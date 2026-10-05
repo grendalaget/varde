@@ -146,6 +146,7 @@ async fn main() -> Result<()> {
                 anchor,
                 force_relay,
                 fence_margin_ms,
+                None,
             )
             .await
         }
@@ -242,6 +243,7 @@ async fn enroll(
         fence_margin_ms: fence_margin_ms.unwrap_or(5000),
         shutdown_replication_timeout_s: 60,
         force_relay: false,
+        mesh_listen_port: 0,
     };
     cfg.save(&data_dir)?;
     info!(node_id = %result.node_id, group = %result.group_id, "enrolled; wrote config.toml");
@@ -269,6 +271,7 @@ async fn run(
     anchor_flag: bool,
     force_relay: bool,
     fence_margin_ms: Option<i64>,
+    ext_stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<()> {
     let mut cfg = config::Config::load(&data_dir)?;
     if anchor_flag {
@@ -297,6 +300,9 @@ async fn run(
         None => game_testgame::TestgameDriver::new(),
     };
     drivers.register(Box::new(tg));
+    drivers.register(Box::new(game_minecraft::MinecraftDriver::new()));
+    drivers.register(Box::new(game_valheim::ValheimDriver::new()));
+    let runtimes = Arc::new(runtimes::HttpRuntimes::new(data_dir.join("runtimes")));
 
     // mesh
     let ipc = mesh_ipc::ipc_endpoint(&data_dir);
@@ -317,6 +323,7 @@ async fn run(
         cp,
         store,
         drivers,
+        runtimes,
         executor: executor_native::NativeExecutor,
         mesh: mesh.clone(),
         execs: Mutex::new(std::collections::HashMap::new()),
@@ -375,7 +382,7 @@ async fn run(
     }
 
     // graceful shutdown
-    wait_shutdown().await;
+    wait_shutdown(ext_stop).await;
     info!("shutting down: stopping executions");
     let _ = stop_tx.send(true);
 
@@ -405,18 +412,30 @@ async fn run(
     Ok(())
 }
 
-async fn wait_shutdown() {
+async fn wait_shutdown(ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
         let mut term = signal(SignalKind::terminate()).expect("sigterm");
+        let ext = async {
+            if let Some(r) = ext_stop.as_mut() {
+                let _ = r.await;
+            } else {
+                std::future::pending::<()>().await
+            }
+        };
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
             _ = term.recv() => {},
+            _ = ext => {},
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Some(r) = ext_stop {
+            let _ = r.await;
+        } else {
+            let _ = tokio::signal::ctrl_c().await;
+        }
     }
 }

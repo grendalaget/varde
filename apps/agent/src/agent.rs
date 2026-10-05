@@ -23,6 +23,7 @@ pub struct Agent {
     pub cp: cp_api::CpClient,
     pub store: Arc<Store>,
     pub drivers: DriverRegistry,
+    pub runtimes: Arc<runtimes::HttpRuntimes>,
     pub executor: executor_native::NativeExecutor,
     pub mesh: Arc<MeshCtl>,
     pub execs: Mutex<HashMap<String, Arc<ExecCtl>>>,

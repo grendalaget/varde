@@ -4,7 +4,6 @@
 //! replication hold; fencing watchdog targets the same handles.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -12,21 +11,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
 use executor_api::{Executor, OutputStream, ProcessHandle};
-use game_driver_api::{
-    DeploymentSpec, DriverContext, GameDriver, GameHealth, RuntimeProvider, SnapshotBarrier,
-};
+use game_driver_api::{DeploymentSpec, DriverContext, GameDriver, GameHealth, SnapshotBarrier};
 use snapshot_store::{SnapshotId, SnapshotMeta};
 use tokio::sync::watch;
 
 use crate::chunks;
 use crate::Agent;
-
-pub struct NoRuntimes;
-impl RuntimeProvider for NoRuntimes {
-    fn runtime_path(&self, _kind: &str, _id: &str) -> Option<PathBuf> {
-        None
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -244,7 +234,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let ctx = DriverContext {
         server_dir: &server_dir,
         deployment_dir: &deployment_dir,
-        runtimes: &NoRuntimes,
+        runtimes: &*agent.runtimes,
         deployment: &deployment,
         config: &config,
         memory_mb: 0,

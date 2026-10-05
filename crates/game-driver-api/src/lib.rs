@@ -68,9 +68,48 @@ pub enum SnapshotBarrier {
     RequiresStop,
 }
 
+/// How a fetched artifact lands in the runtime cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveKind {
+    /// Single file, placed as <id>/<name>.
+    File,
+    /// .tar.gz / .tgz extracted under <id>/.
+    Tgz,
+    /// .zip extracted under <id>/.
+    Zip,
+}
+
+/// Artifact a driver needs downloaded through the agent's RuntimeProvider
+/// (drivers never do raw HTTP). At least one checksum should be set; the
+/// provider refuses to use a downloaded artifact that fails verification.
+#[derive(Debug, Clone)]
+pub struct FetchSpec {
+    pub url: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+    pub sha1: Option<String>,
+    pub archive: ArchiveKind,
+}
+
 /// Runtimes drivers may request (java, steamcmd); implemented by the agent.
+/// All HTTP goes through the provider; drivers only see paths.
+#[async_trait]
 pub trait RuntimeProvider: Send + Sync {
     fn runtime_path(&self, kind: &str, id: &str) -> Option<PathBuf>;
+    /// GET a JSON document (version manifests, runtime APIs).
+    async fn get_json(&self, _url: &str) -> Result<serde_json::Value> {
+        Err("runtime provider cannot fetch".into())
+    }
+    /// Download `spec` into the shared cache at `<runtimes>/<kind>/<id>`,
+    /// atomically and checksum-verified; repeated calls hit the cache.
+    async fn fetch(&self, _kind: &str, _id: &str, _spec: &FetchSpec) -> Result<PathBuf> {
+        Err("runtime provider cannot fetch".into())
+    }
+    /// Install/update a Steam dedicated app into `dest` via steamcmd
+    /// (`+force_install_dir +login anonymous +app_update <app> validate +quit`).
+    async fn steam_app_install(&self, _app_id: u32, _dest: &Path) -> Result<()> {
+        Err("runtime provider cannot fetch".into())
+    }
 }
 
 pub struct DriverContext<'a> {

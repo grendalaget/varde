@@ -34,6 +34,10 @@ pub struct Config {
     /// Never attempt direct paths (passed through to mesh Configure).
     #[serde(default)]
     pub force_relay: bool,
+    /// Fixed UDP listen port for the mesh (0 = ephemeral). Used by the
+    /// netns test so each NAT's port map is known ahead of time.
+    #[serde(default)]
+    pub mesh_listen_port: u32,
 }
 
 fn default_fence_margin_ms() -> i64 {

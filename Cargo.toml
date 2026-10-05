@@ -8,6 +8,7 @@ members = [
     "crates/mesh-ipc",
     "crates/executor-native",
     "crates/cp-api",
+    "crates/runtimes",
     "games/testgame",
     "games/minecraft",
     "games/valheim",
