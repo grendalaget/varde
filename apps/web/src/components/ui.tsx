@@ -90,10 +90,12 @@ export function Badge({
   tone = "neutral",
   children,
   title,
+  className,
 }: {
   tone?: Tone;
   children: ReactNode;
   title?: string;
+  className?: string;
 }) {
   const t: Record<Tone, string> = {
     green: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
@@ -110,6 +112,7 @@ export function Badge({
       className={cx(
         "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
         t[tone],
+        className,
       )}
     >
       {children}

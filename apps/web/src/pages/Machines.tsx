@@ -116,9 +116,15 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
                 {n.name}
               </span>
               {hosting.length > 0 && (
-                <Badge tone="host" title={`Hosting ${hosting.join(", ")}`}>
+                <Badge
+                  tone="host"
+                  className="min-w-0 max-w-full"
+                  title={`Hosting ${hosting.join(", ")}`}
+                >
                   <Ember />
-                  Hosting {hosting.join(", ")}
+                  <span className="truncate">
+                    Hosting {hosting.join(", ")}
+                  </span>
                 </Badge>
               )}
               {n.anchor && <Badge tone="violet">Always-on backup</Badge>}

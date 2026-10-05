@@ -129,10 +129,7 @@ export function Ember({ className = "h-2.5 w-3" }: { className?: string }) {
   );
 }
 
-/**
- * Marks the machine currently hosting a server. Keyed by node so the ember
- * re-ignites when the host changes (Move or failover).
- */
+/** Marks the machine currently hosting a server. Ember is keyed by node so it re-ignites on Move or failover. */
 export function HostMarker({
   nodeId,
   name,
@@ -144,11 +141,10 @@ export function HostMarker({
 }) {
   return (
     <span
-      key={nodeId}
       className={cx("inline-flex items-center gap-1.5 text-take", className)}
       title={`${name} is hosting this server`}
     >
-      <Ember />
+      <Ember key={nodeId} />
       <span className="truncate">{name}</span>
     </span>
   );
