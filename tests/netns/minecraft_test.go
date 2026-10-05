@@ -185,6 +185,28 @@ func newMCEnv(t *testing.T, names []string) *mcEnv {
 		return st == 200
 	})
 	e := &mcEnv{t: t, tmp: tmp, cpURL: cpURL, cp: cp, nodes: map[string]*node{}}
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, nd := range e.nodes {
+			if nd.proc == nil {
+				continue
+			}
+			var keep []string
+			for _, l := range strings.Split(nd.proc.buf.String(), "\n") {
+				if strings.Contains(l, `"msg":"configured"`) ||
+					strings.Contains(l, "direct dial failed") {
+					continue
+				}
+				keep = append(keep, l)
+			}
+			if len(keep) > 60 {
+				keep = keep[len(keep)-60:]
+			}
+			t.Logf("--- node %s agent log tail ---\n%s", nd.name, strings.Join(keep, "\n"))
+		}
+	})
 	auth := apiJSON(t, "POST", cpURL+"/v1/auth/signup", "", map[string]any{
 		"email": "op@example.com", "password": "hunter22!", "display_name": "Op",
 	}, 201)
@@ -594,10 +616,15 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
 	var newest map[string]any
+	var newestAt float64
 	for _, s := range m["snapshots"].([]any) {
 		sm := s.(map[string]any)
-		if sm["state"] == "committed" {
-			newest = sm // list order: newest first or last; take last committed seen
+		if sm["state"] != "committed" {
+			continue
+		}
+		at, _ := sm["created_at"].(float64)
+		if newest == nil || at > newestAt {
+			newest, newestAt = sm, at
 		}
 	}
 	if newest == nil {

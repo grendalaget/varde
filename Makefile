@@ -89,17 +89,20 @@ gen-go-api:
 clean:
 	rm -rf $(BIN) target apps/web/dist
 
-# Root-only Linux netns demo (networking.md §64): builds binaries, then runs
-# the tagged test. Needs `ip`, `iptables`, and root.
+# Root-only Linux netns demo (networking.md §64): builds as the normal
+# user, then runs only the test binary as root (sudo loses HOME/rustup).
 .PHONY: e2e-netns
 e2e-netns: test-bins
-	@if ! sudo -n true 2>/dev/null; then echo "e2e-netns needs root: run 'sudo -v' or 'sudo make e2e-netns'"; exit 1; fi
-	cd tests/netns && go test -tags netns -count=1 -v ./...
+	@if ! sudo -n true 2>/dev/null; then echo "e2e-netns needs root: run 'sudo -v' first"; exit 1; fi
+	cd tests/netns && go test -c -tags netns -o ../../bin/netns.test .
+	cd tests/netns && sudo ../../bin/netns.test -test.v -test.count=1
 
 # Minecraft e2e on the same netns topology (failover + owner shutdown).
 # Needs root plus node (VARDE_NODE if sudo's PATH hides it).
 .PHONY: e2e-minecraft
 e2e-minecraft: test-bins
-	@if ! sudo -n true 2>/dev/null; then echo "e2e-minecraft needs root: run 'sudo -v' or 'sudo make e2e-minecraft'"; exit 1; fi
+	@if ! sudo -n true 2>/dev/null; then echo "e2e-minecraft needs root: run 'sudo -v' first"; exit 1; fi
 	pnpm --filter varde-minecraft-bot install
-	cd tests/netns && go test -tags 'netns minecraft' -run TestMinecraft -count=1 -v -timeout 40m ./...
+	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
+	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
+		../../bin/netns-minecraft.test -test.run TestMinecraft -test.v -test.count=1 -test.timeout 40m

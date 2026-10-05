@@ -198,6 +198,18 @@ func setupTopology(t *testing.T, names []string) {
 	run(t, toolPath()["ip"], "link", "add", bridge, "type", "bridge")
 	run(t, toolPath()["ip"], "addr", "add", wanNet, "dev", bridge)
 	run(t, toolPath()["ip"], "link", "set", bridge, "up")
+	// outbound internet for the nodes (runtime downloads, DNS): the host
+	// forwards bridge traffic and masquerades it on egress. docker hosts
+	// set FORWARD policy DROP, so ACCEPT must be explicit.
+	run(t, toolPath()["iptables"], "-I", "FORWARD", "1", "-i", bridge, "-j", "ACCEPT")
+	run(t, toolPath()["iptables"], "-I", "FORWARD", "1", "-o", bridge, "-j", "ACCEPT")
+	run(t, toolPath()["iptables"], "-t", "nat", "-A", "POSTROUTING",
+		"-s", "10.200.77.0/24", "!", "-o", bridge, "-j", "MASQUERADE")
+	run(t, "mkdir", "-p", "/etc/netns")
+	// per-netns resolv.conf: ip netns exec bind-mounts /etc/netns/<ns>/X
+	// onto /etc/X. Without this the namespace inherits the host's
+	// systemd-resolved stub (127.0.0.53), unreachable inside the ns.
+	dns := upstreamDNS()
 	for i, n := range names {
 		idx := i + 1
 		nat := "nat-" + n
@@ -212,8 +224,16 @@ func setupTopology(t *testing.T, names []string) {
 		nsExec(t, nat, "ip", "link", "set", "vnat-"+n, "up")
 		nsExec(t, nat, "ip", "link", "set", "lo", "up")
 		nsExec(t, nat, "sysctl", "-w", "net.ipv4.ip_forward=1")
+		// nodes reach the real internet through the bridge (outbound
+		// only): default route via the bridge's host-side address
+		nsExec(t, nat, "ip", "route", "add", "default", "via", wanIP)
 		nsExec(t, nat, toolPath()["iptables"], "-t", "nat", "-A", "POSTROUTING",
 			"-o", "vnat-"+n, "-j", "MASQUERADE")
+		run(t, "mkdir", "-p", "/etc/netns/"+n)
+		if err := os.WriteFile("/etc/netns/"+n+"/resolv.conf",
+			[]byte("nameserver "+dns+"\n"), 0o644); err != nil {
+			t.Fatalf("resolv.conf for ns %s: %v", n, err)
+		}
 		// node <-> its nat
 		run(t, toolPath()["ip"], "link", "add", "veth-"+n, "type", "veth", "peer", "name", "vnod-"+n)
 		run(t, toolPath()["ip"], "link", "set", "veth-"+n, "netns", nat)
@@ -258,7 +278,30 @@ func setupTopology(t *testing.T, names []string) {
 			_ = exec.Command(toolPath()["ip"], "netns", "del", "nat-"+n).Run()
 		}
 		_ = exec.Command(toolPath()["ip"], "link", "del", bridge).Run()
+		_ = exec.Command(toolPath()["iptables"], "-D", "FORWARD", "-i", bridge, "-j", "ACCEPT").Run()
+		_ = exec.Command(toolPath()["iptables"], "-D", "FORWARD", "-o", bridge, "-j", "ACCEPT").Run()
+		_ = exec.Command(toolPath()["iptables"], "-t", "nat", "-D", "POSTROUTING",
+			"-s", "10.200.77.0/24", "!", "-o", bridge, "-j", "MASQUERADE").Run()
 	})
+}
+
+// upstreamDNS returns the host's real DNS upstream (the systemd-resolved
+// stub 127.0.0.53 is unreachable inside a netns).
+func upstreamDNS() string {
+	for _, f := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			f := strings.Fields(l)
+			if len(f) == 2 && f[0] == "nameserver" &&
+				!strings.HasPrefix(f[1], "127.") {
+				return f[1]
+			}
+		}
+	}
+	return "8.8.8.8"
 }
 
 // blockDirectUDP drops all forwarded UDP except traffic to the embedded

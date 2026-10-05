@@ -76,6 +76,7 @@ async function main() {
     bot.once('spawn', res)
     setTimeout(() => rej(new Error('spawn timeout')), 45_000)
   }).catch((e) => die('bot: ' + e.message))
+  await bot.waitForChunksToLoad()
 
   const spawn = bot.entity.position.floored()
   const ref = parseRef(args.ref, bot)
