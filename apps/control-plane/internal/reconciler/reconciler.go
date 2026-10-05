@@ -468,7 +468,7 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 			},
 		}
 	}
-	return nil, nil, nil // fresh world
+	return nil, nil, nil // no committed save yet: start fresh
 }
 
 func (r *Reconciler) onlineNodeIDs(ctx context.Context, groupID string) (map[string]bool, error) {

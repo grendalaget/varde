@@ -119,7 +119,7 @@ Response `AgentDirectives`:
      "deployment": {"id":"dep_…","game_id":"minecraft","spec":{...}},
      "config": {...},
      "service": {"service_id":"svc_…","loopback_ip":"127.77.12.34","ports":[{"port":25565,"protocol":"tcp"}]},
-     "restore": {"snapshot_id":"snap_…","manifest_digest":"…","source_node_ids":["node_b","node_c"]},   // null = fresh world
+     "restore": {"snapshot_id":"snap_…","manifest_digest":"…","source_node_ids":["node_b","node_c"]},   // null = start without a save
      "snapshot_interval_s": 120,
      "snapshot_requests": [{"request_id":"…","reason":"manual"}]
   }],

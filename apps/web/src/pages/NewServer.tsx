@@ -112,7 +112,7 @@ export default function NewServer() {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Survival world"
+                placeholder="e.g. Friday night server"
               />
             </Field>
             {game?.config_fields.map((f) => (

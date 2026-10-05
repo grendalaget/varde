@@ -36,7 +36,7 @@ This directory is the contract between components. Read in order:
 ### Hard boundaries
 
 * **The dashboard only talks to the control-plane API.** Never to agents or peers.
-* **The control plane coordinates; it never stores live worlds** and never relays game traffic. It cannot run
+* **The control plane coordinates; it never stores game saves** and never relays game traffic. It cannot run
   arbitrary commands on nodes: every directive is a structured, validated operation (I9).
 * **The agent decides *what*, the mesh decides *how*.** The agent tells the mesh which peers exist, which service
   routes to expose and which services it hosts (declaratively, full-replacement `Set*` RPCs, see
