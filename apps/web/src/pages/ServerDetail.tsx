@@ -310,8 +310,8 @@ function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
             {crossplay ? (
               <p className="text-xs text-slate-400">
                 Crossplay server: players join from Valheim&apos;s Join game →
-                Join by code. The code changes every time the server starts or
-                moves to another machine.
+                Join by code. The code can change when the server restarts or
+                moves to another machine, so check here for the current one.
               </p>
             ) : (
               <p className="text-xs text-slate-400">

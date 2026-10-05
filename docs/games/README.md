@@ -49,11 +49,7 @@ Join by code** flow instead of using the Varde address. Varde displays the
 current join code on the server detail and list pages; it is read from the
 Valheim server log and is updated as soon as the agent sees it.
 
-In two measured runs, Valheim produced a six-digit join code about two seconds
-after `Game server connected`. The code changed after a restart even with the
-same instance ID, port, server name, and save directory, so players need the
-new code after every restart or move. The initial empty-code log line is
-followed by a registered-code line and an active-session line.
+Valheim printed a six-digit join code about two seconds after `Game server connected`, after an initial empty-code line. Across restarts with the same instance ID, port, server name and save directory, the code changed once (124841 → 589208) and stayed the same once (776580 on two quick restarts). Treat the code as able to change on any restart or move; Varde republishes whatever code the agent last saw.
 
 Console clients have not been tested; manual PS5 and Xbox validation is still
 needed.

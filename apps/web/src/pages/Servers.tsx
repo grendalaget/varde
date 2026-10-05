@@ -116,8 +116,8 @@ function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
         {crossplay && (
           <p className="text-xs text-slate-400">
             Crossplay server: players join from Valheim&apos;s Join game → Join
-            by code. The code changes every time the server starts or moves to
-            another machine.
+            by code. The code can change when the server restarts or moves to
+            another machine, so check here for the current one.
           </p>
         )}
         <Row label="Latest safe save">
