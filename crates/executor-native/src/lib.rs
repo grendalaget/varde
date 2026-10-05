@@ -308,7 +308,6 @@ fn platform_rusage(pid: u32) -> Option<ResourceUsage> {
 
 #[cfg(windows)]
 fn platform_configure(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
 }
@@ -324,7 +323,6 @@ unsafe impl Sync for Job {}
 impl Job {
     fn new() -> Result<Job> {
         use windows_sys::Win32::System::JobObjects::*;
-        use windows_sys::Win32::System::Threading::*;
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {

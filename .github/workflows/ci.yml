@@ -28,6 +28,12 @@ jobs:
           install-mode: binary
           skip-cache: true
           working-directory: go
+      - name: webui placeholder (for go:embed)
+        shell: bash
+        run: |
+          mkdir -p apps/control-plane/internal/webui/dist
+          cp apps/control-plane/internal/webui/placeholder.html \
+            apps/control-plane/internal/webui/dist/index.html
       - name: lint
         shell: bash
         run: |
