@@ -19,6 +19,28 @@ use sha2::Digest;
 
 const UA: &str = concat!("varde-agent/", env!("CARGO_PKG_VERSION"));
 
+/// Runtime ids the provider can fetch on this host. Reported in node
+/// capabilities so the scheduler can place games whose runtime isn't
+/// installed yet — `HttpRuntimes` downloads it on demand.
+pub fn provisionable() -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if cfg!(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
+    )) {
+        out.push("java");
+    }
+    if cfg!(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+    )) {
+        out.push("steamcmd");
+    }
+    out
+}
+
 /// Shared runtime cache rooted at `<data>/runtimes`.
 pub struct HttpRuntimes {
     root: PathBuf,
@@ -332,4 +354,14 @@ pub async fn system_java(min: u32, candidates: &[PathBuf]) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod tests {
+    #[test]
+    fn provisionable_linux_x64() {
+        let p = super::provisionable();
+        assert!(p.contains(&"java"));
+        assert!(p.contains(&"steamcmd"));
+    }
 }

@@ -20,7 +20,11 @@ pub fn capabilities(
         disk_free_bytes: disk_free(data_dir).map(|b| b as i64),
         on_battery: Some(false),
         user_active: Some(false),
-        runtimes: Some(vec!["native".into()]),
+        runtimes: Some(
+            std::iter::once("native".to_string())
+                .chain(runtimes::provisionable().into_iter().map(String::from))
+                .collect(),
+        ),
         cached_deployments: Some(vec![]),
         drivers: Some(drivers.iter().map(|d| d.to_string()).collect()),
         uptime_s: Some(uptime()),
