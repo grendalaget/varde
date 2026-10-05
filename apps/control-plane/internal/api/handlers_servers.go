@@ -665,7 +665,11 @@ func (s *Server) GetServerLogs(ctx context.Context, req gen.GetServerLogsRequest
 	}
 	execID := ""
 	if req.Params.ExecutionId != nil {
-		execID = *req.Params.ExecutionId
+		ex, err := s.Store.GetExecution(ctx, *req.Params.ExecutionId)
+		if err != nil || ex.ServerID != srv.ID {
+			return nil, errResp(gen.NotFound, "execution not found", nil)
+		}
+		execID = ex.ID
 	} else if e, err := s.Store.ActiveExecution(ctx, srv.ID); err == nil {
 		execID = e.ID
 	}

@@ -1366,3 +1366,27 @@ func TestUpdateNodeRequiresOwnership(t *testing.T) {
 	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
 		map[string]any{"name": "yep"}, adminTok))
 }
+
+// /logs?execution_id= must not leak executions from other servers.
+func TestServerLogsRejectsForeignExecution(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srvA := e.createServer("testgame", "a", nil)
+	srvB := e.createServer("testgame", "b", nil)
+	_, execA, _ := e.startToRunning(srvA, a, b)
+	_, _, _ = e.startToRunning(srvB, a, b)
+
+	r := e.do("GET", "/v1/servers/"+srvB+"/logs?execution_id="+execA, nil, e.token)
+	if r.Status != 404 {
+		t.Fatalf("foreign execution: want 404, got %d %s", r.Status, r.Raw)
+	}
+	r = e.do("GET", "/v1/servers/"+srvA+"/logs?execution_id="+execA, nil, e.token)
+	if r.Status != 200 {
+		t.Fatalf("own execution: want 200, got %d %s", r.Status, r.Raw)
+	}
+	r = e.do("GET", "/v1/servers/"+srvA+"/logs?execution_id=exec_nonexistent", nil, e.token)
+	if r.Status != 404 {
+		t.Fatalf("nonexistent execution: want 404, got %d %s", r.Status, r.Raw)
+	}
+}
