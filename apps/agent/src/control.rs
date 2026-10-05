@@ -84,7 +84,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         .configure(mesh_ipc::pb::ConfigureRequest {
             node_id: agent.cfg.node_id.clone(),
             identity_key_path: agent.key_path.display().to_string(),
-            listen_port: 0,
+            listen_port: agent.cfg.mesh_listen_port,
             relays: d
                 .relays
                 .iter()

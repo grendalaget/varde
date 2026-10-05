@@ -71,3 +71,10 @@ gen-go-api:
 
 clean:
 	rm -rf $(BIN) target apps/web/dist
+
+# Root-only Linux netns demo (networking.md §64): builds binaries, then runs
+# the tagged test. Needs `ip`, `iptables`, and root.
+.PHONY: e2e-netns
+e2e-netns: test-bins
+	@if ! sudo -n true 2>/dev/null; then echo "e2e-netns needs root: run 'sudo -v' or 'sudo make e2e-netns'"; exit 1; fi
+	cd tests/netns && go test -tags netns -count=1 -v ./...

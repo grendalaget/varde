@@ -63,3 +63,24 @@ storage, executors and game drivers.
 cargo check --target x86_64-pc-windows-gnu -p varde-agent
 (cd apps/mesh && GOOS=windows go build ./...)
 ```
+
+## Root-only network-namespace demo (e2e-netns)
+
+`make e2e-netns` runs the networking.md §64 demo: Linux namespaces `a`, `b`,
+`c`, `anchor`, each behind its own NAT namespace on a shared "internet"
+bridge, with the control plane + embedded relay on the internet side. It
+asserts a↔b connect DIRECT through real hole punching (public observed
+endpoints), INCRs the testgame over the stable `127.77.x.y` address,
+commits a snapshot onto the anchor, hard-kills the host namespace, and
+checks state survives on the same address after recovery. It then blocks
+all non-relay UDP and re-checks the path as RELAYED.
+
+Needs root (`sudo -v` first, or `sudo make e2e-netns`) and is not part of
+`make test`.
+
+Note on the NAT model: kernel MASQUERADE is a symmetric NAT, so the test
+pins the mesh source port with `SNAT --to-source` and port-forwards inbound
+with DNAT — an endpoint-independent NAT. A restricted-cone (reply-only)
+map can't be modelled on a shared port pair because an unsolicited inbound
+punch creates a conntrack entry that collides with the outbound flow's
+reply tuple and starves it (`conntrack_confirm` fails).

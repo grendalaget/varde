@@ -6,4 +6,5 @@ use (
 	./apps/relay
 	./apps/mesh
 	./tests/e2e
+	./tests/netns
 )

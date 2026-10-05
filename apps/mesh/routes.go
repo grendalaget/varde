@@ -197,12 +197,14 @@ func (rt *routeState) serveTCP(c net.Conn, port uint32) {
 				spliceTCP(c, up)
 				return
 			}
+			rt.n.log.Debug("local target dial failed", "service", rt.serviceID, "port", port, "error", err)
 		}
 		_ = c.Close()
 		return
 	}
 	peer := rt.n.peer(host)
 	if peer == nil {
+		rt.n.log.Debug("no peer for host", "service", rt.serviceID, "host", host)
 		_ = c.Close()
 		return
 	}
@@ -215,6 +217,7 @@ func (rt *routeState) serveTCP(c net.Conn, port uint32) {
 		},
 	}})
 	if err != nil {
+		rt.n.log.Debug("open service stream failed", "service", rt.serviceID, "host", host, "error", err)
 		_ = c.Close()
 		return
 	}
