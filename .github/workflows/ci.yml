@@ -15,17 +15,6 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: varde
-          POSTGRES_PASSWORD: varde
-          POSTGRES_DB: varde_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U varde" --health-interval 5s
-          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -33,6 +22,20 @@ jobs:
           go-version: stable
           check-latest: true
       - uses: golangci/golangci-lint-action@v7
+      # services: containers are Linux-only; run postgres via docker on the
+      # ubuntu leg so the windows leg can share this job
+      - name: postgres (linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=varde -e POSTGRES_PASSWORD=varde \
+            -e POSTGRES_DB=varde_test postgres:16
+          for i in $(seq 1 30); do
+            docker exec pg pg_isready -U varde >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "postgres did not become ready"; exit 1
       - name: vet
         run: |
           for m in go apps/control-plane apps/relay apps/mesh; do
@@ -127,6 +130,7 @@ jobs:
       - name: build agent + mesh (MSVC)
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
           cargo build --release -p varde-agent
           cd apps/mesh
           go build -o ../../packaging/windows/dist/varde-mesh.exe .
