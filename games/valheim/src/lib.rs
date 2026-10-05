@@ -7,7 +7,7 @@
 use std::ffi::CStr;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use executor_api::{ProcessHandle, ProcessSpec};
@@ -79,7 +79,19 @@ impl ValheimDriver {
     }
 
     fn valid_world_name(world: &str) -> bool {
-        !world.is_empty() && !world.chars().any(|c| matches!(c, '/' | '\\' | '*' | '?'))
+        let mut chars = world.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        let last = chars.last().unwrap_or(first);
+
+        first != '.'
+            && !first.is_whitespace()
+            && last != '.'
+            && !last.is_whitespace()
+            && !world
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '/' | '\\' | '*' | '?' | ':'))
     }
 
     /// argv after the binary, per agent.md.
@@ -178,9 +190,7 @@ impl GameDriver for ValheimDriver {
         Self::cfg_str(config, "server_name")?;
         let world = Self::cfg_str(config, "world_name")?;
         if !Self::valid_world_name(world) {
-            return Err(
-                "valheim: world_name must be non-empty and cannot contain /, \\, * or ?".into(),
-            );
+            return Err("valheim: world_name must be non-empty, have no path/glob characters, colon or controls, and not start/end with dot or whitespace".into());
         }
         let pw = Self::cfg_str(config, "password")?;
         if pw.len() < 5 {
@@ -265,15 +275,13 @@ impl GameDriver for ValheimDriver {
             return Ok(SnapshotBarrier::Live);
         }
 
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
-            match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(Ok(l)) if Self::is_world_saved(&l.line) => return Ok(SnapshotBarrier::Live),
-                Ok(_) => {}
-                Err(_) => {
-                    if Instant::now() > deadline {
-                        return Ok(SnapshotBarrier::RequiresStop);
-                    }
+                Ok(Ok(_)) | Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => {
+                    return Ok(SnapshotBarrier::RequiresStop);
                 }
             }
         }
@@ -438,6 +446,22 @@ mod tests {
                 "{world:?}"
             );
         }
+        for world in ["..", ".", "../x", "a:b", " x", "x.", "x ", "x\ny"] {
+            let mut bad_world = cfg();
+            bad_world["world_name"] = json!(world);
+            assert!(
+                ValheimDriver::new().validate(&bad_world).is_err(),
+                "{world:?}"
+            );
+        }
+        for world in ["Varde Test", "Dedicated"] {
+            let mut valid_world = cfg();
+            valid_world["world_name"] = json!(world);
+            assert!(
+                ValheimDriver::new().validate(&valid_world).is_ok(),
+                "{world:?}"
+            );
+        }
         for preset in ["", "extreme"] {
             let mut bad_preset = cfg();
             bad_preset["modifiers"] = json!(preset);
@@ -569,6 +593,7 @@ mod tests {
         tail: Vec<OutputLine>,
         output: broadcast::Sender<OutputLine>,
         complete_on_subscribe: bool,
+        output_closed: bool,
     }
 
     #[async_trait]
@@ -580,6 +605,11 @@ mod tests {
             Ok(())
         }
         fn output(&self) -> broadcast::Receiver<OutputLine> {
+            if self.output_closed {
+                let (sender, receiver) = broadcast::channel(8);
+                drop(sender);
+                return receiver;
+            }
             let receiver = self.output.subscribe();
             if self.complete_on_subscribe {
                 let _ = self.output.send(OutputLine {
@@ -618,6 +648,23 @@ mod tests {
         }
     }
 
+    fn test_context<'a>(
+        runtimes: &'a NoRuntimes,
+        deployment: &'a DeploymentSpec,
+        config: &'a serde_json::Value,
+        ports: &'a [PortBinding],
+    ) -> DriverContext<'a> {
+        DriverContext {
+            server_dir: Path::new("/srv"),
+            deployment_dir: Path::new("/dep"),
+            runtimes,
+            deployment,
+            config,
+            ports,
+            memory_mb: 2048,
+        }
+    }
+
     #[tokio::test]
     async fn barrier_waits_only_when_tail_shows_an_unfinished_save() {
         let driver = ValheimDriver::new();
@@ -625,15 +672,7 @@ mod tests {
         let deployment = DeploymentSpec::parse(&json!({}));
         let config = cfg();
         let ports = [];
-        let ctx = DriverContext {
-            server_dir: Path::new("/srv"),
-            deployment_dir: Path::new("/dep"),
-            runtimes: &runtimes,
-            deployment: &deployment,
-            config: &config,
-            ports: &ports,
-            memory_mb: 2048,
-        };
+        let ctx = test_context(&runtimes, &deployment, &config, &ports);
         let (output, _) = broadcast::channel(8);
         let in_progress = TailProcess {
             tail: vec![
@@ -642,6 +681,7 @@ mod tests {
             ],
             output,
             complete_on_subscribe: true,
+            output_closed: false,
         };
         assert_eq!(
             driver.prepare_snapshot(&ctx, &in_progress).await.unwrap(),
@@ -657,10 +697,102 @@ mod tests {
             ],
             output,
             complete_on_subscribe: false,
+            output_closed: false,
         };
         assert_eq!(
             driver.prepare_snapshot(&ctx, &idle).await.unwrap(),
             SnapshotBarrier::Live
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_times_out_after_sixty_seconds_despite_other_output() {
+        let driver = ValheimDriver::new();
+        let runtimes = NoRuntimes;
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let config = cfg();
+        let ports = [];
+        let ctx = test_context(&runtimes, &deployment, &config, &ports);
+        let (output, _) = broadcast::channel(8);
+        let process = TailProcess {
+            tail: vec![
+                output_line(100, "World save (5/5) done. Total time [30ms]"),
+                output_line(200, "World save (1/5) Cloud & Backup checks done [0ms]"),
+            ],
+            output: output.clone(),
+            complete_on_subscribe: false,
+            output_closed: false,
+        };
+        let chatter = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if output
+                    .send(output_line(300, "unrelated server output"))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let result = driver.prepare_snapshot(&ctx, &process).await.unwrap();
+        chatter.abort();
+        assert_eq!(result, SnapshotBarrier::RequiresStop);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_returns_requires_stop_when_output_closes() {
+        let driver = ValheimDriver::new();
+        let runtimes = NoRuntimes;
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let config = cfg();
+        let ports = [];
+        let ctx = test_context(&runtimes, &deployment, &config, &ports);
+        let (output, _) = broadcast::channel(8);
+        let process = TailProcess {
+            tail: vec![
+                output_line(100, "World save (5/5) done. Total time [30ms]"),
+                output_line(200, "World save (1/5) Cloud & Backup checks done [0ms]"),
+            ],
+            output,
+            complete_on_subscribe: false,
+            output_closed: true,
+        };
+        let started = tokio::time::Instant::now();
+
+        let result = driver.prepare_snapshot(&ctx, &process).await.unwrap();
+
+        assert_eq!(result, SnapshotBarrier::RequiresStop);
+        assert_eq!(tokio::time::Instant::now(), started);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn barrier_returns_live_when_save_completion_arrives() {
+        let driver = ValheimDriver::new();
+        let runtimes = NoRuntimes;
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let config = cfg();
+        let ports = [];
+        let ctx = test_context(&runtimes, &deployment, &config, &ports);
+        let (output, _) = broadcast::channel(8);
+        let process = TailProcess {
+            tail: vec![
+                output_line(100, "World save (5/5) done. Total time [30ms]"),
+                output_line(200, "World save (1/5) Cloud & Backup checks done [0ms]"),
+            ],
+            output: output.clone(),
+            complete_on_subscribe: false,
+            output_closed: false,
+        };
+        let completion = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            output
+                .send(output_line(300, "World save (5/5) done. Total time [30ms]"))
+                .unwrap();
+        });
+
+        let result = driver.prepare_snapshot(&ctx, &process).await.unwrap();
+        completion.await.unwrap();
+        assert_eq!(result, SnapshotBarrier::Live);
     }
 }
