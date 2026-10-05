@@ -314,6 +314,7 @@ func TestEndToEnd(t *testing.T) {
 			"--data-dir", dir, "--mesh-bin", bin("varde-mesh"))
 		agents = append(agents, a)
 	}
+	var serverID string
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -324,6 +325,19 @@ func TestEndToEnd(t *testing.T) {
 				b = b[len(b)-8000:]
 			}
 			t.Logf("--- agent%d log tail ---\n%s", i, b)
+		}
+		if serverID != "" {
+			st, b := user.call(t, "GET", "/v1/servers/"+serverID+"/logs", nil)
+			if st == 200 {
+				var m map[string]any
+				if json.Unmarshal(b, &m) == nil {
+					out, _ := json.Marshal(m["lines"])
+					if len(out) > 4000 {
+						out = out[len(out)-4000:]
+					}
+					t.Logf("--- server log tail ---\n%s", out)
+				}
+			}
 		}
 	})
 
@@ -344,7 +358,7 @@ func TestEndToEnd(t *testing.T) {
 		"name": "e2e", "game_id": "testgame", "config": map[string]any{},
 		"min_commit_replicas": 1, "replication_factor": 2,
 	}, 201)
-	serverID := srv["id"].(string)
+	serverID = srv["id"].(string)
 	user.json(t, "POST", "/v1/servers/"+serverID+"/start", map[string]any{}, 200)
 
 	// host node = node_id of the server's active execution

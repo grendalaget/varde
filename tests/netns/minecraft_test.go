@@ -506,6 +506,10 @@ func TestMinecraftFailover(t *testing.T) {
 	}
 	e.setHosting("nas", false)
 	e.setHosting("player", false)
+	// keep kari out of placement until arne is up: the first JRE+jar
+	// download exceeds the lease TTL, and if kari is eligible the
+	// migration can land the exec there before arne finishes preparing
+	e.setHosting("kari", false)
 	e.waitOnline(30*time.Second, mcNodeNames...)
 
 	serverID := e.createMCServer("mc-a", "arne")
@@ -514,6 +518,7 @@ func TestMinecraftFailover(t *testing.T) {
 	// first start downloads Temurin + server.jar on arne
 	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
 	t.Logf("server on arne at %s", svc)
+	e.setHosting("kari", true)
 
 	n1 := randNonce(t)
 	ref := e.botWrite("player", svc, 0, n1, "")

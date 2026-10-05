@@ -71,12 +71,32 @@ function parseRef(s, bot) {
 
 const colX = (ref, spawnX) => (args.ref ? ref.x : spawnX) + 2 + 2 * col
 
+// columnBase finds the top solid block at (x, z) near the anchor height —
+// terrain under the column can sit a few blocks above or below the ground
+// under the spawn block.
+function columnBase(x, z, anchorY) {
+  for (let y = anchorY + 16; y > anchorY - 16; y--) {
+    const b = bot.blockAt(new Vec3(x, y, z))
+    if (b && b.name !== 'air' && b.name !== 'cave_air' && b.boundingBox === 'block') return b.position
+  }
+  return null
+}
+
+// stage wraps a step with a named timeout so a hang says where it hung
+// instead of the opaque 60 s hard timeout.
+function stage(name, p, ms = 20_000) {
+  return Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`${name} timeout`)), ms)),
+  ])
+}
+
 async function main() {
   await new Promise((res, rej) => {
     bot.once('spawn', res)
     setTimeout(() => rej(new Error('spawn timeout')), 45_000)
   }).catch((e) => die('bot: ' + e.message))
-  await bot.waitForChunksToLoad()
+  await stage('waitForChunksToLoad', bot.waitForChunksToLoad(), 30_000).catch((e) => die('bot: ' + e.message))
 
   const spawn = bot.entity.position.floored()
   const ref = parseRef(args.ref, bot)
@@ -84,33 +104,40 @@ async function main() {
   const z = args.ref ? ref.z : spawn.z
 
   if (mode === 'write') {
+    const base = columnBase(x, z, ref.y)
+    if (!base) die(`bot: no ground under column at ${x},${z}`)
     const Item = prismarineItem(bot.version)
     const digits = nonce.split('').map((c) => parseInt(c, 16))
     for (let i = 0; i < 8; i++) {
-      const target = new Vec3(x, ref.y + 1 + i, z)
+      const target = new Vec3(x, base.y + 1 + i, z)
       // fly adjacent to the target so it is within place reach
-      await bot.creative.flyTo(new Vec3(x + 1, target.y + 1, z))
+      await stage(`flyTo ${i}`, bot.creative.flyTo(new Vec3(x + 1, target.y + 1, z))).catch((e) => die('bot: ' + e.message))
       const item = new Item(bot.registry.itemsByName[WOOL[digits[i]] + '_wool'].id, 1)
-      await bot.creative.setInventorySlot(36, item)
+      await stage('setInventorySlot', bot.creative.setInventorySlot(36, item)).catch((e) => die('bot: ' + e.message))
       bot.setQuickBarSlot(0)
       const below = bot.blockAt(new Vec3(x, target.y - 1, z))
       if (!below || below.name === 'air') die(`bot: missing block under column at ${x},${target.y - 1},${z}`)
-      await bot.placeBlock(below, new Vec3(0, 1, 0))
+      await stage(`placeBlock ${i}`, bot.placeBlock(below, new Vec3(0, 1, 0))).catch((e) => die('bot: ' + e.message))
     }
     console.log(JSON.stringify({ ok: true, ref: `${ref.x},${ref.y},${ref.z}` }))
   } else {
+    // find the contiguous 8-wool run near the anchor height (the column
+    // base is the column-local ground, which can differ from the anchor)
     const names = []
-    let nonce = ''
-    for (let i = 0; i < 8; i++) {
-      const b = bot.blockAt(new Vec3(x, ref.y + 1 + i, z))
-      const name = b ? b.name : 'unloaded'
-      names.push(name)
-      const wool = name.endsWith('_wool') ? name.slice(0, -5) : null
-      const digit = wool ? WOOL.indexOf(wool) : -1
-      nonce += digit >= 0 ? digit.toString(16) : '?'
+    for (let y = ref.y - 15; y <= ref.y + 24; y++) {
+      const b = bot.blockAt(new Vec3(x, y, z))
+      names.push(b ? b.name : 'unloaded')
     }
-    if (nonce.includes('?')) {
-      console.log(JSON.stringify({ nonce: null, blocks: names }))
+    let nonce = ''
+    for (let i = 0; i + 8 <= names.length; i++) {
+      if (names.slice(i, i + 8).every((n) => n.endsWith('_wool'))) {
+        nonce = names.slice(i, i + 8).map((n) => WOOL.indexOf(n.slice(0, -5)).toString(16)).join('')
+        break
+      }
+    }
+    if (nonce === '') {
+      const expected = names.slice(16, 24)
+      console.log(JSON.stringify({ nonce: null, blocks: expected }))
     } else {
       console.log(JSON.stringify({ nonce }))
     }
