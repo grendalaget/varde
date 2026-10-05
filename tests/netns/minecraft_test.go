@@ -359,6 +359,24 @@ func (e *mcEnv) hostOf(serverID string) string {
 	return ""
 }
 
+// placedNodeOf returns the node of the latest unfinished execution — the CP's
+// current placement, running or not.
+func (e *mcEnv) placedNodeOf(serverID string) string {
+	st, b := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+	if st != 200 {
+		return ""
+	}
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	for _, ex := range m["executions"].([]any) {
+		em := ex.(map[string]any)
+		if em["ended_at"] == nil && em["state"] != "stopped" && em["state"] != "failed" {
+			return em["node_id"].(string)
+		}
+	}
+	return ""
+}
+
 func (e *mcEnv) svcAddr(serverID string) string {
 	st, b := apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
 	if st != 200 {
@@ -673,24 +691,15 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	}
 	t.Logf("2a: final snapshot committed with ready replica on nas")
 
-	// start kari; failover should pick it up, else start manually
+	// start kari: the CP must re-place automatically — the draining-flag
+	// + refused-exec reports should route around arne with no /start
 	e.startAgent("kari")
 	e.waitOnline(30*time.Second, "kari")
-	autoFailover := false
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		if e.hostOf(serverID) == e.nodes["kari"].nodeID {
-			autoFailover = true
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if autoFailover {
-		t.Logf("2a: server failed over to kari automatically")
-	} else {
-		t.Logf("2a: no automatic failover within 60s; POST /start")
-		apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
-	}
+	placedAt := time.Now()
+	waitFor(t, 30*time.Second, "2a: server re-placed automatically", func() bool {
+		return e.placedNodeOf(serverID) == e.nodes["kari"].nodeID
+	})
+	t.Logf("2a: server placed on kari automatically (%.1fs after kari online)", time.Since(placedAt).Seconds())
 	waitFor(t, 3*time.Minute, "server running on kari", func() bool {
 		if e.hostOf(serverID) != e.nodes["kari"].nodeID {
 			return false
@@ -711,8 +720,15 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	})
 
 	// ---------- 2b: hard power-off after a save ----------
-	e.nodes["kari"].proc.kill()
+	// "kari's agent is stopped" means the node is down — kill the whole
+	// namespace: killing only the agent leaves server.jar orphaned and
+	// still listening on 25565, which trips the one-host invariant
+	killNamespace(t, "kari")
 	time.Sleep(2 * time.Second)
+
+	// arne's agent was SIGTERM'd in 2a — bring it back before hosting again
+	e.startAgent("arne")
+	e.waitOnline(30*time.Second, "arne")
 
 	server2 := e.createMCServer("mc-2b", "arne")
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+server2+"/start", e.tok, map[string]any{}, 200)
@@ -732,16 +748,16 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	e.startAgent("kari")
 	e.waitOnline(30*time.Second, "kari")
 	auto2 := false
-	deadline = time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		if e.hostOf(server2) == e.nodes["kari"].nodeID {
+	deadline2 := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline2) {
+		if e.placedNodeOf(server2) == e.nodes["kari"].nodeID {
 			auto2 = true
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !auto2 {
-		t.Logf("2b: no automatic failover; POST /start")
+		t.Logf("2b: REQUIRED manual /start (no auto failover within 60s)")
 		apiJSON(t, "POST", e.cpURL+"/v1/servers/"+server2+"/start", e.tok, map[string]any{}, 200)
 	} else {
 		t.Logf("2b: server failed over to kari automatically")

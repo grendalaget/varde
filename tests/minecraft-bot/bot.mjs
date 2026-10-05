@@ -121,18 +121,21 @@ async function waitLanded() {
   throw new Error('never landed on ground')
 }
 
-async function pillarOnce() {
+async function pillarOnce(x, z) {
   // the server can refuse a block placed at the apex if its view of the
   // player's bounding box still overlaps the target cell — retry the whole
   // jump+place until the block lands
   let lastErr
   for (let attempt = 0; attempt < 5; attempt++) {
     await waitLanded()
+    // make sure we stand on the column before referencing the block below
+    await goTo(x, z)
     // reference = the block under our feet BEFORE jumping (at jump apex the
     // position below is already the new air gap)
     const below = bot.blockAt(bot.entity.position.offset(0, -0.5, 0))
     if (!below || below.name === 'air' || below.name === 'cave_air') {
-      throw new Error('no block under feet while pillaring')
+      lastErr = new Error('no block under feet while pillaring')
+      continue
     }
     const jumpY = Math.floor(bot.entity.position.y) + 1.0
     bot.setControlState('jump', true)
@@ -142,7 +145,19 @@ async function pillarOnce() {
     }
     bot.setControlState('jump', false)
     if (bot.entity.position.y <= jumpY) {
-      throw new Error(`jump did not rise (y=${bot.entity.position.y.toFixed(2)} want >${jumpY})`)
+      // wedged (e.g. spawned inside a block, or a leaf/ceiling overhead):
+      // dig the blocks at head/ceiling level, step back, retry fresh
+      lastErr = new Error(`jump did not rise (y=${bot.entity.position.y.toFixed(2)} want >${jumpY})`)
+      for (const dy of [1, 2]) {
+        const b = bot.blockAt(bot.entity.position.offset(0, dy, 0))
+        if (b && b.name !== 'air' && b.name !== 'cave_air' && b.diggable) {
+          await bot.dig(b).catch(() => {})
+        }
+      }
+      bot.setControlState('back', true)
+      await sleep(400)
+      bot.setControlState('back', false)
+      continue
     }
     try {
       await bot.placeBlock(below, new Vec3(0, 1, 0))
@@ -180,7 +195,7 @@ async function main() {
       // pillar: place the wool under ourselves while jumping — the bot
       // lands on it and the column grows one block per iteration. No
       // flight needed (allow-flight is off by default).
-      await stage(`pillar ${i}`, pillarOnce()).catch((e) => die('bot: ' + e.message))
+      await stage(`pillar ${i}`, pillarOnce(x, z)).catch((e) => die('bot: ' + e.message))
     }
     console.log(JSON.stringify({ ok: true, ref: `${ref.x},${ref.y},${ref.z}` }))
   } else {
