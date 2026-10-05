@@ -462,11 +462,7 @@ async fn graceful_stop_and_snapshot(
     let mut final_snap = None;
     let mut requires_stop = false;
     if !ctl.is_fenced() {
-        match driver
-            .prepare_snapshot(ctx, &**proc)
-            .await
-            .map_err(dyn_err)
-        {
+        match driver.prepare_snapshot(ctx, &**proc).await.map_err(dyn_err) {
             Ok(SnapshotBarrier::Live) => {
                 match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
                     Ok(info) => final_snap = Some(info),
@@ -989,7 +985,9 @@ mod requires_stop_tests {
                     let mut buf = vec![0u8; 64 * 1024];
                     let _ = s.read(&mut buf).await;
                     let _ = s
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+                        )
                         .await;
                 });
             }
