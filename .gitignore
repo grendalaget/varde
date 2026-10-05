@@ -1,6 +1,9 @@
 # Binaries / build output
 bin/
 dist/
+# keep the go:embed placeholder so `go build` works without a web build
+!apps/control-plane/internal/webui/dist/
+!apps/control-plane/internal/webui/dist/index.html
 target/
 *.exe
 
