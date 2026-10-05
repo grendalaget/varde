@@ -21,3 +21,4 @@ libc = "0.2"
 executor-native = { path = "../../crates/executor-native" }
 runtimes = { path = "../../crates/runtimes" }
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
