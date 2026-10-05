@@ -11,7 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
 use executor_api::{Executor, OutputStream, ProcessHandle};
-use game_driver_api::{DeploymentSpec, DriverContext, GameDriver, GameHealth, SnapshotBarrier};
+use game_driver_api::{
+    DeploymentSpec, DriverContext, GameDriver, GameHealth, PortBinding, PortSpec, SnapshotBarrier,
+};
 use snapshot_store::{SnapshotId, SnapshotMeta};
 use tokio::sync::watch;
 
@@ -69,6 +71,9 @@ pub struct ExecCtl {
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// set when a graceful stop finished + reported stopped
     finished: AtomicBool,
+    /// service ports -> agent-allocated local target ports; fixed for the
+    /// whole execution so in-execution restarts reuse them
+    pub port_bindings: Mutex<Vec<PortBinding>>,
 }
 
 impl ExecCtl {
@@ -87,6 +92,7 @@ impl ExecCtl {
             snapshot_reqs: Mutex::new(VecDeque::new()),
             task: Mutex::new(None),
             finished: AtomicBool::new(false),
+            port_bindings: Mutex::new(Vec::new()),
         })
     }
 
@@ -231,12 +237,17 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             .map(|d| d.spec.clone())
             .unwrap_or(serde_json::json!({})),
     );
+    // allocate the local port block before configure so drivers can bind
+    // 127.0.0.1:<local_port> while the mesh owns <loopback>:<service_port>
+    let bindings = alloc_port_block(&driver.ports(&config))?;
+    *ctl.port_bindings.lock().unwrap() = bindings.clone();
     let ctx = DriverContext {
         server_dir: &server_dir,
         deployment_dir: &deployment_dir,
         runtimes: &*agent.runtimes,
         deployment: &deployment,
         config: &config,
+        ports: &bindings,
         memory_mb: 0,
     };
 
@@ -560,6 +571,46 @@ async fn do_snapshot(
     Ok(info)
 }
 
+/// Allocate one contiguous block of local ports covering `service_ports`.
+/// Offsets are preserved relative to the lowest service port (so a game
+/// using p and p+1 gets base/base+1). The base is random in 20000–59999
+/// and accepted only when every offset test-binds on TCP and UDP on both
+/// 127.0.0.1 and 0.0.0.0; retries up to 50 bases.
+pub fn alloc_port_block(service_ports: &[PortSpec]) -> Result<Vec<PortBinding>> {
+    use rand::Rng;
+    if service_ports.is_empty() {
+        return Ok(vec![]);
+    }
+    let lo = service_ports.iter().map(|p| p.port).min().unwrap();
+    let hi = service_ports.iter().map(|p| p.port).max().unwrap();
+    let span = (hi - lo) as usize + 1;
+    let mut rng = rand::thread_rng();
+    for _ in 0..50 {
+        let base = rng.gen_range(20000u32..=59999u32.saturating_sub(span as u32 - 1));
+        let free = (0..span).all(|off| port_free(base + off as u32));
+        if !free {
+            continue;
+        }
+        return Ok(service_ports
+            .iter()
+            .map(|p| PortBinding {
+                service_port: p.port,
+                local_port: base + (p.port - lo),
+                protocol: p.protocol,
+            })
+            .collect());
+    }
+    bail!("no free contiguous port block after 50 attempts")
+}
+
+fn port_free(port: u32) -> bool {
+    let p = port as u16;
+    std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()
+        && std::net::TcpListener::bind(("0.0.0.0", p)).is_ok()
+        && std::net::UdpSocket::bind(("127.0.0.1", p)).is_ok()
+        && std::net::UdpSocket::bind(("0.0.0.0", p)).is_ok()
+}
+
 fn game_id(ctx: &DriverContext<'_>) -> String {
     ctx.deployment
         .get("game_id")
@@ -636,4 +687,49 @@ async fn flush_logs(agent: &Agent, exec_id: &str, batch: &mut Vec<cp_api::LogLin
         .cp
         .json::<_, serde_json::Value>("POST", &path, Some(&body))
         .await;
+}
+
+#[cfg(test)]
+mod port_alloc_tests {
+    use super::*;
+    use game_driver_api::GameProtocol;
+
+    fn spec(port: u32) -> PortSpec {
+        PortSpec {
+            port,
+            protocol: GameProtocol::Tcp,
+        }
+    }
+
+    #[test]
+    fn contiguous_offsets_preserved() {
+        // valheim-style: two service ports one apart
+        let b = alloc_port_block(&[spec(2456), spec(2457)]).unwrap();
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[0].local_port + 1, b[1].local_port);
+        assert_eq!(b[0].service_port, 2456);
+        assert_eq!(b[1].service_port, 2457);
+        assert!((20000..=59999).contains(&b[0].local_port));
+    }
+
+    #[test]
+    fn allocated_ports_are_free() {
+        let b = alloc_port_block(&[spec(25565), spec(25566), spec(25568)]).unwrap();
+        for p in &b {
+            for addr in ["127.0.0.1", "0.0.0.0"] {
+                std::net::TcpListener::bind((addr, p.local_port as u16))
+                    .expect("tcp bind must succeed on allocated port");
+                std::net::UdpSocket::bind((addr, p.local_port as u16))
+                    .expect("udp bind must succeed on allocated port");
+            }
+        }
+        // offsets relative to the lowest service port
+        assert_eq!(b[1].local_port - b[0].local_port, 1);
+        assert_eq!(b[2].local_port - b[0].local_port, 3);
+    }
+
+    #[test]
+    fn empty_is_empty() {
+        assert!(alloc_port_block(&[]).unwrap().is_empty());
+    }
 }

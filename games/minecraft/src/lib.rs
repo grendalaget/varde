@@ -220,7 +220,11 @@ impl GameDriver for MinecraftDriver {
         let cfg = ctx.config;
         let s = |k: &str| cfg.get(k).and_then(|v| v.as_str()).map(str::to_string);
         let owned = [
-            ("server-port", PORT.to_string()),
+            ("server-port", ctx.local_port(PORT).to_string()),
+            // the mesh service listener owns <loopback>:PORT on every node;
+            // bind loopback only so a wildcard bind can't collide with it
+            // (or expose the offline-mode server on the LAN)
+            ("server-ip", "127.0.0.1".into()),
             (
                 "online-mode",
                 cfg.get("online_mode")
@@ -280,7 +284,7 @@ impl GameDriver for MinecraftDriver {
     async fn probe(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<GameHealth> {
         // `Done (` marks end of server bootstrap; then TCP 25565 accepts.
         let done = p.output_tail(200).iter().any(|l| l.line.contains("Done ("));
-        if done && TcpStream::connect(("127.0.0.1", PORT as u16)).is_ok() {
+        if done && TcpStream::connect(("127.0.0.1", _ctx.local_port(PORT) as u16)).is_ok() {
             Ok(GameHealth::Healthy)
         } else {
             Ok(GameHealth::Starting)
@@ -409,6 +413,46 @@ mod tests {
         assert!(merged.contains("motd=hi"));
         assert!(merged.contains("new-key=added"));
         assert!(!merged.contains("motd=old"));
+    }
+
+    struct NullRuntimes;
+    #[async_trait]
+    impl RuntimeProvider for NullRuntimes {
+        fn runtime_path(&self, _k: &str, _id: &str) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn local_port_and_ip_in_properties() {
+        let tmp = tempfile::tempdir().unwrap();
+        let server_dir = tmp.path().join("srv");
+        let dep_dir = tmp.path().join("dep");
+        std::fs::create_dir_all(&server_dir).unwrap();
+        std::fs::create_dir_all(&dep_dir).unwrap();
+        let rt = NullRuntimes;
+        let cfg = serde_json::json!({"eula_accepted": true});
+        let bindings = [PortBinding {
+            service_port: PORT,
+            local_port: 31234,
+            protocol: GameProtocol::Tcp,
+        }];
+        let dep = DeploymentSpec::parse(&serde_json::json!({}));
+        let ctx = DriverContext {
+            server_dir: &server_dir,
+            deployment_dir: &dep_dir,
+            runtimes: &rt,
+            deployment: &dep,
+            config: &cfg,
+            ports: &bindings,
+            memory_mb: 2048,
+        };
+        MinecraftDriver::new().configure(&ctx).await.unwrap();
+        let props = std::fs::read_to_string(server_dir.join("server.properties")).unwrap();
+        assert!(props.contains("server-port=31234"), "{props}");
+        assert!(props.contains("server-ip=127.0.0.1"), "{props}");
+        assert_eq!(ctx.local_port(PORT), 31234);
+        assert_eq!(ctx.local_port(12345), 12345, "unmapped port unchanged");
     }
 
     #[test]

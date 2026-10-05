@@ -65,14 +65,19 @@ address never moves.
 * **UDP**: each distinct client source address is a *flow*. First datagram ⇒ open a stream with
   `StreamOpen{udp_flow{…, flow_id}}`; payloads go as QUIC datagrams `[uvarint flow_id][payload]` in both directions.
   Idle flows close after 60 s. Datagrams larger than the QUIC max datagram size are dropped and counted.
-* If the host is the local node, forward directly to `127.0.0.1:target_port` without QUIC.
+* If the host is the local node, forward directly to `127.0.0.1:target_port` without QUIC. `target_port` is an
+  agent-allocated local port (see below) — the game never binds the service port itself.
 * On route change (new host/epoch), existing streams are closed; new ones go to the new host.
 
 ### Host side (`SetHostedServices`)
 
 The mesh accepts `service`/`udp_flow` streams only for `(service_id, epoch)` currently hosted; otherwise it replies
 `StreamAccept{ok:false, reason:STALE_EPOCH|UNKNOWN_SERVICE}` and emits `RouteRejected` (stale routes rejected, M4).
-Accepted traffic is forwarded to `127.0.0.1:target_port`.
+Accepted traffic is forwarded to `127.0.0.1:target_port`. Because the service listener already owns
+`<loopback_ip>:<port>` on the host, the game cannot wildcard-bind the same port — so the agent allocates each
+execution a contiguous block of local ports (random base in 20000–59999, offsets preserved relative to the lowest
+service port, probed free on TCP and UDP) and the driver binds `127.0.0.1:<local_port>` instead. `target_port`
+carries that local port; clients always dial the service port.
 
 ### Internal services
 

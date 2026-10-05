@@ -46,6 +46,17 @@ pub struct PortSpec {
     pub protocol: GameProtocol,
 }
 
+/// A service port mapped to the agent-allocated local port the game
+/// actually binds. The mesh service listener owns `<loopback_ip>:<service_port>`
+/// on every node (including the host), so the game must listen on
+/// `127.0.0.1:<local_port>` — wildcard binds collide with the listener.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortBinding {
+    pub service_port: u32,
+    pub local_port: u32,
+    pub protocol: GameProtocol,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameProtocol {
     Tcp,
@@ -118,13 +129,29 @@ pub struct DriverContext<'a> {
     pub runtimes: &'a dyn RuntimeProvider,
     pub deployment: &'a DeploymentSpec,
     pub config: &'a serde_json::Value,
+    /// Service ports mapped to the agent-allocated local ports this
+    /// execution must bind.
+    pub ports: &'a [PortBinding],
     pub memory_mb: u32,
+}
+
+impl DriverContext<'_> {
+    /// Local port the game should bind for `service_port`, or the service
+    /// port itself when there is no mapping.
+    pub fn local_port(&self, service_port: u32) -> u32 {
+        self.ports
+            .iter()
+            .find(|b| b.service_port == service_port)
+            .map(|b| b.local_port)
+            .unwrap_or(service_port)
+    }
 }
 
 #[async_trait]
 pub trait GameDriver: Send + Sync {
     fn id(&self) -> &'static str;
-    /// Ports the game listens on (service ports map 1:1 to local targets).
+    /// Ports the game listens on. Service ports map to agent-allocated
+    /// local targets (see `DriverContext::local_port`).
     fn ports(&self, config: &serde_json::Value) -> Vec<PortSpec>;
     /// Server-dir-relative paths captured by snapshots.
     fn persistent_paths(&self, config: &serde_json::Value) -> Vec<PathPattern>;

@@ -104,7 +104,10 @@ impl GameDriver for TestgameDriver {
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
         Ok(ProcessSpec {
             program: self.binary_path(ctx)?,
-            args: vec![OsString::from("--port"), OsString::from(PORT.to_string())],
+            args: vec![
+                OsString::from("--port"),
+                OsString::from(ctx.local_port(PORT).to_string()),
+            ],
             env: vec![],
             cwd: ctx.server_dir.to_path_buf(),
             stdin: true,
@@ -112,7 +115,7 @@ impl GameDriver for TestgameDriver {
     }
 
     async fn probe(&self, _ctx: &DriverContext<'_>, _p: &dyn ProcessHandle) -> Result<GameHealth> {
-        match std::net::TcpStream::connect(("127.0.0.1", PORT as u16)) {
+        match std::net::TcpStream::connect(("127.0.0.1", _ctx.local_port(PORT) as u16)) {
             Ok(_) => Ok(GameHealth::Healthy),
             Err(_) => Ok(GameHealth::Starting),
         }
@@ -152,5 +155,48 @@ impl GameDriver for TestgameDriver {
     async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
         p.write_stdin("stop").await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NullRuntimes;
+    #[async_trait]
+    impl RuntimeProvider for NullRuntimes {
+        fn runtime_path(&self, _k: &str, _id: &str) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    #[test]
+    fn spec_uses_local_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rt = NullRuntimes;
+        let cfg = serde_json::json!({});
+        let bindings = [PortBinding {
+            service_port: PORT,
+            local_port: 29876,
+            protocol: GameProtocol::Tcp,
+        }];
+        let dep = DeploymentSpec::parse(&serde_json::json!({}));
+        let ctx = DriverContext {
+            server_dir: tmp.path(),
+            deployment_dir: tmp.path(),
+            runtimes: &rt,
+            deployment: &dep,
+            config: &cfg,
+            ports: &bindings,
+            memory_mb: 64,
+        };
+        let spec = TestgameDriver::default().process_spec(&ctx).unwrap();
+        let args: Vec<String> = spec
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into())
+            .collect();
+        let i = args.iter().position(|a| a == "--port").unwrap();
+        assert_eq!(args[i + 1], "29876");
     }
 }

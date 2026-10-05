@@ -29,12 +29,14 @@ async fn real_valheim_install_and_start() {
     });
     let d = ValheimDriver::new();
     d.validate(&cfg).unwrap();
+    let bindings = vec![];
     let ctx = DriverContext {
         server_dir: &server_dir,
         deployment_dir: &dep_dir,
         runtimes: &rt,
         deployment: &DeploymentSpec::parse(&serde_json::json!({})),
         config: &cfg,
+        ports: &bindings,
         memory_mb: 2048,
     };
     d.prepare(&ctx).await.expect("steamcmd install");

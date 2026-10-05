@@ -63,10 +63,11 @@ through a `RuntimeProvider` with checksum verification.
 
 ```rust
 pub struct DriverContext<'a> { pub server_dir: &'a Path, pub deployment_dir: &'a Path, pub runtimes: &'a dyn RuntimeProvider,
-                               pub deployment: &'a DeploymentSpec, pub config: &'a serde_json::Value, pub memory_mb: u32 }
+                               pub deployment: &'a DeploymentSpec, pub config: &'a serde_json::Value,
+                               pub ports: &'a [PortBinding], pub memory_mb: u32 }
 #[async_trait] pub trait GameDriver: Send + Sync {
     fn id(&self) -> &'static str;
-    fn ports(&self, config: &Value) -> Vec<PortSpec>;
+    fn ports(&self, config: &Value) -> Vec<PortSpec>;   // service ports; ctx.ports maps each to an agent-allocated local port (ctx.local_port(p))
     fn persistent_paths(&self, config: &Value) -> Vec<PathPattern>;
     fn validate(&self, config: &Value) -> Result<()>;
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()>;                         // install into deployment_dir (idempotent)

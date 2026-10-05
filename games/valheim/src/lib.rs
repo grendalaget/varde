@@ -46,7 +46,7 @@ impl ValheimDriver {
     }
 
     /// argv after the binary, per agent.md.
-    pub fn args(config: &serde_json::Value, server_dir: &Path) -> Result<Vec<OsString>> {
+    pub fn args(config: &serde_json::Value, server_dir: &Path, port: u32) -> Result<Vec<OsString>> {
         let name = Self::cfg_str(config, "server_name")?;
         let world = Self::cfg_str(config, "world_name")?;
         let pw = Self::cfg_str(config, "password")?;
@@ -64,7 +64,7 @@ impl ValheimDriver {
             OsString::from("-name"),
             OsString::from(name),
             OsString::from("-port"),
-            OsString::from(PORT.to_string()),
+            OsString::from(port.to_string()),
             OsString::from("-world"),
             OsString::from(world),
             OsString::from("-password"),
@@ -159,7 +159,7 @@ impl GameDriver for ValheimDriver {
         ];
         Ok(ProcessSpec {
             program: Self::binary(ctx),
-            args: Self::args(ctx.config, ctx.server_dir)?,
+            args: Self::args(ctx.config, ctx.server_dir, ctx.local_port(PORT))?,
             env,
             cwd: dep,
             stdin: false,
@@ -228,12 +228,17 @@ mod tests {
 
     #[test]
     fn args_shape() {
-        let a = ValheimDriver::args(&cfg(), Path::new("/srv")).unwrap();
+        let a = ValheimDriver::args(&cfg(), Path::new("/srv"), 2456).unwrap();
         let s: Vec<String> = a.iter().map(|o| o.to_string_lossy().into()).collect();
         assert!(s.contains(&"-nographics".to_string()));
         assert!(s.contains(&"-batchmode".to_string()));
         let port_i = s.iter().position(|x| x == "-port").unwrap();
         assert_eq!(s[port_i + 1], "2456");
+        // agent-allocated local port is used verbatim
+        let a2 = ValheimDriver::args(&cfg(), Path::new("/srv"), 32101).unwrap();
+        let s2: Vec<String> = a2.iter().map(|o| o.to_string_lossy().into()).collect();
+        let pi2 = s2.iter().position(|x| x == "-port").unwrap();
+        assert_eq!(s2[pi2 + 1], "32101");
         assert!(s.contains(&"-savedir".to_string()));
         assert!(s.contains(&"1".to_string()) || s.contains(&"0".to_string()));
         let pub_i = s.iter().position(|x| x == "-public").unwrap();

@@ -21,3 +21,6 @@ serde.workspace = true
 serde_json.workspace = true
 snapshot-store = { path = "../../crates/snapshot-store" }
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

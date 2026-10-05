@@ -112,6 +112,7 @@ impl Agent {
             .values()
             .filter(|c| c.phase() == crate::exec::Phase::Running && !c.is_fenced())
             .flat_map(|c| {
+                let bindings = c.port_bindings.lock().unwrap().clone();
                 c.dir
                     .service
                     .iter()
@@ -124,7 +125,11 @@ impl Agent {
                             .map(|p| mesh_ipc::pb::HostedPort {
                                 port: p.port.max(0) as u32,
                                 protocol: proto_for(&p.protocol),
-                                target_port: p.port.max(0) as u32,
+                                target_port: bindings
+                                    .iter()
+                                    .find(|b| b.service_port == p.port.max(0) as u32)
+                                    .map(|b| b.local_port)
+                                    .unwrap_or(p.port.max(0) as u32),
                             })
                             .collect(),
                     })

@@ -37,12 +37,14 @@ async fn real_minecraft_end_to_end() {
     let cfg = serde_json::json!({"eula_accepted": true, "online_mode": false});
     let d = MinecraftDriver::new();
     d.validate(&cfg).unwrap();
+    let bindings = vec![];
     let ctx = DriverContext {
         server_dir: &server_dir,
         deployment_dir: &dep_dir,
         runtimes: &rt,
         deployment: &DeploymentSpec::parse(&serde_json::json!({})),
         config: &cfg,
+        ports: &bindings,
         memory_mb: 1024,
     };
     d.prepare(&ctx).await.expect("download jre+jar");
