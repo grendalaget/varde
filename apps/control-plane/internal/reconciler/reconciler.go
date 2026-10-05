@@ -36,7 +36,7 @@ func DefaultTimings() Timings {
 	return Timings{
 		HeartbeatIntervalMs: 5000,
 		LeaseTTLMs:          20000,
-		StartGraceMs:        600000,
+		StartGraceMs:        30000,
 		SuspectAfterMs:      15000,
 		OfflineAfterMs:      30000,
 		UnschedulableRetry:  15000,

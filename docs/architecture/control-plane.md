@@ -166,8 +166,9 @@ unrecoverable prepare/restore error, with `message`).
   (graceful attempt bounded to `fence_margin/2`, then hard kill) and marks the execution `fenced` locally; it never
   uploads snapshots for it.
 * Defaults (all configurable): heartbeat 5 s, node `suspect` after 15 s without heartbeat, `offline` after 30 s, lease
-  TTL 20 s, start grace 600 s for `preparing/restoring` (downloads) — the grace only applies until the agent reports
-  `running` or the first renewal.
+  TTL 20 s, start grace 30 s for `preparing/restoring`. Heartbeats renew `preparing`/`restoring` leases, so the grace
+  only covers the gap from placement to the first report — not the whole download window. The agent's own fencing
+  deadline derives from this lease, so a long grace would also let a partitioned agent keep hosting for that long.
 
 ## Reconciler
 

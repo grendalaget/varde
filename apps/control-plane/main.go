@@ -76,7 +76,7 @@ func main() {
 		relays         relayFlags
 		heartbeatMs    = flag.Int64("heartbeat-interval-ms", envInt("VARDE_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
 		leaseTTLMs     = flag.Int64("lease-ttl-ms", envInt("VARDE_LEASE_TTL_MS", 20000), "execution lease TTL")
-		startGraceMs   = flag.Int64("start-grace-ms", envInt("VARDE_START_GRACE_MS", 600000), "extra lease while preparing/restoring")
+		startGraceMs   = flag.Int64("start-grace-ms", envInt("VARDE_START_GRACE_MS", 30000), "extra lease while preparing/restoring")
 		suspectAfterMs = flag.Int64("suspect-after-ms", envInt("VARDE_SUSPECT_AFTER_MS", 15000), "node suspect threshold")
 		offlineAfterMs = flag.Int64("offline-after-ms", envInt("VARDE_OFFLINE_AFTER_MS", 30000), "node offline threshold")
 		logLevel       = flag.String("log-level", envOr("VARDE_LOG_LEVEL", "info"), "slog level")
