@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     max_storage_bytes BIGINT,
     admin_state     TEXT NOT NULL DEFAULT 'active'
                     CHECK (admin_state IN ('active','draining','disabled')),
+    owner_user_id   TEXT REFERENCES users(id),
     last_seen_at    BIGINT,
     created_at      BIGINT NOT NULL
 );
@@ -224,7 +225,7 @@ CREATE TABLE IF NOT EXISTS snapshot_requests (
 );
 
 CREATE TABLE IF NOT EXISTS events (
-    id         BIGSERIAL PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id   TEXT NOT NULL,
     server_id  TEXT,
     node_id    TEXT,
@@ -235,7 +236,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_group ON events(group_id, id);
 
 CREATE TABLE IF NOT EXISTS audit_log (
-    id         BIGSERIAL PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id   TEXT,
     actor_type TEXT NOT NULL CHECK (actor_type IN ('user','node','system')),
     actor_id   TEXT NOT NULL,

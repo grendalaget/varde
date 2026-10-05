@@ -115,22 +115,23 @@ type DeviceLink struct {
 }
 
 type Node struct {
-	ID              string `db:"id"`
-	GroupID         string `db:"group_id"`
-	Name            string `db:"name"`
-	PublicKey       string `db:"public_key"`
-	OS              string `db:"os"`
-	Arch            string `db:"arch"`
-	AgentVersion    string `db:"agent_version"`
-	HostingEnabled  int64  `db:"hosting_enabled"`
-	Anchor          int64  `db:"anchor"`
-	Priority        int64  `db:"priority"`
-	MaxMemoryMB     *int64 `db:"max_memory_mb"`
-	MaxCPUPercent   *int64 `db:"max_cpu_percent"`
-	MaxStorageBytes *int64 `db:"max_storage_bytes"`
-	AdminState      string `db:"admin_state"`
-	LastSeenAt      *int64 `db:"last_seen_at"`
-	CreatedAt       int64  `db:"created_at"`
+	ID              string  `db:"id"`
+	GroupID         string  `db:"group_id"`
+	Name            string  `db:"name"`
+	PublicKey       string  `db:"public_key"`
+	OS              string  `db:"os"`
+	Arch            string  `db:"arch"`
+	AgentVersion    string  `db:"agent_version"`
+	HostingEnabled  int64   `db:"hosting_enabled"`
+	Anchor          int64   `db:"anchor"`
+	Priority        int64   `db:"priority"`
+	MaxMemoryMB     *int64  `db:"max_memory_mb"`
+	MaxCPUPercent   *int64  `db:"max_cpu_percent"`
+	MaxStorageBytes *int64  `db:"max_storage_bytes"`
+	AdminState      string  `db:"admin_state"`
+	OwnerUserID     *string `db:"owner_user_id"`
+	LastSeenAt      *int64  `db:"last_seen_at"`
+	CreatedAt       int64   `db:"created_at"`
 }
 
 type NodeStatus struct {

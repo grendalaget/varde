@@ -81,7 +81,29 @@ func Open(url string, clk Clock) (*Store, error) {
 	if _, err := db.Exec(string(mig)); err != nil {
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := ensureColumns(db, s.Dialect); err != nil {
+		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
 	return s, nil
+}
+
+// ensureColumns adds columns introduced after the CREATE TABLE IF NOT EXISTS
+// files were written — old databases keep their tables, so the column must
+// be added idempotently at startup.
+func ensureColumns(db *sqlx.DB, dialect string) error {
+	if dialect == "postgres" {
+		_, err := db.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id)`)
+		return err
+	}
+	var n int
+	if err := db.Get(&n, `SELECT count(*) FROM pragma_table_info('nodes') WHERE name='owner_user_id'`); err != nil {
+		return err
+	}
+	if n == 0 {
+		_, err := db.Exec(`ALTER TABLE nodes ADD COLUMN owner_user_id TEXT REFERENCES users(id)`)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) NowMs() int64 { return s.Clock.Now().UnixMilli() }

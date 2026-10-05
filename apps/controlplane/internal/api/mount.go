@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 )
 
 // NewHandler builds the root handler: agent endpoints behind the signature

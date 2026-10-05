@@ -341,11 +341,11 @@ func (s *Store) UpdateDeviceLink(ctx context.Context, d *DeviceLink) error {
 func (s *Store) CreateNode(ctx context.Context, n *Node) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`INSERT INTO nodes (id,group_id,name,public_key,os,arch,agent_version,hosting_enabled,anchor,priority,
-		                    max_memory_mb,max_cpu_percent,max_storage_bytes,admin_state,last_seen_at,created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		                    max_memory_mb,max_cpu_percent,max_storage_bytes,admin_state,owner_user_id,last_seen_at,created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		n.ID, n.GroupID, n.Name, n.PublicKey, n.OS, n.Arch, n.AgentVersion, n.HostingEnabled,
 		n.Anchor, n.Priority, n.MaxMemoryMB, n.MaxCPUPercent, n.MaxStorageBytes, n.AdminState,
-		n.LastSeenAt, n.CreatedAt)
+		n.OwnerUserID, n.LastSeenAt, n.CreatedAt)
 	return err
 }
 

@@ -18,11 +18,11 @@ import (
 
 	"github.com/grendalaget/varde/go/identity"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
-	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
-	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // Config carries the flag/env configuration used by handlers.

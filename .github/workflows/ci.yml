@@ -31,15 +31,15 @@ jobs:
       - name: webui placeholder (for go:embed)
         shell: bash
         run: |
-          mkdir -p apps/control-plane/internal/webui/dist
-          cp apps/control-plane/internal/webui/placeholder.html \
-            apps/control-plane/internal/webui/dist/index.html
+          mkdir -p apps/controlplane/internal/webui/dist
+          cp apps/controlplane/internal/webui/placeholder.html \
+            apps/controlplane/internal/webui/dist/index.html
       - name: lint
         shell: bash
         run: |
           LINT=$(find "$RUNNER_WORK_SPACE" -name golangci-lint -type f 2>/dev/null | head -1)
           [ -n "$LINT" ] || LINT=golangci-lint
-          for m in go apps/control-plane apps/relay apps/mesh; do
+          for m in go apps/controlplane apps/relay apps/mesh; do
             (cd $m && "$LINT" run ./...) || exit 1
           done
         env:
@@ -60,7 +60,7 @@ jobs:
           echo "postgres did not become ready"; exit 1
       - name: vet
         run: |
-          for m in go apps/control-plane apps/relay apps/mesh; do
+          for m in go apps/controlplane apps/relay apps/mesh; do
             (cd $m && go vet ./...) || exit 1
           done
         shell: bash
@@ -72,7 +72,7 @@ jobs:
             # postgres only runs on the linux leg
             export VARDE_TEST_POSTGRES_URL=postgres://varde:varde@localhost:5432/varde_test?sslmode=disable
           fi
-          for m in go apps/control-plane apps/relay apps/mesh; do
+          for m in go apps/controlplane apps/relay apps/mesh; do
             (cd $m && go test $RACE ./...) || exit 1
           done
         shell: bash

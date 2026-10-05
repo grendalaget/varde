@@ -1,4 +1,4 @@
-module github.com/grendalaget/varde/apps/control-plane
+module github.com/grendalaget/varde/apps/controlplane
 
 go 1.26.0
 

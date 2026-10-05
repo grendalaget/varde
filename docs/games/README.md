@@ -32,8 +32,11 @@ progress as `World save (n/5)` phases and completion as `World save (5/5)
 done`; the barrier is immediate unless the output tail shows a later phase
 after the most recent completion, in which case it waits up to 60 seconds for
 phase 5.
-Graceful shutdown takes the final snapshot only after Valheim exits and writes
-its last save.
+Valheim opts into `snapshot_after_stop`, so the agent skips its snapshot barrier
+and snapshots after graceful stop. Drivers whose barrier returns
+`RequiresStop` also snapshot after stopping. Both paths require a clean exit
+(status 0, no signal) within 30 seconds and an unfenced execution; otherwise
+the final snapshot is skipped.
 
 The Windows stop signal behavior remains unchanged; whether CTRL_BREAK
 triggers a complete save before exit still needs separate validation.

@@ -16,9 +16,9 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
-	"github.com/grendalaget/varde/apps/control-plane/internal/scheduler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // Timings (all configurable on the control plane).
@@ -429,6 +429,20 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 
 	var firstBlocker *store.Snapshot
 	var firstBlockerOnline []string
+	blocked := func() *activationError {
+		if recovery || firstBlocker == nil || (allowOlder != nil && *allowOlder) {
+			return nil
+		}
+		return &activationError{
+			Code:    "latest_save_unavailable",
+			Message: "newest save is only on offline machines",
+			Details: map[string]any{
+				"snapshot_id": firstBlocker.ID,
+				"created_at":  firstBlocker.CreatedAt,
+				"nodes":       firstBlockerOnline,
+			},
+		}
+	}
 	for i := range snaps {
 		snap := &snaps[i]
 		if !eligible(snap) {
@@ -445,6 +459,9 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 			}
 		}
 		if len(ready) > 0 {
+			if ae := blocked(); ae != nil {
+				return nil, nil, ae
+			}
 			return snap, ready, nil
 		}
 		if firstBlocker == nil {
@@ -457,16 +474,8 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 		}
 	}
 
-	if !recovery && firstBlocker != nil && (allowOlder == nil || !*allowOlder) {
-		return nil, nil, &activationError{
-			Code:    "latest_save_unavailable",
-			Message: "newest save is only on offline machines",
-			Details: map[string]any{
-				"snapshot_id": firstBlocker.ID,
-				"created_at":  firstBlocker.CreatedAt,
-				"nodes":       firstBlockerOnline,
-			},
-		}
+	if ae := blocked(); ae != nil {
+		return nil, nil, ae
 	}
 	return nil, nil, nil // no committed save yet: start fresh
 }

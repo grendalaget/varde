@@ -1,5 +1,5 @@
 package: gen
-output: ../../apps/control-plane/internal/api/gen/gen.gen.go
+output: ../../apps/controlplane/internal/api/gen/gen.gen.go
 generate:
   models: true
   std-http-server: true

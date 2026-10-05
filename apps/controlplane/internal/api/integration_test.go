@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api"
-	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
-	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api"
+	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/identity"
 )
 
@@ -659,6 +660,113 @@ func TestLatestSaveUnavailableAndAllowOlder(t *testing.T) {
 	e.mustOK(r)
 }
 
+// A newer save that lives only on an offline machine must block a normal
+// start even when an older save is reachable — otherwise /start silently
+// restores the older save. allow_older_snapshot and automatic recovery both
+// fall back to the older committed save.
+func TestOlderReachableSaveDoesNotBypassLatestBlocker(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execA, epA := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+
+	// snap_old: committed, reachable on other. snap_new: committed too, but
+	// its only replica lives on host.
+	if r := host.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_old", "aa"); r.Status != 201 {
+		t.Fatalf("snap_old %d %s", r.Status, r.Raw)
+	}
+	if r := host.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_new", "bb"); r.Status != 201 {
+		t.Fatalf("snap_new %d %s", r.Status, r.Raw)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`UPDATE snapshots SET state='committed', committed_at=? WHERE id IN ('snap_old','snap_new')`), e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	// restrict each snapshot's replicas to the intended node
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_old' AND node_id!=?`), other.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_new' AND node_id!=?`), host.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if r := other.replicaReady("snap_old"); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+
+	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/stop", nil, e.token))
+	e.reconcile()
+	if r := host.execStatus(execA, srv, epA, "stopped"); r.Status != 204 {
+		t.Fatalf("stopped %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+
+	// host offline: snap_new unreachable, snap_old reachable on other.
+	e.clk.advance(testTimings.OfflineAfterMs + 5000)
+	other.heartbeat(nil)
+	e.reconcile()
+
+	r := e.do("POST", "/v1/servers/"+srv+"/start", map[string]any{}, e.token)
+	if r.Status != 409 || r.Body["code"] != "latest_save_unavailable" {
+		t.Fatalf("want 409 latest_save_unavailable, got %d %s", r.Status, r.Raw)
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("a blocked start must not create an execution")
+	}
+
+	// allow_older_snapshot: restores snap_old, not snap_new.
+	r = e.do("POST", "/v1/servers/"+srv+"/start",
+		map[string]any{"allow_older_snapshot": true}, e.token)
+	e.mustOK(r)
+	e.reconcile()
+	ex := e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("allow_older start produced no execution")
+	}
+	d, _ := other.heartbeat(nil)
+	var found *struct {
+		SnapshotID    string   `json:"snapshot_id"`
+		SourceNodeIDs []string `json:"source_node_ids"`
+	}
+	for _, ex := range d.Executions {
+		if ex.ServerID == srv {
+			found = ex.Restore
+		}
+	}
+	if found == nil || found.SnapshotID != "snap_old" {
+		t.Fatalf("allow_older restore: %+v", found)
+	}
+
+	// the exec dies → automatic re-placement is recovery and must also use
+	// snap_old (newest committed save reachable), never 409
+	execB := ex["id"].(string)
+	epochB := ex["epoch"].(int64)
+	if r := other.execStatus(execB, srv, epochB, "stopped"); r.Status != 204 {
+		t.Fatalf("exec stop %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	ex = e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("recovery produced no execution")
+	}
+	d, _ = other.heartbeat(nil)
+	found = nil
+	for _, ex := range d.Executions {
+		if ex.ServerID == srv {
+			found = ex.Restore
+		}
+	}
+	if found == nil || found.SnapshotID != "snap_old" {
+		t.Fatalf("recovery restore: %+v", found)
+	}
+}
+
 func TestCommitPolicyMinAndAnchor(t *testing.T) {
 	e := newEnv(t)
 	a := e.newAgent("nodeA")
@@ -1165,4 +1273,162 @@ func TestNodeConnections(t *testing.T) {
 	if !found {
 		t.Fatal("node a not in list")
 	}
+}
+
+// An admin must not mint owner invites — that would let them promote
+// themselves. Owners (and operators) still can.
+func TestOwnerInviteRequiresOwner(t *testing.T) {
+	e := newEnv(t)
+	adminTok := e.signup("admin@example.com", "password123")
+	admin, err := e.st.UserByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, admin.ID, "admin", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "owner"}, adminTok)
+	if r.Status != 403 {
+		t.Fatalf("admin creating owner invite: want 403, got %d %s", r.Status, r.Raw)
+	}
+	// member invites are still fine for admins
+	e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "member"}, adminTok))
+	// and the group owner can still create owner invites
+	e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "owner"}, e.token))
+}
+
+// Node settings can only be changed by the node's owner (the user whose
+// enrollment created it), an admin/owner of the group, or an operator.
+func TestUpdateNodeRequiresOwnership(t *testing.T) {
+	e := newEnv(t)
+	memberTok := e.signup("member@example.com", "password123")
+	member, err := e.st.UserByEmail(context.Background(), "member@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, member.ID, "member", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	adminTok := e.signup("admin@example.com", "password123")
+	admin, err := e.st.UserByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, admin.ID, "admin", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+
+	// a node enrolled via the operator's token is owned by the operator
+	a := e.newAgent("owned")
+	var owner sql.NullString
+	if err := e.st.DB.GetContext(context.Background(), &owner, e.st.Rebind(
+		`SELECT owner_user_id FROM nodes WHERE id=?`), a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if !owner.Valid {
+		t.Fatal("enrolled node has NULL owner_user_id")
+	}
+
+	// a plain member cannot change someone else's node
+	r := e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed"}, memberTok)
+	if r.Status != 403 {
+		t.Fatalf("member updating other's node: want 403, got %d %s", r.Status, r.Raw)
+	}
+	// an admin can
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed"}, adminTok))
+	// and so can the owner (the operator user here)
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed-again"}, e.token))
+
+	// a member-owned node: hand the member ownership directly
+	if _, err := e.st.DB.ExecContext(context.Background(), e.st.Rebind(
+		`UPDATE nodes SET owner_user_id=? WHERE id=?`), member.ID, a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"hosting_enabled": false}, memberTok))
+
+	// a node with NULL owner is admin-only
+	if _, err := e.st.DB.ExecContext(context.Background(), e.st.Rebind(
+		`UPDATE nodes SET owner_user_id=NULL WHERE id=?`), a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	r = e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "nope"}, memberTok)
+	if r.Status != 403 {
+		t.Fatalf("member updating ownerless node: want 403, got %d %s", r.Status, r.Raw)
+	}
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "yep"}, adminTok))
+}
+
+// /logs?execution_id= must not leak executions from other servers.
+func TestServerLogsRejectsForeignExecution(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srvA := e.createServer("testgame", "a", nil)
+	srvB := e.createServer("testgame", "b", nil)
+	_, execA, _ := e.startToRunning(srvA, a, b)
+	_, _, _ = e.startToRunning(srvB, a, b)
+
+	r := e.do("GET", "/v1/servers/"+srvB+"/logs?execution_id="+execA, nil, e.token)
+	if r.Status != 404 {
+		t.Fatalf("foreign execution: want 404, got %d %s", r.Status, r.Raw)
+	}
+	r = e.do("GET", "/v1/servers/"+srvA+"/logs?execution_id="+execA, nil, e.token)
+	if r.Status != 200 {
+		t.Fatalf("own execution: want 200, got %d %s", r.Status, r.Raw)
+	}
+	r = e.do("GET", "/v1/servers/"+srvA+"/logs?execution_id=exec_nonexistent", nil, e.token)
+	if r.Status != 404 {
+		t.Fatalf("nonexistent execution: want 404, got %d %s", r.Status, r.Raw)
+	}
+}
+
+// A replica-ready report is only accepted from a node the CP assigned the
+// snapshot to (or the node that produced it). Anything else gets a 409 and
+// changes nothing.
+func TestReplicaReadyRequiresAssignment(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	c := e.newAgent("nodeC")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execA, epA := e.startToRunning(srv, a, b)
+	if r := host.createSnapshot(execA, srv, "dep_x", epA, "final", "snap_x", "aa"); r.Status != 201 {
+		t.Fatalf("snap %d %s", r.Status, r.Raw)
+	}
+	// remove c's replica row entirely — it was never assigned
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_x' AND node_id=?`), c.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if r := c.replicaReady("snap_x"); r.Status != 409 {
+		t.Fatalf("unassigned replica ready: want 409, got %d %s", r.Status, r.Raw)
+	}
+	var state string
+	if err := e.st.DB.Get(&state, e.st.Rebind(
+		`SELECT state FROM snapshots WHERE id='snap_x'`)); err != nil {
+		t.Fatal(err)
+	}
+	if state == "committed" {
+		t.Fatal("unassigned ready report committed the snapshot")
+	}
+	// an assigned node can still report ready
+	if r := otherOf(a, b, host).replicaReady("snap_x"); r.Status != 204 {
+		t.Fatalf("assigned replica ready: want 204, got %d %s", r.Status, r.Raw)
+	}
+}
+
+func otherOf(a, b, host *agent) *agent {
+	if host == a {
+		return b
+	}
+	return a
 }

@@ -1,4 +1,4 @@
-GO_MODULES := go apps/control-plane apps/relay apps/mesh tests/e2e
+GO_MODULES := go apps/controlplane apps/relay apps/mesh tests/e2e
 BIN := bin
 
 export PATH := $(HOME)/go/bin:$(PATH)
@@ -15,9 +15,9 @@ build:
 	$(MAKE) webui-dist
 	@for m in $(GO_MODULES); do (cd $$m && go build ./...) || exit 1; done
 	@mkdir -p $(BIN)
-	@for m in control-plane relay mesh; do \
-		(cd apps/$$m && go build -o ../../$(BIN)/varde-$$m .) || exit 1; \
-	done
+	(cd apps/controlplane && go build -o ../../$(BIN)/varde-control-plane .)
+	(cd apps/relay && go build -o ../../$(BIN)/varde-relay .)
+	(cd apps/mesh && go build -o ../../$(BIN)/varde-mesh .)
 	cp target/debug/varde-agent $(BIN)/varde-agent
 
 # Copy the built SPA into the Go module so go:embed picks it up. dist/ is
@@ -25,13 +25,13 @@ build:
 # materialize it from the committed placeholder instead.
 .PHONY: webui-dist
 webui-dist:
-	@rm -rf apps/control-plane/internal/webui/dist
+	@rm -rf apps/controlplane/internal/webui/dist
 	@if [ -d apps/web/dist ]; then \
-		cp -r apps/web/dist apps/control-plane/internal/webui/dist; \
+		cp -r apps/web/dist apps/controlplane/internal/webui/dist; \
 	else \
-		mkdir -p apps/control-plane/internal/webui/dist && \
-		cp apps/control-plane/internal/webui/placeholder.html \
-			apps/control-plane/internal/webui/dist/index.html; \
+		mkdir -p apps/controlplane/internal/webui/dist && \
+		cp apps/controlplane/internal/webui/placeholder.html \
+			apps/controlplane/internal/webui/dist/index.html; \
 	fi
 
 test: test-bins
@@ -43,9 +43,9 @@ test: test-bins
 test-bins:
 	$(MAKE) webui-dist
 	@mkdir -p $(BIN)
-	@for m in control-plane relay mesh; do \
-		(cd apps/$$m && go build -o ../../$(BIN)/varde-$$m .) || exit 1; \
-	done
+	(cd apps/controlplane && go build -o ../../$(BIN)/varde-control-plane .)
+	(cd apps/relay && go build -o ../../$(BIN)/varde-relay .)
+	(cd apps/mesh && go build -o ../../$(BIN)/varde-mesh .)
 	cargo build --bins
 
 lint:
@@ -79,7 +79,7 @@ package: build
 
 check-gen: gen gen-go-api
 	@git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts \
-		apps/control-plane/internal/api/gen \
+		apps/controlplane/internal/api/gen \
 		|| (echo "generated files are stale; run 'make gen' and commit" && exit 1)
 
 .PHONY: gen-go-api

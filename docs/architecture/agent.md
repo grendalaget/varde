@@ -107,7 +107,9 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
   legacy `saves/worlds_local/<world_name>.db` and `saves/worlds_local/<world_name>.fwl` files, plus current
   `_main.*.db2`, `_main.*.fwl2`, `_main.*.chunks`, `_main.*.ok`, and `*.chunk` files under
   `saves/worlds_local/<world_name>/`, plus `saves/*.txt`.
-  Stop: SIGINT (Linux) / CTRL_BREAK (Windows). The final snapshot is taken from disk after graceful stop and
-  process exit; if the process must be killed or the execution is fenced, the final snapshot is skipped.
+  Stop: SIGINT (Linux) / CTRL_BREAK (Windows). Valheim opts into `snapshot_after_stop`, so the agent skips the
+  barrier and snapshots after graceful stop. Generic `RequiresStop` barriers also snapshot after stopping. Both paths
+  require a clean exit (status 0, no signal) within 30 s and an unfenced execution; otherwise the final snapshot is
+  skipped.
   Linux requires glibc ≥ 2.29; `ldd` checks linked libraries, while `ldconfig -p` warns if runtime-loaded
   `libatomic.so.1` or `libpulse.so.0` is missing (`libatomic1` and `libpulse0` packages).
