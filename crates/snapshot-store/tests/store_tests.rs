@@ -74,7 +74,7 @@ fn snapshot_restore_roundtrip() {
         .find(|(p, _)| p == "data/region/big.bin")
         .unwrap();
     assert_eq!(big.1, blob, "byte-identical output");
-    assert_eq!(store.verify(&info.id).unwrap().ok(), true);
+    assert!(store.verify(&info.id).unwrap().ok());
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn canonical_manifest_golden() {
         "canonical manifest drifted"
     );
     // sorted-by-path invariant is on the writer; check order stability too
-    assert_eq!(Manifest::digest_id(&bytes).0.starts_with("snap_"), true);
+    assert!(Manifest::digest_id(&bytes).0.starts_with("snap_"));
 }
 
 #[test]

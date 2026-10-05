@@ -22,9 +22,30 @@ fn name() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,7}".prop_map(|s| s)
 }
 
+/// Windows reserves device names (con, nul, aux, prn, com1-9, lpt1-9) for the
+/// base of a filename; path validation rightly refuses them, so keep the
+/// generator away from them.
+fn unreserve(path: &str) -> String {
+    const RESERVED: &[&str] = &[
+        "con", "nul", "aux", "prn", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    path.split('/')
+        .map(|seg| {
+            let base = seg.split('.').next().unwrap_or(seg).to_ascii_lowercase();
+            if RESERVED.contains(&base.as_str()) {
+                format!("x{seg}")
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn tree() -> impl Strategy<Value = BTreeMap<String, Vec<u8>>> {
     prop::collection::btree_map(
-        prop::collection::vec(name(), 1..=3).prop_map(|segs| segs.join("/")),
+        prop::collection::vec(name(), 1..=3).prop_map(|segs| unreserve(&segs.join("/"))),
         prop::collection::vec(any::<u8>(), 0..4096),
         1..12,
     )
