@@ -432,7 +432,9 @@ func TestCrossplayServersAreExcludedFromDirectiveRoutes(t *testing.T) {
 	crossplay := e.createServer("valheim", "crossplay", map[string]any{
 		"config": crossplayConfig(),
 	})
-	regular := e.createServer("testgame", "regular", nil)
+	regular := e.createServer("testgame", "regular", map[string]any{
+		"config": map[string]any{"crossplay": true},
+	})
 
 	d, r := a.heartbeat(nil)
 	if r.Status != 200 {
@@ -447,6 +449,14 @@ func TestCrossplayServersAreExcludedFromDirectiveRoutes(t *testing.T) {
 	}
 	if !routes[regular] {
 		t.Fatalf("regular server %s is missing its directive route: %+v", regular, d.Routes)
+	}
+	body := e.mustOK(e.do("GET", "/v1/servers/"+regular, nil, e.token))
+	summary := body["summary"].(map[string]any)
+	if address, ok := summary["address"].(string); !ok || address == "" {
+		t.Fatalf("non-Crossplay game with crossplay:true has no address: %+v", summary)
+	}
+	if _, ok := summary["join_code"]; ok {
+		t.Fatalf("non-Crossplay game with crossplay:true exposes a join code: %+v", summary)
 	}
 }
 
@@ -465,15 +475,15 @@ func TestCrossplayJoinCodeSummaryRequiresRunningExecution(t *testing.T) {
 		"config": crossplayConfig(),
 	})
 	host, execID, epoch := e.startToRunning(srv, a, b)
-	if r := host.execStatusJoinCode(execID, srv, epoch, "running", "124841"); r.Status != 204 {
+	if r := host.execStatusJoinCode(execID, srv, epoch, "running", "123456"); r.Status != 204 {
 		t.Fatalf("join-code report: %d %s", r.Status, r.Raw)
 	}
 
 	r := e.do("GET", "/v1/servers/"+srv, nil, e.token)
 	body := e.mustOK(r)
 	summary := body["summary"].(map[string]any)
-	if got := summary["join_code"]; got != "124841" {
-		t.Fatalf("summary join_code=%v, want 124841", got)
+	if got := summary["join_code"]; got != "123456" {
+		t.Fatalf("summary join_code=%v, want 123456", got)
 	}
 	if _, ok := summary["address"]; ok {
 		t.Fatalf("crossplay summary exposes an address: %+v", summary)
@@ -487,7 +497,7 @@ func TestCrossplayJoinCodeSummaryRequiresRunningExecution(t *testing.T) {
 		t.Fatalf("join-code event count=%d, want 1", eventCount)
 	}
 
-	if r := host.execStatusJoinCode(execID, srv, epoch, "starting", "124841"); r.Status != 204 {
+	if r := host.execStatusJoinCode(execID, srv, epoch, "starting", "123456"); r.Status != 204 {
 		t.Fatalf("starting report: %d %s", r.Status, r.Raw)
 	}
 	body = e.mustOK(e.do("GET", "/v1/servers/"+srv, nil, e.token))
@@ -501,6 +511,81 @@ func TestCrossplayJoinCodeSummaryRequiresRunningExecution(t *testing.T) {
 	}
 	if eventCount != 1 {
 		t.Fatalf("unchanged join code emitted %d events, want 1", eventCount)
+	}
+
+	if r := host.execStatusJoinCode(execID, srv, epoch, "running", ""); r.Status != 204 {
+		t.Fatalf("empty join-code report: %d %s", r.Status, r.Raw)
+	}
+	body = e.mustOK(e.do("GET", "/v1/servers/"+srv, nil, e.token))
+	summary = body["summary"].(map[string]any)
+	if _, ok := summary["join_code"]; ok {
+		t.Fatalf("cleared join code remains in summary: %+v", summary)
+	}
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.join_code'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("clearing join code emitted an event, count=%d", eventCount)
+	}
+
+	fresh := e.createServer("valheim", "empty-crossplay", map[string]any{
+		"config": crossplayConfig(),
+	})
+	freshHost, freshExecID, freshEpoch := e.startToRunning(fresh, a, b)
+	if r := freshHost.execStatusJoinCode(freshExecID, fresh, freshEpoch, "running", ""); r.Status != 204 {
+		t.Fatalf("empty join-code report for fresh execution: %d %s", r.Status, r.Raw)
+	}
+	var rowCount int
+	if err := e.st.DB.Get(&rowCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM execution_info WHERE execution_id=?`), freshExecID); err != nil {
+		t.Fatal(err)
+	}
+	if rowCount != 0 {
+		t.Fatalf("empty join code created %d execution_info rows, want 0", rowCount)
+	}
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.join_code'`), fresh); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("empty join code emitted %d events for a fresh execution", eventCount)
+	}
+}
+
+func TestCrossplayModeCannotChangeWhileRunning(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	for _, node := range []*agent{a, b} {
+		capabilities := caps()
+		capabilities["runtimes"] = []string{"native", "steamcmd"}
+		if _, r := node.heartbeatCaps(nil, capabilities); r.Status != 200 {
+			t.Fatalf("heartbeat with Valheim runtime: %d %s", r.Status, r.Raw)
+		}
+	}
+
+	disabled := crossplayConfig()
+	disabled["crossplay"] = false
+	running := e.createServer("valheim", "running", map[string]any{
+		"config": disabled,
+	})
+	e.startToRunning(running, a, b)
+	r := e.do("PATCH", "/v1/servers/"+running, map[string]any{
+		"config": crossplayConfig(),
+	}, e.token)
+	if r.Status != http.StatusConflict {
+		t.Fatalf("crossplay toggle while running: %d %s, want 409", r.Status, r.Raw)
+	}
+
+	stopped := e.createServer("valheim", "stopped", map[string]any{
+		"config": disabled,
+	})
+	r = e.do("PATCH", "/v1/servers/"+stopped, map[string]any{
+		"config": crossplayConfig(),
+	}, e.token)
+	if r.Status != http.StatusOK {
+		t.Fatalf("crossplay toggle while stopped: %d %s, want 200", r.Status, r.Raw)
 	}
 }
 

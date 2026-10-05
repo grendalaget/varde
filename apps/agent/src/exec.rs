@@ -119,6 +119,9 @@ impl ExecCtl {
     pub fn join_code(&self) -> Option<String> {
         self.join_code.lock().unwrap().clone()
     }
+    pub fn clear_join_code(&self) {
+        *self.join_code.lock().unwrap() = None;
+    }
     fn set_join_code(&self, code: String) -> bool {
         let mut current = self.join_code.lock().unwrap();
         if current.as_ref() == Some(&code) {
@@ -195,7 +198,7 @@ pub async fn report(agent: &Agent, ctl: &ExecCtl) {
         state: ctl.phase().as_str().into(),
         health: Some(ctl.health()),
         message: Some(ctl.message()),
-        join_code: ctl.join_code(),
+        join_code: Some(ctl.join_code().unwrap_or_default()),
     };
     let path = format!("/v1/agent/executions/{}/status", ctl.dir.execution_id);
     if let Err(e) = agent
@@ -326,6 +329,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         ctl.set_phase(Phase::Starting);
         report(&agent, &ctl).await;
         let spec = driver.process_spec(&ctx).map_err(dyn_err)?;
+        ctl.clear_join_code();
         let proc = agent.executor.spawn(&spec).await.map_err(dyn_err)?;
         let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
         tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
@@ -1148,6 +1152,10 @@ mod requires_stop_tests {
         .expect("join-code watcher did not update the execution");
         assert_eq!(ctl.join_code().as_deref(), Some("124841"));
         assert_eq!(agent.exec_reports()[0].join_code.as_deref(), Some("124841"));
+        ctl.clear_join_code();
+        assert_eq!(ctl.join_code(), None);
+        assert!(ctl.set_join_code("589208".into()));
+        assert_eq!(ctl.join_code().as_deref(), Some("589208"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

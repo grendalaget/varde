@@ -125,7 +125,7 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 			if err != nil {
 				return err
 			}
-			if changed {
+			if changed && *er.JoinCode != "" {
 				if err := s.Store.EmitEvent(ctx, tx, node.GroupID, &exec.ServerID, &node.ID,
 					"server.join_code", map[string]any{"join_code": *er.JoinCode}); err != nil {
 					return err
@@ -302,7 +302,8 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			continue
 		}
 		var config map[string]any
-		if json.Unmarshal([]byte(srv.ConfigJSON), &config) == nil && config["crossplay"] == true {
+		if json.Unmarshal([]byte(srv.ConfigJSON), &config) == nil &&
+			crossplayEnabled(srv.GameID, config) {
 			continue
 		}
 		var ports []gen.GamePort

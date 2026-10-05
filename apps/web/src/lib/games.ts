@@ -17,3 +17,13 @@ export function useGames() {
     name: (id: string) => games.find((g) => g.id === id)?.name ?? id,
   };
 }
+
+export function isCrossplayEnabled(
+  game: Game | undefined,
+  config: Record<string, unknown>,
+): boolean {
+  return (
+    config.crossplay === true &&
+    game?.config_fields.some((field) => field.name === "crossplay") === true
+  );
+}

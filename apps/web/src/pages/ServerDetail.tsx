@@ -29,7 +29,7 @@ import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "./NewServer";
 import SaveSafety from "../components/SaveSafety";
-import { useGames } from "../lib/games";
+import { isCrossplayEnabled, useGames } from "../lib/games";
 
 type Tab = "overview" | "saves" | "logs" | "settings" | "details";
 
@@ -128,7 +128,13 @@ export default function ServerDetail({ id }: { id: string }) {
           </button>
         ))}
       </div>
-      {tab === "overview" && <Overview s={s} snapshots={snapshots} />}
+      {tab === "overview" && (
+        <Overview
+          s={s}
+          snapshots={snapshots}
+          crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+        />
+      )}
       {tab === "saves" && (
         <Saves s={s} snapshots={snapshots} refresh={snaps.refresh} />
       )}
@@ -266,9 +272,16 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
   );
 }
 
-function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
+function Overview({
+  s,
+  snapshots,
+  crossplay,
+}: {
+  s: Server;
+  snapshots: Snapshot[];
+  crossplay: boolean;
+}) {
   const sum = s.summary;
-  const crossplay = s.config.crossplay === true;
   const events = useMergedEvents(
     (e) => e.server_id === s.id && e.type !== "execution.state",
   );

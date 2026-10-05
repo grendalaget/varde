@@ -62,7 +62,7 @@ impl Agent {
                 health: Some(c.health()),
                 message: Some(c.message()),
                 player_count: None,
-                join_code: c.join_code(),
+                join_code: Some(c.join_code().unwrap_or_default()),
             })
             .collect()
     }

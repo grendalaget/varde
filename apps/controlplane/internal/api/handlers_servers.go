@@ -48,11 +48,24 @@ func genGame(g *catalog.Game) gen.Game {
 	}
 }
 
+func crossplayEnabled(gameID string, cfg map[string]any) bool {
+	game := catalog.Get(gameID)
+	if game == nil || cfg["crossplay"] != true {
+		return false
+	}
+	for _, field := range game.ConfigFields {
+		if field.Name == "crossplay" {
+			return true
+		}
+	}
+	return false
+}
+
 // serverView builds the API representation including computed summary.
 func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server, error) {
 	var cfg map[string]any
 	_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
-	crossplay := cfg["crossplay"] == true
+	crossplay := crossplayEnabled(srv.GameID, cfg)
 	v := gen.Server{
 		Id:                srv.ID,
 		GroupId:           srv.GroupID,
@@ -332,6 +345,14 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 		if game != nil {
 			if verr := game.ValidateConfig(*b.Config); len(verr) > 0 {
 				return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), nil)
+			}
+		}
+		var oldConfig map[string]any
+		_ = json.Unmarshal([]byte(srv.ConfigJSON), &oldConfig)
+		if crossplayEnabled(srv.GameID, oldConfig) !=
+			crossplayEnabled(srv.GameID, *b.Config) {
+			if _, err := s.Store.ActiveExecution(ctx, srv.ID); err == nil {
+				return nil, errResp(gen.Conflict, "stop the server before changing crossplay", nil)
 			}
 		}
 		srv.ConfigJSON = mustJSON(*b.Config)

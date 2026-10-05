@@ -14,7 +14,7 @@ import { timeAgo } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { useSession } from "../lib/session";
 import SaveSafety from "../components/SaveSafety";
-import { useGames } from "../lib/games";
+import { isCrossplayEnabled, useGames } from "../lib/games";
 
 export default function Servers() {
   const { group } = useSession();
@@ -62,16 +62,28 @@ export default function Servers() {
       )}
       <div className="grid gap-4 md:grid-cols-2">
         {servers.map((s) => (
-          <ServerCard key={s.id} s={s} gameName={games.name(s.game_id)} />
+          <ServerCard
+            key={s.id}
+            s={s}
+            gameName={games.name(s.game_id)}
+            crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+          />
         ))}
       </div>
     </>
   );
 }
 
-function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
+function ServerCard({
+  s,
+  gameName,
+  crossplay,
+}: {
+  s: Server;
+  gameName: string;
+  crossplay: boolean;
+}) {
   const sum = s.summary;
-  const crossplay = s.config.crossplay === true;
   return (
     <Link
       to={`/servers/${s.id}`}
