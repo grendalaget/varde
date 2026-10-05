@@ -1,0 +1,49 @@
+// Relay wire protocol (UDP). Each datagram starts with one type byte. Type
+// bytes are < 0x40 so they never collide with QUIC packets (QUIC sets the 0x40
+// fixed bit), which lets the mesh share one UDP socket between QUIC and relay
+// traffic and lets REGISTERED double as a STUN-like reflector for hole punching.
+//
+//   0x01 REGISTER    node->relay  RelayRegister (protobuf)
+//   0x02 REGISTERED  relay->node  RelayRegistered (protobuf)
+//   0x03 DATA        node->relay  [u8 len][dst node_id][payload]
+//                    relay->node  [u8 len][src node_id][payload]
+//   0x04 PING        node->relay  8-byte nonce
+//   0x05 PONG        relay->node  8-byte nonce
+//   0x06 ERROR       relay->node  RelayError (protobuf)
+//
+// Payloads are QUIC packets of the end-to-end peer connection; the relay
+// cannot decrypt them.
+syntax = "proto3";
+
+package p2pgames.mesh.v1;
+
+option go_package = "github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1";
+
+message RelayRegister {
+  // Control-plane-signed token (see docs/architecture: relay tokens).
+  string token = 1;
+  string node_id = 2;
+  int64 timestamp_unix_ms = 3;
+  // ed25519 signature by the node key over "p2pgames-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
+  bytes signature = 4;
+  string relay_id = 5;
+}
+
+message RelayRegistered {
+  // Sender address as seen by the relay ("ip:port").
+  string observed_addr = 1;
+  int64 expires_unix_ms = 2;
+}
+
+message RelayError {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_UNAUTHENTICATED = 1;
+    CODE_UNKNOWN_DESTINATION = 2;
+    CODE_FORBIDDEN = 3;
+    CODE_RATE_LIMITED = 4;
+  }
+  Code code = 1;
+  string message = 2;
+  string node_id = 3;
+}

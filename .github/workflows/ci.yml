@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: golangci/golangci-lint-action@v7
+      - name: vet
+        run: |
+          for m in go apps/control-plane apps/relay apps/mesh; do
+            (cd $m && go vet ./...) || exit 1
+          done
+        shell: bash
+      - name: test
+        run: |
+          RACE=""
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then RACE="-race"; fi
+          for m in go apps/control-plane apps/relay apps/mesh; do
+            (cd $m && go test $RACE ./...) || exit 1
+          done
+        shell: bash
+
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  web:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web lint
+      - run: pnpm --dir apps/web typecheck
+      - run: pnpm --dir apps/web build
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - run: buf lint
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web add -D openapi-typescript
+      - name: check generated files are up to date
+        run: |
+          buf generate
+          pnpm --dir apps/web gen:api
+          git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts

@@ -1,0 +1,24 @@
+# Binaries / build output
+bin/
+dist/
+target/
+*.exe
+
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env
+.env
+.env.local
+
+# Go binaries produced by plain `go build`
+apps/control-plane/control-plane
+apps/mesh/mesh
+apps/relay/relay

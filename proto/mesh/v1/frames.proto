@@ -1,0 +1,75 @@
+// Peer-to-peer mesh frames carried inside mutually authenticated QUIC
+// connections (TLS 1.3, self-signed certs carrying the node ed25519 key, pinned
+// against the control-plane peer list).
+//
+// Every bidirectional stream starts with a varint-length-prefixed StreamOpen,
+// answered by a varint-length-prefixed StreamAccept. After an accepted
+// TCP/internal stream, the stream carries raw bytes. For a UDP flow the stream
+// stays open for the flow lifetime (closing it ends the flow) and payloads are
+// carried as QUIC datagrams: [flow_id uvarint][payload].
+syntax = "proto3";
+
+package p2pgames.mesh.v1;
+
+option go_package = "github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1";
+
+import "mesh/v1/ipc.proto";
+
+message StreamOpen {
+  oneof kind {
+    ServiceStream service = 1;
+    InternalStream internal = 2;
+    UdpFlow udp_flow = 3;
+    ControlStream control = 4;
+  }
+}
+
+message ServiceStream {
+  string service_id = 1;
+  uint64 epoch = 2;
+  uint32 port = 3;
+  Protocol protocol = 4;
+}
+
+message InternalStream { string name = 1; }
+
+message UdpFlow {
+  string service_id = 1;
+  uint64 epoch = 2;
+  uint32 port = 3;
+  // Chosen by the dialing side, unique per connection.
+  uint64 flow_id = 4;
+}
+
+// Long-lived stream for keepalive / RTT measurement.
+message ControlStream {}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  REJECT_REASON_UNKNOWN_SERVICE = 1;
+  REJECT_REASON_STALE_EPOCH = 2;
+  REJECT_REASON_UNKNOWN_PORT = 3;
+  REJECT_REASON_TARGET_UNREACHABLE = 4;
+  REJECT_REASON_FORBIDDEN = 5;
+}
+
+message StreamAccept {
+  bool ok = 1;
+  RejectReason reason = 2;
+  string message = 3;
+}
+
+message Ping {
+  uint64 nonce = 1;
+  int64 sent_unix_nanos = 2;
+}
+message Pong {
+  uint64 nonce = 1;
+  int64 sent_unix_nanos = 2;
+}
+message ControlFrame {
+  oneof frame {
+    Ping ping = 1;
+    Pong pong = 2;
+  }
+}

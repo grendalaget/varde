@@ -1,0 +1,16 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Protos live under proto/mesh/v1 rather than a directory matching the
+    # package path; layout is a repo convention, not a wire concern.
+    - PACKAGE_DIRECTORY_MATCH
+    # Shared response types (MeshStatus, MeshEvent) are intentionally
+    # reused across RPCs.
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE
