@@ -1399,6 +1399,8 @@ func TestReplicaReadyRequiresAssignment(t *testing.T) {
 	a := e.newAgent("nodeA")
 	b := e.newAgent("nodeB")
 	c := e.newAgent("nodeC")
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+c.nodeID,
+		map[string]any{"hosting_enabled": false}, e.token))
 	srv := e.createServer("testgame", "s1", nil)
 	host, execA, epA := e.startToRunning(srv, a, b)
 	if r := host.createSnapshot(execA, srv, "dep_x", epA, "final", "snap_x", "aa"); r.Status != 201 {
