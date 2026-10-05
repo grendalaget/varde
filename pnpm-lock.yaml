@@ -168,6 +168,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@fontsource/schibsted-grotesk':
+        specifier: 5.2.8
+        version: 5.2.8
       openapi-fetch:
         specifier: ^0.15.0
         version: 0.15.2
@@ -529,6 +532,9 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@fontsource/schibsted-grotesk@5.2.8':
+    resolution: {integrity: sha512-CyyDW5aS89oKGFAVndOsJTQ5pqzKuPnSKWjrdJdMT5TD/eA2JyWapUBhvy6X/lqqrB/GNk74PIff7coPifeVyg==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -2155,6 +2161,8 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@fontsource/schibsted-grotesk@5.2.8': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
