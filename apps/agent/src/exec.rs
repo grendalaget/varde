@@ -4,6 +4,7 @@
 //! replication hold; fencing watchdog targets the same handles.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -411,11 +412,34 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             let due_req = ctl.next_snapshot_req();
             let due_time = last_snap.elapsed() >= snap_interval;
             if let Some((req_id, reason)) = due_req {
-                let _ =
-                    do_snapshot(&agent, &ctl, driver, &ctx, &proc, &reason, Some(&req_id)).await;
+                let _ = do_snapshot(
+                    &agent,
+                    &ctl,
+                    driver,
+                    &ctx,
+                    &proc,
+                    SnapshotOptions {
+                        reason: &reason,
+                        request_id: Some(&req_id),
+                        barrier: true,
+                    },
+                )
+                .await;
                 last_snap = Instant::now();
             } else if due_time {
-                let _ = do_snapshot(&agent, &ctl, driver, &ctx, &proc, "scheduled", None).await;
+                let _ = do_snapshot(
+                    &agent,
+                    &ctl,
+                    driver,
+                    &ctx,
+                    &proc,
+                    SnapshotOptions {
+                        reason: "scheduled",
+                        request_id: None,
+                        barrier: true,
+                    },
+                )
+                .await;
                 last_snap = Instant::now();
             }
         }
@@ -438,25 +462,60 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     report(&agent, &ctl).await;
     let proc = ctl.proc().unwrap();
 
-    // Final snapshot while the game is still live: the driver's barrier
-    // (save-off/save-all) needs a running process. A graceful stop that asks
-    // the game to exit would leave nobody to answer the barrier.
     let mut final_snap = None;
-    if !ctl.is_fenced() {
-        match do_snapshot(&agent, &ctl, driver, &ctx, &proc, "final", None).await {
-            Ok(info) => final_snap = Some(info),
-            Err(e) => {
-                tracing::warn!(exec = %dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+    if driver.snapshot_after_stop() {
+        final_snap = stop_then_snapshot(
+            &ctl,
+            &proc,
+            || driver.graceful_stop(&ctx, &*proc),
+            |barrier| {
+                do_snapshot(
+                    &agent,
+                    &ctl,
+                    driver,
+                    &ctx,
+                    &proc,
+                    SnapshotOptions {
+                        reason: "final",
+                        request_id: None,
+                        barrier,
+                    },
+                )
+            },
+        )
+        .await;
+    } else {
+        // The driver's barrier needs a running process, so these games must
+        // be snapshotted before graceful_stop asks the process to exit.
+        if !ctl.is_fenced() {
+            match do_snapshot(
+                &agent,
+                &ctl,
+                driver,
+                &ctx,
+                &proc,
+                SnapshotOptions {
+                    reason: "final",
+                    request_id: None,
+                    barrier: true,
+                },
+            )
+            .await
+            {
+                Ok(info) => final_snap = Some(info),
+                Err(e) => {
+                    tracing::warn!(exec = %dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                }
             }
         }
-    }
 
-    let _ = driver
-        .graceful_stop(&ctx, &*proc)
-        .await
-        .map_err(|e| tracing::warn!("graceful stop: {e}"));
-    let _ = tokio::time::timeout(Duration::from_secs(30), proc.wait()).await;
-    let _ = proc.kill().await;
+        let _ = driver
+            .graceful_stop(&ctx, &*proc)
+            .await
+            .map_err(|e| tracing::warn!("graceful stop: {e}"));
+        let _ = tokio::time::timeout(Duration::from_secs(30), proc.wait()).await;
+        let _ = proc.kill().await;
+    }
 
     if let Some(info) = final_snap {
         let _ = hold_for_replication(&agent, &info.id).await;
@@ -471,28 +530,35 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
 
 /// Barrier → Store::snapshot → POST /v1/agent/snapshots. Returns the info on
 /// success; marks the manifest invalid locally on 409 stale_epoch.
+struct SnapshotOptions<'a> {
+    reason: &'a str,
+    request_id: Option<&'a str>,
+    barrier: bool,
+}
+
 async fn do_snapshot(
     agent: &Agent,
     ctl: &ExecCtl,
     driver: &dyn GameDriver,
     ctx: &DriverContext<'_>,
     proc: &Arc<dyn ProcessHandle>,
-    reason: &str,
-    request_id: Option<&str>,
+    options: SnapshotOptions<'_>,
 ) -> Result<snapshot_store::SnapshotInfo> {
-    let reason = reason.to_string();
+    let reason = options.reason.to_string();
     let reason2 = reason.clone();
     if ctl.is_fenced() {
         bail!("fenced execution never uploads snapshots");
     }
-    match driver
-        .prepare_snapshot(ctx, &**proc)
-        .await
-        .map_err(dyn_err)?
-    {
-        SnapshotBarrier::Live => {}
-        SnapshotBarrier::RequiresStop => {
-            bail!("driver requires stop for snapshot")
+    if options.barrier {
+        match driver
+            .prepare_snapshot(ctx, &**proc)
+            .await
+            .map_err(dyn_err)?
+        {
+            SnapshotBarrier::Live => {}
+            SnapshotBarrier::RequiresStop => {
+                bail!("driver requires stop for snapshot")
+            }
         }
     }
     let server_dir = ctx.server_dir.to_path_buf();
@@ -523,10 +589,12 @@ async fn do_snapshot(
         )
     })
     .await??;
-    driver
-        .resume_after_snapshot(ctx, &**proc)
-        .await
-        .map_err(dyn_err)?;
+    if options.barrier {
+        driver
+            .resume_after_snapshot(ctx, &**proc)
+            .await
+            .map_err(dyn_err)?;
+    }
     // the fence margin can fire while the snapshot was being built — a fenced
     // exec drops its manifest instead of uploading
     if ctl.is_fenced() {
@@ -552,7 +620,7 @@ async fn do_snapshot(
         stored_bytes: Some(info.stored_bytes as i64),
         file_count: Some(info.file_count as i64),
         chunk_count: Some(info.chunk_count as i64),
-        request_id: request_id.map(|s| s.to_string()),
+        request_id: options.request_id.map(|s| s.to_string()),
     };
     if ctl.is_fenced() {
         let _ = agent.store.delete_snapshot(&info.id);
@@ -575,6 +643,51 @@ async fn do_snapshot(
         Err(e) => return Err(e.into()),
     }
     Ok(info)
+}
+
+async fn stop_then_snapshot<T, Stop, StopFuture, Snapshot, SnapshotFuture>(
+    ctl: &ExecCtl,
+    proc: &Arc<dyn ProcessHandle>,
+    stop: Stop,
+    snapshot: Snapshot,
+) -> Option<T>
+where
+    Stop: FnOnce() -> StopFuture,
+    StopFuture: Future<Output = game_driver_api::Result<()>>,
+    Snapshot: FnOnce(bool) -> SnapshotFuture,
+    SnapshotFuture: Future<Output = Result<T>>,
+{
+    if let Err(e) = stop().await {
+        tracing::warn!(error = %e, "graceful stop");
+    }
+
+    match tokio::time::timeout(Duration::from_secs(60), proc.wait()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "could not confirm game exit; killing and skipping final snapshot");
+            let _ = proc.kill().await;
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "game did not exit after graceful stop; killing and skipping final snapshot"
+            );
+            let _ = proc.kill().await;
+            return None;
+        }
+    }
+
+    if ctl.is_fenced() {
+        return None;
+    }
+
+    match snapshot(false).await {
+        Ok(info) => Some(info),
+        Err(e) => {
+            tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed");
+            None
+        }
+    }
 }
 
 /// Bail if the execution has been fenced or a stop was requested — a
@@ -791,5 +904,94 @@ mod ensure_live_tests {
         let c = ctl();
         c.request_stop(StopKind::Hard);
         assert!(ensure_live(&c).is_err());
+    }
+
+    struct StopWritingProcess {
+        path: std::path::PathBuf,
+        output: tokio::sync::broadcast::Sender<executor_api::OutputLine>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProcessHandle for StopWritingProcess {
+        fn pid(&self) -> u32 {
+            1
+        }
+        async fn write_stdin(&self, _line: &str) -> executor_api::Result<()> {
+            Ok(())
+        }
+        fn output(&self) -> tokio::sync::broadcast::Receiver<executor_api::OutputLine> {
+            self.output.subscribe()
+        }
+        fn output_tail(&self, _n: usize) -> Vec<executor_api::OutputLine> {
+            Vec::new()
+        }
+        async fn wait(&self) -> executor_api::Result<executor_api::ExitStatus> {
+            Ok(executor_api::ExitStatus::default())
+        }
+        async fn terminate(&self) -> executor_api::Result<()> {
+            Ok(())
+        }
+        async fn interrupt(&self) -> executor_api::Result<()> {
+            std::fs::write(&self.path, b"written during graceful stop")?;
+            Ok(())
+        }
+        async fn kill(&self) -> executor_api::Result<()> {
+            Ok(())
+        }
+        fn resource_usage(&self) -> Option<executor_api::ResourceUsage> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn post_stop_snapshot_includes_writes_from_graceful_stop_without_barrier() {
+        let tmp = tempfile::tempdir().unwrap();
+        let server_dir = tmp.path().join("server");
+        std::fs::create_dir_all(&server_dir).unwrap();
+        let file = server_dir.join("state");
+        std::fs::write(&file, b"before stop").unwrap();
+        let (output, _) = tokio::sync::broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(StopWritingProcess { path: file, output });
+        let store = snapshot_store::Store::open(tmp.path().join("store")).unwrap();
+        let snapshot_store = &store;
+        let snapshot_server_dir = &server_dir;
+        let snap = stop_then_snapshot(
+            &ctl(),
+            &proc,
+            || proc.interrupt(),
+            |barrier| async move {
+                assert!(!barrier);
+                let patterns = [snapshot_store::PathPattern::new("state")];
+                Ok(snapshot_store.snapshot(
+                    snapshot_server_dir,
+                    &patterns,
+                    SnapshotMeta {
+                        server_id: "s".into(),
+                        execution_id: "e".into(),
+                        epoch: 1,
+                        node_id: "n".into(),
+                        parent: None,
+                        deployment_id: "d".into(),
+                        created_at_unix_ms: 0,
+                        reason: "final".into(),
+                    },
+                )?)
+            },
+        )
+        .await
+        .expect("snapshot after stop");
+
+        let restored = tmp.path().join("restored");
+        store
+            .restore(
+                &snap.id,
+                &restored,
+                &[snapshot_store::PathPattern::new("state")],
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(restored.join("state")).unwrap(),
+            b"written during graceful stop"
+        );
     }
 }
