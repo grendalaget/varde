@@ -528,14 +528,14 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     Ok(())
 }
 
-/// Barrier → Store::snapshot → POST /v1/agent/snapshots. Returns the info on
-/// success; marks the manifest invalid locally on 409 stale_epoch.
 struct SnapshotOptions<'a> {
     reason: &'a str,
     request_id: Option<&'a str>,
     barrier: bool,
 }
 
+/// Barrier → Store::snapshot → POST /v1/agent/snapshots. Returns the info on
+/// success; marks the manifest invalid locally on 409 stale_epoch.
 async fn do_snapshot(
     agent: &Agent,
     ctl: &ExecCtl,
@@ -662,7 +662,14 @@ where
     }
 
     match tokio::time::timeout(Duration::from_secs(60), proc.wait()).await {
-        Ok(Ok(_)) => {}
+        Ok(Ok(status)) if status.success() => {}
+        Ok(Ok(status)) => {
+            tracing::warn!(
+                status = ?status,
+                "game exited unsuccessfully; skipping final snapshot"
+            );
+            return None;
+        }
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "could not confirm game exit; killing and skipping final snapshot");
             let _ = proc.kill().await;
@@ -909,6 +916,7 @@ mod ensure_live_tests {
     struct StopWritingProcess {
         path: std::path::PathBuf,
         output: tokio::sync::broadcast::Sender<executor_api::OutputLine>,
+        exit_status: executor_api::ExitStatus,
     }
 
     #[async_trait::async_trait]
@@ -926,7 +934,7 @@ mod ensure_live_tests {
             Vec::new()
         }
         async fn wait(&self) -> executor_api::Result<executor_api::ExitStatus> {
-            Ok(executor_api::ExitStatus::default())
+            Ok(self.exit_status.clone())
         }
         async fn terminate(&self) -> executor_api::Result<()> {
             Ok(())
@@ -951,7 +959,14 @@ mod ensure_live_tests {
         let file = server_dir.join("state");
         std::fs::write(&file, b"before stop").unwrap();
         let (output, _) = tokio::sync::broadcast::channel(8);
-        let proc: Arc<dyn ProcessHandle> = Arc::new(StopWritingProcess { path: file, output });
+        let proc: Arc<dyn ProcessHandle> = Arc::new(StopWritingProcess {
+            path: file,
+            output,
+            exit_status: executor_api::ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
+        });
         let store = snapshot_store::Store::open(tmp.path().join("store")).unwrap();
         let snapshot_store = &store;
         let snapshot_server_dir = &server_dir;
@@ -993,5 +1008,35 @@ mod ensure_live_tests {
             std::fs::read(restored.join("state")).unwrap(),
             b"written during graceful stop"
         );
+    }
+
+    #[tokio::test]
+    async fn post_stop_snapshot_skips_nonzero_exit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (output, _) = tokio::sync::broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(StopWritingProcess {
+            path: tmp.path().join("state"),
+            output,
+            exit_status: executor_api::ExitStatus {
+                code: Some(1),
+                signal: None,
+            },
+        });
+        let snapshot_called = Arc::new(AtomicBool::new(false));
+        let called = snapshot_called.clone();
+
+        let snapshot = stop_then_snapshot(
+            &ctl(),
+            &proc,
+            || proc.interrupt(),
+            move |_| async move {
+                called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+
+        assert!(snapshot.is_none());
+        assert!(!snapshot_called.load(Ordering::SeqCst));
     }
 }

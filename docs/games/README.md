@@ -8,9 +8,11 @@ include/exclude lists) land here as each driver is implemented.
 Valheim installs SteamCMD app 896660. On Linux, the host needs glibc 2.29 or
 newer and the runtime shared libraries `libatomic1` and `libpulse0`
 (`libpulse-dev` is also listed by the official guide). The Valheim driver
-checks glibc and uses `ldd` to report missing shared libraries during prepare;
-package recommendations are weak dependencies so hosts that only run
-Minecraft do not install them automatically.
+checks glibc and uses `ldd` to report missing linked libraries during prepare.
+A separate `ldconfig -p` check warns, without blocking prepare, if the
+runtime-loaded `libatomic.so.1` or `libpulse.so.0` is unavailable. Package
+recommendations are weak dependencies so hosts that only run Minecraft do not
+install them automatically.
 
 The `modifiers` setting accepts `normal`, `casual`, `easy`, `hard`,
 `hardcore`, `immersive`, or `hammer` and maps to Valheim's capitalized
@@ -19,11 +21,13 @@ The `modifiers` setting accepts `normal`, `casual`, `easy`, `hard`,
 of more frequent world writes. The maximum expected loss on a hard kill is
 approximately the configured save interval.
 
-Snapshots include only the selected world's `_main.*.db2`, `_main.*.fwl2`,
+Snapshots include legacy `saves/worlds_local/<world_name>.db` and
+`saves/worlds_local/<world_name>.fwl` files, plus the selected world's
+`_main.*.db2`, `_main.*.fwl2`,
 `_main.*.chunks`, `_main.*.ok`, and `*.chunk` files under
-`saves/worlds_local/<world_name>/`, plus `saves/*.txt`. The world name is the
+`saves/worlds_local/<world_name>/`, and `saves/*.txt`. The world name is the
 directory name (including spaces); current Valheim saves use numbered DB2/FWL2
-files and chunk data rather than `<world_name>.db`/`.fwl`. Valheim logs save
+files and chunk data. Valheim logs save
 progress as `World save (n/5)` phases and completion as `World save (5/5)
 done`; the barrier is immediate unless the output tail shows a later phase
 after the most recent completion, in which case it waits up to 60 seconds for

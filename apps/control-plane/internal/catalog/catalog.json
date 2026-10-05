@@ -52,7 +52,7 @@
       { "name": "password", "type": "secret", "required": true, "secret": true, "help": "server password (5+ chars)" },
       { "name": "public", "type": "bool", "default": false, "help": "list on Steam community servers" },
       { "name": "modifiers", "type": "select", "options": ["normal", "casual", "easy", "hard", "hardcore", "immersive", "hammer"], "default": "normal" },
-      { "name": "save_interval_s", "type": "int", "default": 300, "help": "seconds between Valheim world saves (60-3600)" }
+      { "name": "save_interval_s", "type": "int", "default": 300, "min": 60, "max": 3600, "help": "seconds between Valheim world saves (60-3600)" }
     ]
   }
 ]

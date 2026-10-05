@@ -103,9 +103,11 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
   when `modifiers` is configured; ports 2456–2457/udp; password ≥ 5 chars; world names are non-empty and exclude
   `/`, `\`, `*`, and `?`. `save_interval_s` defaults to 300 and is validated to 60..=3600 seconds.
   Barrier: inspect the output tail for a `World save (n/5)` phase after the last `World save (5/5) done`;
-  only then wait up to 60 s for phase 5, otherwise snapshots are live immediately. Persistent paths include only the
-  selected world's `_main.*.db2`, `_main.*.fwl2`, `_main.*.chunks`, `_main.*.ok`, and `*.chunk` files under
+  only then wait up to 60 s for phase 5, otherwise snapshots are live immediately. Persistent paths include the
+  legacy `saves/worlds_local/<world_name>.db` and `saves/worlds_local/<world_name>.fwl` files, plus current
+  `_main.*.db2`, `_main.*.fwl2`, `_main.*.chunks`, `_main.*.ok`, and `*.chunk` files under
   `saves/worlds_local/<world_name>/`, plus `saves/*.txt`.
   Stop: SIGINT (Linux) / CTRL_BREAK (Windows). The final snapshot is taken from disk after graceful stop and
   process exit; if the process must be killed or the execution is fenced, the final snapshot is skipped.
-  Linux requires glibc ≥ 2.29 and recommends `libatomic1` and `libpulse0`.
+  Linux requires glibc ≥ 2.29; `ldd` checks linked libraries, while `ldconfig -p` warns if runtime-loaded
+  `libatomic.so.1` or `libpulse.so.0` is missing (`libatomic1` and `libpulse0` packages).

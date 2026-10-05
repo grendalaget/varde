@@ -160,6 +160,8 @@ impl GameDriver for ValheimDriver {
             if Self::valid_world_name(world) {
                 let world_dir = format!("saves/worlds_local/{world}");
                 paths.extend([
+                    PathPattern::new(format!("saves/worlds_local/{world}.db")),
+                    PathPattern::new(format!("saves/worlds_local/{world}.fwl")),
                     PathPattern::new(format!("{world_dir}/_main.*.db2")),
                     PathPattern::new(format!("{world_dir}/_main.*.fwl2")),
                     PathPattern::new(format!("{world_dir}/_main.*.chunks")),
@@ -309,6 +311,8 @@ async fn linux_preflight(binary: &Path, server_dir: &Path) -> Result<()> {
         }
     }
 
+    warn_missing_runtime_libraries().await;
+
     let output = match tokio::process::Command::new("ldd")
         .arg(binary)
         .env("LD_LIBRARY_PATH", server_dir.join("linux64"))
@@ -340,6 +344,39 @@ async fn linux_preflight(binary: &Path, server_dir: &Path) -> Result<()> {
         return Err(format!("ldd could not inspect Valheim server: {text}").into());
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn warn_missing_runtime_libraries() {
+    let mut available = None;
+    for command in ["ldconfig", "/sbin/ldconfig", "/usr/sbin/ldconfig"] {
+        match tokio::process::Command::new(command)
+            .arg("-p")
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                available = Some(output);
+                break;
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    let Some(output) = available else {
+        return;
+    };
+    let output = String::from_utf8_lossy(&output.stdout);
+    let missing: Vec<&str> = ["libatomic.so.1", "libpulse.so.0"]
+        .into_iter()
+        .filter(|library| !output.contains(library))
+        .collect();
+    if !missing.is_empty() {
+        tracing::warn!(
+            libraries = %missing.join(", "),
+            packages = "libatomic1 libpulse0",
+            "Valheim runtime libraries are not listed by ldconfig"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -485,6 +522,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                PathPattern::new("saves/worlds_local/Varde Test.db"),
+                PathPattern::new("saves/worlds_local/Varde Test.fwl"),
                 PathPattern::new("saves/worlds_local/Varde Test/_main.*.db2"),
                 PathPattern::new("saves/worlds_local/Varde Test/_main.*.fwl2"),
                 PathPattern::new("saves/worlds_local/Varde Test/_main.*.chunks"),
@@ -494,6 +533,8 @@ mod tests {
             ]
         );
         for (pattern, path) in paths.iter().zip([
+            "saves/worlds_local/Varde Test.db",
+            "saves/worlds_local/Varde Test.fwl",
             "saves/worlds_local/Varde Test/_main.4.db2",
             "saves/worlds_local/Varde Test/_main.4.fwl2",
             "saves/worlds_local/Varde Test/_main.4.chunks",
@@ -508,6 +549,10 @@ mod tests {
         assert!(paths
             .iter()
             .all(|pattern| !pattern.matches("saves/worlds_local/Other World/_main.4.db2", true)));
+        assert!(paths.iter().all(|pattern| {
+            !pattern.matches("saves/worlds_local/Other World.db", true)
+                && !pattern.matches("saves/worlds_local/Other World.fwl", true)
+        }));
         assert!(ValheimDriver::new().snapshot_after_stop());
     }
 
