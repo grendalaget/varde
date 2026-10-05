@@ -57,3 +57,7 @@ The wordmark is "varde" in lowercase, set in Schibsted Grotesk SemiBold (SIL OFL
 - **Colour:** only the host is ever orange (Glød `#FF5B1F`), and only while that machine is currently hosting a server. Warnings use yellow `warn`, never Glød.
 - **Minimum size:** below 32 px, use `favicon.svg`.
 - **Clear space:** leave cap stone height on every side.
+
+## Licence
+
+Logo and brand assets are MIT-licensed like the code (see [`/LICENSE`](../LICENSE)); Schibsted Grotesk is SIL OFL 1.1 (`apps/web/public/fonts/OFL.txt`).
