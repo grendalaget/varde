@@ -34,6 +34,11 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         .json("POST", "/v1/agent/heartbeat", Some(&hb))
         .await?;
     apply(agent, &d, sent).await?;
+    let elapsed_ms = sent.elapsed().as_millis() as u64;
+    if elapsed_ms > 1000 {
+        warn!(elapsed_ms, "slow heartbeat");
+    }
+    *agent.last_heartbeat_ok.lock().unwrap() = Some(Instant::now());
     Ok(d.heartbeat_interval_ms)
 }
 
@@ -287,7 +292,12 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
             .cloned()
             .collect();
         for c in expired {
-            warn!(exec = %c.dir.execution_id, "lease deadline expired — fencing");
+            let since_last_heartbeat_ms = agent
+                .last_heartbeat_ok
+                .lock()
+                .unwrap()
+                .map(|t| now.duration_since(t).as_millis() as u64);
+            warn!(exec = %c.dir.execution_id, since_last_heartbeat_ms, "lease deadline expired — fencing");
             c.mark_fenced();
             // graceful bounded to fence_margin/2, then kill
             let a = agent.clone();

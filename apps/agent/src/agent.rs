@@ -33,6 +33,8 @@ pub struct Agent {
     /// replication queue + in-flight set
     pub repl: Mutex<ReplQueue>,
     pub repl_notify: tokio::sync::Notify,
+    /// last successful heartbeat apply; diagnostics for fencing stalls
+    pub last_heartbeat_ok: Mutex<Option<std::time::Instant>>,
 }
 
 #[derive(Default)]

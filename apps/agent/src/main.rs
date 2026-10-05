@@ -366,6 +366,7 @@ async fn run(
         started_at_ms: now_ms(),
         repl: Mutex::new(agent::ReplQueue::default()),
         repl_notify: tokio::sync::Notify::new(),
+        last_heartbeat_ok: Mutex::new(None),
     });
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);

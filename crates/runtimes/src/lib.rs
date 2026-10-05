@@ -82,38 +82,52 @@ impl RuntimeProvider for HttpRuntimes {
         if Self::done(&dest) {
             return Ok(dest);
         }
-        std::fs::create_dir_all(dest.parent().unwrap())?;
+        let parent = dest.parent().unwrap().to_path_buf();
         let staging = dest.with_extension("staging");
-        let _ = std::fs::remove_dir_all(&staging);
-        std::fs::create_dir_all(&staging)?;
-        let blob = staging.join(&spec.file_name);
-        download_verified(
-            &spec.url,
-            &blob,
-            spec.sha256.as_deref(),
-            spec.sha1.as_deref(),
-        )
+        let staging2 = staging.clone();
+        spawn_fs({
+            let s = staging2.clone();
+            move || {
+                let _ = std::fs::remove_dir_all(&s);
+                Ok(())
+            }
+        })
         .await?;
-        match spec.archive {
-            ArchiveKind::File => {}
-            ArchiveKind::Tgz => {
-                let f = std::fs::File::open(&blob)?;
-                tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&staging)?;
-                let _ = std::fs::remove_file(&blob);
-            }
-            ArchiveKind::Zip => {
-                let f = std::fs::File::open(&blob)?;
-                zip::ZipArchive::new(f)?.extract(&staging)?;
-                let _ = std::fs::remove_file(&blob);
-            }
+        spawn_fs(move || {
+            std::fs::create_dir_all(&parent)?;
+            std::fs::create_dir_all(&staging2)?;
+            Ok(())
+        })
+        .await?;
+        let result = fetch_into(&staging, spec).await;
+        if let Err(e) = result {
+            let s = staging.clone();
+            let _ = spawn_fs(move || {
+                let _ = std::fs::remove_dir_all(&s);
+                Ok(())
+            })
+            .await;
+            return Err(e);
         }
         if dest.exists() {
             // another exec won the race; drop our staging copy
-            let _ = std::fs::remove_dir_all(&staging);
+            let s = staging.clone();
+            let _ = spawn_fs(move || {
+                let _ = std::fs::remove_dir_all(&s);
+                Ok(())
+            })
+            .await;
             return Ok(dest);
         }
-        std::fs::write(staging.join(".complete"), b"ok")?;
-        std::fs::rename(&staging, &dest)?;
+        // publish atomically; fs ops stay off the async worker
+        let st = staging.clone();
+        let d = dest.clone();
+        spawn_fs(move || {
+            std::fs::write(st.join(".complete"), b"ok")?;
+            std::fs::rename(&st, &d)?;
+            Ok(())
+        })
+        .await?;
         Ok(dest)
     }
 
@@ -271,6 +285,54 @@ async fn http_get(url: &str, redirs: u32) -> game_driver_api::Result<Vec<u8>> {
     Ok(resp.into_body().collect().await?.to_bytes().to_vec())
 }
 
+/// Blocking filesystem/CPU work (hashing, archive unpack, writes, renames)
+/// must not run on the async worker — it stalls the heartbeat loop and
+/// expires execution leases on big downloads (cold-start fencing bug).
+async fn spawn_fs<T: Send + 'static>(
+    f: impl FnOnce() -> game_driver_api::Result<T> + Send + 'static,
+) -> game_driver_api::Result<T> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("blocking task: {e}"))?
+}
+
+/// Download + unpack `spec` into an existing staging dir. Network stays on
+/// the async worker; hashing, writes and archive extraction are blocking.
+async fn fetch_into(staging: &Path, spec: &FetchSpec) -> game_driver_api::Result<()> {
+    let blob = staging.join(&spec.file_name);
+    download_verified(
+        &spec.url,
+        &blob,
+        spec.sha256.as_deref(),
+        spec.sha1.as_deref(),
+    )
+    .await?;
+    match spec.archive {
+        ArchiveKind::File => {}
+        ArchiveKind::Tgz => {
+            let (b, s) = (blob.clone(), staging.to_path_buf());
+            spawn_fs(move || {
+                let f = std::fs::File::open(&b)?;
+                tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&s)?;
+                let _ = std::fs::remove_file(&b);
+                Ok(())
+            })
+            .await?;
+        }
+        ArchiveKind::Zip => {
+            let (b, s) = (blob.clone(), staging.to_path_buf());
+            spawn_fs(move || {
+                let f = std::fs::File::open(&b)?;
+                zip::ZipArchive::new(f)?.extract(&s)?;
+                let _ = std::fs::remove_file(&b);
+                Ok(())
+            })
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Download `url` to `file` then verify sha256/sha1 (whichever is provided).
 async fn download_verified(
     url: &str,
@@ -280,20 +342,26 @@ async fn download_verified(
 ) -> game_driver_api::Result<()> {
     tracing::info!(url, dest = %file.display(), "runtime download");
     let body = http_get(url, 8).await?;
-    if let Some(want) = sha256 {
-        let got = hex::encode(sha2::Sha256::digest(&body));
-        if !got.eq_ignore_ascii_case(want) {
-            return Err(format!("sha256 mismatch for {url}: got {got} want {want}").into());
+    let (s256, s1) = (sha256.map(String::from), sha1.map(String::from));
+    let f = file.to_path_buf();
+    let u = url.to_string();
+    spawn_fs(move || {
+        if let Some(want) = s256 {
+            let got = hex::encode(sha2::Sha256::digest(&body));
+            if !got.eq_ignore_ascii_case(&want) {
+                return Err(format!("sha256 mismatch for {u}: got {got} want {want}").into());
+            }
         }
-    }
-    if let Some(want) = sha1 {
-        let got = hex::encode(sha1::Sha1::digest(&body));
-        if !got.eq_ignore_ascii_case(want) {
-            return Err(format!("sha1 mismatch for {url}: got {got} want {want}").into());
+        if let Some(want) = s1 {
+            let got = hex::encode(sha1::Sha1::digest(&body));
+            if !got.eq_ignore_ascii_case(&want) {
+                return Err(format!("sha1 mismatch for {u}: got {got} want {want}").into());
+            }
         }
-    }
-    std::fs::write(file, &body)?;
-    Ok(())
+        std::fs::write(&f, &body)?;
+        Ok(())
+    })
+    .await
 }
 
 /// Find `bin/java` (or `bin/java.exe`) under a fetched runtime dir; Temurin
@@ -358,6 +426,7 @@ pub async fn system_java(min: u32, candidates: &[PathBuf]) -> Option<PathBuf> {
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
 mod tests {
+
     #[test]
     fn provisionable_linux_x64() {
         let p = super::provisionable();
