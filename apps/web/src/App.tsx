@@ -198,70 +198,139 @@ function Layout() {
   else page = <p className="text-slate-400">Page not found.</p>;
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-950 px-3 py-4">
-        <Link to="/" className="mb-6 flex items-center gap-2 px-2">
+    <Shell
+      sidebar={
+        <>
+          <Link to="/" className="mb-6 hidden items-center gap-2 px-2 md:flex">
+            <Cairn />
+            <span className="text-lg font-semibold tracking-tight">Varde</span>
+          </Link>
+          <label className="mb-4 px-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+              Group
+            </span>
+            <select
+              className="mt-1 w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1.5 text-sm"
+              value={group.group_id}
+              onChange={(e) => {
+                if (e.target.value === "__new") navigate("/settings?new=1");
+                else {
+                  selectGroup(e.target.value);
+                  navigate("/");
+                }
+              }}
+            >
+              {me.groups.map((g) => (
+                <option key={g.group_id} value={g.group_id}>
+                  {g.name}
+                </option>
+              ))}
+              <option value="__new">+ New group…</option>
+            </select>
+          </label>
+          <nav className="flex flex-col gap-0.5">
+            {NAV.map((n) => (
+              <Link
+                key={n.to}
+                to={n.to}
+                className={cx(
+                  "rounded-md px-2 py-1.5 text-sm",
+                  n.active(p)
+                    ? "bg-slate-800 font-medium text-white"
+                    : "text-slate-400 hover:bg-slate-900 hover:text-slate-200",
+                )}
+              >
+                {n.label}
+              </Link>
+            ))}
+          </nav>
+          <div className="mt-auto space-y-3 px-2 text-xs text-slate-500">
+            <div className="flex items-center gap-2" title="Live updates">
+              <Dot tone={connected ? "green" : "amber"} />
+              {connected ? "Live" : "Reconnecting…"}
+            </div>
+            <div className="truncate text-slate-400">
+              {me.user.display_name}
+            </div>
+            <button
+              className="text-slate-500 hover:text-slate-300"
+              onClick={async () => {
+                await api.POST("/v1/auth/logout");
+                window.location.href = "/";
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </>
+      }
+    >
+      {page}
+    </Shell>
+  );
+}
+
+function Shell({
+  sidebar,
+  children,
+}: {
+  sidebar: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const { pathname } = useLocation();
+  const [open, setOpen] = useState(false);
+  const [lastPath, setLastPath] = useState(pathname);
+  if (pathname !== lastPath) {
+    setLastPath(pathname);
+    setOpen(false);
+  }
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 md:flex">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur md:hidden">
+        <Link to="/" className="flex items-center gap-2">
           <Cairn />
           <span className="text-lg font-semibold tracking-tight">Varde</span>
         </Link>
-        <label className="mb-4 px-2">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-            Group
-          </span>
-          <select
-            className="mt-1 w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1.5 text-sm"
-            value={group.group_id}
-            onChange={(e) => {
-              if (e.target.value === "__new") navigate("/settings?new=1");
-              else {
-                selectGroup(e.target.value);
-                navigate("/");
-              }
-            }}
+        <button
+          type="button"
+          aria-label={open ? "Close menu" : "Open menu"}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="-mr-2 rounded-md p-2 text-slate-300 hover:bg-slate-900"
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
           >
-            {me.groups.map((g) => (
-              <option key={g.group_id} value={g.group_id}>
-                {g.name}
-              </option>
-            ))}
-            <option value="__new">+ New group…</option>
-          </select>
-        </label>
-        <nav className="flex flex-col gap-0.5">
-          {NAV.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              className={cx(
-                "rounded-md px-2 py-1.5 text-sm",
-                n.active(p)
-                  ? "bg-slate-800 font-medium text-white"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200",
-              )}
-            >
-              {n.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="mt-auto space-y-3 px-2 text-xs text-slate-500">
-          <div className="flex items-center gap-2" title="Live updates">
-            <Dot tone={connected ? "green" : "amber"} />
-            {connected ? "Live" : "Reconnecting…"}
-          </div>
-          <div className="truncate text-slate-400">{me.user.display_name}</div>
-          <button
-            className="text-slate-500 hover:text-slate-300"
-            onClick={async () => {
-              await api.POST("/v1/auth/logout");
-              window.location.href = "/";
-            }}
-          >
-            Sign out
-          </button>
-        </div>
+            {open ? (
+              <path d="M6 6l12 12M18 6L6 18" />
+            ) : (
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            )}
+          </svg>
+        </button>
+      </header>
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <aside
+        className={cx(
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-slate-800 bg-slate-950 px-3 py-4 transition-transform md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
+          open ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        {sidebar}
       </aside>
-      <main className="min-w-0 flex-1 px-8 py-8">
-        <div className="mx-auto max-w-5xl">{page}</div>
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+        <div className="mx-auto max-w-5xl">{children}</div>
       </main>
     </div>
   );

@@ -89,7 +89,7 @@ function MachineRow({ n }: { n: Node }) {
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-4 px-4 py-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-0 sm:flex-1">
           <Dot tone={liveTone(n)} />
           <div className="min-w-0">
             <div className="flex items-center gap-2">

@@ -112,7 +112,7 @@ export default function ServerDetail({ id }: { id: string }) {
           />
         }
       />
-      <div className="mb-6 flex gap-1 border-b border-slate-800">
+      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-slate-800 [scrollbar-width:none]">
         {tabs.map(([t, label]) => (
           <button
             key={t}
@@ -388,9 +388,13 @@ function Saves({
             <thead className="text-left text-xs uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-4 py-2 font-medium">Taken</th>
-                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="hidden px-4 py-2 font-medium sm:table-cell">
+                  Status
+                </th>
                 <th className="px-4 py-2 font-medium">Backed up on</th>
-                <th className="px-4 py-2 font-medium">Size</th>
+                <th className="hidden px-4 py-2 font-medium sm:table-cell">
+                  Size
+                </th>
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
@@ -413,8 +417,14 @@ function Saves({
                         {REASON[x.reason] ?? x.reason} · on{" "}
                         {nodeName(x.node_id)}
                       </div>
+                      <div className="mt-1 flex items-center gap-2 sm:hidden">
+                        <Badge tone={st.tone}>{st.label}</Badge>
+                        <span className="text-xs text-slate-500">
+                          {bytes(x.size_bytes)}
+                        </span>
+                      </div>
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="hidden px-4 py-2 sm:table-cell">
                       <Badge tone={st.tone}>{st.label}</Badge>
                     </td>
                     <td className="px-4 py-2">
@@ -443,7 +453,7 @@ function Saves({
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-slate-400">
+                    <td className="hidden px-4 py-2 text-slate-400 sm:table-cell">
                       {bytes(x.size_bytes)}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -505,7 +515,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
         actions={
           executions.length > 0 && (
             <select
-              className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm"
+              className="max-w-48 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm sm:max-w-none"
               value={effective}
               onChange={(e) => setExecId(e.target.value)}
             >
@@ -768,8 +778,8 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
 function KV({ k, v }: { k: string; v?: string | null }) {
   return (
     <div className="flex gap-3">
-      <dt className="w-36 shrink-0 text-slate-500">{k}</dt>
-      <dd className="truncate text-slate-200">{v ?? "—"}</dd>
+      <dt className="w-28 shrink-0 text-slate-500 sm:w-36">{k}</dt>
+      <dd className="min-w-0 break-all text-slate-200">{v ?? "—"}</dd>
     </div>
   );
 }
