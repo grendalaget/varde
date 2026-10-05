@@ -44,11 +44,16 @@ pub fn provisionable() -> Vec<&'static str> {
 /// Shared runtime cache rooted at `<data>/runtimes`.
 pub struct HttpRuntimes {
     root: PathBuf,
+    /// serializes concurrent fetches for the same destination
+    locks: std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl HttpRuntimes {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
     }
 
     fn dest(&self, kind: &str, id: &str) -> PathBuf {
@@ -57,6 +62,15 @@ impl HttpRuntimes {
 
     fn done(path: &Path) -> bool {
         path.join(".complete").is_file()
+    }
+
+    fn dest_lock(&self, dest: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks
+            .lock()
+            .unwrap()
+            .entry(dest.to_path_buf())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 }
 
@@ -82,17 +96,26 @@ impl RuntimeProvider for HttpRuntimes {
         if Self::done(&dest) {
             return Ok(dest);
         }
+        // one fetcher per destination; re-check after acquiring so the
+        // second caller of a concurrent pair returns the populated cache
+        let lock = self.dest_lock(&dest);
+        let _guard = lock.lock().await;
+        if Self::done(&dest) {
+            return Ok(dest);
+        }
         let parent = dest.parent().unwrap().to_path_buf();
-        let staging = dest.with_extension("staging");
+        // unique staging dir: guards against a stale staging left by a
+        // killed run, and against a second agent sharing the cache
+        let staging = parent.join(format!(
+            "{}.staging-{}-{}",
+            dest.file_name().unwrap().to_string_lossy(),
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
         let staging2 = staging.clone();
-        spawn_fs({
-            let s = staging2.clone();
-            move || {
-                let _ = std::fs::remove_dir_all(&s);
-                Ok(())
-            }
-        })
-        .await?;
         spawn_fs(move || {
             std::fs::create_dir_all(&parent)?;
             std::fs::create_dir_all(&staging2)?;
@@ -108,16 +131,6 @@ impl RuntimeProvider for HttpRuntimes {
             })
             .await;
             return Err(e);
-        }
-        if dest.exists() {
-            // another exec won the race; drop our staging copy
-            let s = staging.clone();
-            let _ = spawn_fs(move || {
-                let _ = std::fs::remove_dir_all(&s);
-                Ok(())
-            })
-            .await;
-            return Ok(dest);
         }
         // publish atomically; fs ops stay off the async worker
         let st = staging.clone();
@@ -426,11 +439,72 @@ pub async fn system_java(min: u32, candidates: &[PathBuf]) -> Option<PathBuf> {
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
 mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering as AOrd};
 
     #[test]
     fn provisionable_linux_x64() {
         let p = super::provisionable();
         assert!(p.contains(&"java"));
         assert!(p.contains(&"steamcmd"));
+    }
+
+    // minimal http/1.0 server serving one fixed body, counting requests
+    async fn serve_once(
+        count: Arc<AtomicUsize>,
+        body: Vec<u8>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let h = tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                count.fetch_add(1, AOrd::SeqCst);
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let resp = format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                let _ = s.write_all(resp.as_bytes()).await;
+                let _ = s.write_all(&body).await;
+            }
+        });
+        (format!("http://{addr}/blob.tgz"), h)
+    }
+
+    fn make_tgz(payload: &[u8]) -> Vec<u8> {
+        let mut b = tar::Builder::new(Vec::new());
+        let mut h = tar::Header::new_gnu();
+        h.set_size(payload.len() as u64);
+        h.set_cksum();
+        b.append_data(&mut h, "file.txt", payload).unwrap();
+        let tgz = b.into_inner().unwrap();
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        use std::io::Write;
+        e.write_all(&tgz).unwrap();
+        e.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn concurrent_fetch_same_dest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rt = Arc::new(HttpRuntimes::new(tmp.path().join("runtimes")));
+        let count = Arc::new(AtomicUsize::new(0));
+        let tgz = make_tgz(b"hello runtime");
+        let (url, _srv) = serve_once(count.clone(), tgz).await;
+        let spec = FetchSpec {
+            url,
+            file_name: "b.tgz".into(),
+            sha256: None,
+            sha1: None,
+            archive: ArchiveKind::Tgz,
+        };
+        let (a, b) = (rt.clone(), rt.clone());
+        let (r1, r2) = tokio::join!(a.fetch("kind", "id", &spec), b.fetch("kind", "id", &spec));
+        let p1 = r1.unwrap();
+        let p2 = r2.unwrap();
+        assert_eq!(p1, p2);
+        assert_eq!(count.load(AOrd::SeqCst), 1, "exactly one GET expected");
+        let got = std::fs::read_to_string(p1.join("file.txt")).unwrap();
+        assert_eq!(got, "hello runtime");
+        assert!(p1.join(".complete").is_file());
     }
 }
