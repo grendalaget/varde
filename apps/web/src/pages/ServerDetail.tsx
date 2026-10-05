@@ -282,8 +282,8 @@ function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
           <div className="space-y-3 p-4 text-sm">
             {s.observed_state === "failed" && (
               <WarnNote>
-                The game stopped unexpectedly. Check the logs, then press Start
-                to try again.
+                The game stopped unexpectedly. Check the logs, then press Stop
+                and Start to try again.
               </WarnNote>
             )}
             <div className="flex items-center justify-between gap-3">
