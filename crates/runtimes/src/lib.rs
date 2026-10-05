@@ -5,9 +5,9 @@
 //! sibling staging dir and are renamed into place (atomic), checksums
 //! (sha256 and/or sha1) are verified before the cache is populated.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use game_driver_api::{ArchiveKind, FetchSpec, RuntimeProvider};
@@ -16,6 +16,7 @@ use hyper::header::{HeaderValue, HOST, LOCATION, USER_AGENT};
 use hyper::{Request, Uri};
 use hyper_util::rt::TokioIo;
 use sha2::Digest;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 const UA: &str = concat!("varde-agent/", env!("CARGO_PKG_VERSION"));
 
@@ -146,25 +147,83 @@ impl RuntimeProvider for HttpRuntimes {
 
     async fn steam_app_install(&self, app_id: u32, dest: &Path) -> game_driver_api::Result<()> {
         let cmd = steamcmd(self).await?;
-        std::fs::create_dir_all(dest)?;
-        let st = tokio::process::Command::new(cmd)
-            .arg("+force_install_dir")
-            .arg(dest)
-            .arg("+login")
-            .arg("anonymous")
-            .arg("+app_update")
-            .arg(app_id.to_string())
-            .arg("validate")
-            .arg("+quit")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await?;
-        if !st.success() {
-            return Err(format!("steamcmd exited {st}").into());
+        let destination = dest.to_path_buf();
+        spawn_fs(move || {
+            std::fs::create_dir_all(destination)?;
+            Ok(())
+        })
+        .await?;
+
+        let mut retried_after_self_update = false;
+        loop {
+            let mut child = tokio::process::Command::new(&cmd)
+                .arg("+force_install_dir")
+                .arg(dest)
+                .arg("+login")
+                .arg("anonymous")
+                .arg("+app_update")
+                .arg(app_id.to_string())
+                .arg("validate")
+                .arg("+quit")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
+            let captured = Arc::new(Mutex::new(VecDeque::with_capacity(40)));
+            let stdout = child
+                .stdout
+                .take()
+                .map(|pipe| capture_output(pipe, captured.clone()));
+            let stderr = child
+                .stderr
+                .take()
+                .map(|pipe| capture_output(pipe, captured.clone()));
+            let st = child.wait().await?;
+            if let Some(stdout) = stdout {
+                let _ = stdout.await;
+            }
+            if let Some(stderr) = stderr {
+                let _ = stderr.await;
+            }
+            let lines = captured.lock().unwrap().iter().cloned().collect::<Vec<_>>();
+            if st.success() {
+                return Ok(());
+            }
+            if !retried_after_self_update && steamcmd_self_updated(&lines) {
+                tracing::warn!(
+                    status = %st,
+                    "steamcmd exited non-zero after self-update; retrying once"
+                );
+                retried_after_self_update = true;
+                continue;
+            }
+            return Err(format!("steamcmd exited {st}\nlast output:\n{}", lines.join("\n")).into());
         }
-        Ok(())
     }
+}
+
+fn steamcmd_self_updated(output: &[String]) -> bool {
+    output.iter().any(|line| {
+        let line = line.to_ascii_lowercase();
+        line.contains("update complete, launching steamcmd")
+            || line.contains("restarting steamcmd by request")
+    })
+}
+
+fn capture_output<R>(pipe: R, captured: Arc<Mutex<VecDeque<String>>>) -> tokio::task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(pipe).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let mut captured = captured.lock().unwrap();
+            if captured.len() == 40 {
+                captured.pop_front();
+            }
+            captured.push_back(line);
+        }
+    })
 }
 
 /// Path to the steamcmd binary, bootstrapping the tool itself via fetch().
@@ -447,6 +506,17 @@ mod tests {
         let p = super::provisionable();
         assert!(p.contains(&"java"));
         assert!(p.contains(&"steamcmd"));
+    }
+
+    #[test]
+    fn steamcmd_self_update_is_retryable_but_app_errors_alone_are_not() {
+        assert!(super::steamcmd_self_updated(&[
+            "Update complete, launching Steamcmd...".into(),
+            "ERROR! Failed to install app '896660' (Missing configuration)".into(),
+        ]));
+        assert!(!super::steamcmd_self_updated(&[
+            "ERROR! Failed to install app '896660' (Missing configuration)".into(),
+        ]));
     }
 
     // minimal http/1.0 server serving one fixed body, counting requests
