@@ -721,6 +721,22 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	if err != nil {
 		return nil, errResp(gen.NotFound, "snapshot not found", nil)
 	}
+	// a node may only mark replicas it was actually assigned (or that it
+	// produced as the snapshot's source)
+	if snap.GroupID != node.GroupID {
+		return nil, errResp(gen.Conflict, "replica not assigned", nil)
+	}
+	assigned := false
+	if reps, err := s.Store.ReplicasForSnapshot(ctx, snap.ID); err == nil {
+		for _, r := range reps {
+			if r.NodeID == node.ID && r.State != "deleting" {
+				assigned = true
+			}
+		}
+	}
+	if !assigned {
+		return nil, errResp(gen.Conflict, "replica not assigned", nil)
+	}
 	now := s.Store.NowMs()
 	if err := s.Store.UpsertReplica(ctx, s.Store.DB, &store.Replica{
 		SnapshotID: snap.ID, NodeID: node.ID, State: "ready",
