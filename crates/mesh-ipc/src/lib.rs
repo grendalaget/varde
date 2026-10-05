@@ -1,6 +1,7 @@
 //! Generated client and IPC plumbing for the agent ↔ mesh local protocol.
 //!
 //! Transport: Unix domain socket on Unix, named pipe on Windows. Never TCP.
+#![allow(clippy::result_large_err)] // generated tonic code returns big Status errs
 
 use std::io;
 use std::path::Path;

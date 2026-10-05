@@ -21,7 +21,23 @@ jobs:
         with:
           go-version: stable
           check-latest: true
+      # install golangci-lint once and run it per module: the action's
+      # default run at the workspace root trips on go.work
       - uses: golangci/golangci-lint-action@v7
+        with:
+          install-mode: binary
+          skip-cache: true
+          working-directory: go
+      - name: lint
+        shell: bash
+        run: |
+          LINT=$(find "$RUNNER_WORK_SPACE" -name golangci-lint -type f 2>/dev/null | head -1)
+          [ -n "$LINT" ] || LINT=golangci-lint
+          for m in go apps/control-plane apps/relay apps/mesh; do
+            (cd $m && "$LINT" run ./...) || exit 1
+          done
+        env:
+          RUNNER_WORK_SPACE: ${{ github.workspace }}/..
       # services: containers are Linux-only; run postgres via docker on the
       # ubuntu leg so the windows leg can share this job
       - name: postgres (linux)
@@ -77,6 +93,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -99,6 +117,8 @@ jobs:
           go-version: stable
           check-latest: true
       - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -141,8 +161,10 @@ jobs:
       - name: build installer
         shell: pwsh
         run: |
+          # ref_name is e.g. "1/merge" on PRs; sanitize for the filename
+          $ver = "${{ github.ref_name }}" -replace '[^0-9A-Za-z._-]','-'
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-            /DVersion="${{ github.ref_name }}" `
+            /DVersion="$ver" `
             packaging/windows/varde-agent.iss
       - uses: actions/upload-artifact@v4
         with:
