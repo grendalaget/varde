@@ -259,6 +259,7 @@ func (s *Server) ApproveDeviceLink(ctx context.Context, req gen.ApproveDeviceLin
 		ID: nodeID, GroupID: req.Body.GroupId, Name: req.Body.Name,
 		PublicKey: d.PublicKey, OS: d.OS, Arch: d.Arch, AgentVersion: d.AgentVersion,
 		HostingEnabled: 1, AdminState: "active", CreatedAt: now,
+		OwnerUserID: d.ApprovedBy,
 	}
 	if err := s.Store.CreateNode(ctx, n); err != nil {
 		return nil, err
@@ -361,11 +362,16 @@ func (s *Server) AgentEnrollToken(ctx context.Context, req gen.AgentEnrollTokenR
 	if name == "" {
 		name = "node-" + t.ID[len("ent_"):min(10, len(t.ID))]
 	}
+	var owner *string
+	if t.CreatedBy != "" {
+		owner = &t.CreatedBy
+	}
 	n := &store.Node{
 		ID: ids.Must(ids.Node), GroupID: t.GroupID, Name: name,
 		PublicKey: b.PublicKey, OS: strv(b.Os), Arch: strv(b.Arch),
 		AgentVersion: strv(b.AgentVersion), HostingEnabled: t.HostingEnabled,
 		Anchor: t.Anchor, AdminState: "active", CreatedAt: now,
+		OwnerUserID: owner,
 	}
 	if err := s.Store.CreateNode(ctx, n); err != nil {
 		if store.IsUniqueViolation(err) {
@@ -449,6 +455,13 @@ func (s *Server) UpdateNode(ctx context.Context, req gen.UpdateNodeRequestObject
 	role, rerr := s.Store.MemberRole(ctx, n.GroupID, u.ID)
 	if rerr != nil && u.IsOperator != 1 {
 		return nil, errResp(gen.Forbidden, "not a member of this group", nil)
+	}
+	// node ownership: the enrolling user, or admin/owner of the group, or an
+	// operator. Nodes with no owner (pre-column enrollments) are admin-only.
+	adminish := role == "admin" || role == "owner" || u.IsOperator == 1
+	owned := n.OwnerUserID != nil && *n.OwnerUserID == u.ID
+	if !adminish && !owned {
+		return nil, errResp(gen.Forbidden, "not the node owner", nil)
 	}
 	b := req.Body
 	if b == nil {

@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     max_storage_bytes BIGINT,
     admin_state     TEXT NOT NULL DEFAULT 'active'
                     CHECK (admin_state IN ('active','draining','disabled')),
+    owner_user_id   TEXT REFERENCES users(id),
     last_seen_at    BIGINT,
     created_at      BIGINT NOT NULL
 );

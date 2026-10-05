@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1297,4 +1298,71 @@ func TestOwnerInviteRequiresOwner(t *testing.T) {
 	// and the group owner can still create owner invites
 	e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/invites",
 		map[string]any{"role": "owner"}, e.token))
+}
+
+// Node settings can only be changed by the node's owner (the user whose
+// enrollment created it), an admin/owner of the group, or an operator.
+func TestUpdateNodeRequiresOwnership(t *testing.T) {
+	e := newEnv(t)
+	memberTok := e.signup("member@example.com", "password123")
+	member, err := e.st.UserByEmail(context.Background(), "member@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, member.ID, "member", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	adminTok := e.signup("admin@example.com", "password123")
+	admin, err := e.st.UserByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, admin.ID, "admin", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+
+	// a node enrolled via the operator's token is owned by the operator
+	a := e.newAgent("owned")
+	var owner sql.NullString
+	if err := e.st.DB.GetContext(context.Background(), &owner, e.st.Rebind(
+		`SELECT owner_user_id FROM nodes WHERE id=?`), a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if !owner.Valid {
+		t.Fatal("enrolled node has NULL owner_user_id")
+	}
+
+	// a plain member cannot change someone else's node
+	r := e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed"}, memberTok)
+	if r.Status != 403 {
+		t.Fatalf("member updating other's node: want 403, got %d %s", r.Status, r.Raw)
+	}
+	// an admin can
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed"}, adminTok))
+	// and so can the owner (the operator user here)
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "renamed-again"}, e.token))
+
+	// a member-owned node: hand the member ownership directly
+	if _, err := e.st.DB.ExecContext(context.Background(), e.st.Rebind(
+		`UPDATE nodes SET owner_user_id=? WHERE id=?`), member.ID, a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"hosting_enabled": false}, memberTok))
+
+	// a node with NULL owner is admin-only
+	if _, err := e.st.DB.ExecContext(context.Background(), e.st.Rebind(
+		`UPDATE nodes SET owner_user_id=NULL WHERE id=?`), a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	r = e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "nope"}, memberTok)
+	if r.Status != 403 {
+		t.Fatalf("member updating ownerless node: want 403, got %d %s", r.Status, r.Raw)
+	}
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID,
+		map[string]any{"name": "yep"}, adminTok))
 }
