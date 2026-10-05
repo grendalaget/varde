@@ -707,6 +707,7 @@ dependencies = [
  "executor-api",
  "executor-native",
  "game-driver-api",
+ "libc",
  "runtimes",
  "serde",
  "serde_json",
