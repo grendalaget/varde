@@ -546,15 +546,26 @@ func TestRouteMoveAndStaleEpoch(t *testing.T) {
 	}
 
 	ping := func(wantAlive bool) {
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", testIP, testTCP), 8*time.Second)
-		if err != nil {
-			t.Fatalf("dial: %v", err)
+		// a just-moved route can still be opening its upstream stream when
+		// the first client connects; tolerate a few resets/timeouts on the
+		// live-path checks (Windows surfaces them as forced closes)
+		var err error
+		for i := 0; ; i++ {
+			var c net.Conn
+			c, err = net.DialTimeout("tcp", fmt.Sprintf("%s:%d", testIP, testTCP), 8*time.Second)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			_, _ = c.Write([]byte("hi"))
+			buf := make([]byte, 2)
+			_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+			_, err = io.ReadFull(c, buf)
+			_ = c.Close()
+			if !wantAlive || err == nil || i >= 5 {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
 		}
-		_, _ = c.Write([]byte("hi"))
-		buf := make([]byte, 2)
-		_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
-		_, err = io.ReadFull(c, buf)
-		_ = c.Close()
 		if wantAlive && err != nil {
 			t.Fatalf("expected echo, got %v", err)
 		}
