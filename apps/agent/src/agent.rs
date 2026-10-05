@@ -89,13 +89,16 @@ impl Agent {
             .get(execution_id)
             .map(|c| (c.dir.server_id.clone(), c.dir.epoch))
             .unwrap_or_default();
-        self.state.lock().unwrap().upsert(crate::state::ExecRecord {
-            execution_id: execution_id.into(),
-            server_id,
-            epoch,
-            pgid,
-            fenced: false,
-        });
+        self.state
+            .lock()
+            .unwrap()
+            .upsert(crate::state::ExecRecord::new(
+                execution_id.into(),
+                server_id,
+                epoch,
+                pgid,
+                false,
+            ));
     }
 
     /// Push services for currently-hosting executions into the mesh.

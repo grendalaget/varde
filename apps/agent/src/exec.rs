@@ -520,6 +520,12 @@ async fn do_snapshot(
         .resume_after_snapshot(ctx, &**proc)
         .await
         .map_err(dyn_err)?;
+    // the fence margin can fire while the snapshot was being built — a fenced
+    // exec drops its manifest instead of uploading
+    if ctl.is_fenced() {
+        let _ = agent.store.delete_snapshot(&info.id);
+        bail!("fenced execution never uploads snapshots");
+    }
 
     let body = AgentSnapshot {
         snapshot_id: info.id.0.clone(),
@@ -541,6 +547,10 @@ async fn do_snapshot(
         chunk_count: Some(info.chunk_count as i64),
         request_id: request_id.map(|s| s.to_string()),
     };
+    if ctl.is_fenced() {
+        let _ = agent.store.delete_snapshot(&info.id);
+        bail!("fenced execution never uploads snapshots");
+    }
     match agent
         .cp
         .json::<_, serde_json::Value>("POST", "/v1/agent/snapshots", Some(&body))

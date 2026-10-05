@@ -58,7 +58,10 @@ impl ServeTracker {
     fn record_chunk(&self, snap_hints: &[String], chunk: &str) {
         let mut g = self.inner.lock().unwrap();
         for h in snap_hints {
-            g.entry(h.clone()).or_default().chunks.insert(chunk.to_string());
+            g.entry(h.clone())
+                .or_default()
+                .chunks
+                .insert(chunk.to_string());
         }
     }
     /// True once some peer fetched the manifest and every chunk of `m`.

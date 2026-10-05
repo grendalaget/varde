@@ -303,13 +303,16 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
                 }
                 c.mark_finished();
                 c.request_stop(StopKind::Hard);
-                a.state.lock().unwrap().upsert(crate::state::ExecRecord {
-                    execution_id: c.dir.execution_id.clone(),
-                    server_id: c.dir.server_id.clone(),
-                    epoch: c.dir.epoch,
-                    pgid: c.pgid(),
-                    fenced: true,
-                });
+                a.state
+                    .lock()
+                    .unwrap()
+                    .upsert(crate::state::ExecRecord::new(
+                        c.dir.execution_id.clone(),
+                        c.dir.server_id.clone(),
+                        c.dir.epoch,
+                        c.pgid(),
+                        true,
+                    ));
                 a.sync_hosted_services().await;
             });
         }
