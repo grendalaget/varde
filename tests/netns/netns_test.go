@@ -188,9 +188,9 @@ var nodeNames = []string{"a", "b", "c", "anchor"}
 // "internet"), per node a NAT namespace (10.200.77.1i) that masquerades
 // everything leaving it, and a node namespace on a private 192.168.i.0/24
 // link. Between nodes there is no route except via their NATs.
-func setupTopology(t *testing.T) {
+func setupTopology(t *testing.T, names []string) {
 	// idempotent: clear leftovers from a previous run first
-	for _, n := range nodeNames {
+	for _, n := range names {
 		_ = exec.Command(toolPath()["ip"], "netns", "del", n).Run()
 		_ = exec.Command(toolPath()["ip"], "netns", "del", "nat-"+n).Run()
 	}
@@ -198,7 +198,7 @@ func setupTopology(t *testing.T) {
 	run(t, toolPath()["ip"], "link", "add", bridge, "type", "bridge")
 	run(t, toolPath()["ip"], "addr", "add", wanNet, "dev", bridge)
 	run(t, toolPath()["ip"], "link", "set", bridge, "up")
-	for i, n := range nodeNames {
+	for i, n := range names {
 		idx := i + 1
 		nat := "nat-" + n
 		run(t, "ip", "netns", "add", nat)
@@ -253,7 +253,7 @@ func setupTopology(t *testing.T) {
 			fmt.Sprintf("192.168.%d.2:%d", idx, meshUDPPort))
 	}
 	t.Cleanup(func() {
-		for _, n := range nodeNames {
+		for _, n := range names {
 			_ = exec.Command(toolPath()["ip"], "netns", "del", n).Run()
 			_ = exec.Command(toolPath()["ip"], "netns", "del", "nat-"+n).Run()
 		}
@@ -266,8 +266,8 @@ func setupTopology(t *testing.T) {
 // port-forward: otherwise inbound punches still reach the node and the
 // half-open state (inbound delivered, outbound dropped) wedges the path
 // instead of falling back to relay.
-func blockDirectUDP(t *testing.T) {
-	for i, n := range nodeNames {
+func blockDirectUDP(t *testing.T, names []string) {
+	for i, n := range names {
 		idx := i + 1
 		nat := "nat-" + n
 		nsExec(t, nat, toolPath()["iptables"], "-t", "nat", "-D", "PREROUTING",
@@ -362,7 +362,7 @@ func TestNetnsDemo(t *testing.T) {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-netns`")
 	}
 	tmp := t.TempDir()
-	setupTopology(t)
+	setupTopology(t, nodeNames)
 
 	cpPort := 18080
 	cpURL := fmt.Sprintf("http://%s:%d", wanIP, cpPort)
@@ -597,7 +597,7 @@ func TestNetnsDemo(t *testing.T) {
 	})
 
 	// ---- phase 2: relay fallback ----
-	blockDirectUDP(t)
+	blockDirectUDP(t, nodeNames)
 	// restart every node's agent so fresh dials can't punch through
 	for _, nd := range nodes {
 		nd.proc.kill()

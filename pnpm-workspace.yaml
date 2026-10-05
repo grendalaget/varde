@@ -1,5 +1,6 @@
 packages:
   - "apps/web"
+  - "tests/minecraft-bot"
 
 allowBuilds:
   esbuild: true

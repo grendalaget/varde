@@ -95,3 +95,11 @@ clean:
 e2e-netns: test-bins
 	@if ! sudo -n true 2>/dev/null; then echo "e2e-netns needs root: run 'sudo -v' or 'sudo make e2e-netns'"; exit 1; fi
 	cd tests/netns && go test -tags netns -count=1 -v ./...
+
+# Minecraft e2e on the same netns topology (failover + owner shutdown).
+# Needs root plus node (VARDE_NODE if sudo's PATH hides it).
+.PHONY: e2e-minecraft
+e2e-minecraft: test-bins
+	@if ! sudo -n true 2>/dev/null; then echo "e2e-minecraft needs root: run 'sudo -v' or 'sudo make e2e-minecraft'"; exit 1; fi
+	pnpm --filter varde-minecraft-bot install
+	cd tests/netns && go test -tags 'netns minecraft' -run TestMinecraft -count=1 -v -timeout 40m ./...
