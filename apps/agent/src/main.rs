@@ -71,6 +71,22 @@ enum Cmd {
         #[arg(long, env = "VARDE_DATA_DIR")]
         data_dir: Option<PathBuf>,
     },
+    /// Manage the Windows service (install/uninstall as SYSTEM).
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Register the agent as a Windows service (auto-start).
+    Install,
+    /// Remove the Windows service registration.
+    Uninstall,
+    /// Run under the service control manager (invoked by SCM).
+    #[command(hide = true)]
+    Run,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -96,6 +112,23 @@ fn default_mesh_bin() -> Result<PathBuf> {
         return Ok(sibling);
     }
     Ok(PathBuf::from("/usr/lib/varde").join(name))
+}
+
+#[cfg(windows)]
+mod svc;
+
+#[cfg(windows)]
+async fn service_dispatch(action: ServiceAction) -> Result<()> {
+    match action {
+        ServiceAction::Install => svc::install(),
+        ServiceAction::Uninstall => svc::uninstall(),
+        ServiceAction::Run => svc::run_service(),
+    }
+}
+
+#[cfg(not(windows))]
+async fn service_dispatch(_action: ServiceAction) -> Result<()> {
+    anyhow::bail!("service management is only supported on Windows")
 }
 
 fn now_ms() -> i64 {
@@ -151,6 +184,7 @@ async fn main() -> Result<()> {
             .await
         }
         Cmd::Status { data_dir } => status(data_dir.unwrap_or_else(default_data_dir)),
+        Cmd::Service { action } => service_dispatch(action).await,
     }
 }
 

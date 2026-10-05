@@ -110,3 +110,37 @@ jobs:
           buf generate
           pnpm --dir apps/web gen:api
           git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+          override: true
+      - name: build agent + mesh (MSVC)
+        shell: pwsh
+        run: |
+          cargo build --release -p varde-agent
+          cd apps/mesh
+          go build -o ../../packaging/windows/dist/varde-mesh.exe .
+          cd ../..
+          Copy-Item target/release/varde-agent.exe packaging/windows/dist/
+      - name: Inno Setup
+        run: choco install innosetup -y
+      - name: build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DVersion="${{ github.ref_name }}" `
+            packaging/windows/varde-agent.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VardeSetup
+          path: packaging/windows/dist/VardeSetup-*.exe

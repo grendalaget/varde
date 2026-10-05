@@ -35,11 +35,6 @@ overrides:
     depends:
       - systemd
 scripts:
-  postinstall: |
-    getent passwd varde >/dev/null || useradd --system --home-dir /var/lib/varde --shell /usr/sbin/nologin varde
-    systemctl daemon-reload || true
-    systemctl enable --now varde-agent.service || true
-  preremove: |
-    systemctl disable --now varde-agent.service || true
-  postremove: |
-    systemctl daemon-reload || true
+  postinstall: packaging/linux/scripts/varde-agent.postinstall
+  preremove: packaging/linux/scripts/varde-agent.preremove
+  postremove: packaging/linux/scripts/postremove

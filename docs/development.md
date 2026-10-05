@@ -64,6 +64,17 @@ cargo check --target x86_64-pc-windows-gnu -p varde-agent
 (cd apps/mesh && GOOS=windows go build ./...)
 ```
 
+## Linux packages
+
+```sh
+make package VERSION=0.1.0   # nfpm .deb + .rpm into dist/
+```
+
+Produces `varde-agent`, `varde-control-plane` and `varde-relay` packages
+(systemd units, `varde` system user, `/var/lib/varde` 0700, env files under
+`/etc/varde`). The Windows installer is `packaging/windows/varde-agent.iss`
+(Inno Setup) — built by the `windows-installer` CI job on windows-latest.
+
 ## Root-only network-namespace demo (e2e-netns)
 
 `make e2e-netns` runs the networking.md §64 demo: Linux namespaces `a`, `b`,

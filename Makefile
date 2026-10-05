@@ -60,6 +60,23 @@ fmt:
 	cargo fmt
 	pnpm --dir apps/web format
 
+# Linux packages (.deb + .rpm) via nfpm. Requires nfpm on PATH.
+#   make package VERSION=0.1.0
+.PHONY: package
+package: VERSION ?= 0.0.0-dev
+package: build
+	@mkdir -p dist
+	cp bin/varde-agent bin/varde-mesh bin/varde-control-plane bin/varde-relay dist/
+	@for p in varde-agent varde-control-plane varde-relay; do \
+		cfg=packaging/linux/nfpm.yaml; \
+		[ $$p = varde-agent ] || cfg=packaging/linux/nfpm-$${p#varde-}.yaml; \
+		for pack in deb rpm; do \
+			ARCH=amd64 VERSION=$(VERSION) nfpm package \
+				--config $$cfg --packager $$pack \
+				--target dist/$$p-$(VERSION)-amd64.$$pack || exit 1; \
+		done; \
+	done
+
 check-gen: gen gen-go-api
 	@git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts \
 		apps/control-plane/internal/api/gen \

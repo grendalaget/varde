@@ -1,0 +1,4 @@
+#!/bin/sh
+getent passwd varde >/dev/null || useradd --system --home-dir /var/lib/varde --shell /usr/sbin/nologin varde
+systemctl daemon-reload || true
+systemctl enable --now varde-agent.service || true

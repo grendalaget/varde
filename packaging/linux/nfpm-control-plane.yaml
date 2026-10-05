@@ -1,0 +1,39 @@
+name: varde-control-plane
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: Arne Molland and varde contributors
+description: Varde control plane — peer-hosted game servers for groups of friends.
+license: MIT
+contents:
+  - src: dist/varde-control-plane
+    dst: /usr/bin/varde-control-plane
+    file_info:
+      mode: 0755
+  - src: packaging/linux/varde-control-plane.service
+    dst: /usr/lib/systemd/system/varde-control-plane.service
+    type: config
+    file_info:
+      mode: 0644
+  - src: packaging/linux/control-plane.env
+    dst: /etc/varde/control-plane.env
+    type: config|noreplace
+    file_info:
+      mode: 0640
+  - dst: /var/lib/varde-cp
+    type: dir
+    file_info:
+      mode: 0750
+overrides:
+  deb:
+    depends:
+      - systemd
+  rpm:
+    depends:
+      - systemd
+scripts:
+  postinstall: packaging/linux/scripts/varde-control-plane.postinstall
+  preremove: packaging/linux/scripts/varde-control-plane.preremove
+  postremove: packaging/linux/scripts/postremove
