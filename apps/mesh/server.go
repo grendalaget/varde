@@ -31,7 +31,7 @@ func (s *meshServer) Configure(_ context.Context, req *meshv1.ConfigureRequest) 
 	if err := s.n.Configure(req); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	s.log.Info("configured", "node_id", req.GetNodeId(),
+	s.log.Debug("configured", "node_id", req.GetNodeId(),
 		"relays", len(req.GetRelays()), "force_relay", req.GetForceRelay())
 	return &meshv1.ConfigureResponse{}, nil
 }

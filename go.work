@@ -5,4 +5,5 @@ use (
 	./apps/control-plane
 	./apps/relay
 	./apps/mesh
+	./tests/e2e
 )

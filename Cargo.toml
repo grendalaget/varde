@@ -6,6 +6,8 @@ members = [
     "crates/executor-api",
     "crates/snapshot-store",
     "crates/mesh-ipc",
+    "crates/executor-native",
+    "crates/cp-api",
     "games/testgame",
     "games/minecraft",
     "games/valheim",

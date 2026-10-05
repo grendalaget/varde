@@ -1,0 +1,25 @@
+[package]
+name = "cp-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek.workspace = true
+hex.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "client", "client-legacy", "http1"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls = { version = "0.26", features = ["ring"] }
+webpki-roots = "0.26"
+
+[dev-dependencies]
+serde_yaml = "0.9"

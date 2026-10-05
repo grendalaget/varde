@@ -1,4 +1,4 @@
-GO_MODULES := go apps/control-plane apps/relay apps/mesh
+GO_MODULES := go apps/control-plane apps/relay apps/mesh tests/e2e
 BIN := bin
 
 export PATH := $(HOME)/go/bin:$(PATH)
@@ -20,18 +20,33 @@ build:
 	done
 	cp target/debug/p2pgames-agent $(BIN)/p2pgames-agent
 
-# Copy the built SPA into the Go module so go:embed picks it up. The
-# committed placeholder index.html keeps `go build` working without a web build.
+# Copy the built SPA into the Go module so go:embed picks it up. dist/ is
+# fully untracked so `git status` stays clean; without a web build we
+# materialize it from the committed placeholder instead.
 .PHONY: webui-dist
 webui-dist:
+	@rm -rf apps/control-plane/internal/webui/dist
 	@if [ -d apps/web/dist ]; then \
-		rm -rf apps/control-plane/internal/webui/dist && \
 		cp -r apps/web/dist apps/control-plane/internal/webui/dist; \
+	else \
+		mkdir -p apps/control-plane/internal/webui/dist && \
+		cp apps/control-plane/internal/webui/placeholder.html \
+			apps/control-plane/internal/webui/dist/index.html; \
 	fi
 
-test:
+test: test-bins
 	@for m in $(GO_MODULES); do (cd $$m && go test ./...) || exit 1; done
 	cargo test --workspace
+
+# e2e tests execute the real binaries; build them first (idempotent).
+.PHONY: test-bins
+test-bins:
+	$(MAKE) webui-dist
+	@mkdir -p $(BIN)
+	@for m in control-plane relay mesh; do \
+		(cd apps/$$m && go build -o ../../$(BIN)/p2pgames-$$m .) || exit 1; \
+	done
+	cargo build --bins
 
 lint:
 	buf lint

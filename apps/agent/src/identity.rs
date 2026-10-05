@@ -35,6 +35,18 @@ pub fn load_or_create(path: &Path) -> Result<(String, bool)> {
     Ok((fingerprint(&key.verifying_key()), true))
 }
 
+/// Loads the node key (must exist — run `enroll` first) and returns it.
+pub fn load(path: &Path) -> Result<SigningKey> {
+    let pem = fs::read_to_string(path).with_context(|| format!("read key {}", path.display()))?;
+    SigningKey::from_pkcs8_pem(&pem).with_context(|| format!("parse key {}", path.display()))
+}
+
+/// base64(raw 32-byte public key) — the form the control plane stores.
+pub fn public_key_b64(key: &SigningKey) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(key.verifying_key().as_bytes())
+}
+
 /// fingerprint = "node_" + first 16 hex chars of SHA-256(raw 32-byte public
 /// key), matching go/identity.Fingerprint. Pre-enrollment log label only —
 /// after enrollment the agent uses the control-plane-assigned node_id.

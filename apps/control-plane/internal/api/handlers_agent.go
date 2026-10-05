@@ -446,8 +446,8 @@ func (s *Server) AgentCreateSnapshot(ctx context.Context, req gen.AgentCreateSna
 		return nil, errResp(gen.NotFound, "execution not found", nil)
 	}
 	// The snapshot is accepted only if the execution is the server's active
-	// one, held by the caller, epoch matches, and the lease is still valid —
-	// except final/migration snapshots during a stop in progress.
+	// one, held by the caller, epoch matches, and the lease is still valid.
+	// Stopping executions keep their lease alive via heartbeats.
 	active, aerr := s.Store.ActiveExecution(ctx, b.ServerId)
 	now := s.Store.NowMs()
 	valid := aerr == nil && active.ID == exec.ID && exec.NodeID == node.ID &&

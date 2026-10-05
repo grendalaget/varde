@@ -234,6 +234,7 @@ func (p *peerState) getEndpoints() []*net.UDPAddr {
 func (p *peerState) dialDirectOnce() bool {
 	eps := p.getEndpoints()
 	if len(eps) == 0 {
+		p.n.log.Debug("no endpoints to dial", "peer", p.id)
 		return false
 	}
 	budget := p.n.timings.DirectDialInterval * time.Duration(p.n.timings.DirectDialRounds)
@@ -247,6 +248,7 @@ func (p *peerState) dialDirectOnce() bool {
 			defer wg.Done()
 			conn, err := p.n.tr.Dial(ctx, addr, p.n.tlsConfigFor(p.id), quicConfig())
 			if err != nil {
+				p.n.log.Debug("direct dial failed", "peer", p.id, "addr", addr, "error", err)
 				return
 			}
 			if won.CompareAndSwap(false, true) {

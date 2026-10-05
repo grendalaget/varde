@@ -1,0 +1,639 @@
+//! Execution supervisor: `prepare → restore → configure → spawn → probe →
+//! running`; periodic + requested snapshots behind the driver barrier;
+//! restart policy 3-in-10-min; graceful stop with final snapshot and a
+//! replication hold; fencing watchdog targets the same handles.
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::{bail, Context, Result};
+use cp_api::{AgentSnapshot, ExecutionDirective};
+use executor_api::{Executor, OutputStream, ProcessHandle};
+use game_driver_api::{
+    DeploymentSpec, DriverContext, GameDriver, GameHealth, RuntimeProvider, SnapshotBarrier,
+};
+use snapshot_store::{SnapshotId, SnapshotMeta};
+use tokio::sync::watch;
+
+use crate::chunks;
+use crate::Agent;
+
+pub struct NoRuntimes;
+impl RuntimeProvider for NoRuntimes {
+    fn runtime_path(&self, _kind: &str, _id: &str) -> Option<PathBuf> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Preparing,
+    Restoring,
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Failed,
+    /// killed by the fencing watchdog; uploads forbidden
+    Fenced,
+}
+
+impl Phase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Phase::Preparing => "preparing",
+            Phase::Restoring => "restoring",
+            Phase::Starting => "starting",
+            Phase::Running => "running",
+            Phase::Stopping => "stopping",
+            Phase::Stopped => "stopped",
+            Phase::Failed => "failed",
+            Phase::Fenced => "fenced",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopKind {
+    /// Directive says action=stop: graceful → final snapshot → stopped.
+    Graceful,
+    /// Gone from directives / fenced: kill now, no uploads.
+    Hard,
+}
+
+pub struct ExecCtl {
+    pub dir: ExecutionDirective,
+    phase: Mutex<Phase>,
+    health: Mutex<String>,
+    message: Mutex<String>,
+    /// fencing deadline; refreshed each heartbeat
+    pub deadline: Mutex<Option<Instant>>,
+    fenced: AtomicBool,
+    stop: watch::Sender<Option<StopKind>>,
+    pgid: Mutex<u32>,
+    proc: Mutex<Option<Arc<dyn ProcessHandle>>>,
+    snapshot_reqs: Mutex<VecDeque<(String, String)>>, // (request_id, reason)
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// set when a graceful stop finished + reported stopped
+    finished: AtomicBool,
+}
+
+impl ExecCtl {
+    pub fn new(dir: ExecutionDirective) -> Arc<ExecCtl> {
+        let (tx, _rx) = watch::channel(None);
+        Arc::new(ExecCtl {
+            dir,
+            phase: Mutex::new(Phase::Preparing),
+            health: Mutex::new("unknown".into()),
+            message: Mutex::new(String::new()),
+            deadline: Mutex::new(None),
+            fenced: AtomicBool::new(false),
+            stop: tx,
+            pgid: Mutex::new(0),
+            proc: Mutex::new(None),
+            snapshot_reqs: Mutex::new(VecDeque::new()),
+            task: Mutex::new(None),
+            finished: AtomicBool::new(false),
+        })
+    }
+
+    pub fn phase(&self) -> Phase {
+        *self.phase.lock().unwrap()
+    }
+    pub fn set_phase(&self, p: Phase) {
+        *self.phase.lock().unwrap() = p;
+    }
+    pub fn health(&self) -> String {
+        self.health.lock().unwrap().clone()
+    }
+    pub fn message(&self) -> String {
+        self.message.lock().unwrap().clone()
+    }
+    pub fn set_health(&self, h: &str) {
+        *self.health.lock().unwrap() = h.to_string();
+    }
+    pub fn set_message(&self, m: &str) {
+        *self.message.lock().unwrap() = m.to_string();
+    }
+    pub fn is_fenced(&self) -> bool {
+        self.fenced.load(Ordering::SeqCst)
+    }
+    pub fn mark_fenced(&self) {
+        self.fenced.store(true, Ordering::SeqCst);
+        self.set_phase(Phase::Fenced);
+    }
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::SeqCst)
+    }
+    pub fn mark_finished(&self) {
+        self.finished.store(true, Ordering::SeqCst);
+    }
+    pub fn request_stop(&self, kind: StopKind) {
+        let _ = self.stop.send(Some(kind));
+    }
+    fn stop_rx(&self) -> watch::Receiver<Option<StopKind>> {
+        self.stop.subscribe()
+    }
+    pub fn set_pgid(&self, pid: u32) {
+        *self.pgid.lock().unwrap() = pid;
+    }
+    pub fn pgid(&self) -> u32 {
+        *self.pgid.lock().unwrap()
+    }
+    pub fn set_proc(&self, p: Arc<dyn ProcessHandle>) {
+        *self.proc.lock().unwrap() = Some(p);
+    }
+    pub fn proc(&self) -> Option<Arc<dyn ProcessHandle>> {
+        self.proc.lock().unwrap().clone()
+    }
+    pub fn queue_snapshot(&self, request_id: String, reason: String) {
+        self.snapshot_reqs
+            .lock()
+            .unwrap()
+            .push_back((request_id, reason));
+    }
+    fn next_snapshot_req(&self) -> Option<(String, String)> {
+        self.snapshot_reqs.lock().unwrap().pop_front()
+    }
+    pub fn set_task(&self, t: tokio::task::JoinHandle<()>) {
+        *self.task.lock().unwrap() = Some(t);
+    }
+}
+
+/// executor/driver APIs return Box<dyn Error>; anyhow can't `?` them.
+fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
+    anyhow::anyhow!("{e}")
+}
+
+fn unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Report an immediate state transition to the CP (best effort — heartbeat
+/// also carries it).
+pub async fn report(agent: &Agent, ctl: &ExecCtl) {
+    let body = cp_api::ExecutionStatusUpdate {
+        server_id: ctl.dir.server_id.clone(),
+        epoch: ctl.dir.epoch,
+        state: ctl.phase().as_str().into(),
+        health: Some(ctl.health()),
+        message: Some(ctl.message()),
+    };
+    let path = format!("/v1/agent/executions/{}/status", ctl.dir.execution_id);
+    if let Err(e) = agent
+        .cp
+        .json::<_, serde_json::Value>("POST", &path, Some(&body))
+        .await
+    {
+        tracing::warn!(exec = %ctl.dir.execution_id, error = %e, "status report failed");
+    }
+}
+
+pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
+    let a = agent.clone();
+    let c = ctl.clone();
+    let task = tokio::spawn(async move {
+        if let Err(e) = run(a.clone(), c.clone()).await {
+            tracing::error!(exec = %c.dir.execution_id, error = %format!("{e:#}"), "supervisor failed");
+            c.set_phase(Phase::Failed);
+            c.set_message(&format!("{e:#}"));
+            report(&a, &c).await;
+        }
+        a.execs.lock().unwrap().remove(&c.dir.execution_id);
+        a.state.lock().unwrap().remove(&c.dir.execution_id);
+        a.sync_hosted_services().await;
+    });
+    ctl.set_task(task);
+}
+
+async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
+    let dir = ctl.dir.clone();
+    let game_id = dir
+        .deployment
+        .as_ref()
+        .map(|d| d.game_id.clone())
+        .unwrap_or_else(|| "testgame".into());
+    let driver: &dyn GameDriver = agent
+        .drivers
+        .get(&game_id)
+        .context(format!("no driver for {game_id}"))?;
+    let config = dir.config.clone().unwrap_or(serde_json::json!({}));
+    driver.validate(&config).map_err(dyn_err)?;
+
+    let server_dir = agent.data_dir.join("servers").join(&dir.server_id);
+    let deployment_dir = agent.data_dir.join("deployments").join(
+        dir.deployment
+            .as_ref()
+            .map(|d| d.id.clone())
+            .unwrap_or_else(|| game_id.clone()),
+    );
+    std::fs::create_dir_all(&server_dir)?;
+    std::fs::create_dir_all(&deployment_dir)?;
+    let deployment = DeploymentSpec::parse(
+        &dir.deployment
+            .as_ref()
+            .map(|d| d.spec.clone())
+            .unwrap_or(serde_json::json!({})),
+    );
+    let ctx = DriverContext {
+        server_dir: &server_dir,
+        deployment_dir: &deployment_dir,
+        runtimes: &NoRuntimes,
+        deployment: &deployment,
+        config: &config,
+        memory_mb: 0,
+    };
+
+    // ---- prepare ----
+    ctl.set_phase(Phase::Preparing);
+    report(&agent, &ctl).await;
+    driver.prepare(&ctx).await.map_err(dyn_err)?;
+
+    // ---- restore ----
+    if let Some(r) = &dir.restore {
+        ctl.set_phase(Phase::Restoring);
+        report(&agent, &ctl).await;
+        let sid = SnapshotId(r.snapshot_id.clone());
+        chunks::fetch_snapshot(
+            &agent.mesh,
+            &agent.store,
+            &sid,
+            &r.manifest_digest,
+            &r.source_node_ids,
+        )
+        .await?;
+        let store = agent.store.clone();
+        let inc = driver.persistent_paths(&config);
+        let dst = server_dir.clone();
+        tokio::task::spawn_blocking(move || store.restore(&sid, &dst, &inc)).await??;
+    }
+
+    driver.configure(&ctx).await.map_err(dyn_err)?;
+
+    // ---- spawn + probe + supervise ----
+    let mut attempts: VecDeque<Instant> = VecDeque::new();
+    let mut last_snap = Instant::now();
+    let snap_interval = Duration::from_secs(dir.snapshot_interval_s.unwrap_or(120).max(5) as u64);
+    let mut stop_rx = ctl.stop_rx();
+
+    'outer: loop {
+        // restart policy: 3 attempts in 10 minutes
+        let now = Instant::now();
+        while attempts
+            .front()
+            .map(|t| now.duration_since(*t) > Duration::from_secs(600))
+            .unwrap_or(false)
+        {
+            attempts.pop_front();
+        }
+        if attempts.len() >= 3 {
+            ctl.set_phase(Phase::Failed);
+            ctl.set_message("restart limit reached (3 in 10 min)");
+            report(&agent, &ctl).await;
+            ctl.mark_finished();
+            return Ok(());
+        }
+        attempts.push_back(now);
+
+        ctl.set_phase(Phase::Starting);
+        report(&agent, &ctl).await;
+        let spec = driver.process_spec(&ctx).map_err(dyn_err)?;
+        let proc = agent.executor.spawn(&spec).await.map_err(dyn_err)?;
+        let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
+        tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
+        ctl.set_pgid(proc.pid());
+        ctl.set_proc(proc.clone());
+        agent.note_exec_pgid(&dir.execution_id, proc.pid());
+        spawn_log_pump(&agent, &ctl, proc.clone());
+
+        // watch the process while probing so an early crash restarts now
+        // instead of waiting out the probe deadline
+        let exit_watch = {
+            let p = proc.clone();
+            tokio::spawn(async move { p.wait().await })
+        };
+        tokio::pin!(exit_watch);
+
+        // probe until healthy; any early return past this point must kill the
+        // spawned process — bail!/return would leave the game orphaned and the
+        // exec removed from execs (the fencing watchdog could never reach it)
+        let mut running = false;
+        let mut probe_dead = false;
+        let probe_deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < probe_deadline && !exit_watch.is_finished() {
+            match driver.probe(&ctx, &*proc).await {
+                Ok(GameHealth::Healthy) => {
+                    running = true;
+                    break;
+                }
+                Ok(GameHealth::Dead(m)) => {
+                    tracing::warn!(exec = %dir.execution_id, "probe: {m}");
+                    probe_dead = true;
+                    break;
+                }
+                Ok(GameHealth::Starting) => {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                        _ = &mut exit_watch => {}
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(exec = %dir.execution_id, error = %format!("{e:#}"), "probe error");
+                }
+            }
+            if ctl.is_fenced() {
+                running = false;
+                break;
+            }
+        }
+        if probe_dead {
+            let _ = proc.kill().await;
+            continue 'outer;
+        }
+        if !running && exit_watch.is_finished() {
+            if let Ok(st) = (&mut exit_watch).await {
+                tracing::warn!(exec = %dir.execution_id, status = ?st, "game exited during startup");
+            }
+        }
+        if ctl.is_fenced() {
+            let _ = proc.kill().await;
+            ctl.mark_finished();
+            return Ok(());
+        }
+        if !running {
+            let _ = proc.kill().await;
+            continue 'outer;
+        }
+        ctl.set_phase(Phase::Running);
+        ctl.set_health("ok");
+        report(&agent, &ctl).await;
+        agent.sync_hosted_services().await;
+
+        // ---- running loop ----
+        let mut exited = false;
+        let mut graceful_stop = false;
+        loop {
+            tokio::select! {
+                _ = stop_rx.changed() => {
+                    let kind = *stop_rx.borrow();
+                    match kind {
+                        Some(StopKind::Hard) => {
+                            let _ = proc.kill().await;
+                            ctl.mark_finished();
+                            return Ok(());
+                        }
+                        Some(StopKind::Graceful) => { graceful_stop = true; break; }
+                        None => continue,
+                    }
+                }
+                _ = proc.wait() => { exited = true; break; }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+            }
+            if ctl.is_fenced() {
+                let _ = proc.kill().await;
+                ctl.mark_finished();
+                return Ok(());
+            }
+            // periodic + requested snapshots
+            let due_req = ctl.next_snapshot_req();
+            let due_time = last_snap.elapsed() >= snap_interval;
+            if let Some((req_id, reason)) = due_req {
+                let _ =
+                    do_snapshot(&agent, &ctl, driver, &ctx, &proc, &reason, Some(&req_id)).await;
+                last_snap = Instant::now();
+            } else if due_time {
+                let _ = do_snapshot(&agent, &ctl, driver, &ctx, &proc, "scheduled", None).await;
+                last_snap = Instant::now();
+            }
+        }
+
+        if exited && !graceful_stop && !ctl.is_fenced() {
+            tracing::warn!(exec = %dir.execution_id, "game exited; restarting");
+            continue 'outer;
+        }
+        if graceful_stop {
+            break;
+        }
+        if ctl.is_fenced() {
+            ctl.mark_finished();
+            return Ok(());
+        }
+    }
+
+    // ---- graceful stop: final snapshot + replication hold ----
+    ctl.set_phase(Phase::Stopping);
+    report(&agent, &ctl).await;
+    let proc = ctl.proc().unwrap();
+
+    // Final snapshot while the game is still live: the driver's barrier
+    // (save-off/save-all) needs a running process. A graceful stop that asks
+    // the game to exit would leave nobody to answer the barrier.
+    let mut final_snap = None;
+    if !ctl.is_fenced() {
+        match do_snapshot(&agent, &ctl, driver, &ctx, &proc, "final", None).await {
+            Ok(info) => final_snap = Some(info),
+            Err(e) => {
+                tracing::warn!(exec = %dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+            }
+        }
+    }
+
+    let _ = driver
+        .graceful_stop(&ctx, &*proc)
+        .await
+        .map_err(|e| tracing::warn!("graceful stop: {e}"));
+    let _ = tokio::time::timeout(Duration::from_secs(30), proc.wait()).await;
+    let _ = proc.kill().await;
+
+    if let Some(info) = final_snap {
+        let _ = hold_for_replication(&agent, &info.id).await;
+    }
+
+    ctl.set_phase(Phase::Stopped);
+    ctl.mark_finished();
+    report(&agent, &ctl).await;
+    agent.sync_hosted_services().await;
+    Ok(())
+}
+
+/// Barrier → Store::snapshot → POST /v1/agent/snapshots. Returns the info on
+/// success; marks the manifest invalid locally on 409 stale_epoch.
+async fn do_snapshot(
+    agent: &Agent,
+    ctl: &ExecCtl,
+    driver: &dyn GameDriver,
+    ctx: &DriverContext<'_>,
+    proc: &Arc<dyn ProcessHandle>,
+    reason: &str,
+    request_id: Option<&str>,
+) -> Result<snapshot_store::SnapshotInfo> {
+    let reason = reason.to_string();
+    let reason2 = reason.clone();
+    if ctl.is_fenced() {
+        bail!("fenced execution never uploads snapshots");
+    }
+    match driver
+        .prepare_snapshot(ctx, &**proc)
+        .await
+        .map_err(dyn_err)?
+    {
+        SnapshotBarrier::Live => {}
+        SnapshotBarrier::RequiresStop => {
+            bail!("driver requires stop for snapshot")
+        }
+    }
+    let server_dir = ctx.server_dir.to_path_buf();
+    let inc = driver.persistent_paths(ctx.config);
+    let store = agent.store.clone();
+    let dir = ctl.dir.clone();
+    let dep_id = dir
+        .deployment
+        .as_ref()
+        .map(|d| d.id.clone())
+        .unwrap_or_else(|| game_id(ctx));
+    let node_id = agent.cfg.node_id.clone();
+    let info = tokio::task::spawn_blocking(move || {
+        store.snapshot(
+            &server_dir,
+            &inc,
+            SnapshotMeta {
+                server_id: dir.server_id.clone(),
+                execution_id: dir.execution_id.clone(),
+                epoch: dir.epoch,
+                node_id,
+                // parent is advisory; the CP derives it from its own rows
+                parent: None,
+                deployment_id: dep_id,
+                created_at_unix_ms: unix_ms(),
+                reason: reason2,
+            },
+        )
+    })
+    .await??;
+    driver
+        .resume_after_snapshot(ctx, &**proc)
+        .await
+        .map_err(dyn_err)?;
+
+    let body = AgentSnapshot {
+        snapshot_id: info.id.0.clone(),
+        server_id: ctl.dir.server_id.clone(),
+        execution_id: ctl.dir.execution_id.clone(),
+        epoch: ctl.dir.epoch,
+        parent_id: None,
+        manifest_digest: info.digest.clone(),
+        deployment_id: ctl
+            .dir
+            .deployment
+            .as_ref()
+            .map(|d| d.id.clone())
+            .unwrap_or_default(),
+        reason: reason.clone(),
+        size_bytes: Some(info.size_bytes as i64),
+        stored_bytes: Some(info.stored_bytes as i64),
+        file_count: Some(info.file_count as i64),
+        chunk_count: Some(info.chunk_count as i64),
+        request_id: request_id.map(|s| s.to_string()),
+    };
+    match agent
+        .cp
+        .json::<_, serde_json::Value>("POST", "/v1/agent/snapshots", Some(&body))
+        .await
+    {
+        Ok(_) => {
+            tracing::info!(exec = %ctl.dir.execution_id, snap = %info.id, reason = %reason, "snapshot accepted");
+        }
+        Err(e) if e.api_code() == Some("stale_epoch") => {
+            // CP rejected: mark invalid locally, never upload again
+            let _ = agent.store.delete_snapshot(&info.id);
+            tracing::warn!(snap = %info.id, "snapshot rejected as stale; marked invalid");
+            return Err(e.into());
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(info)
+}
+
+fn game_id(ctx: &DriverContext<'_>) -> String {
+    ctx.deployment
+        .get("game_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("testgame")
+        .to_string()
+}
+
+/// Hold the stop until a peer fetched the whole snapshot through our chunk
+/// server (≈ "reports ready"), bounded by shutdown_replication_timeout.
+async fn hold_for_replication(agent: &Agent, id: &SnapshotId) -> Result<()> {
+    let timeout = Duration::from_secs(agent.cfg.shutdown_replication_timeout_s.max(1) as u64);
+    let deadline = Instant::now() + timeout;
+    let m = agent.store.manifest(id)?;
+    while Instant::now() < deadline {
+        if agent.chunk_tracker.fully_served(&id.0, &m) || agent.chunk_tracker.peer_ready(&id.0) {
+            tracing::info!(snap = %id, "final snapshot fully fetched by a peer");
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    tracing::warn!(snap = %id, "replication hold timed out; save remains local for now");
+    Ok(())
+}
+
+/// Forward process output to the CP logs endpoint (throttled).
+fn spawn_log_pump(agent: &Arc<Agent>, ctl: &Arc<ExecCtl>, proc: Arc<dyn ProcessHandle>) {
+    let mut rx = proc.output();
+    let a = agent.clone();
+    let exec_id = ctl.dir.execution_id.clone();
+    tokio::spawn(async move {
+        let mut batch = Vec::new();
+        let mut tick = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            tokio::select! {
+                l = rx.recv() => {
+                    match l {
+                        Ok(l) => {
+                            batch.push(cp_api::LogLine {
+                                at: l.at_unix_ms,
+                                stream: match l.stream {
+                                    OutputStream::Stdout => "stdout",
+                                    OutputStream::Stderr => "stderr",
+                                    OutputStream::Agent => "agent",
+                                }.into(),
+                                line: l.line.to_string(),
+                            });
+                            if batch.len() >= 100 {
+                                flush_logs(&a, &exec_id, &mut batch).await;
+                            }
+                        }
+                        Err(_) => {
+                            flush_logs(&a, &exec_id, &mut batch).await;
+                            return;
+                        }
+                    }
+                }
+                _ = tick.tick() => {
+                    if !batch.is_empty() {
+                        flush_logs(&a, &exec_id, &mut batch).await;
+                    }
+                }
+            }
+        }
+    });
+}
+
+async fn flush_logs(agent: &Agent, exec_id: &str, batch: &mut Vec<cp_api::LogLine>) {
+    let body = cp_api::LogBatch {
+        lines: std::mem::take(batch),
+    };
+    let path = format!("/v1/agent/executions/{exec_id}/logs");
+    let _ = agent
+        .cp
+        .json::<_, serde_json::Value>("POST", &path, Some(&body))
+        .await;
+}

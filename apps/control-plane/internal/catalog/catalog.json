@@ -2,7 +2,10 @@
   {
     "id": "testgame",
     "name": "Test Game",
-    "ports": [{ "port": 23000, "protocol": "udp" }],
+    "ports": [
+      { "port": 7777, "protocol": "tcp" },
+      { "port": 7777, "protocol": "udp" }
+    ],
     "os": ["linux", "windows"],
     "arch": ["x86_64", "aarch64"],
     "min_memory_mb": 64,

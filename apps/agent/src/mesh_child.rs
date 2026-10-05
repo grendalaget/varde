@@ -27,7 +27,9 @@ impl SupervisedChild {
 
 /// Spawn parameters kept for respawns after a crash.
 pub struct ChildSpec {
+    #[allow(dead_code)]
     bin: PathBuf,
+    #[allow(dead_code)]
     ipc: String,
 }
 
@@ -41,6 +43,7 @@ pub fn spawn(bin: PathBuf, ipc: String) -> (SupervisedChild, ChildSpec) {
 }
 
 /// Respawns after a crash using the saved spec.
+#[allow(dead_code)]
 pub fn respawn(spec: &ChildSpec) -> SupervisedChild {
     spawn_inner(&spec.bin, &spec.ipc)
 }
@@ -62,10 +65,22 @@ fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
 }
 
 fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
-    Command::new(bin)
-        .arg("--ipc")
-        .arg(ipc)
-        .stdin(Stdio::null())
-        .spawn()
+    let mut cmd = Command::new(bin);
+    cmd.arg("--ipc").arg(ipc).stdin(Stdio::null());
+    if let Ok(lvl) = std::env::var("P2PGAMES_MESH_LOG_LEVEL") {
+        cmd.arg("--log-level").arg(lvl);
+    }
+    // If the agent dies abruptly, the mesh must not orphan: it would keep
+    // holding loopback routes and the QUIC socket.
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
         .with_context(|| format!("spawn {}", bin.display()))
 }
