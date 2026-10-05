@@ -1273,3 +1273,28 @@ func TestNodeConnections(t *testing.T) {
 		t.Fatal("node a not in list")
 	}
 }
+
+// An admin must not mint owner invites — that would let them promote
+// themselves. Owners (and operators) still can.
+func TestOwnerInviteRequiresOwner(t *testing.T) {
+	e := newEnv(t)
+	adminTok := e.signup("admin@example.com", "password123")
+	admin, err := e.st.UserByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddMember(context.Background(), e.group, admin.ID, "admin", e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "owner"}, adminTok)
+	if r.Status != 403 {
+		t.Fatalf("admin creating owner invite: want 403, got %d %s", r.Status, r.Raw)
+	}
+	// member invites are still fine for admins
+	e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "member"}, adminTok))
+	// and the group owner can still create owner invites
+	e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/invites",
+		map[string]any{"role": "owner"}, e.token))
+}
