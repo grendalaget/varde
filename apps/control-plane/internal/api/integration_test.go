@@ -659,6 +659,113 @@ func TestLatestSaveUnavailableAndAllowOlder(t *testing.T) {
 	e.mustOK(r)
 }
 
+// A newer save that lives only on an offline machine must block a normal
+// start even when an older save is reachable — otherwise /start silently
+// restores the older save. allow_older_snapshot and automatic recovery both
+// fall back to the older committed save.
+func TestOlderReachableSaveDoesNotBypassLatestBlocker(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execA, epA := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+
+	// snap_old: committed, reachable on other. snap_new: committed too, but
+	// its only replica lives on host.
+	if r := host.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_old", "aa"); r.Status != 201 {
+		t.Fatalf("snap_old %d %s", r.Status, r.Raw)
+	}
+	if r := host.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_new", "bb"); r.Status != 201 {
+		t.Fatalf("snap_new %d %s", r.Status, r.Raw)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`UPDATE snapshots SET state='committed', committed_at=? WHERE id IN ('snap_old','snap_new')`), e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	// restrict each snapshot's replicas to the intended node
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_old' AND node_id!=?`), other.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_new' AND node_id!=?`), host.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if r := other.replicaReady("snap_old"); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+
+	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/stop", nil, e.token))
+	e.reconcile()
+	if r := host.execStatus(execA, srv, epA, "stopped"); r.Status != 204 {
+		t.Fatalf("stopped %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+
+	// host offline: snap_new unreachable, snap_old reachable on other.
+	e.clk.advance(testTimings.OfflineAfterMs + 5000)
+	other.heartbeat(nil)
+	e.reconcile()
+
+	r := e.do("POST", "/v1/servers/"+srv+"/start", map[string]any{}, e.token)
+	if r.Status != 409 || r.Body["code"] != "latest_save_unavailable" {
+		t.Fatalf("want 409 latest_save_unavailable, got %d %s", r.Status, r.Raw)
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("a blocked start must not create an execution")
+	}
+
+	// allow_older_snapshot: restores snap_old, not snap_new.
+	r = e.do("POST", "/v1/servers/"+srv+"/start",
+		map[string]any{"allow_older_snapshot": true}, e.token)
+	e.mustOK(r)
+	e.reconcile()
+	ex := e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("allow_older start produced no execution")
+	}
+	d, _ := other.heartbeat(nil)
+	var found *struct {
+		SnapshotID    string   `json:"snapshot_id"`
+		SourceNodeIDs []string `json:"source_node_ids"`
+	}
+	for _, ex := range d.Executions {
+		if ex.ServerID == srv {
+			found = ex.Restore
+		}
+	}
+	if found == nil || found.SnapshotID != "snap_old" {
+		t.Fatalf("allow_older restore: %+v", found)
+	}
+
+	// the exec dies → automatic re-placement is recovery and must also use
+	// snap_old (newest committed save reachable), never 409
+	execB := ex["id"].(string)
+	epochB := ex["epoch"].(int64)
+	if r := other.execStatus(execB, srv, epochB, "stopped"); r.Status != 204 {
+		t.Fatalf("exec stop %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	ex = e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("recovery produced no execution")
+	}
+	d, _ = other.heartbeat(nil)
+	found = nil
+	for _, ex := range d.Executions {
+		if ex.ServerID == srv {
+			found = ex.Restore
+		}
+	}
+	if found == nil || found.SnapshotID != "snap_old" {
+		t.Fatalf("recovery restore: %+v", found)
+	}
+}
+
 func TestCommitPolicyMinAndAnchor(t *testing.T) {
 	e := newEnv(t)
 	a := e.newAgent("nodeA")
