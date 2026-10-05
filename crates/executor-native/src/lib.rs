@@ -195,6 +195,10 @@ impl ProcessHandle for NativeHandle {
         platform_terminate(self)
     }
 
+    async fn interrupt(&self) -> Result<()> {
+        platform_interrupt(self)
+    }
+
     async fn kill(&self) -> Result<()> {
         platform_kill(self)
     }
@@ -237,6 +241,17 @@ fn platform_configure(cmd: &mut Command) {
 fn platform_terminate(h: &NativeHandle) -> Result<()> {
     // negative pid ⇒ the whole process group (child is group leader)
     if unsafe { libc::kill(-(h.pid as i32), libc::SIGTERM) } == -1 {
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() != Some(libc::ESRCH) {
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn platform_interrupt(h: &NativeHandle) -> Result<()> {
+    if unsafe { libc::kill(-(h.pid as i32), libc::SIGINT) } == -1 {
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ESRCH) {
             return Err(e.into());
@@ -384,6 +399,12 @@ fn platform_terminate(h: &NativeHandle) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn platform_interrupt(h: &NativeHandle) -> Result<()> {
+    // CTRL_BREAK is the closest interrupt signal available
+    platform_terminate(h)
 }
 
 #[cfg(windows)]

@@ -75,6 +75,9 @@ pub trait ProcessHandle: Send + Sync {
     async fn wait(&self) -> Result<ExitStatus>;
     /// Graceful: SIGTERM to the process group / CTRL_BREAK (Windows).
     async fn terminate(&self) -> Result<()>;
+    /// Interrupt-style graceful stop: SIGINT to the process group /
+    /// CTRL_BREAK (Windows). Games that only honor SIGINT (valheim).
+    async fn interrupt(&self) -> Result<()>;
     /// Hard kill of the whole group / job object.
     async fn kill(&self) -> Result<()>;
     fn resource_usage(&self) -> Option<ResourceUsage>;

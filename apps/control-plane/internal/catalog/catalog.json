@@ -25,14 +25,14 @@
     "runtimes": ["java"],
     "config_fields": [
       { "name": "version", "type": "select", "options": ["1.21.4", "1.21.1", "1.20.6"], "default": "1.21.4", "required": true },
-      { "name": "flavor", "type": "select", "options": ["vanilla", "paper"], "default": "paper", "required": true },
+      { "name": "eula_accepted", "type": "bool", "default": false, "required": true, "help": "you must accept the Minecraft EULA to run a server" },
       { "name": "max_players", "type": "int", "default": 20, "required": false },
       { "name": "difficulty", "type": "select", "options": ["peaceful", "easy", "normal", "hard"], "default": "normal" },
+      { "name": "gamemode", "type": "select", "options": ["survival", "creative", "adventure", "spectator"], "default": "survival" },
       { "name": "view_distance", "type": "int", "default": 10 },
       { "name": "online_mode", "type": "bool", "default": false, "help": "off for peer-hosted play without Mojang auth" },
-      { "name": "motd", "type": "string", "default": "A varde server" },
-      { "name": "seed", "type": "string", "required": false },
-      { "name": "admin_usernames", "type": "string", "required": false, "help": "comma-separated Minecraft usernames to op" }
+      { "name": "motd", "type": "string", "default": "A Varde server" },
+      { "name": "seed", "type": "string", "required": false }
     ]
   },
   {
@@ -40,8 +40,7 @@
     "name": "Valheim Dedicated",
     "ports": [
       { "port": 2456, "protocol": "udp" },
-      { "port": 2457, "protocol": "udp" },
-      { "port": 2458, "protocol": "udp" }
+      { "port": 2457, "protocol": "udp" }
     ],
     "os": ["linux", "windows"],
     "arch": ["x86_64"],
