@@ -20,4 +20,8 @@ export default tseslint.config([
       globals: globals.browser,
     },
   },
+  {
+    files: ["src/lib/**/*.tsx", "src/components/ui.tsx"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
 ]);
