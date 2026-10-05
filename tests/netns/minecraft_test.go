@@ -154,6 +154,8 @@ type mcEnv struct {
 	token   string
 	nodes   map[string]*node
 	cp      *proc
+
+	serverIDs []string
 }
 
 func newMCEnv(t *testing.T, names []string) *mcEnv {
@@ -189,20 +191,22 @@ func newMCEnv(t *testing.T, names []string) *mcEnv {
 		if !t.Failed() {
 			return
 		}
+		e.dumpServerState()
 		for _, nd := range e.nodes {
 			if nd.proc == nil {
 				continue
 			}
 			var keep []string
 			for _, l := range strings.Split(nd.proc.buf.String(), "\n") {
-				if strings.Contains(l, `"msg":"configured"`) ||
-					strings.Contains(l, "direct dial failed") {
+				// drop mesh-child slog lines ({"time":...}) — they bury the
+				// agent's tracing lines in relay/dial spam
+				if strings.HasPrefix(l, `{"time":`) {
 					continue
 				}
 				keep = append(keep, l)
 			}
-			if len(keep) > 60 {
-				keep = keep[len(keep)-60:]
+			if len(keep) > 400 {
+				keep = keep[len(keep)-400:]
 			}
 			t.Logf("--- node %s agent log tail ---\n%s", nd.name, strings.Join(keep, "\n"))
 		}
@@ -316,7 +320,27 @@ func (e *mcEnv) createMCServer(name, preferred string) string {
 		"replication_factor": 3, "min_commit_replicas": 1,
 		"preferred_node_id": e.nodes[preferred].nodeID,
 	}, 201)
-	return srv["id"].(string)
+	id := srv["id"].(string)
+	e.serverIDs = append(e.serverIDs, id)
+	return id
+}
+
+// dumpServerState logs executions + node liveness for diagnosis.
+func (e *mcEnv) dumpServerState() {
+	for _, id := range e.serverIDs {
+		st, b := apiCall("GET", e.cpURL+"/v1/servers/"+id+"/executions", e.tok, nil)
+		e.t.Logf("server %s executions (%d): %s", id, st, b)
+	}
+	st, b := apiCall("GET", e.cpURL+"/v1/groups/"+e.groupID+"/nodes", e.tok, nil)
+	if st == 200 {
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		for _, nn := range m["nodes"].([]any) {
+			nm := nn.(map[string]any)
+			e.t.Logf("node %s: liveness=%v hosting=%v",
+				e.nodeName(nm["id"].(string)), nm["liveness"], nm["hosting_enabled"])
+		}
+	}
 }
 
 func (e *mcEnv) hostOf(serverID string) string {
