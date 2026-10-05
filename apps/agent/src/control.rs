@@ -245,6 +245,7 @@ async fn report_absent_stopped_msg(agent: &Agent, e: &cp_api::ExecutionDirective
         state: "stopped".into(),
         health: None,
         message: Some(message.to_string()),
+        join_code: None,
     };
     let path = format!("/v1/agent/executions/{}/status", e.execution_id);
     let _ = agent

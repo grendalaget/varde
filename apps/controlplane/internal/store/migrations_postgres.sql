@@ -170,6 +170,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_active
     ON server_executions(server_id) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exec_node ON server_executions(node_id) WHERE ended_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS execution_info (
+    execution_id TEXT PRIMARY KEY REFERENCES server_executions(id),
+    join_code TEXT,
+    updated_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS migrations (
     id                 TEXT PRIMARY KEY,
     server_id          TEXT NOT NULL REFERENCES servers(id),

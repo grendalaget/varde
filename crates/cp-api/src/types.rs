@@ -135,6 +135,8 @@ pub struct ExecutionReport {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +292,8 @@ pub struct ExecutionStatusUpdate {
     pub health: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -475,6 +479,8 @@ pub struct ServerSummary {
     pub only_on_one_machine: Option<bool>,
     #[serde(default)]
     pub address: Option<String>,
+    #[serde(default)]
+    pub join_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

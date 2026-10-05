@@ -120,6 +120,18 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 	leaseExp := now + s.Cfg.Timings.LeaseTTLMs
 
 	return s.Store.Tx(ctx, func(tx *sqlx.Tx) error {
+		if er.JoinCode != nil {
+			changed, err := s.Store.SetExecutionJoinCode(ctx, tx, exec.ID, *er.JoinCode, now)
+			if err != nil {
+				return err
+			}
+			if changed {
+				if err := s.Store.EmitEvent(ctx, tx, node.GroupID, &exec.ServerID, &node.ID,
+					"server.join_code", map[string]any{"join_code": *er.JoinCode}); err != nil {
+					return err
+				}
+			}
+		}
 		switch state {
 		case "running":
 			if exec.StartedAt == nil {
@@ -289,6 +301,10 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		if err != nil {
 			continue
 		}
+		var config map[string]any
+		if json.Unmarshal([]byte(srv.ConfigJSON), &config) == nil && config["crossplay"] == true {
+			continue
+		}
 		var ports []gen.GamePort
 		_ = json.Unmarshal([]byte(svc.PortsJSON), &ports)
 		rt := gen.DirectiveRoute{
@@ -401,7 +417,7 @@ func (s *Server) AgentExecutionStatus(ctx context.Context, req gen.AgentExecutio
 	now := s.Store.NowMs()
 	if err := s.processExecReport(ctx, node, &gen.ExecutionReport{
 		ExecutionId: exec.ID, ServerId: b.ServerId, Epoch: b.Epoch,
-		State: b.State, Health: b.Health, Message: b.Message,
+		State: b.State, Health: b.Health, Message: b.Message, JoinCode: b.JoinCode,
 	}, now); err != nil {
 		return nil, errResp(gen.StaleEpoch, "stale execution", nil)
 	}

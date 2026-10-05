@@ -78,12 +78,43 @@ impl ValheimDriver {
         Ok(seconds)
     }
 
+    fn crossplay(config: &serde_json::Value) -> Result<bool> {
+        Ok(config
+            .get("crossplay")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or("valheim: config crossplay must be a boolean")
+            })
+            .transpose()?
+            .unwrap_or(false))
+    }
+
+    fn instance_id(server_id: &str) -> String {
+        let sanitized: String = server_id
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("varde-{sanitized}")
+    }
+
     fn valid_world_name(world: &str) -> bool {
         !world.is_empty() && !world.chars().any(|c| matches!(c, '/' | '\\' | '*' | '?'))
     }
 
     /// argv after the binary, per agent.md.
-    pub fn args(config: &serde_json::Value, server_dir: &Path, port: u32) -> Result<Vec<OsString>> {
+    pub fn args(
+        config: &serde_json::Value,
+        server_id: &str,
+        server_dir: &Path,
+        port: u32,
+    ) -> Result<Vec<OsString>> {
         let name = Self::cfg_str(config, "server_name")?;
         let world = Self::cfg_str(config, "world_name")?;
         let pw = Self::cfg_str(config, "password")?;
@@ -119,7 +150,23 @@ impl ValheimDriver {
         if let Some(preset) = Self::preset(config)? {
             args.extend([OsString::from("-preset"), OsString::from(preset)]);
         }
+        if Self::crossplay(config)? {
+            args.extend([
+                OsString::from("-crossplay"),
+                OsString::from("-instanceid"),
+                OsString::from(Self::instance_id(server_id)),
+            ]);
+        }
         Ok(args)
+    }
+
+    fn parse_join_code(line: &str) -> Option<String> {
+        let code = line.split_once("join code ")?.1.split_whitespace().next()?;
+        if !code.is_empty() && code.bytes().all(|byte| byte.is_ascii_digit()) {
+            Some(code.to_string())
+        } else {
+            None
+        }
     }
 
     /// Valheim marks a completed world save with `World save (5/5) done`.
@@ -188,6 +235,7 @@ impl GameDriver for ValheimDriver {
         }
         Self::preset(config)?;
         Self::save_interval_s(config)?;
+        Self::crossplay(config)?;
         Ok(())
     }
 
@@ -230,11 +278,20 @@ impl GameDriver for ValheimDriver {
         ];
         Ok(ProcessSpec {
             program: Self::binary(ctx),
-            args: Self::args(ctx.config, ctx.server_dir, ctx.local_port(PORT))?,
+            args: Self::args(
+                ctx.config,
+                ctx.server_id,
+                ctx.server_dir,
+                ctx.local_port(PORT),
+            )?,
             env,
             cwd: dep,
             stdin: false,
         })
+    }
+
+    fn join_code_from_log(&self, line: &str) -> Option<String> {
+        Self::parse_join_code(line)
     }
 
     async fn probe(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<GameHealth> {
@@ -398,14 +455,14 @@ mod tests {
 
     #[test]
     fn args_shape() {
-        let a = ValheimDriver::args(&cfg(), Path::new("/srv"), 2456).unwrap();
+        let a = ValheimDriver::args(&cfg(), "srv-123", Path::new("/srv"), 2456).unwrap();
         let s: Vec<String> = a.iter().map(|o| o.to_string_lossy().into()).collect();
         assert!(s.contains(&"-nographics".to_string()));
         assert!(s.contains(&"-batchmode".to_string()));
         let port_i = s.iter().position(|x| x == "-port").unwrap();
         assert_eq!(s[port_i + 1], "2456");
         // agent-allocated local port is used verbatim
-        let a2 = ValheimDriver::args(&cfg(), Path::new("/srv"), 32101).unwrap();
+        let a2 = ValheimDriver::args(&cfg(), "srv-123", Path::new("/srv"), 32101).unwrap();
         let s2: Vec<String> = a2.iter().map(|o| o.to_string_lossy().into()).collect();
         let pi2 = s2.iter().position(|x| x == "-port").unwrap();
         assert_eq!(s2[pi2 + 1], "32101");
@@ -419,6 +476,27 @@ mod tests {
         assert_eq!(s[backups_i + 1], "0");
         let preset_i = s.iter().position(|x| x == "-preset").unwrap();
         assert_eq!(s[preset_i + 1], "Normal");
+        assert!(!s
+            .iter()
+            .any(|arg| arg == "-crossplay" || arg == "-instanceid"));
+    }
+
+    #[test]
+    fn crossplay_args_use_a_sanitized_server_instance_id() {
+        let mut config = cfg();
+        config["crossplay"] = json!(true);
+        let args = ValheimDriver::args(&config, "srv /123", Path::new("/srv"), 2456).unwrap();
+        let args: Vec<String> = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into())
+            .collect();
+        assert!(args.contains(&"-crossplay".to_string()));
+        let instance_id = args.iter().position(|arg| arg == "-instanceid").unwrap();
+        assert_eq!(args[instance_id + 1], "varde-srv__123");
+        assert!(ValheimDriver::new().validate(&config).is_ok());
+
+        config["crossplay"] = json!("true");
+        assert!(ValheimDriver::new().validate(&config).is_err());
     }
 
     #[test]
@@ -443,6 +521,9 @@ mod tests {
             bad_preset["modifiers"] = json!(preset);
             assert!(ValheimDriver::new().validate(&bad_preset).is_err());
         }
+        let mut bad_crossplay = cfg();
+        bad_crossplay["crossplay"] = json!("true");
+        assert!(ValheimDriver::new().validate(&bad_crossplay).is_err());
     }
 
     #[test]
@@ -471,6 +552,33 @@ mod tests {
     }
 
     #[test]
+    fn join_code_parsing_ignores_timestamps_and_empty_codes() {
+        let driver = ValheimDriver::new();
+        assert_eq!(
+            driver.join_code_from_log(
+                "10/05/2026 22:08:01: Session \"Varde XP Test\" registered with join code 124841"
+            ),
+            Some("124841".into())
+        );
+        assert_eq!(
+            driver.join_code_from_log(
+                "10/05/2026 22:08:02: Session \"Varde XP Test\" with join code 124841 and IP 140.232.64.3:24560 is active with 0 player(s)"
+            ),
+            Some("124841".into())
+        );
+        assert_eq!(
+            driver.join_code_from_log(
+                "10/05/2026 22:08:00: New session server \"Varde XP Test\" that has join code , now 0 player(s)"
+            ),
+            None
+        );
+        assert_eq!(
+            driver.join_code_from_log("10/05/2026 22:08:03: Game server connected"),
+            None
+        );
+    }
+
+    #[test]
     fn preset_mapping_and_save_interval_bounds() {
         for (config_value, expected) in [
             ("normal", "Normal"),
@@ -484,7 +592,7 @@ mod tests {
             let mut config = cfg();
             config["modifiers"] = json!(config_value);
             assert_eq!(ValheimDriver::preset(&config).unwrap(), Some(expected));
-            let args = ValheimDriver::args(&config, Path::new("/srv"), 2456).unwrap();
+            let args = ValheimDriver::args(&config, "srv-123", Path::new("/srv"), 2456).unwrap();
             let args: Vec<String> = args
                 .iter()
                 .map(|arg| arg.to_string_lossy().into())
@@ -495,7 +603,8 @@ mod tests {
 
         let mut without_preset = cfg();
         without_preset.as_object_mut().unwrap().remove("modifiers");
-        let args = ValheimDriver::args(&without_preset, Path::new("/srv"), 2456).unwrap();
+        let args =
+            ValheimDriver::args(&without_preset, "srv-123", Path::new("/srv"), 2456).unwrap();
         assert!(!args.iter().any(|arg| arg == "-preset"));
         assert_eq!(
             ValheimDriver::save_interval_s(&without_preset).unwrap(),
@@ -626,6 +735,7 @@ mod tests {
         let config = cfg();
         let ports = [];
         let ctx = DriverContext {
+            server_id: "valheim-test",
             server_dir: Path::new("/srv"),
             deployment_dir: Path::new("/dep"),
             runtimes: &runtimes,

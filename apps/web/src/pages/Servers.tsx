@@ -71,6 +71,7 @@ export default function Servers() {
 
 function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
   const sum = s.summary;
+  const crossplay = s.config.crossplay === true;
   return (
     <Link
       to={`/servers/${s.id}`}
@@ -91,15 +92,34 @@ function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
             <span className="text-slate-500">Not running</span>
           )}
         </Row>
-        <Row label="Address">
-          {sum.address ? (
-            <span onClick={(e) => e.preventDefault()}>
-              <CopyText text={sum.address} />
-            </span>
+        <Row label={crossplay ? "Join code" : "Address"}>
+          {crossplay ? (
+            sum.join_code ? (
+              <span onClick={(e) => e.preventDefault()}>
+                <CopyText text={sum.join_code} />
+              </span>
+            ) : (
+              <span className="text-slate-500">
+                {s.observed_state === "running" ? "Waiting for code…" : "—"}
+              </span>
+            )
           ) : (
-            <span className="text-slate-500">—</span>
+            sum.address ? (
+              <span onClick={(e) => e.preventDefault()}>
+                <CopyText text={sum.address} />
+              </span>
+            ) : (
+              <span className="text-slate-500">—</span>
+            )
           )}
         </Row>
+        {crossplay && (
+          <p className="text-xs text-slate-400">
+            Crossplay server: players join from Valheim&apos;s Join game → Join
+            by code. The code changes every time the server starts or moves to
+            another machine.
+          </p>
+        )}
         <Row label="Latest safe save">
           {sum.latest_safe_save ? (
             <span className="text-slate-100">

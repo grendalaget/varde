@@ -52,6 +52,7 @@ func genGame(g *catalog.Game) gen.Game {
 func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server, error) {
 	var cfg map[string]any
 	_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+	crossplay := cfg["crossplay"] == true
 	v := gen.Server{
 		Id:                srv.ID,
 		GroupId:           srv.GroupID,
@@ -75,7 +76,7 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 		var ports []gen.GamePort
 		_ = json.Unmarshal([]byte(svc.PortsJSON), &ports)
 		v.Service = &gen.Service{ServiceId: svc.ID, LoopbackIp: svc.LoopbackIP, Ports: ports}
-		if len(ports) > 0 {
+		if len(ports) > 0 && !crossplay {
 			v.Summary.Address = ptr(fmt.Sprintf("%s:%d", svc.LoopbackIP, ports[0].Port))
 		}
 	}
@@ -87,6 +88,9 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 				Name   string `json:"name"`
 				NodeId string `json:"node_id"`
 			}{Name: n.Name, NodeId: n.ID}
+		}
+		if crossplay {
+			v.Summary.JoinCode, _ = s.Store.ExecutionJoinCode(ctx, e.ID)
 		}
 	}
 

@@ -110,11 +110,18 @@ fn request_schemas_in_sync() {
     // The execution-status body is inline in the yaml (no named schema) —
     // check the Rust type against the declared field set by hand.
     let update: cp_api::ExecutionStatusUpdate = serde_json::from_value(serde_json::json!(
-        {"server_id":"s","epoch":1,"state":"running","health":"ok","message":"m"}
+        {"server_id":"s","epoch":1,"state":"running","health":"ok","message":"m","join_code":"124841"}
     ))
     .unwrap();
     let back = serde_json::to_value(&update).unwrap();
-    for f in ["server_id", "epoch", "state", "health", "message"] {
+    for f in [
+        "server_id",
+        "epoch",
+        "state",
+        "health",
+        "message",
+        "join_code",
+    ] {
         assert!(back.get(f).is_some(), "status update missing {f}");
     }
 }

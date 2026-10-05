@@ -268,6 +268,7 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
 
 function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
   const sum = s.summary;
+  const crossplay = s.config.crossplay === true;
   const events = useMergedEvents(
     (e) => e.server_id === s.id && e.type !== "execution.state",
   );
@@ -287,18 +288,38 @@ function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
               </WarnNote>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-400">Address</span>
-              {sum.address ? (
-                <CopyText text={sum.address} />
+              <span className="text-slate-400">
+                {crossplay ? "Join code" : "Address"}
+              </span>
+              {crossplay ? (
+                sum.join_code ? (
+                  <CopyText text={sum.join_code} />
+                ) : (
+                  <span className="text-slate-500">
+                    {s.observed_state === "running" ? "Waiting for code…" : "—"}
+                  </span>
+                )
               ) : (
-                <span className="text-slate-500">—</span>
+                sum.address ? (
+                  <CopyText text={sum.address} />
+                ) : (
+                  <span className="text-slate-500">—</span>
+                )
               )}
             </div>
-            <p className="text-xs text-slate-400">
-              This address works from any machine in the group with Varde
-              running, and it stays the same when the server moves to another
-              machine.
-            </p>
+            {crossplay ? (
+              <p className="text-xs text-slate-400">
+                Crossplay server: players join from Valheim&apos;s Join game →
+                Join by code. The code changes every time the server starts or
+                moves to another machine.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-400">
+                This address works from any machine in the group with Varde
+                running, and it stays the same when the server moves to another
+                machine.
+              </p>
+            )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-slate-400">Hosting on</span>
               <span>
