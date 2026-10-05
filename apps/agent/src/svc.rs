@@ -6,6 +6,8 @@
 
 use anyhow::{Context, Result};
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use windows_service::service::{
     ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
@@ -94,11 +96,16 @@ fn service_main_inner() -> Result<()> {
     // SCM -> agent graceful-stop channel
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let mut stop_tx = Some(stop_tx);
+    // set while a stop is being drained; the drain reporter below re-issues
+    // StopPending with fresh wait hints so the SCM doesn't kill us mid-hold
+    let draining = Arc::new(AtomicBool::new(false));
+    let handler_draining = draining.clone();
     let status_handle = service_control_handler::register(
         SERVICE_NAME,
         move |event| -> ServiceControlHandlerResult {
             match event {
                 ServiceControl::Stop | ServiceControl::Preshutdown => {
+                    handler_draining.store(true, Ordering::SeqCst);
                     if let Some(tx) = stop_tx.take() {
                         let _ = tx.send(());
                     }
@@ -133,6 +140,30 @@ fn service_main_inner() -> Result<()> {
         Duration::ZERO,
     )?;
 
+    // re-report StopPending every few seconds while the agent drains; a
+    // single short wait hint would let the SCM kill us mid-hold
+    let status_handle2 = status_handle;
+    let reporter_done = Arc::new(AtomicBool::new(false));
+    let reporter_done2 = reporter_done.clone();
+    let reporter = std::thread::spawn(move || {
+        let mut checkpoint: u32 = 1;
+        while !reporter_done2.load(Ordering::SeqCst) {
+            if draining.load(Ordering::SeqCst) {
+                let _ = status_handle2.set_service_status(ServiceStatus {
+                    service_type: ServiceType::OWN_PROCESS,
+                    current_state: ServiceState::StopPending,
+                    controls_accepted: ServiceControlAccept::empty(),
+                    exit_code: ServiceExitCode::Win32(0),
+                    checkpoint,
+                    wait_hint: Duration::from_secs(30),
+                    process_id: None,
+                });
+                checkpoint += 1;
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    });
+
     // run the real agent on this worker thread; STOP/PRESHUTDOWN feeds the
     // same graceful-stop path as SIGTERM/ctrl-c.
     let rt = tokio::runtime::Runtime::new().context("tokio runtime")?;
@@ -145,6 +176,8 @@ fn service_main_inner() -> Result<()> {
         Some(stop_rx),
     ));
 
+    reporter_done.store(true, Ordering::SeqCst);
+    let _ = reporter.join();
     set_status(
         ServiceState::StopPending,
         ServiceControlAccept::empty(),

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::SigningKey;
@@ -35,6 +36,9 @@ pub struct Agent {
     pub repl_notify: tokio::sync::Notify,
     /// last successful heartbeat apply; diagnostics for fencing stalls
     pub last_heartbeat_ok: Mutex<Option<std::time::Instant>>,
+    /// shutdown requested: drain executions while heartbeats, the mesh, the
+    /// chunk server and replication keep running; refuse new work
+    pub shutting_down: AtomicBool,
 }
 
 #[derive(Default)]

@@ -16,6 +16,7 @@ mod sysinfo;
 pub use agent::Agent;
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
@@ -367,6 +368,7 @@ async fn run(
         repl: Mutex::new(agent::ReplQueue::default()),
         repl_notify: tokio::sync::Notify::new(),
         last_heartbeat_ok: Mutex::new(None),
+        shutting_down: AtomicBool::new(false),
     });
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
@@ -416,12 +418,16 @@ async fn run(
         });
     }
 
-    // graceful shutdown
+    // graceful shutdown: drain executions FIRST (final snapshot + replication
+    // hold) while heartbeats, the fencing watchdog, the mesh, the chunk server
+    // and the replication worker keep running — the node must stay CP-visible
+    // and reachable as a snapshot source for the hold to succeed. Only after
+    // the drain do the background loops get their stop signal.
     wait_shutdown(ext_stop).await;
-    info!("shutting down: stopping executions");
-    let _ = stop_tx.send(true);
-
-    // graceful stop of all hosted executions (final snapshot + replication hold)
+    info!("shutting down: draining executions");
+    agent
+        .shutting_down
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let execs: Vec<Arc<exec::ExecCtl>> = agent.execs.lock().unwrap().values().cloned().collect();
     for c in execs {
         c.request_stop(exec::StopKind::Graceful);
@@ -443,6 +449,7 @@ async fn run(
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    let _ = stop_tx.send(true);
     info!("agent stopped");
     Ok(())
 }

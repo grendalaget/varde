@@ -35,6 +35,10 @@ logs: /var/log/varde (Linux) | <data>\logs (Windows); JSON lines, rotated
 * **Mesh supervisor**: spawn, restart with backoff, re-apply all `Set*` state after restart.
 * **Replication workers** (storage.md) and **chunk server**.
 
+On shutdown the agent first drains executions (graceful stop, final snapshot, replication hold) while heartbeats,
+the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
+as a snapshot source and refuses new executions — and only then signals the loops to stop.
+
 ## Executor API (`crates/executor-api`)
 
 ```rust

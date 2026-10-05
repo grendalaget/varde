@@ -172,6 +172,13 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                     report_absent_stopped(agent, e).await;
                     continue;
                 }
+                if agent
+                    .shutting_down
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    info!(exec = %e.execution_id, "shutting down; refusing new execution");
+                    continue;
+                }
                 let ctl = ExecCtl::new(e.clone());
                 *ctl.deadline.lock().unwrap() = Some(deadline);
                 for r in &e.snapshot_requests {

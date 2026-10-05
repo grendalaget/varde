@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=simple
 User=varde
 ExecStart=/usr/bin/varde-agent run
+# the agent drains executions (final snapshot + replication hold, default 60 s)
+# before stopping; give it the hold plus stop overhead before SIGKILL
+TimeoutStopSec=105
 Restart=always
 RestartSec=5
 StateDirectory=varde
