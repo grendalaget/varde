@@ -21,10 +21,40 @@ const devicePollIntervalS = 3
 func genNode(s *Server, ctx context.Context, n *store.Node) (gen.Node, error) {
 	liveness := s.Recon.Liveness(n)
 	var caps *gen.Capabilities
+	connections := []gen.NodeConnection{}
 	if st, err := s.Store.GetNodeStatus(ctx, n.ID); err == nil {
 		var c gen.Capabilities
 		if err := jsonUnmarshal(st.StatusJSON, &c); err == nil {
 			caps = &c
+		}
+		var mesh struct {
+			Peers []struct {
+				NodeID string `json:"node_id"`
+				Path   string `json:"path"`
+				RttUs  int64  `json:"rtt_us"`
+			} `json:"peers"`
+		}
+		if err := jsonUnmarshal(st.MeshJSON, &mesh); err == nil && len(mesh.Peers) > 0 {
+			// name lookup is only over this node's group; peers that aren't
+			// group members are omitted
+			if peers, err := s.Store.ListNodes(ctx, n.GroupID); err == nil {
+				names := map[string]string{}
+				for _, p := range peers {
+					names[p.ID] = p.Name
+				}
+				for _, p := range mesh.Peers {
+					name, ok := names[p.NodeID]
+					if !ok {
+						continue
+					}
+					connections = append(connections, gen.NodeConnection{
+						NodeId: p.NodeID,
+						Name:   name,
+						Path:   gen.NodeConnectionPath(p.Path),
+						RttUs:  p.RttUs,
+					})
+				}
+			}
 		}
 	}
 	return gen.Node{
@@ -46,6 +76,7 @@ func genNode(s *Server, ctx context.Context, n *store.Node) (gen.Node, error) {
 		Liveness:        ptr(gen.NodeLiveness(liveness)),
 		LastSeenAt:      n.LastSeenAt,
 		Capabilities:    caps,
+		Connections:     connections,
 		CreatedAt:       n.CreatedAt,
 	}, nil
 }

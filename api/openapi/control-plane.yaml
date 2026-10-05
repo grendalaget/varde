@@ -1254,7 +1254,7 @@ components:
     Node:
       type: object
       required: [id, group_id, name, public_key, os, arch, hosting_enabled, anchor,
-                 admin_state, online, created_at]
+                 admin_state, online, connections, created_at]
       properties:
         id: { type: string }
         group_id: { type: string }
@@ -1276,7 +1276,20 @@ components:
         liveness: { type: string, enum: [online, suspect, offline] }
         last_seen_at: { type: integer, format: int64, nullable: true }
         capabilities: { $ref: "#/components/schemas/Capabilities" }
+        connections:
+          type: array
+          description: mesh paths to other nodes in the group, from the node's latest heartbeat
+          items: { $ref: "#/components/schemas/NodeConnection" }
         created_at: { type: integer, format: int64 }
+
+    NodeConnection:
+      type: object
+      required: [node_id, name, path, rtt_us]
+      properties:
+        node_id: { type: string }
+        name: { type: string }
+        path: { type: string, enum: [none, direct, relayed] }
+        rtt_us: { type: integer, format: int64 }
 
     GameConfigField:
       type: object

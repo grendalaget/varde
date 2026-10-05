@@ -55,6 +55,7 @@ const (
 	ctxUser ctxKey = iota
 	ctxNode
 	ctxToken
+	ctxAuthCookie // bool: session resolved from the varde_session cookie
 )
 
 func userFrom(ctx context.Context) *store.User {
@@ -120,15 +121,19 @@ func writeErr(w http.ResponseWriter, status int, code gen.ErrorCode, msg string,
 func (s *Server) userAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := ""
+		fromCookie := false
 		if c, err := r.Cookie(auth.SessionCookie); err == nil {
 			token = c.Value
+			fromCookie = true
 		} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 			token = strings.TrimPrefix(h, "Bearer ")
 		}
 		if token != "" {
 			if u, err := s.Auth.SessionUser(r.Context(), token); err == nil {
 				ctx := context.WithValue(r.Context(), ctxUser, u)
-				r = r.WithContext(context.WithValue(ctx, ctxToken, token))
+				ctx = context.WithValue(ctx, ctxToken, token)
+				ctx = context.WithValue(ctx, ctxAuthCookie, fromCookie)
+				r = r.WithContext(ctx)
 			}
 		}
 		next.ServeHTTP(w, r)

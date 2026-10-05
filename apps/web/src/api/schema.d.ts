@@ -857,8 +857,18 @@ export interface components {
             /** Format: int64 */
             last_seen_at?: number | null;
             capabilities?: components["schemas"]["Capabilities"];
+            /** @description mesh paths to other nodes in the group, from the node's latest heartbeat */
+            connections: components["schemas"]["NodeConnection"][];
             /** Format: int64 */
             created_at: number;
+        };
+        NodeConnection: {
+            node_id: string;
+            name: string;
+            /** @enum {string} */
+            path: "none" | "direct" | "relayed";
+            /** Format: int64 */
+            rtt_us: number;
         };
         GameConfigField: {
             name: string;

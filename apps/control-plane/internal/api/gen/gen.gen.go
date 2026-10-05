@@ -347,19 +347,19 @@ func (e LogLineStream) Valid() bool {
 
 // Defines values for MeshReportPeersPath.
 const (
-	Direct  MeshReportPeersPath = "direct"
-	None    MeshReportPeersPath = "none"
-	Relayed MeshReportPeersPath = "relayed"
+	MeshReportPeersPathDirect  MeshReportPeersPath = "direct"
+	MeshReportPeersPathNone    MeshReportPeersPath = "none"
+	MeshReportPeersPathRelayed MeshReportPeersPath = "relayed"
 )
 
 // Valid indicates whether the value is a known member of the MeshReportPeersPath enum.
 func (e MeshReportPeersPath) Valid() bool {
 	switch e {
-	case Direct:
+	case MeshReportPeersPathDirect:
 		return true
-	case None:
+	case MeshReportPeersPathNone:
 		return true
-	case Relayed:
+	case MeshReportPeersPathRelayed:
 		return true
 	default:
 		return false
@@ -402,6 +402,27 @@ func (e NodeLiveness) Valid() bool {
 	case Online:
 		return true
 	case Suspect:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeConnectionPath.
+const (
+	NodeConnectionPathDirect  NodeConnectionPath = "direct"
+	NodeConnectionPathNone    NodeConnectionPath = "none"
+	NodeConnectionPathRelayed NodeConnectionPath = "relayed"
+)
+
+// Valid indicates whether the value is a known member of the NodeConnectionPath enum.
+func (e NodeConnectionPath) Valid() bool {
+	switch e {
+	case NodeConnectionPathDirect:
+		return true
+	case NodeConnectionPathNone:
+		return true
+	case NodeConnectionPathRelayed:
 		return true
 	default:
 		return false
@@ -1018,21 +1039,24 @@ type MeshReportPeersPath string
 
 // Node defines model for Node.
 type Node struct {
-	AdminState      NodeAdminState `json:"admin_state"`
-	AgentVersion    *string        `json:"agent_version,omitempty"`
-	Anchor          bool           `json:"anchor"`
-	Arch            string         `json:"arch"`
-	Capabilities    *Capabilities  `json:"capabilities,omitempty"`
-	CreatedAt       int64          `json:"created_at"`
-	GroupId         string         `json:"group_id"`
-	HostingEnabled  bool           `json:"hosting_enabled"`
-	Id              string         `json:"id"`
-	LastSeenAt      *int64         `json:"last_seen_at,omitempty"`
-	Liveness        *NodeLiveness  `json:"liveness,omitempty"`
-	MaxCpuPercent   *int           `json:"max_cpu_percent,omitempty"`
-	MaxMemoryMb     *int           `json:"max_memory_mb,omitempty"`
-	MaxStorageBytes *int64         `json:"max_storage_bytes,omitempty"`
-	Name            string         `json:"name"`
+	AdminState   NodeAdminState `json:"admin_state"`
+	AgentVersion *string        `json:"agent_version,omitempty"`
+	Anchor       bool           `json:"anchor"`
+	Arch         string         `json:"arch"`
+	Capabilities *Capabilities  `json:"capabilities,omitempty"`
+
+	// Connections mesh paths to other nodes in the group, from the node's latest heartbeat
+	Connections     []NodeConnection `json:"connections"`
+	CreatedAt       int64            `json:"created_at"`
+	GroupId         string           `json:"group_id"`
+	HostingEnabled  bool             `json:"hosting_enabled"`
+	Id              string           `json:"id"`
+	LastSeenAt      *int64           `json:"last_seen_at,omitempty"`
+	Liveness        *NodeLiveness    `json:"liveness,omitempty"`
+	MaxCpuPercent   *int             `json:"max_cpu_percent,omitempty"`
+	MaxMemoryMb     *int             `json:"max_memory_mb,omitempty"`
+	MaxStorageBytes *int64           `json:"max_storage_bytes,omitempty"`
+	Name            string           `json:"name"`
 
 	// Online computed from last_seen_at
 	Online   bool   `json:"online"`
@@ -1048,6 +1072,17 @@ type NodeAdminState string
 
 // NodeLiveness defines model for Node.Liveness.
 type NodeLiveness string
+
+// NodeConnection defines model for NodeConnection.
+type NodeConnection struct {
+	Name   string             `json:"name"`
+	NodeId string             `json:"node_id"`
+	Path   NodeConnectionPath `json:"path"`
+	RttUs  int64              `json:"rtt_us"`
+}
+
+// NodeConnectionPath defines model for NodeConnection.Path.
+type NodeConnectionPath string
 
 // ObservedState defines model for ObservedState.
 type ObservedState string

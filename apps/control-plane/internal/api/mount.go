@@ -52,7 +52,7 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		case strings.HasSuffix(p, "/events/stream") && strings.HasPrefix(p, "/v1/groups/"):
 			s.userAuth(http.HandlerFunc(s.ServeSSE)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/") || p == "/healthz" || p == "/readyz":
-			s.userAuth(genMux).ServeHTTP(w, r)
+			s.userAuth(s.csrf(s.sessionCookies(genMux))).ServeHTTP(w, r)
 		default:
 			spa.ServeHTTP(w, r)
 		}

@@ -952,3 +952,170 @@ func TestFailedExecDoesNotBlockLostRecovery(t *testing.T) {
 		t.Fatalf("no automatic recovery after lost lease: %+v", ex)
 	}
 }
+
+// ---- cookie sessions + CSRF ----
+
+// rawDo performs a request with explicit headers/cookies and returns the
+// raw response so cookie headers can be inspected.
+func (e *env) rawDo(method, path string, body []byte, headers map[string]string, cookies ...*http.Cookie) *http.Response {
+	e.t.Helper()
+	req, _ := http.NewRequest(method, e.http.URL+path, bytes.NewReader(body))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp
+}
+
+func sessionCookie(t *testing.T, resp *http.Response) *http.Cookie {
+	t.Helper()
+	for _, c := range resp.Cookies() {
+		if c.Name == "varde_session" {
+			return c
+		}
+	}
+	t.Fatalf("no varde_session cookie set")
+	return nil
+}
+
+func TestCookieSession(t *testing.T) {
+	e := newEnv(t)
+	e.do("POST", "/v1/auth/signup", map[string]any{
+		"email": "cookie@example.com", "password": "pw123456!", "display_name": "c",
+	}, "")
+	login, _ := json.Marshal(map[string]any{"email": "cookie@example.com", "password": "pw123456!"})
+	resp := e.rawDo("POST", "/v1/auth/login", login, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("login: %d", resp.StatusCode)
+	}
+	c := sessionCookie(t, resp)
+	if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || c.Path != "/" || c.MaxAge <= 0 {
+		t.Fatalf("bad cookie attrs: %+v", c)
+	}
+	// cookie works for auth
+	if r := e.rawDo("GET", "/v1/me", nil, nil, c); r.StatusCode != 200 {
+		t.Fatalf("cookie /me: %d", r.StatusCode)
+	}
+	// logout clears the cookie and revokes the session
+	resp = e.rawDo("POST", "/v1/auth/logout", nil,
+		map[string]string{"Origin": e.http.URL}, c)
+	if resp.StatusCode != 204 {
+		t.Fatalf("logout: %d", resp.StatusCode)
+	}
+	if c2 := sessionCookie(t, resp); c2.MaxAge >= 0 {
+		t.Fatalf("logout cookie not cleared: %+v", c2)
+	}
+	if r := e.rawDo("GET", "/v1/me", nil, nil, c); r.StatusCode != 401 {
+		t.Fatalf("revoked session still works: %d", r.StatusCode)
+	}
+}
+
+func TestCSRFGuard(t *testing.T) {
+	e := newEnv(t)
+	r := e.do("POST", "/v1/auth/signup", map[string]any{
+		"email": "csrf@example.com", "password": "pw123456!", "display_name": "c",
+	}, "")
+	token := r.Body["token"].(string)
+	c := &http.Cookie{Name: "varde_session", Value: token}
+	body, _ := json.Marshal(map[string]any{"name": "g2"})
+
+	// cookie + matching Origin (request's own host) passes
+	if resp := e.rawDo("POST", "/v1/groups", body,
+		map[string]string{"Origin": e.http.URL}, c); resp.StatusCode != 201 {
+		t.Fatalf("cookie+matching origin: %d", resp.StatusCode)
+	}
+	// cookie + foreign Origin rejected
+	if resp := e.rawDo("POST", "/v1/groups", body,
+		map[string]string{"Origin": "https://evil.example"}, c); resp.StatusCode != 403 {
+		t.Fatalf("cookie+foreign origin: %d", resp.StatusCode)
+	}
+	// cookie + no Origin/Referer rejected
+	if resp := e.rawDo("POST", "/v1/groups", body, nil, c); resp.StatusCode != 403 {
+		t.Fatalf("cookie+no origin: %d", resp.StatusCode)
+	}
+	// Referer fallback passes
+	if resp := e.rawDo("POST", "/v1/groups", body,
+		map[string]string{"Referer": e.http.URL + "/groups"}, c); resp.StatusCode != 201 {
+		t.Fatalf("cookie+matching referer: %d", resp.StatusCode)
+	}
+	// bearer + no Origin passes (CSRF only applies to cookie sessions)
+	if resp := e.rawDo("POST", "/v1/groups", body,
+		map[string]string{"Authorization": "Bearer " + token}); resp.StatusCode != 201 {
+		t.Fatalf("bearer+no origin: %d", resp.StatusCode)
+	}
+	// cookie + matching public-url Origin passes even when host differs
+	e.srv.Cfg.PublicURL = "https://varde.example.com"
+	if resp := e.rawDo("POST", "/v1/groups", body,
+		map[string]string{"Origin": "https://varde.example.com"}, c); resp.StatusCode != 201 {
+		t.Fatalf("cookie+public-url origin: %d", resp.StatusCode)
+	}
+}
+
+// heartbeatWithMesh reports mesh peers as part of the heartbeat body.
+func (a *agent) heartbeatWithMesh(peers []map[string]any) apiResp {
+	a.e.t.Helper()
+	body := map[string]any{
+		"capabilities": caps(), "executions": []any{},
+		"mesh": map[string]any{"peers": peers},
+	}
+	raw, _ := json.Marshal(body)
+	return a.signedDo("POST", "/v1/agent/heartbeat", raw, 0, nil)
+}
+
+func TestNodeConnections(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("node-a")
+	b := e.newAgent("node-b")
+	// name the nodes so connections can resolve names
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID, map[string]any{"name": "alpha"}, e.token))
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+b.nodeID, map[string]any{"name": "beta"}, e.token))
+
+	a.heartbeatWithMesh([]map[string]any{
+		{"node_id": b.nodeID, "path": "direct", "rtt_us": 1234},
+		{"node_id": "node_not_in_group", "path": "relayed", "rtt_us": 9},
+	})
+	e.clk.advance(1000)
+	a.heartbeatWithMesh([]map[string]any{
+		{"node_id": b.nodeID, "path": "direct", "rtt_us": 1234},
+		{"node_id": "node_not_in_group", "path": "relayed", "rtt_us": 9},
+	})
+
+	check := func(m map[string]any, where string) {
+		conns, _ := m["connections"].([]any)
+		if len(conns) != 1 {
+			t.Fatalf("%s: expected 1 connection, got %v", where, m["connections"])
+		}
+		c := conns[0].(map[string]any)
+		if c["node_id"] != b.nodeID || c["name"] != "beta" || c["path"] != "direct" || c["rtt_us"] != 1234.0 {
+			t.Fatalf("%s: bad connection %+v", where, c)
+		}
+	}
+	check(e.mustOK(e.do("GET", "/v1/nodes/"+a.nodeID, nil, e.token)), "GET node")
+	list := e.mustOK(e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, e.token))
+	found := false
+	for _, n := range list["nodes"].([]any) {
+		nm := n.(map[string]any)
+		switch nm["id"] {
+		case a.nodeID:
+			found = true
+			check(nm, "list nodes")
+		case b.nodeID:
+			if conns, _ := nm["connections"].([]any); len(conns) != 0 {
+				t.Fatalf("node b should have empty connections, got %v", conns)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("node a not in list")
+	}
+}
