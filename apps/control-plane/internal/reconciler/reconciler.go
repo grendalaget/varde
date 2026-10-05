@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -50,10 +51,13 @@ type Reconciler struct {
 	Log     *slog.Logger
 
 	wake chan struct{}
+
+	lvMu sync.Mutex
+	lv   map[string]string // last emitted liveness state per node
 }
 
 func New(s *store.Store, t Timings, log *slog.Logger) *Reconciler {
-	return &Reconciler{Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1)}
+	return &Reconciler{Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1), lv: map[string]string{}}
 }
 
 // Wake asks for an immediate pass (API mutation, heartbeat).
@@ -116,23 +120,20 @@ func (r *Reconciler) nodeLiveness(ctx context.Context) error {
 		}
 		for _, n := range nodes {
 			state := r.Liveness(&n)
-			var typ string
-			switch state {
-			case "suspect":
-				typ = "node.suspect"
-			case "offline":
-				typ = "node.offline"
+			last, seeded := r.lastLiveness(n.ID)
+			r.setLiveness(n.ID, state)
+			if !seeded {
+				// first pass after startup: seed from last_seen_at so a
+				// restart doesn't re-emit node.online for every node
+				continue
 			}
-			// Emit transitions only: remember last emitted in node_status? —
-			// we use a cheap guard: only emit when crossing a boundary.
-			last := lastLiveness(ctx, r.Store, n.ID)
-			if last != state {
-				setLiveness(ctx, r.Store, n.ID, state)
-				if state != "online" {
-					_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), typ, map[string]any{"name": n.Name})
-				} else if last != "" {
-					_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node.online", map[string]any{"name": n.Name})
-				}
+			if last == state {
+				continue
+			}
+			if state != "online" {
+				_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node."+state, map[string]any{"name": n.Name})
+			} else {
+				_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node.online", map[string]any{"name": n.Name})
 			}
 		}
 	}
@@ -155,14 +156,17 @@ func (r *Reconciler) Liveness(n *store.Node) string {
 	}
 }
 
-var livenessCache = map[string]string{}
-
-func lastLiveness(_ context.Context, _ *store.Store, nodeID string) string {
-	return livenessCache[nodeID]
+func (r *Reconciler) lastLiveness(nodeID string) (string, bool) {
+	r.lvMu.Lock()
+	defer r.lvMu.Unlock()
+	st, ok := r.lv[nodeID]
+	return st, ok
 }
 
-func setLiveness(_ context.Context, _ *store.Store, nodeID, state string) {
-	livenessCache[nodeID] = state
+func (r *Reconciler) setLiveness(nodeID, state string) {
+	r.lvMu.Lock()
+	r.lv[nodeID] = state
+	r.lvMu.Unlock()
 }
 
 // ---- per-server reconcile ----
@@ -206,6 +210,23 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 			if open[i].ServerID == srv.ID {
 				return nil
 			}
+		}
+		// Crash-loop guard: an execution that ended 'failed' does not
+		// reactivate on its own — only an explicit start clears it.
+		// 'lost' (lease expiry above) is the only automatic recovery.
+		execs, err := s.ExecutionsForServer(ctx, srv.ID)
+		if err != nil {
+			return err
+		}
+		if len(execs) > 0 && execs[0].EndReason != nil && *execs[0].EndReason == "failed" {
+			if srv.ObservedState != "failed" {
+				// server.failed was already emitted when the agent reported
+				// the failure — just converge observed state (once).
+				if err := s.SetObservedState(ctx, s.DB, srv.ID, "failed", now); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		return r.activate(ctx, srv, active, true)
 	}

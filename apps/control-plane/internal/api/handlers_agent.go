@@ -103,6 +103,11 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 		exec.Epoch != er.Epoch || er.Epoch != active.Epoch {
 		return fmt.Errorf("stale_epoch") // logged; not returned to agent as error
 	}
+	// An expired lease is terminal: never resurrect it. The reconciler reaps
+	// it as 'lost' on the next pass; until then reports change nothing.
+	if exec.LeaseExpiresAt <= now {
+		return fmt.Errorf("stale: lease expired")
+	}
 
 	state := string(er.State)
 	exec.State = state
@@ -445,10 +450,8 @@ func (s *Server) AgentCreateSnapshot(ctx context.Context, req gen.AgentCreateSna
 	// except final/migration snapshots during a stop in progress.
 	active, aerr := s.Store.ActiveExecution(ctx, b.ServerId)
 	now := s.Store.NowMs()
-	isFinal := b.Reason == gen.AgentSnapshotReasonFinal || b.Reason == gen.AgentSnapshotReasonMigration
 	valid := aerr == nil && active.ID == exec.ID && exec.NodeID == node.ID &&
-		exec.Epoch == b.Epoch &&
-		(exec.LeaseExpiresAt > now || (isFinal && exec.Action == "stop"))
+		exec.Epoch == b.Epoch && exec.LeaseExpiresAt > now
 	if !valid {
 		return nil, errResp(gen.StaleEpoch, "stale epoch or expired lease", map[string]any{
 			"server_id": b.ServerId, "epoch": b.Epoch,

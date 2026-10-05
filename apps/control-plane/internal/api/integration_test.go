@@ -846,3 +846,109 @@ func TestParallelStartsNoTwoActive(t *testing.T) {
 		t.Fatalf("%d active executions", n)
 	}
 }
+
+func TestNoLeaseResurrection(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("n1")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execID, epoch := e.startToRunning(srv, a)
+
+	var leaseBefore int64
+	if err := e.st.DB.Get(&leaseBefore, e.st.Rebind(
+		`SELECT lease_expires_at FROM server_executions WHERE id=?`), execID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lease expires; a late heartbeat arrives before the reconciler ticks.
+	e.clk.advance(testTimings.LeaseTTLMs + 1)
+	_, r := host.heartbeat([]map[string]any{
+		{"execution_id": execID, "server_id": srv, "epoch": epoch, "state": "running"},
+	})
+	if r.Status != 200 {
+		t.Fatalf("heartbeat: %d %s", r.Status, r.Raw)
+	}
+	var leaseAfter int64
+	if err := e.st.DB.Get(&leaseAfter, e.st.Rebind(
+		`SELECT lease_expires_at FROM server_executions WHERE id=? AND ended_at IS NULL`), execID); err != nil {
+		t.Fatal(err)
+	}
+	if leaseAfter != leaseBefore {
+		t.Fatalf("expired lease renewed: %d → %d", leaseBefore, leaseAfter)
+	}
+	// Directive still lists the exec until the reconciler reaps it — but the
+	// lease stays expired, so the next pass ends it 'lost'.
+	e.reconcile()
+	ex := e.st.DB
+	var endReason string
+	if err := ex.Get(&endReason, e.st.Rebind(
+		`SELECT end_reason FROM server_executions WHERE id=?`), execID); err != nil {
+		t.Fatalf("execution not ended lost: %v", err)
+	}
+	if endReason != "lost" {
+		t.Fatalf("end_reason=%s", endReason)
+	}
+}
+
+func TestCrashLoopGuard(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("n1")
+	b := e.newAgent("n2")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execID, epoch := e.startToRunning(srv, a, b)
+
+	// agent reports the run failed while desired is still 'running'
+	if r := host.execStatus(execID, srv, epoch, "failed"); r.Status != 204 {
+		t.Fatalf("failed report: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	if e.observed(srv) != "failed" {
+		t.Fatalf("observed=%s", e.observed(srv))
+	}
+	// several passes: never a new execution, and server.failed only once
+	for i := 0; i < 3; i++ {
+		e.reconcile()
+	}
+	if n := e.activeExecCount(srv); n != 0 {
+		t.Fatalf("auto-reactivated after failure (%d active)", n)
+	}
+	var failedEvents int
+	if err := e.st.DB.Get(&failedEvents, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.failed'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if failedEvents != 1 {
+		t.Fatalf("server.failed emitted %d times", failedEvents)
+	}
+
+	// explicit start clears the guard and activates normally
+	r := e.do("POST", "/v1/servers/"+srv+"/start", map[string]any{}, e.token)
+	e.mustOK(r)
+	ex := e.activeExec(srv)
+	if ex == nil || ex["id"] == execID {
+		t.Fatalf("no new execution after explicit start: %+v", ex)
+	}
+	if ex["epoch"].(int64) != epoch+1 {
+		t.Fatalf("epoch %d → %d", epoch, ex["epoch"])
+	}
+}
+
+func TestFailedExecDoesNotBlockLostRecovery(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("n1")
+	b := e.newAgent("n2")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execID, _ := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+
+	// lease expiry (lost) still triggers automatic recovery
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	other.heartbeat(nil)
+	e.reconcile()
+	ex := e.activeExec(srv)
+	if ex == nil || ex["id"] == execID || ex["node"] == host.nodeID {
+		t.Fatalf("no automatic recovery after lost lease: %+v", ex)
+	}
+}

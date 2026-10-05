@@ -385,11 +385,16 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 		return nil, err
 	}
 	if srv.DesiredState == "running" {
-		v, err := s.serverView(ctx, srv)
-		if err != nil {
-			return nil, err
+		if _, err := s.Store.ActiveExecution(ctx, srv.ID); err == nil {
+			v, err := s.serverView(ctx, srv)
+			if err != nil {
+				return nil, err
+			}
+			return gen.StartServer200JSONResponse(v), nil // idempotent
 		}
-		return gen.StartServer200JSONResponse(v), nil // idempotent
+		// No active execution despite desired=running: the previous run
+		// ended 'failed'. An explicit start clears the crash-loop guard
+		// and activates normally below.
 	}
 	if err := s.Store.UpdateServerDesired(ctx, srv.ID, "running", s.Store.NowMs()); err != nil {
 		return nil, err

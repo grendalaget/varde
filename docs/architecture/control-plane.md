@@ -144,7 +144,8 @@ Other agent endpoints:
 * `POST /v1/agent/snapshots {snapshot_id, server_id, execution_id, epoch, parent_id, manifest_digest, deployment_id,
   reason, size_bytes, stored_bytes, file_count, chunk_count, request_id?}` — accepted only if the execution is the active
   one, held by the caller, with matching epoch, **and its lease has not expired** (I3). Else 409 `stale_epoch`.
-  Final snapshots (`reason=final|migration`) are accepted while `action=stop` is in progress.
+  Final snapshots (`reason=final|migration`) are accepted while the lease is still valid — heartbeats keep
+  extending it during a `stop` in progress, so a final snapshot late in the stop is covered the same way.
 * `POST /v1/agent/snapshots/{id}/replicas {state:"ready"}` — after the node verified every chunk.
 * `POST /v1/agent/executions/{id}/logs {lines:[{at,stream,line}]}`.
 
