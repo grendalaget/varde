@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
@@ -51,7 +52,14 @@ func (s *Server) StreamEvents(ctx context.Context, req gen.StreamEventsRequestOb
 
 // ServeSSE implements GET /v1/groups/{id}/events/stream outside oapi-codegen.
 func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
+	// mounted outside the ServeMux (see NewHandler), so PathValue is empty;
+	// extract the id from the path directly
 	groupID := r.PathValue("groupId")
+	if groupID == "" {
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/v1/groups/"); ok {
+			groupID, _, _ = strings.Cut(rest, "/")
+		}
+	}
 	ctx := r.Context()
 	if _, _, err := s.requireRole(ctx, groupID, "member"); err != nil {
 		if ae, ok := err.(*apiError); ok {
@@ -74,6 +82,10 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// send an initial comment so proxies that hold headers until the
+	// first body byte (e.g. Vite dev's compression middleware, nginx
+	// buffering) flush the response headers right away
+	_, _ = fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
 	heartbeat := time.NewTicker(15 * time.Second)
