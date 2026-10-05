@@ -446,9 +446,10 @@ async fn run(
     Ok(())
 }
 
-async fn wait_shutdown(mut ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {
+async fn wait_shutdown(ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {
     #[cfg(unix)]
     {
+        let mut ext_stop = ext_stop;
         use tokio::signal::unix::{signal, SignalKind};
         let mut term = signal(SignalKind::terminate()).expect("sigterm");
         let ext = async {

@@ -65,11 +65,13 @@ jobs:
           done
         shell: bash
       - name: test
-        env:
-          VARDE_TEST_POSTGRES_URL: postgres://varde:varde@localhost:5432/varde_test?sslmode=disable
         run: |
           RACE=""
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then RACE="-race"; fi
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            RACE="-race"
+            # postgres only runs on the linux leg
+            export VARDE_TEST_POSTGRES_URL=postgres://varde:varde@localhost:5432/varde_test?sslmode=disable
+          fi
           for m in go apps/control-plane apps/relay apps/mesh; do
             (cd $m && go test $RACE ./...) || exit 1
           done

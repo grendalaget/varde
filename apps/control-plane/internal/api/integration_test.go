@@ -75,7 +75,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{t: t, clk: clk, st: st, recon: recon, srv: srv}
 	e.http = httptest.NewServer(api.NewHandler(srv, nil))
-	t.Cleanup(e.http.Close)
+	t.Cleanup(func() { e.http.Close(); _ = st.Close() })
 	e.token = e.signup("op@example.com", "password123")
 	e.group = e.createGroup("g1")
 	return e

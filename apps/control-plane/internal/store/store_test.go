@@ -20,6 +20,7 @@ func testStores(t *testing.T) map[string]*Store {
 	if url := postgresTestURL(); url != "" {
 		p, err := Open(url, nil)
 		if err != nil {
+			_ = s.Close()
 			t.Fatalf("postgres open: %v", err)
 		}
 		// dedicated test DB: reset the schema so reruns don't collide
