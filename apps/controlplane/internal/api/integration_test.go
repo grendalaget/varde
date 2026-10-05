@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api"
-	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
-	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api"
+	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/identity"
 )
 

@@ -11,10 +11,10 @@ import (
 	"github.com/grendalaget/varde/go/ids"
 	"github.com/grendalaget/varde/go/relaytoken"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/scheduler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // activationErr bridges reconciler errors to the API layer.

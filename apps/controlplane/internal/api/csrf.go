@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 )
 
 // sessionCookieMaxAge is 30 days.

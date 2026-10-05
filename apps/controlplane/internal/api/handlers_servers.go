@@ -8,10 +8,10 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
-	"github.com/grendalaget/varde/apps/control-plane/internal/services"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/services"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 func (s *Server) ListGames(ctx context.Context, _ gen.ListGamesRequestObject) (gen.ListGamesResponseObject, error) {

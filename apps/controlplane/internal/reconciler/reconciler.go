@@ -16,9 +16,9 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
-	"github.com/grendalaget/varde/apps/control-plane/internal/scheduler"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // Timings (all configurable on the control plane).
