@@ -1,47 +1,1737 @@
 openapi: 3.1.0
 info:
   title: p2pgames control plane
-  version: "0.1.0"
+  version: "0.2.0"
   description: >
-    Public HTTP API for the p2pgames control plane. The web dashboard and
-    CLI are the only intended clients; peers never call this API.
+    Public HTTP API for the p2pgames control plane. The web dashboard uses the
+    public endpoints; node agents use the `/v1/agent/*` endpoints (tag `agent`)
+    with ed25519 request signing instead of bearer auth.
   license:
     name: MIT
 servers:
   - url: http://localhost:8080
-    description: Local development
+tags:
+  - name: meta
+  - name: auth
+  - name: groups
+  - name: nodes
+  - name: servers
+  - name: snapshots
+  - name: events
+  - name: admin
+  - name: agent
+
 paths:
   /healthz:
     get:
       operationId: getHealth
-      summary: Liveness probe
       tags: [meta]
+      summary: Liveness probe
       responses:
         "200":
           description: Service is up.
           content:
             application/json:
-              schema:
-                type: object
-                required: [status]
-                properties:
-                  status:
-                    type: string
-                    enum: [ok]
+              schema: { $ref: "#/components/schemas/Health" }
+  /readyz:
+    get:
+      operationId: getReady
+      tags: [meta]
+      summary: Readiness probe (DB reachable)
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/version:
     get:
       operationId: getVersion
-      summary: Control-plane build version
       tags: [meta]
+      summary: Control-plane build version
       responses:
         "200":
           description: Version string.
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+  /v1/relay/public-key:
+    get:
+      operationId: getRelayPublicKey
+      tags: [meta]
+      summary: ed25519 public key used to sign relay tokens
+      responses:
+        "200":
+          description: base64 public key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RelayPublicKey" }
+
+  /v1/auth/signup:
+    post:
+      operationId: signup
+      tags: [auth]
+      summary: Create an account. First user becomes operator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Session created (also sets the p2pg_session cookie).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "204": { description: Logged out. }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Current user and memberships.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Groups the caller belongs to.
+          content:
+            application/json:
               schema:
                 type: object
-                required: [version]
+                required: [groups]
                 properties:
-                  version:
-                    type: string
-                    example: "0.1.0"
+                  groups:
+                    type: array
+                    items: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createGroup
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Created (caller becomes owner).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}:
+    get:
+      operationId: getGroup
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Group.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateGroup
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                settings: { $ref: "#/components/schemas/GroupSettings" }
+      responses:
+        "200":
+          description: Updated (owner only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteGroup
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "204": { description: Deleted (owner only). }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/members:
+    get:
+      operationId: listMembers
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/members/{userId}:
+    patch:
+      operationId: updateMember
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "200":
+          description: Updated (owner only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: removeMember
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/UserId" }
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/invites:
+    post:
+      operationId: createInvite
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+                expires_at: { type: integer, format: int64 }
+                max_uses: { type: integer }
+      responses:
+        "201":
+          description: Invite created (admin+).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invite" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/invites/{code}:
+    get:
+      operationId: getInvite
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Invite details.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invite" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/invites/{code}/accept:
+    post:
+      operationId: acceptInvite
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Joined the group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group_id]
+                properties:
+                  group_id: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/groups/{groupId}/enrollment-tokens:
+    get:
+      operationId: listEnrollmentTokens
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Tokens (hashes only; secrets shown at creation).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items: { $ref: "#/components/schemas/EnrollmentToken" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createEnrollmentToken
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                anchor: { type: boolean, default: false }
+                hosting_enabled: { type: boolean, default: true }
+                labels: { type: object, additionalProperties: { type: string } }
+                expires_at: { type: integer, format: int64 }
+                max_uses: { type: integer }
+      responses:
+        "201":
+          description: Created; `token` is shown only here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnrollmentTokenCreated" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/enrollment-tokens/{tokenId}:
+    delete:
+      operationId: deleteEnrollmentToken
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - name: tokenId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/device-links/{userCode}:
+    get:
+      operationId: getDeviceLink
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: userCode
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device link status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceLink" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/device-links/approve:
+    post:
+      operationId: approveDeviceLink
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code, group_id, name]
+              properties:
+                user_code: { type: string }
+                group_id: { type: string }
+                name: { type: string }
+      responses:
+        "200":
+          description: Approved; the polling agent receives its node id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceLink" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/groups/{groupId}/nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Nodes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/nodes/{nodeId}:
+    get:
+      operationId: getNode
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/NodeId" }]
+      responses:
+        "200":
+          description: Node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateNode
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/NodeId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                hosting_enabled: { type: boolean }
+                anchor: { type: boolean }
+                priority: { type: integer, minimum: 0, maximum: 100 }
+                max_memory_mb: { type: integer }
+                max_cpu_percent: { type: integer }
+                max_storage_bytes: { type: integer, format: int64 }
+                admin_state:
+                  type: string
+                  enum: [active, draining, disabled]
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteNode
+      tags: [nodes]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/NodeId" }]
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/games:
+    get:
+      operationId: listGames
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Game catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [games]
+                properties:
+                  games:
+                    type: array
+                    items: { $ref: "#/components/schemas/Game" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/groups/{groupId}/servers:
+    get:
+      operationId: listServers
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Servers with computed summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [servers]
+                properties:
+                  servers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, game_id]
+              properties:
+                name: { type: string }
+                game_id: { type: string }
+                config: { type: object, additionalProperties: true }
+                replication_factor: { type: integer, minimum: 1 }
+                min_commit_replicas: { type: integer, minimum: 1 }
+                snapshot_interval_s: { type: integer, minimum: 0 }
+                preferred_node_id: { type: string }
+      responses:
+        "201":
+          description: Created (admin+).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}:
+    get:
+      operationId: getServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "200":
+          description: Server with computed summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                config: { type: object, additionalProperties: true }
+                replication_factor: { type: integer, minimum: 1 }
+                min_commit_replicas: { type: integer, minimum: 1 }
+                snapshot_interval_s: { type: integer, minimum: 0 }
+                preferred_node_id: { type: string }
+      responses:
+        "200":
+          description: Updated (admin+).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "204": { description: Deleted (admin+). Snapshots are retained per policy. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/start:
+    post:
+      operationId: startServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preferred_node_id: { type: string }
+                allow_older_snapshot: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Start requested; reconciler places an execution.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/stop:
+    post:
+      operationId: stopServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "200":
+          description: Stop requested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/move:
+    post:
+      operationId: moveServer
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_node_id]
+              properties:
+                target_node_id: { type: string }
+      responses:
+        "200":
+          description: Migration requested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Server" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /v1/servers/{serverId}/snapshots:
+    get:
+      operationId: listSnapshots
+      tags: [snapshots]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "200":
+          description: Snapshots with replica state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshots]
+                properties:
+                  snapshots:
+                    type: array
+                    items: { $ref: "#/components/schemas/Snapshot" }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: requestSnapshot
+      tags: [snapshots]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "202":
+          description: Manual snapshot requested; delivered in the next heartbeat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id]
+                properties:
+                  request_id: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/snapshots/{snapshotId}:
+    patch:
+      operationId: updateSnapshot
+      tags: [snapshots]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: snapshotId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pinned]
+              properties:
+                pinned: { type: boolean }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/servers/{serverId}/executions:
+    get:
+      operationId: listExecutions
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServerId" }]
+      responses:
+        "200":
+          description: Execution history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [executions]
+                properties:
+                  executions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Execution" }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/logs:
+    get:
+      operationId: getServerLogs
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ServerId" }
+        - name: execution_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Captured stdout/stderr/agent lines.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lines]
+                properties:
+                  lines:
+                    type: array
+                    items: { $ref: "#/components/schemas/LogLine" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/groups/{groupId}/events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - name: after
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: Events after the given id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/events/stream:
+    get:
+      operationId: streamEvents
+      tags: [events]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: SSE stream; honours Last-Event-ID.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/groups:
+    get:
+      operationId: adminListGroups
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: All groups (operator only).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/admin/groups/{groupId}/limits:
+    put:
+      operationId: adminSetGroupLimits
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupLimits" }
+      responses:
+        "200":
+          description: Limits set (null = unlimited).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GroupLimits" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/agent/enroll/device:
+    post:
+      operationId: agentEnrollDevice
+      tags: [agent]
+      summary: Start device-code enrollment (unsigned; no node yet).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceEnrollRequest" }
+      responses:
+        "200":
+          description: Codes issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceEnrollResponse" }
+  /v1/agent/enroll/device/poll:
+    post:
+      operationId: agentEnrollDevicePoll
+      tags: [agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code]
+              properties:
+                device_code: { type: string }
+      responses:
+        "200":
+          description: Approved; node enrolled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnrollResult" }
+        "202": { description: Still pending user approval. }
+        "410": { description: Expired. }
+  /v1/agent/enroll/token:
+    post:
+      operationId: agentEnrollToken
+      tags: [agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenEnrollRequest" }
+      responses:
+        "200":
+          description: Enrolled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnrollResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /v1/agent/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentHeartbeat" }
+      responses:
+        "200":
+          description: Complete desired state for this node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentDirectives" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/agent/executions/{executionId}/status:
+    post:
+      operationId: agentExecutionStatus
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [server_id, epoch, state]
+              properties:
+                server_id: { type: string }
+                epoch: { type: integer, format: int64 }
+                state: { $ref: "#/components/schemas/ExecutionState" }
+                health: { type: string }
+                message: { type: string }
+      responses:
+        "204": { description: Recorded. }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/agent/executions/{executionId}/logs:
+    post:
+      operationId: agentExecutionLogs
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                lines:
+                  type: array
+                  items: { $ref: "#/components/schemas/LogLine" }
+      responses:
+        "204": { description: Recorded. }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/agent/snapshots:
+    post:
+      operationId: agentCreateSnapshot
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentSnapshot" }
+      responses:
+        "201":
+          description: Snapshot registered; replication targets computed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/agent/snapshots/{snapshotId}/replicas:
+    post:
+      operationId: agentReplicaReady
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      parameters:
+        - name: snapshotId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state:
+                  type: string
+                  enum: [ready]
+      responses:
+        "204": { description: Replica marked ready; commit policy re-evaluated. }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  parameters:
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema: { type: string }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string }
+    NodeId:
+      name: nodeId
+      in: path
+      required: true
+      schema: { type: string }
+    ServerId:
+      name: serverId
+      in: path
+      required: true
+      schema: { type: string }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: p2pg_session
+    agentSignature:
+      type: mutualTLS
+      description: >
+        Marker scheme — actually ed25519 request signing via headers
+        X-P2PG-Node, X-P2PG-Timestamp, X-P2PG-Signature (see
+        docs/architecture/control-plane.md §Authentication).
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
+                 limit_exceeded, validation, unauthorized, conflict,
+                 unschedulable, internal]
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+    Version:
+      type: object
+      required: [version]
+      properties:
+        version: { type: string }
+    RelayPublicKey:
+      type: object
+      required: [public_key]
+      properties:
+        public_key: { type: string, description: base64 ed25519 public key }
+
+    Role:
+      type: string
+      enum: [owner, admin, member]
+    SignupRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        display_name: { type: string }
+        invite_code: { type: string, description: "required when signup policy is invite" }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    AuthResponse:
+      type: object
+      required: [user, token]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        token: { type: string }
+    User:
+      type: object
+      required: [id, email, display_name, is_operator, created_at]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        is_operator: { type: boolean }
+        created_at: { type: integer, format: int64 }
+    Me:
+      type: object
+      required: [user, groups]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        groups:
+          type: array
+          items:
+            type: object
+            required: [group_id, name, role]
+            properties:
+              group_id: { type: string }
+              name: { type: string }
+              role: { $ref: "#/components/schemas/Role" }
+
+    GroupSettings:
+      type: object
+      properties:
+        snapshot_interval_s: { type: integer, default: 120 }
+        default_replication_factor: { type: integer, default: 3 }
+        default_min_commit_replicas: { type: integer, default: 2 }
+        require_anchor_for_commit: { type: boolean, default: false }
+        snapshot_retention: { type: integer, default: 10 }
+    Group:
+      type: object
+      required: [id, name, plan, settings, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        plan: { type: string }
+        settings: { $ref: "#/components/schemas/GroupSettings" }
+        created_at: { type: integer, format: int64 }
+    GroupLimits:
+      type: object
+      properties:
+        max_nodes: { type: integer, nullable: true }
+        max_servers: { type: integer, nullable: true }
+        max_storage_bytes: { type: integer, format: int64, nullable: true }
+        max_relay_bytes_month: { type: integer, format: int64, nullable: true }
+    Member:
+      type: object
+      required: [user_id, email, display_name, role, created_at]
+      properties:
+        user_id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: integer, format: int64 }
+    Invite:
+      type: object
+      required: [code, group_id, group_name, role, expires_at, max_uses, uses]
+      properties:
+        code: { type: string }
+        group_id: { type: string }
+        group_name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        expires_at: { type: integer, format: int64, nullable: true }
+        max_uses: { type: integer, nullable: true }
+        uses: { type: integer }
+    EnrollmentToken:
+      type: object
+      required: [id, group_id, anchor, hosting_enabled, expires_at, uses]
+      properties:
+        id: { type: string }
+        group_id: { type: string }
+        anchor: { type: boolean }
+        hosting_enabled: { type: boolean }
+        labels: { type: object, additionalProperties: { type: string } }
+        expires_at: { type: integer, format: int64, nullable: true }
+        max_uses: { type: integer, nullable: true }
+        uses: { type: integer }
+    EnrollmentTokenCreated:
+      allOf:
+        - $ref: "#/components/schemas/EnrollmentToken"
+        - type: object
+          required: [token]
+          properties:
+            token: { type: string, description: "pge_… secret, shown once" }
+    DeviceLink:
+      type: object
+      required: [user_code, hostname, os, arch, state, expires_at]
+      properties:
+        user_code: { type: string }
+        hostname: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        agent_version: { type: string }
+        state:
+          type: string
+          enum: [pending, approved, consumed, expired]
+        group_id: { type: string, nullable: true }
+        node_id: { type: string, nullable: true }
+        expires_at: { type: integer, format: int64 }
+
+    Node:
+      type: object
+      required: [id, group_id, name, public_key, os, arch, hosting_enabled, anchor,
+                 admin_state, online, created_at]
+      properties:
+        id: { type: string }
+        group_id: { type: string }
+        name: { type: string }
+        public_key: { type: string, description: base64 ed25519 }
+        os: { type: string }
+        arch: { type: string }
+        agent_version: { type: string }
+        hosting_enabled: { type: boolean }
+        anchor: { type: boolean }
+        priority: { type: integer }
+        max_memory_mb: { type: integer, nullable: true }
+        max_cpu_percent: { type: integer, nullable: true }
+        max_storage_bytes: { type: integer, format: int64, nullable: true }
+        admin_state:
+          type: string
+          enum: [active, draining, disabled]
+        online: { type: boolean, description: "computed from last_seen_at" }
+        liveness: { type: string, enum: [online, suspect, offline] }
+        last_seen_at: { type: integer, format: int64, nullable: true }
+        capabilities: { $ref: "#/components/schemas/Capabilities" }
+        created_at: { type: integer, format: int64 }
+
+    GameConfigField:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [string, int, bool, select, secret]
+        default: {}
+        required: { type: boolean, default: false }
+        secret: { type: boolean, default: false }
+        options:
+          type: array
+          items: { type: string }
+        help: { type: string }
+    GamePort:
+      type: object
+      required: [port, protocol]
+      properties:
+        port: { type: integer }
+        protocol: { $ref: "#/components/schemas/Protocol" }
+    Game:
+      type: object
+      required: [id, name, ports, os, arch, min_memory_mb, config_fields]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/GamePort" }
+        os:
+          type: array
+          items: { type: string, enum: [linux, windows] }
+        arch:
+          type: array
+          items: { type: string }
+        min_memory_mb: { type: integer }
+        runtimes:
+          type: array
+          items: { type: string }
+        config_fields:
+          type: array
+          items: { $ref: "#/components/schemas/GameConfigField" }
+
+    Protocol:
+      type: string
+      enum: [tcp, udp]
+    DesiredState:
+      type: string
+      enum: [running, stopped]
+    ObservedState:
+      type: string
+      enum: [stopped, starting, running, stopping, recovering, migrating, failed]
+    ServerSummary:
+      type: object
+      properties:
+        hosting_on:
+          type: object
+          nullable: true
+          required: [node_id, name]
+          properties:
+            node_id: { type: string }
+            name: { type: string }
+        latest_safe_save:
+          type: object
+          nullable: true
+          required: [snapshot_id, created_at]
+          properties:
+            snapshot_id: { type: string }
+            created_at: { type: integer, format: int64 }
+            replicas:
+              type: array
+              items:
+                type: object
+                required: [node_id, name, anchor]
+                properties:
+                  node_id: { type: string }
+                  name: { type: string }
+                  anchor: { type: boolean }
+        latest_save:
+          type: object
+          nullable: true
+          required: [snapshot_id, created_at]
+          properties:
+            snapshot_id: { type: string }
+            created_at: { type: integer, format: int64 }
+        only_on_one_machine: { type: boolean }
+        address: { type: string, example: "127.77.12.34:25565" }
+    Server:
+      type: object
+      required: [id, group_id, name, game_id, desired_state, observed_state, epoch,
+                 replication_factor, min_commit_replicas, snapshot_interval_s,
+                 config, created_at, updated_at, summary]
+      properties:
+        id: { type: string }
+        group_id: { type: string }
+        name: { type: string }
+        game_id: { type: string }
+        deployment_id: { type: string, nullable: true }
+        desired_state: { $ref: "#/components/schemas/DesiredState" }
+        observed_state: { $ref: "#/components/schemas/ObservedState" }
+        epoch: { type: integer, format: int64 }
+        replication_factor: { type: integer }
+        min_commit_replicas: { type: integer }
+        snapshot_interval_s: { type: integer }
+        preferred_node_id: { type: string, nullable: true }
+        config: { type: object, additionalProperties: true }
+        service: { $ref: "#/components/schemas/Service" }
+        summary: { $ref: "#/components/schemas/ServerSummary" }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+    Service:
+      type: object
+      required: [service_id, loopback_ip, ports]
+      properties:
+        service_id: { type: string }
+        loopback_ip: { type: string, example: "127.77.12.34" }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/GamePort" }
+    ExecutionState:
+      type: string
+      enum: [preparing, restoring, starting, running, stopping, stopped, failed]
+    Execution:
+      type: object
+      required: [id, server_id, node_id, epoch, state, action, created_at]
+      properties:
+        id: { type: string }
+        server_id: { type: string }
+        node_id: { type: string }
+        epoch: { type: integer, format: int64 }
+        state: { $ref: "#/components/schemas/ExecutionState" }
+        action: { type: string, enum: [run, stop] }
+        stop_reason: { type: string, nullable: true }
+        lease_expires_at: { type: integer, format: int64 }
+        restore_snapshot_id: { type: string, nullable: true }
+        health: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+        placement:
+          type: object
+          properties:
+            score: { type: number }
+            reasons:
+              type: array
+              items: { type: string }
+        started_at: { type: integer, format: int64, nullable: true }
+        ended_at: { type: integer, format: int64, nullable: true }
+        end_reason:
+          type: string
+          nullable: true
+          enum: [stopped, lost, failed, migrated, fenced]
+    Snapshot:
+      type: object
+      required: [id, server_id, epoch, node_id, reason, state, created_at, pinned,
+                 replicas]
+      properties:
+        id: { type: string }
+        server_id: { type: string }
+        epoch: { type: integer, format: int64 }
+        execution_id: { type: string }
+        node_id: { type: string }
+        parent_id: { type: string, nullable: true }
+        manifest_digest: { type: string }
+        deployment_id: { type: string }
+        reason:
+          type: string
+          enum: [scheduled, manual, final, migration]
+        state:
+          type: string
+          enum: [local, replicating, committed, superseded, invalid]
+        size_bytes: { type: integer, format: int64 }
+        stored_bytes: { type: integer, format: int64 }
+        file_count: { type: integer }
+        chunk_count: { type: integer }
+        pinned: { type: boolean }
+        created_at: { type: integer, format: int64 }
+        committed_at: { type: integer, format: int64, nullable: true }
+        replicas:
+          type: array
+          items:
+            type: object
+            required: [node_id, state]
+            properties:
+              node_id: { type: string }
+              state:
+                type: string
+                enum: [assigned, ready, deleting]
+    LogLine:
+      type: object
+      required: [at, stream, line]
+      properties:
+        at: { type: integer, format: int64 }
+        stream:
+          type: string
+          enum: [stdout, stderr, agent]
+        line: { type: string }
+    Event:
+      type: object
+      required: [id, group_id, type, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        group_id: { type: string }
+        server_id: { type: string, nullable: true }
+        node_id: { type: string, nullable: true }
+        type: { type: string }
+        data: { type: object, additionalProperties: true }
+        created_at: { type: integer, format: int64 }
+
+    # ---- agent payloads ----
+    Capabilities:
+      type: object
+      properties:
+        os: { type: string }
+        arch: { type: string }
+        cpu_cores: { type: integer }
+        memory_total_mb: { type: integer }
+        memory_available_mb: { type: integer }
+        disk_free_bytes: { type: integer, format: int64 }
+        on_battery: { type: boolean }
+        user_active: { type: boolean }
+        runtimes:
+          type: array
+          items: { type: string }
+        cached_deployments:
+          type: array
+          items: { type: string }
+        drivers:
+          type: array
+          items: { type: string }
+        uptime_s: { type: integer }
+        agent_started_at: { type: integer, format: int64 }
+    MeshReport:
+      type: object
+      properties:
+        listen_port: { type: integer }
+        local_endpoints:
+          type: array
+          items: { type: string }
+        observed_endpoints:
+          type: array
+          items: { type: string }
+        relay_ids:
+          type: array
+          items: { type: string }
+        peers:
+          type: array
+          items:
+            type: object
+            properties:
+              node_id: { type: string }
+              path:
+                type: string
+                enum: [none, direct, relayed]
+              rtt_us: { type: integer, format: int64 }
+    ExecutionReport:
+      type: object
+      required: [execution_id, server_id, epoch, state]
+      properties:
+        execution_id: { type: string }
+        server_id: { type: string }
+        epoch: { type: integer, format: int64 }
+        state: { $ref: "#/components/schemas/ExecutionState" }
+        health: { type: string }
+        message: { type: string }
+        player_count: { type: integer, nullable: true }
+    AgentHeartbeat:
+      type: object
+      properties:
+        agent_version: { type: string }
+        capabilities: { $ref: "#/components/schemas/Capabilities" }
+        mesh: { $ref: "#/components/schemas/MeshReport" }
+        executions:
+          type: array
+          items: { $ref: "#/components/schemas/ExecutionReport" }
+        snapshots_stored_bytes: { type: integer, format: int64 }
+    DirectivePeer:
+      type: object
+      required: [node_id, name, public_key]
+      properties:
+        node_id: { type: string }
+        name: { type: string }
+        public_key: { type: string, description: base64 ed25519 }
+        endpoints:
+          type: array
+          items: { type: string }
+        relay_ids:
+          type: array
+          items: { type: string }
+    DirectiveRoute:
+      type: object
+      required: [service_id, server_id, server_name, loopback_ip, ports]
+      properties:
+        service_id: { type: string }
+        server_id: { type: string }
+        server_name: { type: string }
+        loopback_ip: { type: string }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/GamePort" }
+        host_node_id: { type: string, description: "empty = server stopped" }
+        epoch: { type: integer, format: int64 }
+    DirectiveRelay:
+      type: object
+      required: [relay_id, addr, token]
+      properties:
+        relay_id: { type: string }
+        addr: { type: string }
+        token: { type: string }
+    ReplicationTask:
+      type: object
+      required: [snapshot_id, server_id, manifest_digest, source_node_ids]
+      properties:
+        snapshot_id: { type: string }
+        server_id: { type: string }
+        manifest_digest: { type: string }
+        source_node_ids:
+          type: array
+          items: { type: string }
+    SnapshotRequest:
+      type: object
+      required: [request_id, reason]
+      properties:
+        request_id: { type: string }
+        reason:
+          type: string
+          enum: [scheduled, manual, final, migration]
+    ExecutionDirective:
+      type: object
+      required: [execution_id, server_id, server_name, epoch,
+                 lease_expires_at_unix_ms, action]
+      properties:
+        execution_id: { type: string }
+        server_id: { type: string }
+        server_name: { type: string }
+        epoch: { type: integer, format: int64 }
+        lease_expires_at_unix_ms: { type: integer, format: int64 }
+        action:
+          type: string
+          enum: [run, stop]
+        stop_reason:
+          type: string
+          nullable: true
+          enum: [user, migration, drain]
+        deployment:
+          type: object
+          nullable: true
+          required: [id, game_id, spec]
+          properties:
+            id: { type: string }
+            game_id: { type: string }
+            spec: { type: object, additionalProperties: true }
+        config: { type: object, additionalProperties: true }
+        service: { $ref: "#/components/schemas/Service" }
+        restore:
+          type: object
+          nullable: true
+          required: [snapshot_id, manifest_digest, source_node_ids]
+          properties:
+            snapshot_id: { type: string }
+            manifest_digest: { type: string }
+            source_node_ids:
+              type: array
+              items: { type: string }
+        snapshot_interval_s: { type: integer }
+        snapshot_requests:
+          type: array
+          items: { $ref: "#/components/schemas/SnapshotRequest" }
+    AgentDirectives:
+      type: object
+      required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]
+      properties:
+        server_time_unix_ms: { type: integer, format: int64 }
+        heartbeat_interval_ms: { type: integer }
+        lease_ttl_ms: { type: integer }
+        node:
+          type: object
+          required: [name, hosting_enabled, anchor, admin_state]
+          properties:
+            name: { type: string }
+            hosting_enabled: { type: boolean }
+            anchor: { type: boolean }
+            admin_state:
+              type: string
+              enum: [active, draining, disabled]
+        executions:
+          type: array
+          items: { $ref: "#/components/schemas/ExecutionDirective" }
+        peers:
+          type: array
+          items: { $ref: "#/components/schemas/DirectivePeer" }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/DirectiveRoute" }
+        relays:
+          type: array
+          items: { $ref: "#/components/schemas/DirectiveRelay" }
+        replication_tasks:
+          type: array
+          items: { $ref: "#/components/schemas/ReplicationTask" }
+        delete_snapshots:
+          type: array
+          items: { type: string }
+    DeviceEnrollRequest:
+      type: object
+      required: [public_key]
+      properties:
+        public_key: { type: string, description: base64 ed25519 }
+        hostname: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        agent_version: { type: string }
+    DeviceEnrollResponse:
+      type: object
+      required: [device_code, user_code, verification_url, expires_in, interval]
+      properties:
+        device_code: { type: string }
+        user_code: { type: string, example: "WOLF-73-KITE" }
+        verification_url: { type: string }
+        expires_in: { type: integer }
+        interval: { type: integer }
+    TokenEnrollRequest:
+      type: object
+      required: [token, public_key]
+      properties:
+        token: { type: string, description: "pge_… enrollment token" }
+        public_key: { type: string, description: base64 ed25519 }
+        hostname: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        agent_version: { type: string }
+    EnrollResult:
+      type: object
+      required: [node_id, group_id, control_plane_public_key]
+      properties:
+        node_id: { type: string }
+        group_id: { type: string }
+        control_plane_public_key: { type: string, description: base64 ed25519 }
+    AgentSnapshot:
+      type: object
+      required: [snapshot_id, server_id, execution_id, epoch, manifest_digest,
+                 deployment_id, reason]
+      properties:
+        snapshot_id: { type: string }
+        server_id: { type: string }
+        execution_id: { type: string }
+        epoch: { type: integer, format: int64 }
+        parent_id: { type: string, nullable: true }
+        manifest_digest: { type: string }
+        deployment_id: { type: string }
+        reason:
+          type: string
+          enum: [scheduled, manual, final, migration]
+        size_bytes: { type: integer, format: int64 }
+        stored_bytes: { type: integer, format: int64 }
+        file_count: { type: integer }
+        chunk_count: { type: integer }
+        request_id: { type: string }

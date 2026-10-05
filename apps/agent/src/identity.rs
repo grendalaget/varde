@@ -1,5 +1,5 @@
 //! Node identity: an ed25519 key stored as PKCS#8 PEM at
-//! `<data>/identity/node.key` (mode 0600). node_id = "node_" + first 16 hex
+//! `<data>/identity/node.key` (mode 0600). fingerprint = "node_" + first 16 hex
 //! chars of SHA-256(public key), matching go/identity.
 
 use std::fs;
@@ -11,14 +11,14 @@ use ed25519_dalek::pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 
 /// Loads the node key from `path`, generating a fresh one on first start.
-/// Returns (node_id, created).
+/// Returns (fingerprint, created).
 pub fn load_or_create(path: &Path) -> Result<(String, bool)> {
     if path.exists() {
         let pem =
             fs::read_to_string(path).with_context(|| format!("read key {}", path.display()))?;
         let key = SigningKey::from_pkcs8_pem(&pem)
             .with_context(|| format!("parse key {}", path.display()))?;
-        return Ok((node_id(&key.verifying_key()), false));
+        return Ok((fingerprint(&key.verifying_key()), false));
     }
 
     let mut rng = rand::rngs::OsRng;
@@ -32,12 +32,13 @@ pub fn load_or_create(path: &Path) -> Result<(String, bool)> {
     }
     fs::write(path, pem.as_bytes()).with_context(|| format!("write key {}", path.display()))?;
     restrict_permissions(path)?;
-    Ok((node_id(&key.verifying_key()), true))
+    Ok((fingerprint(&key.verifying_key()), true))
 }
 
-/// node_id = "node_" + first 16 hex chars of SHA-256(raw 32-byte public
-/// key), matching go/identity.NodeID.
-fn node_id(vk: &VerifyingKey) -> String {
+/// fingerprint = "node_" + first 16 hex chars of SHA-256(raw 32-byte public
+/// key), matching go/identity.Fingerprint. Pre-enrollment log label only —
+/// after enrollment the agent uses the control-plane-assigned node_id.
+fn fingerprint(vk: &VerifyingKey) -> String {
     use sha2::{Digest, Sha256};
     let sum = Sha256::digest(vk.as_bytes());
     format!("node_{}", &hex::encode(sum)[..16])

@@ -81,11 +81,11 @@ async fn run(data_dir: Option<PathBuf>, mesh_bin: Option<PathBuf>) -> Result<()>
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
 
     let key_path = data_dir.join("identity").join("node.key");
-    let (node_id, created) = identity::load_or_create(&key_path)?;
+    let (fingerprint, created) = identity::load_or_create(&key_path)?;
     if created {
-        info!(node_id, key = %key_path.display(), "generated node identity");
+        info!(fingerprint, key = %key_path.display(), "generated node identity");
     } else {
-        info!(node_id, "loaded node identity");
+        info!(fingerprint, "loaded node identity");
     }
 
     let ipc = mesh_ipc::ipc_endpoint(&data_dir);
@@ -95,7 +95,9 @@ async fn run(data_dir: Option<PathBuf>, mesh_bin: Option<PathBuf>) -> Result<()>
     let (mut child, child_spec) = mesh_child::spawn(mesh_bin, ipc.clone());
     let ipc_for_client = ipc.clone();
     let key_path_str = key_path.display().to_string();
-    let node_id_for_client = node_id.clone();
+    // Pre-enrollment: mesh Configure uses the fingerprint as a temporary
+    // node id. After enrollment the CP-assigned node_id replaces it.
+    let node_id_for_client = fingerprint.clone();
     let _client = tokio::spawn(async move {
         // The mesh needs a moment to bind the IPC listener.
         for attempt in 0..50u32 {

@@ -50,6 +50,8 @@ snapshots(id, server_id, group_id, epoch, execution_id, node_id, parent_id, mani
           reason{scheduled,manual,final,migration}, state{local,replicating,committed,superseded,invalid},
           size_bytes, stored_bytes, file_count, chunk_count, pinned, created_at, committed_at)
 snapshot_replicas(snapshot_id, node_id, state{assigned,ready,deleting}, assigned_at, ready_at, PK(snapshot_id,node_id))
+snapshot_requests(request_id PK, server_id, execution_id, reason, created_at, claimed_at)  -- queued one-off snapshot requests, delivered via directives
+kv(key PK, value)                                                                          -- CP-internal state (e.g. relay signing key)
 events(id SEQ, group_id, server_id, node_id, type, data_json, created_at)
 audit_log(id SEQ, group_id, actor_type{user,node,system}, actor_id, action, target, data_json, created_at)
 execution_logs(execution_id, seq, at, stream{stdout,stderr,agent}, line)   -- capped to last 2000 lines per execution

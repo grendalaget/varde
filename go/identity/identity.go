@@ -7,11 +7,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 const keyFilePerm = 0o600
@@ -72,9 +74,50 @@ func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
 	return ParsePrivateKeyPEM(data)
 }
 
-// NodeID derives a stable node identifier from a public key:
-// "node_" + first 16 hex chars of SHA-256(pub).
-func NodeID(pub ed25519.PublicKey) string {
+// Fingerprint derives a stable, human-readable label from a public key:
+// "node_" + first 16 hex chars of SHA-256(pub). It is a pre-enrollment log
+// label only — the control plane assigns the real node_id (node_ + 20
+// base32 chars) at enrollment and the agent uses that id everywhere after.
+func Fingerprint(pub ed25519.PublicKey) string {
 	sum := sha256.Sum256(pub)
 	return "node_" + hex.EncodeToString(sum[:8])
+}
+
+// AgentSigVersion prefixes the canonical agent request signing string.
+const AgentSigVersion = "p2pgames-agent-v1"
+
+// SigningString builds the canonical string an agent signs for a
+// /v1/agent/* request:
+//
+//	"p2pgames-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))
+//
+// timestamp is unix milliseconds formatted in decimal.
+func SigningString(method, path string, timestampUnixMs int64, body []byte) string {
+	sum := sha256.Sum256(body)
+	return strings.Join([]string{
+		AgentSigVersion,
+		strings.ToUpper(method),
+		path,
+		fmt.Sprintf("%d", timestampUnixMs),
+		hex.EncodeToString(sum[:]),
+	}, "\n")
+}
+
+// SignRequest signs a request, returning the base64 signature to put in the
+// X-P2PG-Signature header.
+func SignRequest(priv ed25519.PrivateKey, method, path string, timestampUnixMs int64, body []byte) string {
+	sig := ed25519.Sign(priv, []byte(SigningString(method, path, timestampUnixMs, body)))
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+// VerifyRequest checks an X-P2PG-Signature value against the request.
+func VerifyRequest(pub ed25519.PublicKey, method, path string, timestampUnixMs int64, body []byte, sigB64 string) error {
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return fmt.Errorf("signature not base64: %w", err)
+	}
+	if !ed25519.Verify(pub, []byte(SigningString(method, path, timestampUnixMs, body)), sig) {
+		return errors.New("invalid signature")
+	}
+	return nil
 }

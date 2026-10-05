@@ -1,0 +1,55 @@
+[
+  {
+    "id": "testgame",
+    "name": "Test Game",
+    "ports": [{ "port": 23000, "protocol": "udp" }],
+    "os": ["linux", "windows"],
+    "arch": ["x86_64", "aarch64"],
+    "min_memory_mb": 64,
+    "runtimes": ["native"],
+    "config_fields": [
+      { "name": "message", "type": "string", "default": "hello", "required": false, "help": "text the test server echoes" },
+      { "name": "tick_rate", "type": "int", "default": 20, "required": false }
+    ]
+  },
+  {
+    "id": "minecraft",
+    "name": "Minecraft (Java)",
+    "ports": [{ "port": 25565, "protocol": "tcp" }],
+    "os": ["linux", "windows"],
+    "arch": ["x86_64", "aarch64"],
+    "min_memory_mb": 2048,
+    "runtimes": ["java"],
+    "config_fields": [
+      { "name": "version", "type": "select", "options": ["1.21.4", "1.21.1", "1.20.6"], "default": "1.21.4", "required": true },
+      { "name": "flavor", "type": "select", "options": ["vanilla", "paper"], "default": "paper", "required": true },
+      { "name": "max_players", "type": "int", "default": 20, "required": false },
+      { "name": "difficulty", "type": "select", "options": ["peaceful", "easy", "normal", "hard"], "default": "normal" },
+      { "name": "view_distance", "type": "int", "default": 10 },
+      { "name": "online_mode", "type": "bool", "default": false, "help": "off for peer-hosted play without Mojang auth" },
+      { "name": "motd", "type": "string", "default": "A p2pgames server" },
+      { "name": "seed", "type": "string", "required": false },
+      { "name": "admin_usernames", "type": "string", "required": false, "help": "comma-separated Minecraft usernames to op" }
+    ]
+  },
+  {
+    "id": "valheim",
+    "name": "Valheim Dedicated",
+    "ports": [
+      { "port": 2456, "protocol": "udp" },
+      { "port": 2457, "protocol": "udp" },
+      { "port": 2458, "protocol": "udp" }
+    ],
+    "os": ["linux", "windows"],
+    "arch": ["x86_64"],
+    "min_memory_mb": 2048,
+    "runtimes": ["steamcmd"],
+    "config_fields": [
+      { "name": "server_name", "type": "string", "required": true },
+      { "name": "world_name", "type": "string", "required": true },
+      { "name": "password", "type": "secret", "required": true, "secret": true, "help": "server password (5+ chars)" },
+      { "name": "public", "type": "bool", "default": false, "help": "list on Steam community servers" },
+      { "name": "modifiers", "type": "select", "options": ["normal", "casual", "easy", "hard", "hardcore"], "default": "normal" }
+    ]
+  }
+]

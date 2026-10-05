@@ -10,14 +10,24 @@ gen:
 	pnpm --dir apps/web gen:api
 
 build:
-	@for m in $(GO_MODULES); do (cd $$m && go build ./...) || exit 1; done
 	cargo build --workspace
 	pnpm --dir apps/web build
+	$(MAKE) webui-dist
+	@for m in $(GO_MODULES); do (cd $$m && go build ./...) || exit 1; done
 	@mkdir -p $(BIN)
 	@for m in control-plane relay mesh; do \
 		(cd apps/$$m && go build -o ../../$(BIN)/p2pgames-$$m .) || exit 1; \
 	done
 	cp target/debug/p2pgames-agent $(BIN)/p2pgames-agent
+
+# Copy the built SPA into the Go module so go:embed picks it up. The
+# committed placeholder index.html keeps `go build` working without a web build.
+.PHONY: webui-dist
+webui-dist:
+	@if [ -d apps/web/dist ]; then \
+		rm -rf apps/control-plane/internal/webui/dist && \
+		cp -r apps/web/dist apps/control-plane/internal/webui/dist; \
+	fi
 
 test:
 	@for m in $(GO_MODULES); do (cd $$m && go test ./...) || exit 1; done
@@ -35,9 +45,14 @@ fmt:
 	cargo fmt
 	pnpm --dir apps/web format
 
-check-gen: gen
+check-gen: gen gen-go-api
 	@git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts \
+		apps/control-plane/internal/api/gen \
 		|| (echo "generated files are stale; run 'make gen' and commit" && exit 1)
+
+.PHONY: gen-go-api
+gen-go-api:
+	cd api/openapi && oapi-codegen -config oapi-codegen.yaml control-plane.yaml
 
 clean:
 	rm -rf $(BIN) target apps/web/dist

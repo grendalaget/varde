@@ -38,13 +38,31 @@ func TestSaveLoad(t *testing.T) {
 	}
 }
 
-func TestNodeID(t *testing.T) {
+func TestFingerprint(t *testing.T) {
 	pub, _, err := Generate()
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	id := NodeID(pub)
+	id := Fingerprint(pub)
 	if len(id) != len("node_")+16 {
-		t.Fatalf("node id %q has unexpected length", id)
+		t.Fatalf("fingerprint %q has unexpected length", id)
+	}
+}
+
+func TestSignVerify(t *testing.T) {
+	pub, priv, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	body := []byte(`{"a":1}`)
+	sig := SignRequest(priv, "POST", "/v1/agent/heartbeat", 1790000000000, body)
+	if err := VerifyRequest(pub, "POST", "/v1/agent/heartbeat", 1790000000000, body, sig); err != nil {
+		t.Fatalf("VerifyRequest: %v", err)
+	}
+	if err := VerifyRequest(pub, "POST", "/v1/agent/heartbeat", 1790000000001, body, sig); err == nil {
+		t.Fatal("expected failure on timestamp mismatch")
+	}
+	if err := VerifyRequest(pub, "POST", "/v1/agent/heartbeat", 1790000000000, []byte("{}"), sig); err == nil {
+		t.Fatal("expected failure on body mismatch")
 	}
 }

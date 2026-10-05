@@ -1,6 +1,6 @@
 module github.com/arnemolland/p2pgames/apps/mesh
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
