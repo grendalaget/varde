@@ -10,6 +10,7 @@ import {
   PageHeader,
   Toggle,
 } from "../components/ui";
+import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
 import { navigate, useLocation } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
@@ -55,7 +56,7 @@ export default function Settings() {
     );
   }
 
-  if (!s) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (!s) return <PageLoader />;
 
   const num = (k: keyof GroupSettings) => (
     <input
@@ -137,10 +138,10 @@ export default function Settings() {
                 label="Require always-on backup"
               />
               <div>
-                <div className="text-sm text-slate-200">
+                <div className="text-sm text-skifer-200">
                   Require the always-on backup
                 </div>
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-skifer-400">
                   A save only counts as safe once an always-on backup has it
                   (applies when the group has one).
                 </div>

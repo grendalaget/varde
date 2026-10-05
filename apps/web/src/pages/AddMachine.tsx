@@ -119,16 +119,16 @@ export default function AddMachine() {
             )}
             {(tokens.data?.tokens.length ?? 0) > 0 && (
               <div>
-                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500">
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-skifer-500">
                   Active tokens
                 </h3>
-                <ul className="divide-y divide-slate-800 text-sm">
+                <ul className="divide-y divide-skifer-800 text-sm">
                   {tokens.data!.tokens.map((t) => (
                     <li
                       key={t.id}
                       className="flex items-center justify-between py-2"
                     >
-                      <span className="text-slate-300">
+                      <span className="text-skifer-300">
                         {t.anchor ? "Always-on backup" : "Machine"} · used{" "}
                         {t.uses}
                         {t.max_uses ? `/${t.max_uses}` : ""} · expires{" "}

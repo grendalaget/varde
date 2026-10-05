@@ -1,3 +1,76 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background-color: theme("colors.natt");
+    color: theme("colors.take");
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: theme("fontFamily.display");
+  }
+}
+
+/* Brand marks (components/Logo.tsx). Only the lit stone is ever Glød. */
+.vd {
+  --vd-stone: currentColor;
+  --vd-ember: theme("colors.glod");
+}
+.vd-s,
+.vd-h {
+  fill: var(--vd-stone);
+}
+.vd-h1,
+.vd-ember {
+  fill: var(--vd-ember);
+}
+.vd-h1.vd-unlit {
+  fill: var(--vd-stone);
+}
+.vd-h2 {
+  animation-delay: -2.4s;
+}
+.vd-h3 {
+  animation-delay: -1.2s;
+}
+.vd-moving .vd-h,
+.vd-hover:hover .vd-h,
+.vd-hover:focus-visible .vd-h {
+  animation-name: vd-lit;
+  animation-duration: 3.6s;
+  animation-iteration-count: infinite;
+}
+@keyframes vd-lit {
+  0%,
+  25% {
+    fill: var(--vd-ember);
+  }
+  30%,
+  97% {
+    fill: var(--vd-stone);
+  }
+  100% {
+    fill: var(--vd-ember);
+  }
+}
+.vd-ignite {
+  animation: vd-ignite 0.9s ease-out;
+}
+@keyframes vd-ignite {
+  from {
+    fill: theme("colors.skifer.600");
+  }
+  to {
+    fill: var(--vd-ember);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vd-h,
+  .vd-ignite {
+    animation: none !important;
+  }
+}

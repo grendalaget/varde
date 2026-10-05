@@ -19,9 +19,9 @@ export default function SaveSafety({
     <div className="space-y-2">
       {replicas.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-slate-400">Backed up on</span>
+          <span className="text-skifer-400">Backed up on</span>
           {replicas.map((r) => (
-            <Badge key={r.node_id} tone={r.anchor ? "violet" : "slate"}>
+            <Badge key={r.node_id} tone={r.anchor ? "violet" : "neutral"}>
               {r.name}
               {r.anchor && !compact && " · always-on"}
             </Badge>
@@ -35,7 +35,7 @@ export default function SaveSafety({
         </WarnNote>
       )}
       {newerUnsafe && !compact && (
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-skifer-400">
           A newer save is still being backed up.
         </p>
       )}
