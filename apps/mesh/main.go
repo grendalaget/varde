@@ -7,6 +7,8 @@ import (
 	"context"
 	"flag"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,8 +18,12 @@ import (
 	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
 )
 
+// Set by -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	ipc := flag.String("ipc", "", "IPC endpoint: unix socket path (Linux) or named pipe path (Windows)")
+	debugListen := flag.String("debug-listen", "", "optional 127.0.0.1:port for /metrics")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -28,6 +34,27 @@ func main() {
 		os.Exit(2)
 	}
 
+	n := NewNode(log, DefaultTimings(), nil)
+	defer n.Close()
+
+	if *debugListen != "" {
+		la, err := net.ResolveTCPAddr("tcp", *debugListen)
+		if err != nil || !la.IP.IsLoopback() {
+			log.Error("--debug-listen must be a loopback address", "addr", *debugListen)
+			os.Exit(2)
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", n.metrics.handler(n))
+		go func() {
+			ln, err := net.ListenTCP("tcp", la)
+			if err != nil {
+				log.Error("debug listen failed", "error", err)
+				return
+			}
+			_ = http.Serve(ln, mux)
+		}()
+	}
+
 	lis, err := listenIPC(*ipc)
 	if err != nil {
 		log.Error("ipc listen failed", "ipc", *ipc, "error", err)
@@ -35,7 +62,7 @@ func main() {
 	}
 
 	srv := grpc.NewServer()
-	meshv1.RegisterMeshServiceServer(srv, newMeshServer(log))
+	meshv1.RegisterMeshServiceServer(srv, newMeshServer(log, n))
 
 	go func() {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
