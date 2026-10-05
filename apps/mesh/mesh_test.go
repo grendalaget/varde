@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 	"github.com/grendalaget/varde/go/identity"
@@ -68,7 +67,7 @@ func newTestNode(t *testing.T, id string) *testNode {
 		t.Fatal(err)
 	}
 	n := NewNode(testLog(), testTimings, nil)
-	sock := filepath.Join(dir, "mesh.sock")
+	sock := ipcSockPath(dir)
 	lis, err := listenIPC(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +75,7 @@ func newTestNode(t *testing.T, id string) *testNode {
 	gs := grpc.NewServer()
 	meshv1.RegisterMeshServiceServer(gs, newMeshServer(testLog(), n))
 	go func() { _ = gs.Serve(lis) }()
-	cc, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpcIPCClient(sock)
 	if err != nil {
 		t.Fatal(err)
 	}

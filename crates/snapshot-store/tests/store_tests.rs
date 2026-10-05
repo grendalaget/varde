@@ -366,6 +366,9 @@ fn filetime_back(p: &Path, ms_ago: u64) {
     }
     #[cfg(not(unix))]
     {
-        let _ = (p, ms_ago);
+        let t = filetime::FileTime::from_system_time(
+            std::time::SystemTime::now() - std::time::Duration::from_millis(ms_ago),
+        );
+        filetime::set_file_mtime(p, t).unwrap();
     }
 }
