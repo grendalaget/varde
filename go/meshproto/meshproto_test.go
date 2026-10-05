@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 func FuzzReadFrame(f *testing.F) {
@@ -102,7 +102,7 @@ func TestRegisterSignature(t *testing.T) {
 	if VerifyRegister(pub, "eu-2", "node_x", 1234, sig) {
 		t.Fatal("wrong relay accepted")
 	}
-	if got := RegisterSigningString("eu-1", "node_x", 1234); got != "p2pgames-relay-register|eu-1|node_x|1234" {
+	if got := RegisterSigningString("eu-1", "node_x", 1234); got != "varde-relay-register|eu-1|node_x|1234" {
 		t.Fatalf("signing string %q", got)
 	}
 }

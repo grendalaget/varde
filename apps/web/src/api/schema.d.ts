@@ -816,7 +816,7 @@ export interface components {
             uses: number;
         };
         EnrollmentTokenCreated: components["schemas"]["EnrollmentToken"] & {
-            /** @description pge_… secret, shown once */
+            /** @description vde_… secret, shown once */
             token: string;
         };
         DeviceLink: {
@@ -1175,7 +1175,7 @@ export interface components {
             interval: number;
         };
         TokenEnrollRequest: {
-            /** @description pge_… enrollment token */
+            /** @description vde_… enrollment token */
             token: string;
             /** @description base64 ed25519 */
             public_key: string;
@@ -1362,7 +1362,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Session created (also sets the p2pg_session cookie). */
+            /** @description Session created (also sets the varde_session cookie). */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -107,7 +107,7 @@ An anchor is a node with `anchor = true` (set from the dashboard or by its enrol
    "Latest save only on Arne-PC" and replication resumes when that PC is back.
 4. Scheduler bonus +80 as host when hosting is enabled on it ("always-on").
 
-Anchors run the normal agent (`p2pgames-agent run --anchor` is equivalent to setting the flag; typically
+Anchors run the normal agent (`varde-agent run --anchor` is equivalent to setting the flag; typically
 `hosting_enabled=false`). A hosting provider can offer "cloud backup" simply by enrolling anchor nodes into customer
 groups.
 

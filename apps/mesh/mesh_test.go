@@ -21,10 +21,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/identity"
-	"github.com/arnemolland/p2pgames/go/relay"
-	"github.com/arnemolland/p2pgames/go/relaytoken"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/identity"
+	"github.com/grendalaget/varde/go/relay"
+	"github.com/grendalaget/varde/go/relaytoken"
 )
 
 var testTimings = Timings{

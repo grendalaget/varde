@@ -1,4 +1,4 @@
-// Package relay implements the p2pgames UDP relay: stateless apart from
+// Package relay implements the varde UDP relay: stateless apart from
 // 60 s registrations, it forwards opaque QUIC ciphertext between registered
 // nodes of the same control-plane group. See proto/mesh/v1/relay.proto.
 package relay
@@ -15,9 +15,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/meshproto"
-	"github.com/arnemolland/p2pgames/go/relaytoken"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/meshproto"
+	"github.com/grendalaget/varde/go/relaytoken"
 )
 
 // Defaults from networking.md.

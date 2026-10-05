@@ -658,7 +658,7 @@ func (*SetPeersResponse) Descriptor() ([]byte, []int) {
 type PeerState struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	NodeId         string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Path           PathKind               `protobuf:"varint,2,opt,name=path,proto3,enum=p2pgames.mesh.v1.PathKind" json:"path,omitempty"`
+	Path           PathKind               `protobuf:"varint,2,opt,name=path,proto3,enum=varde.mesh.v1.PathKind" json:"path,omitempty"`
 	RemoteAddr     string                 `protobuf:"bytes,3,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
 	RelayId        string                 `protobuf:"bytes,4,opt,name=relay_id,json=relayId,proto3" json:"relay_id,omitempty"`
 	RttUs          int64                  `protobuf:"varint,5,opt,name=rtt_us,json=rttUs,proto3" json:"rtt_us,omitempty"`
@@ -838,7 +838,7 @@ func (x *ListPeersResponse) GetPeers() []*PeerState {
 type PortSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Port          uint32                 `protobuf:"varint,1,opt,name=port,proto3" json:"port,omitempty"`
-	Protocol      Protocol               `protobuf:"varint,2,opt,name=protocol,proto3,enum=p2pgames.mesh.v1.Protocol" json:"protocol,omitempty"`
+	Protocol      Protocol               `protobuf:"varint,2,opt,name=protocol,proto3,enum=varde.mesh.v1.Protocol" json:"protocol,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1109,7 +1109,7 @@ func (x *RouteBindError) GetMessage() string {
 type HostedPort struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Port     uint32                 `protobuf:"varint,1,opt,name=port,proto3" json:"port,omitempty"`
-	Protocol Protocol               `protobuf:"varint,2,opt,name=protocol,proto3,enum=p2pgames.mesh.v1.Protocol" json:"protocol,omitempty"`
+	Protocol Protocol               `protobuf:"varint,2,opt,name=protocol,proto3,enum=varde.mesh.v1.Protocol" json:"protocol,omitempty"`
 	// Local port of the game process on 127.0.0.1 (usually equal to port).
 	TargetPort    uint32 `protobuf:"varint,3,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1846,8 +1846,8 @@ var File_mesh_v1_ipc_proto protoreflect.FileDescriptor
 
 const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\n" +
-	"\x11mesh/v1/ipc.proto\x12\x10p2pgames.mesh.v1\"\x12\n" +
-	"\x10GetStatusRequest\"\x94\x02\n" +
+	"\x11mesh/v1/ipc.proto\x12\rvarde.mesh.v1\"\x12\n" +
+	"\x10GetStatusRequest\"\x91\x02\n" +
 	"\n" +
 	"MeshStatus\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
@@ -1856,8 +1856,8 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"configured\x18\x03 \x01(\bR\n" +
 	"configured\x12!\n" +
 	"\flisten_addrs\x18\x04 \x03(\tR\vlistenAddrs\x12-\n" +
-	"\x12observed_endpoints\x18\x05 \x03(\tR\x11observedEndpoints\x124\n" +
-	"\x06relays\x18\x06 \x03(\v2\x1c.p2pgames.mesh.v1.RelayStateR\x06relays\x12+\n" +
+	"\x12observed_endpoints\x18\x05 \x03(\tR\x11observedEndpoints\x121\n" +
+	"\x06relays\x18\x06 \x03(\v2\x19.varde.mesh.v1.RelayStateR\x06relays\x12+\n" +
 	"\x12started_at_unix_ms\x18\a \x01(\x03R\x0fstartedAtUnixMs\"r\n" +
 	"\n" +
 	"RelayState\x12\x19\n" +
@@ -1870,13 +1870,13 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x05Relay\x12\x19\n" +
 	"\brelay_id\x18\x01 \x01(\tR\arelayId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x14\n" +
-	"\x05token\x18\x03 \x01(\tR\x05token\"\xca\x01\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"\xc7\x01\n" +
 	"\x10ConfigureRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12*\n" +
 	"\x11identity_key_path\x18\x02 \x01(\tR\x0fidentityKeyPath\x12\x1f\n" +
 	"\vlisten_port\x18\x03 \x01(\rR\n" +
-	"listenPort\x12/\n" +
-	"\x06relays\x18\x04 \x03(\v2\x17.p2pgames.mesh.v1.RelayR\x06relays\x12\x1f\n" +
+	"listenPort\x12,\n" +
+	"\x06relays\x18\x04 \x03(\v2\x14.varde.mesh.v1.RelayR\x06relays\x12\x1f\n" +
 	"\vforce_relay\x18\x05 \x01(\bR\n" +
 	"forceRelay\"\x13\n" +
 	"\x11ConfigureResponse\"y\n" +
@@ -1885,13 +1885,13 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\n" +
 	"public_key\x18\x02 \x01(\fR\tpublicKey\x12\x1c\n" +
 	"\tendpoints\x18\x03 \x03(\tR\tendpoints\x12\x1b\n" +
-	"\trelay_ids\x18\x04 \x03(\tR\brelayIds\"?\n" +
-	"\x0fSetPeersRequest\x12,\n" +
-	"\x05peers\x18\x01 \x03(\v2\x16.p2pgames.mesh.v1.PeerR\x05peers\"\x12\n" +
-	"\x10SetPeersResponse\"\x88\x02\n" +
+	"\trelay_ids\x18\x04 \x03(\tR\brelayIds\"<\n" +
+	"\x0fSetPeersRequest\x12)\n" +
+	"\x05peers\x18\x01 \x03(\v2\x13.varde.mesh.v1.PeerR\x05peers\"\x12\n" +
+	"\x10SetPeersResponse\"\x85\x02\n" +
 	"\tPeerState\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12.\n" +
-	"\x04path\x18\x02 \x01(\x0e2\x1a.p2pgames.mesh.v1.PathKindR\x04path\x12\x1f\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12+\n" +
+	"\x04path\x18\x02 \x01(\x0e2\x17.varde.mesh.v1.PathKindR\x04path\x12\x1f\n" +
 	"\vremote_addr\x18\x03 \x01(\tR\n" +
 	"remoteAddr\x12\x19\n" +
 	"\brelay_id\x18\x04 \x01(\tR\arelayId\x12\x15\n" +
@@ -1899,49 +1899,49 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\bbytes_tx\x18\x06 \x01(\x04R\abytesTx\x12\x19\n" +
 	"\bbytes_rx\x18\a \x01(\x04R\abytesRx\x12)\n" +
 	"\x11last_seen_unix_ms\x18\b \x01(\x03R\x0elastSeenUnixMs\"\x12\n" +
-	"\x10ListPeersRequest\"F\n" +
-	"\x11ListPeersResponse\x121\n" +
-	"\x05peers\x18\x01 \x03(\v2\x1b.p2pgames.mesh.v1.PeerStateR\x05peers\"V\n" +
+	"\x10ListPeersRequest\"C\n" +
+	"\x11ListPeersResponse\x12.\n" +
+	"\x05peers\x18\x01 \x03(\v2\x18.varde.mesh.v1.PeerStateR\x05peers\"S\n" +
 	"\bPortSpec\x12\x12\n" +
-	"\x04port\x18\x01 \x01(\rR\x04port\x126\n" +
-	"\bprotocol\x18\x02 \x01(\x0e2\x1a.p2pgames.mesh.v1.ProtocolR\bprotocol\"\xb8\x01\n" +
+	"\x04port\x18\x01 \x01(\rR\x04port\x123\n" +
+	"\bprotocol\x18\x02 \x01(\x0e2\x17.varde.mesh.v1.ProtocolR\bprotocol\"\xb5\x01\n" +
 	"\fServiceRoute\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x1f\n" +
 	"\vloopback_ip\x18\x02 \x01(\tR\n" +
-	"loopbackIp\x120\n" +
-	"\x05ports\x18\x03 \x03(\v2\x1a.p2pgames.mesh.v1.PortSpecR\x05ports\x12 \n" +
+	"loopbackIp\x12-\n" +
+	"\x05ports\x18\x03 \x03(\v2\x17.varde.mesh.v1.PortSpecR\x05ports\x12 \n" +
 	"\fhost_node_id\x18\x04 \x01(\tR\n" +
 	"hostNodeId\x12\x14\n" +
-	"\x05epoch\x18\x05 \x01(\x04R\x05epoch\"J\n" +
-	"\x10SetRoutesRequest\x126\n" +
-	"\x06routes\x18\x01 \x03(\v2\x1e.p2pgames.mesh.v1.ServiceRouteR\x06routes\"M\n" +
-	"\x11SetRoutesResponse\x128\n" +
-	"\x06errors\x18\x01 \x03(\v2 .p2pgames.mesh.v1.RouteBindErrorR\x06errors\"I\n" +
+	"\x05epoch\x18\x05 \x01(\x04R\x05epoch\"G\n" +
+	"\x10SetRoutesRequest\x123\n" +
+	"\x06routes\x18\x01 \x03(\v2\x1b.varde.mesh.v1.ServiceRouteR\x06routes\"J\n" +
+	"\x11SetRoutesResponse\x125\n" +
+	"\x06errors\x18\x01 \x03(\v2\x1d.varde.mesh.v1.RouteBindErrorR\x06errors\"I\n" +
 	"\x0eRouteBindError\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"y\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"v\n" +
 	"\n" +
 	"HostedPort\x12\x12\n" +
-	"\x04port\x18\x01 \x01(\rR\x04port\x126\n" +
-	"\bprotocol\x18\x02 \x01(\x0e2\x1a.p2pgames.mesh.v1.ProtocolR\bprotocol\x12\x1f\n" +
+	"\x04port\x18\x01 \x01(\rR\x04port\x123\n" +
+	"\bprotocol\x18\x02 \x01(\x0e2\x17.varde.mesh.v1.ProtocolR\bprotocol\x12\x1f\n" +
 	"\vtarget_port\x18\x03 \x01(\rR\n" +
-	"targetPort\"x\n" +
+	"targetPort\"u\n" +
 	"\rHostedService\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x14\n" +
-	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x122\n" +
-	"\x05ports\x18\x03 \x03(\v2\x1c.p2pgames.mesh.v1.HostedPortR\x05ports\"W\n" +
-	"\x18SetHostedServicesRequest\x12;\n" +
-	"\bservices\x18\x01 \x03(\v2\x1f.p2pgames.mesh.v1.HostedServiceR\bservices\"\x1b\n" +
+	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12/\n" +
+	"\x05ports\x18\x03 \x03(\v2\x19.varde.mesh.v1.HostedPortR\x05ports\"T\n" +
+	"\x18SetHostedServicesRequest\x128\n" +
+	"\bservices\x18\x01 \x03(\v2\x1c.varde.mesh.v1.HostedServiceR\bservices\"\x1b\n" +
 	"\x19SetHostedServicesResponse\"F\n" +
 	"\x0fInternalService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vtarget_port\x18\x02 \x01(\rR\n" +
-	"targetPort\"[\n" +
-	"\x1aSetInternalServicesRequest\x12=\n" +
-	"\bservices\x18\x01 \x03(\v2!.p2pgames.mesh.v1.InternalServiceR\bservices\"\x1d\n" +
+	"targetPort\"X\n" +
+	"\x1aSetInternalServicesRequest\x12:\n" +
+	"\bservices\x18\x01 \x03(\v2\x1e.varde.mesh.v1.InternalServiceR\bservices\"\x1d\n" +
 	"\x1bSetInternalServicesResponse\"R\n" +
 	"\x1aBindInternalForwardRequest\x12 \n" +
 	"\fpeer_node_id\x18\x01 \x01(\tR\n" +
@@ -1956,13 +1956,13 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\n" +
 	"forward_id\x18\x01 \x01(\tR\tforwardId\"\x1f\n" +
 	"\x1dUnbindInternalForwardResponse\"\x14\n" +
-	"\x12WatchEventsRequest\"\xcc\x02\n" +
+	"\x12WatchEventsRequest\"\xc3\x02\n" +
 	"\tMeshEvent\x12\x1c\n" +
 	"\n" +
-	"at_unix_ms\x18\x01 \x01(\x03R\batUnixMs\x12I\n" +
-	"\x11peer_path_changed\x18\x02 \x01(\v2\x1b.p2pgames.mesh.v1.PeerStateH\x00R\x0fpeerPathChanged\x12H\n" +
-	"\x0eroute_rejected\x18\x03 \x01(\v2\x1f.p2pgames.mesh.v1.RouteRejectedH\x00R\rrouteRejected\x12C\n" +
-	"\rrelay_changed\x18\x04 \x01(\v2\x1c.p2pgames.mesh.v1.RelayStateH\x00R\frelayChanged\x12>\n" +
+	"at_unix_ms\x18\x01 \x01(\x03R\batUnixMs\x12F\n" +
+	"\x11peer_path_changed\x18\x02 \x01(\v2\x18.varde.mesh.v1.PeerStateH\x00R\x0fpeerPathChanged\x12E\n" +
+	"\x0eroute_rejected\x18\x03 \x01(\v2\x1c.varde.mesh.v1.RouteRejectedH\x00R\rrouteRejected\x12@\n" +
+	"\rrelay_changed\x18\x04 \x01(\v2\x19.varde.mesh.v1.RelayStateH\x00R\frelayChanged\x12>\n" +
 	"\x1aobserved_endpoints_changed\x18\x05 \x01(\tH\x00R\x18observedEndpointsChangedB\a\n" +
 	"\x05event\"h\n" +
 	"\rRouteRejected\x12\x1d\n" +
@@ -1979,18 +1979,18 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x15PATH_KIND_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0ePATH_KIND_NONE\x10\x01\x12\x14\n" +
 	"\x10PATH_KIND_DIRECT\x10\x02\x12\x15\n" +
-	"\x11PATH_KIND_RELAYED\x10\x032\xd5\a\n" +
-	"\vMeshService\x12M\n" +
-	"\tGetStatus\x12\".p2pgames.mesh.v1.GetStatusRequest\x1a\x1c.p2pgames.mesh.v1.MeshStatus\x12T\n" +
-	"\tConfigure\x12\".p2pgames.mesh.v1.ConfigureRequest\x1a#.p2pgames.mesh.v1.ConfigureResponse\x12Q\n" +
-	"\bSetPeers\x12!.p2pgames.mesh.v1.SetPeersRequest\x1a\".p2pgames.mesh.v1.SetPeersResponse\x12T\n" +
-	"\tListPeers\x12\".p2pgames.mesh.v1.ListPeersRequest\x1a#.p2pgames.mesh.v1.ListPeersResponse\x12T\n" +
-	"\tSetRoutes\x12\".p2pgames.mesh.v1.SetRoutesRequest\x1a#.p2pgames.mesh.v1.SetRoutesResponse\x12l\n" +
-	"\x11SetHostedServices\x12*.p2pgames.mesh.v1.SetHostedServicesRequest\x1a+.p2pgames.mesh.v1.SetHostedServicesResponse\x12r\n" +
-	"\x13SetInternalServices\x12,.p2pgames.mesh.v1.SetInternalServicesRequest\x1a-.p2pgames.mesh.v1.SetInternalServicesResponse\x12r\n" +
-	"\x13BindInternalForward\x12,.p2pgames.mesh.v1.BindInternalForwardRequest\x1a-.p2pgames.mesh.v1.BindInternalForwardResponse\x12x\n" +
-	"\x15UnbindInternalForward\x12..p2pgames.mesh.v1.UnbindInternalForwardRequest\x1a/.p2pgames.mesh.v1.UnbindInternalForwardResponse\x12R\n" +
-	"\vWatchEvents\x12$.p2pgames.mesh.v1.WatchEventsRequest\x1a\x1b.p2pgames.mesh.v1.MeshEvent0\x01B7Z5github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1b\x06proto3"
+	"\x11PATH_KIND_RELAYED\x10\x032\x99\a\n" +
+	"\vMeshService\x12G\n" +
+	"\tGetStatus\x12\x1f.varde.mesh.v1.GetStatusRequest\x1a\x19.varde.mesh.v1.MeshStatus\x12N\n" +
+	"\tConfigure\x12\x1f.varde.mesh.v1.ConfigureRequest\x1a .varde.mesh.v1.ConfigureResponse\x12K\n" +
+	"\bSetPeers\x12\x1e.varde.mesh.v1.SetPeersRequest\x1a\x1f.varde.mesh.v1.SetPeersResponse\x12N\n" +
+	"\tListPeers\x12\x1f.varde.mesh.v1.ListPeersRequest\x1a .varde.mesh.v1.ListPeersResponse\x12N\n" +
+	"\tSetRoutes\x12\x1f.varde.mesh.v1.SetRoutesRequest\x1a .varde.mesh.v1.SetRoutesResponse\x12f\n" +
+	"\x11SetHostedServices\x12'.varde.mesh.v1.SetHostedServicesRequest\x1a(.varde.mesh.v1.SetHostedServicesResponse\x12l\n" +
+	"\x13SetInternalServices\x12).varde.mesh.v1.SetInternalServicesRequest\x1a*.varde.mesh.v1.SetInternalServicesResponse\x12l\n" +
+	"\x13BindInternalForward\x12).varde.mesh.v1.BindInternalForwardRequest\x1a*.varde.mesh.v1.BindInternalForwardResponse\x12r\n" +
+	"\x15UnbindInternalForward\x12+.varde.mesh.v1.UnbindInternalForwardRequest\x1a,.varde.mesh.v1.UnbindInternalForwardResponse\x12L\n" +
+	"\vWatchEvents\x12!.varde.mesh.v1.WatchEventsRequest\x1a\x18.varde.mesh.v1.MeshEvent0\x01B4Z2github.com/grendalaget/varde/go/gen/mesh/v1;meshv1b\x06proto3"
 
 var (
 	file_mesh_v1_ipc_proto_rawDescOnce sync.Once
@@ -2007,77 +2007,77 @@ func file_mesh_v1_ipc_proto_rawDescGZIP() []byte {
 var file_mesh_v1_ipc_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_mesh_v1_ipc_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_mesh_v1_ipc_proto_goTypes = []any{
-	(Protocol)(0),                         // 0: p2pgames.mesh.v1.Protocol
-	(PathKind)(0),                         // 1: p2pgames.mesh.v1.PathKind
-	(*GetStatusRequest)(nil),              // 2: p2pgames.mesh.v1.GetStatusRequest
-	(*MeshStatus)(nil),                    // 3: p2pgames.mesh.v1.MeshStatus
-	(*RelayState)(nil),                    // 4: p2pgames.mesh.v1.RelayState
-	(*Relay)(nil),                         // 5: p2pgames.mesh.v1.Relay
-	(*ConfigureRequest)(nil),              // 6: p2pgames.mesh.v1.ConfigureRequest
-	(*ConfigureResponse)(nil),             // 7: p2pgames.mesh.v1.ConfigureResponse
-	(*Peer)(nil),                          // 8: p2pgames.mesh.v1.Peer
-	(*SetPeersRequest)(nil),               // 9: p2pgames.mesh.v1.SetPeersRequest
-	(*SetPeersResponse)(nil),              // 10: p2pgames.mesh.v1.SetPeersResponse
-	(*PeerState)(nil),                     // 11: p2pgames.mesh.v1.PeerState
-	(*ListPeersRequest)(nil),              // 12: p2pgames.mesh.v1.ListPeersRequest
-	(*ListPeersResponse)(nil),             // 13: p2pgames.mesh.v1.ListPeersResponse
-	(*PortSpec)(nil),                      // 14: p2pgames.mesh.v1.PortSpec
-	(*ServiceRoute)(nil),                  // 15: p2pgames.mesh.v1.ServiceRoute
-	(*SetRoutesRequest)(nil),              // 16: p2pgames.mesh.v1.SetRoutesRequest
-	(*SetRoutesResponse)(nil),             // 17: p2pgames.mesh.v1.SetRoutesResponse
-	(*RouteBindError)(nil),                // 18: p2pgames.mesh.v1.RouteBindError
-	(*HostedPort)(nil),                    // 19: p2pgames.mesh.v1.HostedPort
-	(*HostedService)(nil),                 // 20: p2pgames.mesh.v1.HostedService
-	(*SetHostedServicesRequest)(nil),      // 21: p2pgames.mesh.v1.SetHostedServicesRequest
-	(*SetHostedServicesResponse)(nil),     // 22: p2pgames.mesh.v1.SetHostedServicesResponse
-	(*InternalService)(nil),               // 23: p2pgames.mesh.v1.InternalService
-	(*SetInternalServicesRequest)(nil),    // 24: p2pgames.mesh.v1.SetInternalServicesRequest
-	(*SetInternalServicesResponse)(nil),   // 25: p2pgames.mesh.v1.SetInternalServicesResponse
-	(*BindInternalForwardRequest)(nil),    // 26: p2pgames.mesh.v1.BindInternalForwardRequest
-	(*BindInternalForwardResponse)(nil),   // 27: p2pgames.mesh.v1.BindInternalForwardResponse
-	(*UnbindInternalForwardRequest)(nil),  // 28: p2pgames.mesh.v1.UnbindInternalForwardRequest
-	(*UnbindInternalForwardResponse)(nil), // 29: p2pgames.mesh.v1.UnbindInternalForwardResponse
-	(*WatchEventsRequest)(nil),            // 30: p2pgames.mesh.v1.WatchEventsRequest
-	(*MeshEvent)(nil),                     // 31: p2pgames.mesh.v1.MeshEvent
-	(*RouteRejected)(nil),                 // 32: p2pgames.mesh.v1.RouteRejected
+	(Protocol)(0),                         // 0: varde.mesh.v1.Protocol
+	(PathKind)(0),                         // 1: varde.mesh.v1.PathKind
+	(*GetStatusRequest)(nil),              // 2: varde.mesh.v1.GetStatusRequest
+	(*MeshStatus)(nil),                    // 3: varde.mesh.v1.MeshStatus
+	(*RelayState)(nil),                    // 4: varde.mesh.v1.RelayState
+	(*Relay)(nil),                         // 5: varde.mesh.v1.Relay
+	(*ConfigureRequest)(nil),              // 6: varde.mesh.v1.ConfigureRequest
+	(*ConfigureResponse)(nil),             // 7: varde.mesh.v1.ConfigureResponse
+	(*Peer)(nil),                          // 8: varde.mesh.v1.Peer
+	(*SetPeersRequest)(nil),               // 9: varde.mesh.v1.SetPeersRequest
+	(*SetPeersResponse)(nil),              // 10: varde.mesh.v1.SetPeersResponse
+	(*PeerState)(nil),                     // 11: varde.mesh.v1.PeerState
+	(*ListPeersRequest)(nil),              // 12: varde.mesh.v1.ListPeersRequest
+	(*ListPeersResponse)(nil),             // 13: varde.mesh.v1.ListPeersResponse
+	(*PortSpec)(nil),                      // 14: varde.mesh.v1.PortSpec
+	(*ServiceRoute)(nil),                  // 15: varde.mesh.v1.ServiceRoute
+	(*SetRoutesRequest)(nil),              // 16: varde.mesh.v1.SetRoutesRequest
+	(*SetRoutesResponse)(nil),             // 17: varde.mesh.v1.SetRoutesResponse
+	(*RouteBindError)(nil),                // 18: varde.mesh.v1.RouteBindError
+	(*HostedPort)(nil),                    // 19: varde.mesh.v1.HostedPort
+	(*HostedService)(nil),                 // 20: varde.mesh.v1.HostedService
+	(*SetHostedServicesRequest)(nil),      // 21: varde.mesh.v1.SetHostedServicesRequest
+	(*SetHostedServicesResponse)(nil),     // 22: varde.mesh.v1.SetHostedServicesResponse
+	(*InternalService)(nil),               // 23: varde.mesh.v1.InternalService
+	(*SetInternalServicesRequest)(nil),    // 24: varde.mesh.v1.SetInternalServicesRequest
+	(*SetInternalServicesResponse)(nil),   // 25: varde.mesh.v1.SetInternalServicesResponse
+	(*BindInternalForwardRequest)(nil),    // 26: varde.mesh.v1.BindInternalForwardRequest
+	(*BindInternalForwardResponse)(nil),   // 27: varde.mesh.v1.BindInternalForwardResponse
+	(*UnbindInternalForwardRequest)(nil),  // 28: varde.mesh.v1.UnbindInternalForwardRequest
+	(*UnbindInternalForwardResponse)(nil), // 29: varde.mesh.v1.UnbindInternalForwardResponse
+	(*WatchEventsRequest)(nil),            // 30: varde.mesh.v1.WatchEventsRequest
+	(*MeshEvent)(nil),                     // 31: varde.mesh.v1.MeshEvent
+	(*RouteRejected)(nil),                 // 32: varde.mesh.v1.RouteRejected
 }
 var file_mesh_v1_ipc_proto_depIdxs = []int32{
-	4,  // 0: p2pgames.mesh.v1.MeshStatus.relays:type_name -> p2pgames.mesh.v1.RelayState
-	5,  // 1: p2pgames.mesh.v1.ConfigureRequest.relays:type_name -> p2pgames.mesh.v1.Relay
-	8,  // 2: p2pgames.mesh.v1.SetPeersRequest.peers:type_name -> p2pgames.mesh.v1.Peer
-	1,  // 3: p2pgames.mesh.v1.PeerState.path:type_name -> p2pgames.mesh.v1.PathKind
-	11, // 4: p2pgames.mesh.v1.ListPeersResponse.peers:type_name -> p2pgames.mesh.v1.PeerState
-	0,  // 5: p2pgames.mesh.v1.PortSpec.protocol:type_name -> p2pgames.mesh.v1.Protocol
-	14, // 6: p2pgames.mesh.v1.ServiceRoute.ports:type_name -> p2pgames.mesh.v1.PortSpec
-	15, // 7: p2pgames.mesh.v1.SetRoutesRequest.routes:type_name -> p2pgames.mesh.v1.ServiceRoute
-	18, // 8: p2pgames.mesh.v1.SetRoutesResponse.errors:type_name -> p2pgames.mesh.v1.RouteBindError
-	0,  // 9: p2pgames.mesh.v1.HostedPort.protocol:type_name -> p2pgames.mesh.v1.Protocol
-	19, // 10: p2pgames.mesh.v1.HostedService.ports:type_name -> p2pgames.mesh.v1.HostedPort
-	20, // 11: p2pgames.mesh.v1.SetHostedServicesRequest.services:type_name -> p2pgames.mesh.v1.HostedService
-	23, // 12: p2pgames.mesh.v1.SetInternalServicesRequest.services:type_name -> p2pgames.mesh.v1.InternalService
-	11, // 13: p2pgames.mesh.v1.MeshEvent.peer_path_changed:type_name -> p2pgames.mesh.v1.PeerState
-	32, // 14: p2pgames.mesh.v1.MeshEvent.route_rejected:type_name -> p2pgames.mesh.v1.RouteRejected
-	4,  // 15: p2pgames.mesh.v1.MeshEvent.relay_changed:type_name -> p2pgames.mesh.v1.RelayState
-	2,  // 16: p2pgames.mesh.v1.MeshService.GetStatus:input_type -> p2pgames.mesh.v1.GetStatusRequest
-	6,  // 17: p2pgames.mesh.v1.MeshService.Configure:input_type -> p2pgames.mesh.v1.ConfigureRequest
-	9,  // 18: p2pgames.mesh.v1.MeshService.SetPeers:input_type -> p2pgames.mesh.v1.SetPeersRequest
-	12, // 19: p2pgames.mesh.v1.MeshService.ListPeers:input_type -> p2pgames.mesh.v1.ListPeersRequest
-	16, // 20: p2pgames.mesh.v1.MeshService.SetRoutes:input_type -> p2pgames.mesh.v1.SetRoutesRequest
-	21, // 21: p2pgames.mesh.v1.MeshService.SetHostedServices:input_type -> p2pgames.mesh.v1.SetHostedServicesRequest
-	24, // 22: p2pgames.mesh.v1.MeshService.SetInternalServices:input_type -> p2pgames.mesh.v1.SetInternalServicesRequest
-	26, // 23: p2pgames.mesh.v1.MeshService.BindInternalForward:input_type -> p2pgames.mesh.v1.BindInternalForwardRequest
-	28, // 24: p2pgames.mesh.v1.MeshService.UnbindInternalForward:input_type -> p2pgames.mesh.v1.UnbindInternalForwardRequest
-	30, // 25: p2pgames.mesh.v1.MeshService.WatchEvents:input_type -> p2pgames.mesh.v1.WatchEventsRequest
-	3,  // 26: p2pgames.mesh.v1.MeshService.GetStatus:output_type -> p2pgames.mesh.v1.MeshStatus
-	7,  // 27: p2pgames.mesh.v1.MeshService.Configure:output_type -> p2pgames.mesh.v1.ConfigureResponse
-	10, // 28: p2pgames.mesh.v1.MeshService.SetPeers:output_type -> p2pgames.mesh.v1.SetPeersResponse
-	13, // 29: p2pgames.mesh.v1.MeshService.ListPeers:output_type -> p2pgames.mesh.v1.ListPeersResponse
-	17, // 30: p2pgames.mesh.v1.MeshService.SetRoutes:output_type -> p2pgames.mesh.v1.SetRoutesResponse
-	22, // 31: p2pgames.mesh.v1.MeshService.SetHostedServices:output_type -> p2pgames.mesh.v1.SetHostedServicesResponse
-	25, // 32: p2pgames.mesh.v1.MeshService.SetInternalServices:output_type -> p2pgames.mesh.v1.SetInternalServicesResponse
-	27, // 33: p2pgames.mesh.v1.MeshService.BindInternalForward:output_type -> p2pgames.mesh.v1.BindInternalForwardResponse
-	29, // 34: p2pgames.mesh.v1.MeshService.UnbindInternalForward:output_type -> p2pgames.mesh.v1.UnbindInternalForwardResponse
-	31, // 35: p2pgames.mesh.v1.MeshService.WatchEvents:output_type -> p2pgames.mesh.v1.MeshEvent
+	4,  // 0: varde.mesh.v1.MeshStatus.relays:type_name -> varde.mesh.v1.RelayState
+	5,  // 1: varde.mesh.v1.ConfigureRequest.relays:type_name -> varde.mesh.v1.Relay
+	8,  // 2: varde.mesh.v1.SetPeersRequest.peers:type_name -> varde.mesh.v1.Peer
+	1,  // 3: varde.mesh.v1.PeerState.path:type_name -> varde.mesh.v1.PathKind
+	11, // 4: varde.mesh.v1.ListPeersResponse.peers:type_name -> varde.mesh.v1.PeerState
+	0,  // 5: varde.mesh.v1.PortSpec.protocol:type_name -> varde.mesh.v1.Protocol
+	14, // 6: varde.mesh.v1.ServiceRoute.ports:type_name -> varde.mesh.v1.PortSpec
+	15, // 7: varde.mesh.v1.SetRoutesRequest.routes:type_name -> varde.mesh.v1.ServiceRoute
+	18, // 8: varde.mesh.v1.SetRoutesResponse.errors:type_name -> varde.mesh.v1.RouteBindError
+	0,  // 9: varde.mesh.v1.HostedPort.protocol:type_name -> varde.mesh.v1.Protocol
+	19, // 10: varde.mesh.v1.HostedService.ports:type_name -> varde.mesh.v1.HostedPort
+	20, // 11: varde.mesh.v1.SetHostedServicesRequest.services:type_name -> varde.mesh.v1.HostedService
+	23, // 12: varde.mesh.v1.SetInternalServicesRequest.services:type_name -> varde.mesh.v1.InternalService
+	11, // 13: varde.mesh.v1.MeshEvent.peer_path_changed:type_name -> varde.mesh.v1.PeerState
+	32, // 14: varde.mesh.v1.MeshEvent.route_rejected:type_name -> varde.mesh.v1.RouteRejected
+	4,  // 15: varde.mesh.v1.MeshEvent.relay_changed:type_name -> varde.mesh.v1.RelayState
+	2,  // 16: varde.mesh.v1.MeshService.GetStatus:input_type -> varde.mesh.v1.GetStatusRequest
+	6,  // 17: varde.mesh.v1.MeshService.Configure:input_type -> varde.mesh.v1.ConfigureRequest
+	9,  // 18: varde.mesh.v1.MeshService.SetPeers:input_type -> varde.mesh.v1.SetPeersRequest
+	12, // 19: varde.mesh.v1.MeshService.ListPeers:input_type -> varde.mesh.v1.ListPeersRequest
+	16, // 20: varde.mesh.v1.MeshService.SetRoutes:input_type -> varde.mesh.v1.SetRoutesRequest
+	21, // 21: varde.mesh.v1.MeshService.SetHostedServices:input_type -> varde.mesh.v1.SetHostedServicesRequest
+	24, // 22: varde.mesh.v1.MeshService.SetInternalServices:input_type -> varde.mesh.v1.SetInternalServicesRequest
+	26, // 23: varde.mesh.v1.MeshService.BindInternalForward:input_type -> varde.mesh.v1.BindInternalForwardRequest
+	28, // 24: varde.mesh.v1.MeshService.UnbindInternalForward:input_type -> varde.mesh.v1.UnbindInternalForwardRequest
+	30, // 25: varde.mesh.v1.MeshService.WatchEvents:input_type -> varde.mesh.v1.WatchEventsRequest
+	3,  // 26: varde.mesh.v1.MeshService.GetStatus:output_type -> varde.mesh.v1.MeshStatus
+	7,  // 27: varde.mesh.v1.MeshService.Configure:output_type -> varde.mesh.v1.ConfigureResponse
+	10, // 28: varde.mesh.v1.MeshService.SetPeers:output_type -> varde.mesh.v1.SetPeersResponse
+	13, // 29: varde.mesh.v1.MeshService.ListPeers:output_type -> varde.mesh.v1.ListPeersResponse
+	17, // 30: varde.mesh.v1.MeshService.SetRoutes:output_type -> varde.mesh.v1.SetRoutesResponse
+	22, // 31: varde.mesh.v1.MeshService.SetHostedServices:output_type -> varde.mesh.v1.SetHostedServicesResponse
+	25, // 32: varde.mesh.v1.MeshService.SetInternalServices:output_type -> varde.mesh.v1.SetInternalServicesResponse
+	27, // 33: varde.mesh.v1.MeshService.BindInternalForward:output_type -> varde.mesh.v1.BindInternalForwardResponse
+	29, // 34: varde.mesh.v1.MeshService.UnbindInternalForward:output_type -> varde.mesh.v1.UnbindInternalForwardResponse
+	31, // 35: varde.mesh.v1.MeshService.WatchEvents:output_type -> varde.mesh.v1.MeshEvent
 	26, // [26:36] is the sub-list for method output_type
 	16, // [16:26] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name

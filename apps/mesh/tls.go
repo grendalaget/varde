@@ -14,7 +14,7 @@ import (
 )
 
 // alpn is our application protocol tag.
-const alpn = "p2pgames/1"
+const alpn = "varde/1"
 
 // selfSignedCert builds a self-signed X.509 certificate carrying the node's
 // ed25519 key. Peers authenticate by pinning the key, not the chain.
@@ -25,7 +25,7 @@ func selfSignedCert(priv ed25519.PrivateKey) (tls.Certificate, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "p2pgames-node"},
+		Subject:               pkix.Name{CommonName: "varde-node"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

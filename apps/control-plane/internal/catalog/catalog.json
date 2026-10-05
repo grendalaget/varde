@@ -30,7 +30,7 @@
       { "name": "difficulty", "type": "select", "options": ["peaceful", "easy", "normal", "hard"], "default": "normal" },
       { "name": "view_distance", "type": "int", "default": 10 },
       { "name": "online_mode", "type": "bool", "default": false, "help": "off for peer-hosted play without Mojang auth" },
-      { "name": "motd", "type": "string", "default": "A p2pgames server" },
+      { "name": "motd", "type": "string", "default": "A varde server" },
       { "name": "seed", "type": "string", "required": false },
       { "name": "admin_usernames", "type": "string", "required": false, "help": "comma-separated Minecraft usernames to op" }
     ]

@@ -10,7 +10,7 @@ name = "game_testgame"
 path = "src/lib.rs"
 
 [[bin]]
-name = "p2pgames-testgame"
+name = "varde-testgame"
 path = "src/main.rs"
 
 [dependencies]

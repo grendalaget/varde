@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 // meshServer is the MeshService gRPC surface on top of Node.

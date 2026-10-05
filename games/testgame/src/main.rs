@@ -1,4 +1,4 @@
-//! p2pgames-testgame: tiny dedicated "game server" used by tests and the e2e
+//! varde-testgame: tiny dedicated "game server" used by tests and the e2e
 //! demo. Mirrors the Minecraft save-barrier protocol shape:
 //!
 //!   TCP :7777 — line protocol: `INCR`, `GET`, `SET <n>` → replies the value

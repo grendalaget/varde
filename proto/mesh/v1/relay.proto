@@ -15,16 +15,16 @@
 // cannot decrypt them.
 syntax = "proto3";
 
-package p2pgames.mesh.v1;
+package varde.mesh.v1;
 
-option go_package = "github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1";
+option go_package = "github.com/grendalaget/varde/go/gen/mesh/v1;meshv1";
 
 message RelayRegister {
   // Control-plane-signed token (see docs/architecture: relay tokens).
   string token = 1;
   string node_id = 2;
   int64 timestamp_unix_ms = 3;
-  // ed25519 signature by the node key over "p2pgames-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
+  // ed25519 signature by the node key over "varde-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
   bytes signature = 4;
   string relay_id = 5;
 }

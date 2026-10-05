@@ -51,9 +51,9 @@ impl TestgameDriver {
             }
         }
         let name = if cfg!(windows) {
-            "p2pgames-testgame.exe"
+            "varde-testgame.exe"
         } else {
-            "p2pgames-testgame"
+            "varde-testgame"
         };
         if let Ok(exe) = std::env::current_exe() {
             let sib = exe.with_file_name(name);

@@ -60,6 +60,6 @@ storage, executors and game drivers.
 ## Cross-checking the Windows build
 
 ```sh
-cargo check --target x86_64-pc-windows-gnu -p p2pgames-agent
+cargo check --target x86_64-pc-windows-gnu -p varde-agent
 (cd apps/mesh && GOOS=windows go build ./...)
 ```

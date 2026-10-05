@@ -2,7 +2,7 @@
 
 > A logical game server belongs to the group, not to whichever PC happens to run it.
 
-p2pgames is a substrate for running ordinary dedicated game servers on a group's own machines. Exactly one machine
+varde is a substrate for running ordinary dedicated game servers on a group's own machines. Exactly one machine
 runs a given server at a time; its persistent state is captured as immutable, content-addressed snapshots that are
 replicated to other machines; a coordinator hands out time-bounded execution leases so that another machine can take
 over when the host disappears; and a peer-to-peer mesh gives every player a stable local address for the server no
@@ -20,10 +20,10 @@ This directory is the contract between components. Read in order:
 
 | Component | Language | Binary | Runs on |
 |---|---|---|---|
-| Control plane | Go | `p2pgames-control-plane` | one place: a VPS, a home server, a hosting provider. Embeds the web UI and (optionally) a relay |
-| Relay | Go | `p2pgames-relay` | anywhere with a public UDP port; optional when direct paths work |
-| Mesh node | Go | `p2pgames-mesh` | every machine, as a child process of the agent |
-| Agent | Rust | `p2pgames-agent` | every machine (Windows service / systemd unit) |
+| Control plane | Go | `varde-control-plane` | one place: a VPS, a home server, a hosting provider. Embeds the web UI and (optionally) a relay |
+| Relay | Go | `varde-relay` | anywhere with a public UDP port; optional when direct paths work |
+| Mesh node | Go | `varde-mesh` | every machine, as a child process of the agent |
+| Agent | Rust | `varde-agent` | every machine (Windows service / systemd unit) |
 | Web dashboard | TypeScript | static SPA served by the control plane | browser |
 
 ```
@@ -58,7 +58,7 @@ group works peer-to-peer, and the UI says plainly when the latest save exists on
 
 The same binaries serve both audiences:
 
-* **Friends:** one `p2pgames-control-plane` (SQLite, embedded relay, embedded UI) on any always-on box, or a public
+* **Friends:** one `varde-control-plane` (SQLite, embedded relay, embedded UI) on any always-on box, or a public
   instance run by someone else. The box running it can also run an agent as an anchor.
 * **Hosting business:** control plane on PostgreSQL behind a load balancer, separate regional relays, provider-owned
   anchor/host nodes enrolled into customer groups with enrollment tokens, per-group limits (`group_limits`) and an
@@ -97,5 +97,5 @@ The dashboard has an **Advanced** toggle that shows epochs, execution ids and sn
 
 `<prefix>_<20 lowercase base32 chars>` (random, 100 bits) for `usr_ grp_ node_ srv_ dep_ exec_ svc_ inv_`.
 Snapshot ids are derived: `snap_` + lowercase base32 (no padding) of the first 16 bytes of the manifest BLAKE3 digest.
-Enrollment tokens: `pge_` + 32 base32 chars (secret; only a SHA-256 hash is stored). Device user codes: `WORD-NN-WORD`
+Enrollment tokens: `vde_` + 32 base32 chars (secret; only a SHA-256 hash is stored). Device user codes: `WORD-NN-WORD`
 from a fixed word list (case-insensitive).

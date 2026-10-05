@@ -1,14 +1,14 @@
 # Agent
 
-`p2pgames-agent` (Rust, tokio). One OS service: Windows Service (`windows-service` crate, accepts STOP + PRESHUTDOWN)
+`varde-agent` (Rust, tokio). One OS service: Windows Service (`windows-service` crate, accepts STOP + PRESHUTDOWN)
 or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcommands: `run`, `enroll --server URL
-[--token pge_…]` (device-code flow if no token: prints/opens the link), `status`, `service install|uninstall`
+[--token vde_…]` (device-code flow if no token: prints/opens the link), `status`, `service install|uninstall`
 (Windows), `version`.
 
 ## Local layout (spec §35)
 
 ```
-<data>/                     /var/lib/p2pgames  |  %ProgramData%\P2PGames
+<data>/                     /var/lib/varde  |  %ProgramData%\Varde
   config.toml               control_plane_url, node_id, group_id, control_plane_public_key, overrides
   identity/node.key         ed25519 PKCS#8 PEM, 0600 / SYSTEM-only ACL
   run/mesh.sock             IPC (Linux)
@@ -17,7 +17,7 @@ or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcomm
   chunks/  snapshots/       snapshot-store
   servers/<srv_id>/         live working directory of a hosted server
   state/executions.json     last known executions + fencing status (survives agent restarts)
-logs: /var/log/p2pgames (Linux) | <data>\logs (Windows); JSON lines, rotated
+logs: /var/log/varde (Linux) | <data>\logs (Windows); JSON lines, rotated
 ```
 
 ## Main loops
@@ -82,7 +82,7 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
 
 ### Drivers
 
-* **testgame** (`games/testgame`, also builds `p2pgames-testgame`): a tiny server used by tests and the e2e demo.
+* **testgame** (`games/testgame`, also builds `varde-testgame`): a tiny server used by tests and the e2e demo.
   TCP line protocol on `:7777` (`INCR`, `GET`, `SET <n>`), UDP `:7777` (`GET` → value). State in `data/state.json`,
   autosaved; stdin understands `save-off`, `save-all` (prints `Saved the game`), `save-on`, `stop` — mirroring
   Minecraft so the barrier path is exercised.

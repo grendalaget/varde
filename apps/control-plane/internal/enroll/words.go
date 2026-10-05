@@ -76,13 +76,13 @@ func DeviceCode() (string, error) {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b), nil
 }
 
-// EnrollmentToken returns "pge_" + 32 base32 chars.
+// EnrollmentToken returns "vde_" + 32 base32 chars.
 func EnrollmentToken() (string, error) {
 	b := make([]byte, 20)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return "pge_" + strings.ToLower(
+	return "vde_" + strings.ToLower(
 		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)), nil
 }
 

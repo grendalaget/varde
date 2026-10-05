@@ -11,8 +11,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/meshproto"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/meshproto"
 )
 
 // routeState is the client side of one service: TCP/UDP listeners on the

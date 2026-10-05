@@ -14,8 +14,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/identity"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/identity"
 )
 
 // Timings are injectable for tests.

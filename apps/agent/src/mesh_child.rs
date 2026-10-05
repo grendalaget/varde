@@ -1,4 +1,4 @@
-//! Supervised mesh child process. The agent spawns p2pgames-mesh with
+//! Supervised mesh child process. The agent spawns varde-mesh with
 //! `--ipc <endpoint>` and restarts it with backoff when it exits.
 
 use std::path::PathBuf;
@@ -67,7 +67,7 @@ fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
 fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     let mut cmd = Command::new(bin);
     cmd.arg("--ipc").arg(ipc).stdin(Stdio::null());
-    if let Ok(lvl) = std::env::var("P2PGAMES_MESH_LOG_LEVEL") {
+    if let Ok(lvl) = std::env::var("VARDE_MESH_LOG_LEVEL") {
         cmd.arg("--log-level").arg(lvl);
     }
     // If the agent dies abruptly, the mesh must not orphan: it would keep

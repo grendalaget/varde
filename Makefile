@@ -16,9 +16,9 @@ build:
 	@for m in $(GO_MODULES); do (cd $$m && go build ./...) || exit 1; done
 	@mkdir -p $(BIN)
 	@for m in control-plane relay mesh; do \
-		(cd apps/$$m && go build -o ../../$(BIN)/p2pgames-$$m .) || exit 1; \
+		(cd apps/$$m && go build -o ../../$(BIN)/varde-$$m .) || exit 1; \
 	done
-	cp target/debug/p2pgames-agent $(BIN)/p2pgames-agent
+	cp target/debug/varde-agent $(BIN)/varde-agent
 
 # Copy the built SPA into the Go module so go:embed picks it up. dist/ is
 # fully untracked so `git status` stays clean; without a web build we
@@ -44,7 +44,7 @@ test-bins:
 	$(MAKE) webui-dist
 	@mkdir -p $(BIN)
 	@for m in control-plane relay mesh; do \
-		(cd apps/$$m && go build -o ../../$(BIN)/p2pgames-$$m .) || exit 1; \
+		(cd apps/$$m && go build -o ../../$(BIN)/varde-$$m .) || exit 1; \
 	done
 	cargo build --bins
 

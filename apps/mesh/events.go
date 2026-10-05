@@ -3,7 +3,7 @@ package main
 import (
 	"sync"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 // eventBus fans MeshEvents out to WatchEvents subscribers.

@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/auth"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/reconciler"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
-	"github.com/arnemolland/p2pgames/go/identity"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api"
+	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
+	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/go/identity"
 )
 
 // ---- fake clock ----
@@ -219,9 +219,9 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 	sig := identity.SignRequest(a.priv, method, path, ts, body)
 	req, _ := http.NewRequest(method, a.e.http.URL+path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-P2PG-Node", a.nodeID)
-	req.Header.Set("X-P2PG-Timestamp", fmt.Sprint(ts))
-	req.Header.Set("X-P2PG-Signature", sig)
+	req.Header.Set("X-Varde-Node", a.nodeID)
+	req.Header.Set("X-Varde-Timestamp", fmt.Sprint(ts))
+	req.Header.Set("X-Varde-Signature", sig)
 	if tamper != nil {
 		tamper(req.Header)
 	}
@@ -411,7 +411,7 @@ func TestBadSignatureRejected(t *testing.T) {
 	raw := []byte(`{"executions":[]}`)
 	// wrong signature
 	if r := a.signedDo("POST", "/v1/agent/heartbeat", raw, 0, func(h http.Header) {
-		h.Set("X-P2PG-Signature", base64.StdEncoding.EncodeToString(make([]byte, 64)))
+		h.Set("X-Varde-Signature", base64.StdEncoding.EncodeToString(make([]byte, 64)))
 	}); r.Status != 401 {
 		t.Fatalf("bad sig: %d", r.Status)
 	}

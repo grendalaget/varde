@@ -1,4 +1,4 @@
-// Command p2pgames-relay forwards opaque encrypted UDP payloads between
+// Command varde-relay forwards opaque encrypted UDP payloads between
 // mesh nodes that cannot establish a direct path. Thin wrapper over go/relay.
 package main
 
@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/arnemolland/p2pgames/go/relay"
+	"github.com/grendalaget/varde/go/relay"
 )
 
 func envOr(key, fallback string) string {
@@ -34,11 +34,11 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	listen := flag.String("listen", envOr("P2PGAMES_RELAY_LISTEN", ":3478"), "UDP listen address")
-	id := flag.String("id", envOr("P2PGAMES_RELAY_ID", "eu-1"), "relay id (must match CP-signed tokens)")
-	cpKey := flag.String("control-plane-key", envOr("P2PGAMES_RELAY_CP_KEY", ""),
+	listen := flag.String("listen", envOr("VARDE_RELAY_LISTEN", ":3478"), "UDP listen address")
+	id := flag.String("id", envOr("VARDE_RELAY_ID", "eu-1"), "relay id (must match CP-signed tokens)")
+	cpKey := flag.String("control-plane-key", envOr("VARDE_RELAY_CP_KEY", ""),
 		"control-plane public key: base64, or URL of /v1/relay/public-key")
-	metricsAddr := flag.String("metrics", envOr("P2PGAMES_RELAY_METRICS", ""), "Prometheus metrics listen address (e.g. :9090)")
+	metricsAddr := flag.String("metrics", envOr("VARDE_RELAY_METRICS", ""), "Prometheus metrics listen address (e.g. :9090)")
 	rate := flag.Float64("group-rate-mbps", 0, "per-group forward rate cap in Mbit/s (0 = unlimited)")
 	flag.Parse()
 

@@ -1,4 +1,4 @@
-# p2pgames
+# Varde
 
 Peer-hosted game servers for groups of friends. One active host at a time,
 replicated snapshots, automatic failover, stable loopback service addresses,

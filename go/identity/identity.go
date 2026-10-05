@@ -84,12 +84,12 @@ func Fingerprint(pub ed25519.PublicKey) string {
 }
 
 // AgentSigVersion prefixes the canonical agent request signing string.
-const AgentSigVersion = "p2pgames-agent-v1"
+const AgentSigVersion = "varde-agent-v1"
 
 // SigningString builds the canonical string an agent signs for a
 // /v1/agent/* request:
 //
-//	"p2pgames-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))
+//	"varde-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))
 //
 // timestamp is unix milliseconds formatted in decimal.
 func SigningString(method, path string, timestampUnixMs int64, body []byte) string {
@@ -104,13 +104,13 @@ func SigningString(method, path string, timestampUnixMs int64, body []byte) stri
 }
 
 // SignRequest signs a request, returning the base64 signature to put in the
-// X-P2PG-Signature header.
+// X-Varde-Signature header.
 func SignRequest(priv ed25519.PrivateKey, method, path string, timestampUnixMs int64, body []byte) string {
 	sig := ed25519.Sign(priv, []byte(SigningString(method, path, timestampUnixMs, body)))
 	return base64.StdEncoding.EncodeToString(sig)
 }
 
-// VerifyRequest checks an X-P2PG-Signature value against the request.
+// VerifyRequest checks an X-Varde-Signature value against the request.
 func VerifyRequest(pub ed25519.PublicKey, method, path string, timestampUnixMs int64, body []byte, sigB64 string) error {
 	sig, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil {

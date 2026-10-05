@@ -1,9 +1,9 @@
-module github.com/arnemolland/p2pgames/apps/relay
+module github.com/grendalaget/varde/apps/relay
 
 go 1.26.0
 
 require (
-	github.com/arnemolland/p2pgames/go v0.0.0
+	github.com/grendalaget/varde/go v0.0.0
 	github.com/prometheus/client_golang v1.24.1
 )
 
@@ -22,4 +22,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/arnemolland/p2pgames/go => ../../go
+replace github.com/grendalaget/varde/go => ../../go

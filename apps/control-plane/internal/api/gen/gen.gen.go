@@ -786,7 +786,7 @@ type EnrollmentTokenCreated struct {
 	Labels         *map[string]string `json:"labels,omitempty"`
 	MaxUses        *int               `json:"max_uses,omitempty"`
 
-	// Token pge_… secret, shown once
+	// Token vde_… secret, shown once
 	Token string `json:"token"`
 	Uses  int    `json:"uses"`
 }
@@ -1186,7 +1186,7 @@ type TokenEnrollRequest struct {
 	// PublicKey base64 ed25519
 	PublicKey string `json:"public_key"`
 
-	// Token pge_… enrollment token
+	// Token vde_… enrollment token
 	Token string `json:"token"`
 }
 

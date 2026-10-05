@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/arnemolland/p2pgames/go/ids"
+	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api/gen"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/enroll"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/control-plane/internal/enroll"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
 )
 
 const deviceLinkTTLMs = 900_000 // 15 min

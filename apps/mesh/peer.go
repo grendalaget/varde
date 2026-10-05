@@ -10,7 +10,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 // peerState tracks one remote node: candidate endpoints, the active

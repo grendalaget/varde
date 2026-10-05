@@ -1,29 +1,29 @@
-name: p2pgames
+name: varde-agent
 arch: ${ARCH}
 platform: linux
 version: ${VERSION}
 section: net
 priority: optional
-maintainer: Arne Molland and p2pgames contributors
+maintainer: Arne Molland and varde contributors
 description: Peer-hosted game servers for groups of friends.
 license: MIT
 contents:
-  - src: dist/p2pgames-agent
-    dst: /usr/bin/p2pgames-agent
+  - src: dist/varde-agent
+    dst: /usr/bin/varde-agent
     file_info:
       mode: 0755
-  - src: dist/p2pgames-mesh
-    dst: /usr/lib/p2pgames/p2pgames-mesh
+  - src: dist/varde-mesh
+    dst: /usr/lib/varde/varde-mesh
     file_info:
       mode: 0755
-  - src: packaging/linux/p2pgames-agent.service
-    dst: /usr/lib/systemd/system/p2pgames-agent.service
+  - src: packaging/linux/varde-agent.service
+    dst: /usr/lib/systemd/system/varde-agent.service
     type: config
     file_info:
       mode: 0644
-  - dst: /etc/p2pgames
+  - dst: /etc/varde
     type: dir
-  - dst: /var/lib/p2pgames
+  - dst: /var/lib/varde
     type: dir
     file_info:
       mode: 0700
@@ -36,9 +36,10 @@ overrides:
       - systemd
 scripts:
   postinstall: |
+    getent passwd varde >/dev/null || useradd --system --home-dir /var/lib/varde --shell /usr/sbin/nologin varde
     systemctl daemon-reload || true
-    systemctl enable --now p2pgames-agent.service || true
+    systemctl enable --now varde-agent.service || true
   preremove: |
-    systemctl disable --now p2pgames-agent.service || true
+    systemctl disable --now varde-agent.service || true
   postremove: |
     systemctl daemon-reload || true

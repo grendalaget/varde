@@ -1,4 +1,4 @@
-//! p2pgames-agent: local node agent. Owns identity, enrollment, the control
+//! varde-agent: local node agent. Owns identity, enrollment, the control
 //! loop, execution supervision, the snapshot store and the chunk server, and
 //! supervises the Go mesh subprocess over IPC.
 
@@ -24,7 +24,7 @@ use ed25519_dalek::SigningKey;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "p2pgames-agent", version, about = "p2pgames local node agent")]
+#[command(name = "varde-agent", version, about = "varde local node agent")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -38,7 +38,7 @@ enum Cmd {
         server: String,
         #[arg(long)]
         token: Option<String>,
-        #[arg(long, env = "P2PGAMES_DATA_DIR")]
+        #[arg(long, env = "VARDE_DATA_DIR")]
         data_dir: Option<PathBuf>,
         /// Record this node as an anchor in the local config.
         #[arg(long)]
@@ -52,9 +52,9 @@ enum Cmd {
     },
     /// Run the agent in the foreground.
     Run {
-        #[arg(long, env = "P2PGAMES_DATA_DIR")]
+        #[arg(long, env = "VARDE_DATA_DIR")]
         data_dir: Option<PathBuf>,
-        #[arg(long, env = "P2PGAMES_MESH_BIN")]
+        #[arg(long, env = "VARDE_MESH_BIN")]
         mesh_bin: Option<PathBuf>,
         /// Treat config anchor=true as already set; flag form per agent.md.
         #[arg(long)]
@@ -68,7 +68,7 @@ enum Cmd {
     },
     /// Show enrollment/config status.
     Status {
-        #[arg(long, env = "P2PGAMES_DATA_DIR")]
+        #[arg(long, env = "VARDE_DATA_DIR")]
         data_dir: Option<PathBuf>,
     },
 }
@@ -78,24 +78,24 @@ fn default_data_dir() -> PathBuf {
         std::env::var_os("ProgramData")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("P2PGames")
+            .join("Varde")
     } else {
-        PathBuf::from("/var/lib/p2pgames")
+        PathBuf::from("/var/lib/varde")
     }
 }
 
 fn default_mesh_bin() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("resolve agent exe path")?;
     let name = if cfg!(windows) {
-        "p2pgames-mesh.exe"
+        "varde-mesh.exe"
     } else {
-        "p2pgames-mesh"
+        "varde-mesh"
     };
     let sibling = exe.with_file_name(name);
     if sibling.exists() {
         return Ok(sibling);
     }
-    Ok(PathBuf::from("/usr/lib/p2pgames").join(name))
+    Ok(PathBuf::from("/usr/lib/varde").join(name))
 }
 
 fn now_ms() -> i64 {

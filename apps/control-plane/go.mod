@@ -1,9 +1,9 @@
-module github.com/arnemolland/p2pgames/apps/control-plane
+module github.com/grendalaget/varde/apps/control-plane
 
 go 1.26.0
 
 require (
-	github.com/arnemolland/p2pgames/go v0.0.0
+	github.com/grendalaget/varde/go v0.0.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/oapi-codegen/runtime v1.7.0
@@ -40,4 +40,4 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 )
 
-replace github.com/arnemolland/p2pgames/go => ../../go
+replace github.com/grendalaget/varde/go => ../../go

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/arnemolland/p2pgames/go/ids"
+	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api/gen"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/catalog"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/services"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
+	"github.com/grendalaget/varde/apps/control-plane/internal/services"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
 )
 
 func (s *Server) ListGames(ctx context.Context, _ gen.ListGamesRequestObject) (gen.ListGamesResponseObject, error) {

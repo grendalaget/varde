@@ -8,13 +8,13 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/arnemolland/p2pgames/go/ids"
-	"github.com/arnemolland/p2pgames/go/relaytoken"
+	"github.com/grendalaget/varde/go/ids"
+	"github.com/grendalaget/varde/go/relaytoken"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api/gen"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/reconciler"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/scheduler"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/control-plane/internal/scheduler"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
 )
 
 // activationErr bridges reconciler errors to the API layer.

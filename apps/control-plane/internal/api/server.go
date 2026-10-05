@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arnemolland/p2pgames/go/identity"
+	"github.com/grendalaget/varde/go/identity"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api/gen"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/auth"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/catalog"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/reconciler"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
+	"github.com/grendalaget/varde/apps/control-plane/internal/catalog"
+	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
 )
 
 // Config carries the flag/env configuration used by handlers.
@@ -178,13 +178,13 @@ func (s *Server) requireOperator(ctx context.Context) (*store.User, error) {
 
 const agentSkewMs = 60_000
 
-// agentAuth verifies X-P2PG-* headers on /v1/agent calls that need a node.
+// agentAuth verifies X-Varde-* headers on /v1/agent calls that need a node.
 // Enrollment endpoints (device/token) are unsigned and skip this middleware.
 func (s *Server) agentAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nodeID := r.Header.Get("X-P2PG-Node")
-		tsStr := r.Header.Get("X-P2PG-Timestamp")
-		sigB64 := r.Header.Get("X-P2PG-Signature")
+		nodeID := r.Header.Get("X-Varde-Node")
+		tsStr := r.Header.Get("X-Varde-Timestamp")
+		sigB64 := r.Header.Get("X-Varde-Signature")
 		if nodeID == "" || tsStr == "" || sigB64 == "" {
 			writeErr(w, http.StatusUnauthorized, gen.Unauthorized, "missing signature headers", nil)
 			return

@@ -47,7 +47,7 @@ impl Config {
     pub fn load(data_dir: &Path) -> Result<Config> {
         let p = data_dir.join("config.toml");
         let s = std::fs::read_to_string(&p)
-            .with_context(|| format!("read {} (run `p2pgames-agent enroll` first)", p.display()))?;
+            .with_context(|| format!("read {} (run `varde-agent enroll` first)", p.display()))?;
         toml::from_str(&s).with_context(|| format!("parse {}", p.display()))
     }
 

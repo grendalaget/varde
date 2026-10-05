@@ -19,12 +19,12 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: p2pg
-          POSTGRES_PASSWORD: p2pg
-          POSTGRES_DB: p2pg_test
+          POSTGRES_USER: varde
+          POSTGRES_PASSWORD: varde
+          POSTGRES_DB: varde_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U p2pg" --health-interval 5s
+          --health-cmd "pg_isready -U varde" --health-interval 5s
           --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
         shell: bash
       - name: test
         env:
-          P2PGAMES_TEST_POSTGRES_URL: postgres://p2pg:p2pg@localhost:5432/p2pg_test?sslmode=disable
+          VARDE_TEST_POSTGRES_URL: postgres://varde:varde@localhost:5432/varde_test?sslmode=disable
         run: |
           RACE=""
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then RACE="-race"; fi

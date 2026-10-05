@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: p2pgames control plane
+  title: Varde control plane
   version: "0.2.0"
   description: >
-    Public HTTP API for the p2pgames control plane. The web dashboard uses the
+    Public HTTP API for the Varde control plane. The web dashboard uses the
     public endpoints; node agents use the `/v1/agent/*` endpoints (tag `agent`)
     with ed25519 request signing instead of bearer auth.
   license:
@@ -102,7 +102,7 @@ paths:
             schema: { $ref: "#/components/schemas/LoginRequest" }
       responses:
         "200":
-          description: Session created (also sets the p2pg_session cookie).
+          description: Session created (also sets the varde_session cookie).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
@@ -1084,12 +1084,12 @@ components:
     cookieAuth:
       type: apiKey
       in: cookie
-      name: p2pg_session
+      name: varde_session
     agentSignature:
       type: mutualTLS
       description: >
         Marker scheme — actually ed25519 request signing via headers
-        X-P2PG-Node, X-P2PG-Timestamp, X-P2PG-Signature (see
+        X-Varde-Node, X-Varde-Timestamp, X-Varde-Signature (see
         docs/architecture/control-plane.md §Authentication).
   responses:
     Error:
@@ -1234,7 +1234,7 @@ components:
         - type: object
           required: [token]
           properties:
-            token: { type: string, description: "pge_… secret, shown once" }
+            token: { type: string, description: "vde_… secret, shown once" }
     DeviceLink:
       type: object
       required: [user_code, hostname, os, arch, state, expires_at]
@@ -1702,7 +1702,7 @@ components:
       type: object
       required: [token, public_key]
       properties:
-        token: { type: string, description: "pge_… enrollment token" }
+        token: { type: string, description: "vde_… enrollment token" }
         public_key: { type: string, description: base64 ed25519 }
         hostname: { type: string }
         os: { type: string }

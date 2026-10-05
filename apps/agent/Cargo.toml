@@ -1,12 +1,12 @@
 [package]
-name = "p2pgames-agent"
+name = "varde-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "p2pgames-agent"
+name = "varde-agent"
 path = "src/main.rs"
 
 [dependencies]

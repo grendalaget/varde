@@ -165,9 +165,9 @@ func DecodeFlowDatagram(dgram []byte) (flowID uint64, payload []byte, err error)
 
 // RegisterSigningString is the canonical string the node signs when
 // registering with a relay:
-// "p2pgames-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
+// "varde-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
 func RegisterSigningString(relayID, nodeID string, timestampUnixMs int64) string {
-	return fmt.Sprintf("p2pgames-relay-register|%s|%s|%d", relayID, nodeID, timestampUnixMs)
+	return fmt.Sprintf("varde-relay-register|%s|%s|%d", relayID, nodeID, timestampUnixMs)
 }
 
 // SignRegister signs the register string with the node key.

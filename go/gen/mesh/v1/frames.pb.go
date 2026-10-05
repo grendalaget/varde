@@ -208,7 +208,7 @@ type ServiceStream struct {
 	ServiceId     string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
 	Epoch         uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
-	Protocol      Protocol               `protobuf:"varint,4,opt,name=protocol,proto3,enum=p2pgames.mesh.v1.Protocol" json:"protocol,omitempty"`
+	Protocol      Protocol               `protobuf:"varint,4,opt,name=protocol,proto3,enum=varde.mesh.v1.Protocol" json:"protocol,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -424,7 +424,7 @@ func (*ControlStream) Descriptor() ([]byte, []int) {
 type StreamAccept struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	Reason        RejectReason           `protobuf:"varint,2,opt,name=reason,proto3,enum=p2pgames.mesh.v1.RejectReason" json:"reason,omitempty"`
+	Reason        RejectReason           `protobuf:"varint,2,opt,name=reason,proto3,enum=varde.mesh.v1.RejectReason" json:"reason,omitempty"`
 	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -671,20 +671,20 @@ var File_mesh_v1_frames_proto protoreflect.FileDescriptor
 
 const file_mesh_v1_frames_proto_rawDesc = "" +
 	"\n" +
-	"\x14mesh/v1/frames.proto\x12\x10p2pgames.mesh.v1\x1a\x11mesh/v1/ipc.proto\"\x86\x02\n" +
+	"\x14mesh/v1/frames.proto\x12\rvarde.mesh.v1\x1a\x11mesh/v1/ipc.proto\"\xfa\x01\n" +
 	"\n" +
-	"StreamOpen\x12;\n" +
-	"\aservice\x18\x01 \x01(\v2\x1f.p2pgames.mesh.v1.ServiceStreamH\x00R\aservice\x12>\n" +
-	"\binternal\x18\x02 \x01(\v2 .p2pgames.mesh.v1.InternalStreamH\x00R\binternal\x126\n" +
-	"\budp_flow\x18\x03 \x01(\v2\x19.p2pgames.mesh.v1.UdpFlowH\x00R\audpFlow\x12;\n" +
-	"\acontrol\x18\x04 \x01(\v2\x1f.p2pgames.mesh.v1.ControlStreamH\x00R\acontrolB\x06\n" +
-	"\x04kind\"\x90\x01\n" +
+	"StreamOpen\x128\n" +
+	"\aservice\x18\x01 \x01(\v2\x1c.varde.mesh.v1.ServiceStreamH\x00R\aservice\x12;\n" +
+	"\binternal\x18\x02 \x01(\v2\x1d.varde.mesh.v1.InternalStreamH\x00R\binternal\x123\n" +
+	"\budp_flow\x18\x03 \x01(\v2\x16.varde.mesh.v1.UdpFlowH\x00R\audpFlow\x128\n" +
+	"\acontrol\x18\x04 \x01(\v2\x1c.varde.mesh.v1.ControlStreamH\x00R\acontrolB\x06\n" +
+	"\x04kind\"\x8d\x01\n" +
 	"\rServiceStream\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x14\n" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12\x12\n" +
-	"\x04port\x18\x03 \x01(\rR\x04port\x126\n" +
-	"\bprotocol\x18\x04 \x01(\x0e2\x1a.p2pgames.mesh.v1.ProtocolR\bprotocol\"$\n" +
+	"\x04port\x18\x03 \x01(\rR\x04port\x123\n" +
+	"\bprotocol\x18\x04 \x01(\x0e2\x17.varde.mesh.v1.ProtocolR\bprotocol\"$\n" +
 	"\x0eInternalStream\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"k\n" +
 	"\aUdpFlow\x12\x1d\n" +
@@ -693,20 +693,20 @@ const file_mesh_v1_frames_proto_rawDesc = "" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12\x12\n" +
 	"\x04port\x18\x03 \x01(\rR\x04port\x12\x17\n" +
 	"\aflow_id\x18\x04 \x01(\x04R\x06flowId\"\x0f\n" +
-	"\rControlStream\"p\n" +
+	"\rControlStream\"m\n" +
 	"\fStreamAccept\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\x126\n" +
-	"\x06reason\x18\x02 \x01(\x0e2\x1e.p2pgames.mesh.v1.RejectReasonR\x06reason\x12\x18\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x123\n" +
+	"\x06reason\x18\x02 \x01(\x0e2\x1b.varde.mesh.v1.RejectReasonR\x06reason\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\"D\n" +
 	"\x04Ping\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12&\n" +
 	"\x0fsent_unix_nanos\x18\x02 \x01(\x03R\rsentUnixNanos\"D\n" +
 	"\x04Pong\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12&\n" +
-	"\x0fsent_unix_nanos\x18\x02 \x01(\x03R\rsentUnixNanos\"s\n" +
-	"\fControlFrame\x12,\n" +
-	"\x04ping\x18\x01 \x01(\v2\x16.p2pgames.mesh.v1.PingH\x00R\x04ping\x12,\n" +
-	"\x04pong\x18\x02 \x01(\v2\x16.p2pgames.mesh.v1.PongH\x00R\x04pongB\a\n" +
+	"\x0fsent_unix_nanos\x18\x02 \x01(\x03R\rsentUnixNanos\"m\n" +
+	"\fControlFrame\x12)\n" +
+	"\x04ping\x18\x01 \x01(\v2\x13.varde.mesh.v1.PingH\x00R\x04ping\x12)\n" +
+	"\x04pong\x18\x02 \x01(\v2\x13.varde.mesh.v1.PongH\x00R\x04pongB\a\n" +
 	"\x05frame*\xd2\x01\n" +
 	"\fRejectReason\x12\x1d\n" +
 	"\x19REJECT_REASON_UNSPECIFIED\x10\x00\x12!\n" +
@@ -714,7 +714,7 @@ const file_mesh_v1_frames_proto_rawDesc = "" +
 	"\x19REJECT_REASON_STALE_EPOCH\x10\x02\x12\x1e\n" +
 	"\x1aREJECT_REASON_UNKNOWN_PORT\x10\x03\x12$\n" +
 	" REJECT_REASON_TARGET_UNREACHABLE\x10\x04\x12\x1b\n" +
-	"\x17REJECT_REASON_FORBIDDEN\x10\x05B7Z5github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1b\x06proto3"
+	"\x17REJECT_REASON_FORBIDDEN\x10\x05B4Z2github.com/grendalaget/varde/go/gen/mesh/v1;meshv1b\x06proto3"
 
 var (
 	file_mesh_v1_frames_proto_rawDescOnce sync.Once
@@ -731,27 +731,27 @@ func file_mesh_v1_frames_proto_rawDescGZIP() []byte {
 var file_mesh_v1_frames_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_mesh_v1_frames_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_mesh_v1_frames_proto_goTypes = []any{
-	(RejectReason)(0),      // 0: p2pgames.mesh.v1.RejectReason
-	(*StreamOpen)(nil),     // 1: p2pgames.mesh.v1.StreamOpen
-	(*ServiceStream)(nil),  // 2: p2pgames.mesh.v1.ServiceStream
-	(*InternalStream)(nil), // 3: p2pgames.mesh.v1.InternalStream
-	(*UdpFlow)(nil),        // 4: p2pgames.mesh.v1.UdpFlow
-	(*ControlStream)(nil),  // 5: p2pgames.mesh.v1.ControlStream
-	(*StreamAccept)(nil),   // 6: p2pgames.mesh.v1.StreamAccept
-	(*Ping)(nil),           // 7: p2pgames.mesh.v1.Ping
-	(*Pong)(nil),           // 8: p2pgames.mesh.v1.Pong
-	(*ControlFrame)(nil),   // 9: p2pgames.mesh.v1.ControlFrame
-	(Protocol)(0),          // 10: p2pgames.mesh.v1.Protocol
+	(RejectReason)(0),      // 0: varde.mesh.v1.RejectReason
+	(*StreamOpen)(nil),     // 1: varde.mesh.v1.StreamOpen
+	(*ServiceStream)(nil),  // 2: varde.mesh.v1.ServiceStream
+	(*InternalStream)(nil), // 3: varde.mesh.v1.InternalStream
+	(*UdpFlow)(nil),        // 4: varde.mesh.v1.UdpFlow
+	(*ControlStream)(nil),  // 5: varde.mesh.v1.ControlStream
+	(*StreamAccept)(nil),   // 6: varde.mesh.v1.StreamAccept
+	(*Ping)(nil),           // 7: varde.mesh.v1.Ping
+	(*Pong)(nil),           // 8: varde.mesh.v1.Pong
+	(*ControlFrame)(nil),   // 9: varde.mesh.v1.ControlFrame
+	(Protocol)(0),          // 10: varde.mesh.v1.Protocol
 }
 var file_mesh_v1_frames_proto_depIdxs = []int32{
-	2,  // 0: p2pgames.mesh.v1.StreamOpen.service:type_name -> p2pgames.mesh.v1.ServiceStream
-	3,  // 1: p2pgames.mesh.v1.StreamOpen.internal:type_name -> p2pgames.mesh.v1.InternalStream
-	4,  // 2: p2pgames.mesh.v1.StreamOpen.udp_flow:type_name -> p2pgames.mesh.v1.UdpFlow
-	5,  // 3: p2pgames.mesh.v1.StreamOpen.control:type_name -> p2pgames.mesh.v1.ControlStream
-	10, // 4: p2pgames.mesh.v1.ServiceStream.protocol:type_name -> p2pgames.mesh.v1.Protocol
-	0,  // 5: p2pgames.mesh.v1.StreamAccept.reason:type_name -> p2pgames.mesh.v1.RejectReason
-	7,  // 6: p2pgames.mesh.v1.ControlFrame.ping:type_name -> p2pgames.mesh.v1.Ping
-	8,  // 7: p2pgames.mesh.v1.ControlFrame.pong:type_name -> p2pgames.mesh.v1.Pong
+	2,  // 0: varde.mesh.v1.StreamOpen.service:type_name -> varde.mesh.v1.ServiceStream
+	3,  // 1: varde.mesh.v1.StreamOpen.internal:type_name -> varde.mesh.v1.InternalStream
+	4,  // 2: varde.mesh.v1.StreamOpen.udp_flow:type_name -> varde.mesh.v1.UdpFlow
+	5,  // 3: varde.mesh.v1.StreamOpen.control:type_name -> varde.mesh.v1.ControlStream
+	10, // 4: varde.mesh.v1.ServiceStream.protocol:type_name -> varde.mesh.v1.Protocol
+	0,  // 5: varde.mesh.v1.StreamAccept.reason:type_name -> varde.mesh.v1.RejectReason
+	7,  // 6: varde.mesh.v1.ControlFrame.ping:type_name -> varde.mesh.v1.Ping
+	8,  // 7: varde.mesh.v1.ControlFrame.pong:type_name -> varde.mesh.v1.Pong
 	8,  // [8:8] is the sub-list for method output_type
 	8,  // [8:8] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 // internalForward is a 127.0.0.1 TCP listener tunnelling to a peer's

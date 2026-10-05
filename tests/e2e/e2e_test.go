@@ -261,7 +261,7 @@ func TestEndToEnd(t *testing.T) {
 	relayPort := freePort(t)
 	cpURL := fmt.Sprintf("http://127.0.0.1:%d", cpPort)
 
-	cp := spawn(t, bin("p2pgames-control-plane"),
+	cp := spawn(t, bin("varde-control-plane"),
 		"--listen", fmt.Sprintf("127.0.0.1:%d", cpPort),
 		"--db", "sqlite://"+filepath.Join(tmp, "cp.db"),
 		"--public-url", cpURL,
@@ -306,12 +306,12 @@ func TestEndToEnd(t *testing.T) {
 		dir := filepath.Join(tmp, fmt.Sprintf("agent%d", i))
 		url := "http://" + p.addr()
 		a := &agentNode{dir: dir, prefix: prefixes[i], proxyURL: url}
-		runOut(t, rustBin("p2pgames-agent"), "enroll",
+		runOut(t, rustBin("varde-agent"), "enroll",
 			"--server", url, "--token", token,
 			"--data-dir", dir, "--loopback-prefix", a.prefix,
 			"--fence-margin-ms", "1000")
-		a.proc = spawn(t, rustBin("p2pgames-agent"), "run",
-			"--data-dir", dir, "--mesh-bin", bin("p2pgames-mesh"))
+		a.proc = spawn(t, rustBin("varde-agent"), "run",
+			"--data-dir", dir, "--mesh-bin", bin("varde-mesh"))
 		agents = append(agents, a)
 	}
 	t.Cleanup(func() {
@@ -467,8 +467,8 @@ func TestEndToEnd(t *testing.T) {
 	})
 
 	// revive killed agent: orphan game must be reaped, no hosting
-	agents[hostIdx].proc = spawn(t, rustBin("p2pgames-agent"), "run",
-		"--data-dir", agents[hostIdx].dir, "--mesh-bin", bin("p2pgames-mesh"))
+	agents[hostIdx].proc = spawn(t, rustBin("varde-agent"), "run",
+		"--data-dir", agents[hostIdx].dir, "--mesh-bin", bin("varde-mesh"))
 	waitFor(t, 30*time.Second, "revived agent heartbeating without hosting", func() bool {
 		return hostOf() == newHost
 	})
@@ -476,9 +476,13 @@ func TestEndToEnd(t *testing.T) {
 	// by the new host's mesh route on ITS translated prefix; the old game's
 	// bound 127.0.0.1:7777 must no longer be a testgame — check via process
 	// table: the revived agent logs "killed orphaned game process group".
+	// "killed orphaned" when the process group is still alive; "dropping
+	// stale orphan record" when it already exited (e.g. stdin EOF) — the
+	// boot_id/starttime guard must not kill a pgid it can't verify
 	waitFor(t, 10*time.Second, "orphan reaped", func() bool {
-		return bytes.Contains(agents[hostIdx].proc.logBuf.Bytes(),
-			[]byte("killed orphaned game process"))
+		b := agents[hostIdx].proc.logBuf.Bytes()
+		return bytes.Contains(b, []byte("killed orphaned game process")) ||
+			bytes.Contains(b, []byte("dropping stale orphan record"))
 	})
 
 	// graceful stop: final snapshot reaches a peer before stopped

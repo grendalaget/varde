@@ -90,7 +90,11 @@ impl ExecState {
                 kill_group(r.pgid);
                 tracing::warn!(exec = %r.execution_id, pgid = r.pgid, "killed orphaned game process group");
             } else {
-                tracing::info!(exec = %r.execution_id, pgid = r.pgid, "dropping stale orphan record");
+                tracing::info!(exec = %r.execution_id, pgid = r.pgid,
+                    boot_ok = !r.boot_id.is_empty() && r.boot_id == boot_id(),
+                    rec_ticks = r.pgid_start_ticks,
+                    cur_ticks = proc_start_ticks(r.pgid),
+                    "dropping stale orphan record");
             }
         }
         self.records.clear();

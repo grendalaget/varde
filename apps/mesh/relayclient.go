@@ -11,8 +11,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/meshproto"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/meshproto"
 )
 
 // relayPipe is a virtual net.PacketConn carrying a whole relayed QUIC
@@ -34,7 +34,7 @@ type pipePacket struct {
 // virtualAddr identifies a remote node on the relay pipe.
 type virtualAddr string
 
-func (v virtualAddr) Network() string { return "p2pg-relay" }
+func (v virtualAddr) Network() string { return "varde-relay" }
 func (v virtualAddr) String() string  { return string(v) }
 
 func (p *relayPipe) ReadFrom(b []byte) (int, net.Addr, error) {

@@ -1,21 +1,22 @@
 [Unit]
-Description=p2pgames node agent
+Description=Varde node agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/p2pgames-agent run
+User=varde
+ExecStart=/usr/bin/varde-agent run
 Restart=always
 RestartSec=5
-StateDirectory=p2pgames
+StateDirectory=varde
 StateDirectoryMode=0700
-ConfigurationDirectory=p2pgames
+ConfigurationDirectory=varde
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/p2pgames /etc/p2pgames
+ReadWritePaths=/var/lib/varde /etc/varde
 
 [Install]
 WantedBy=multi-user.target

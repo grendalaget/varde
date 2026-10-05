@@ -1,4 +1,4 @@
-module github.com/arnemolland/p2pgames/go
+module github.com/grendalaget/varde/go
 
 go 1.26.0
 

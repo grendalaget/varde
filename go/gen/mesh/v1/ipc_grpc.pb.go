@@ -26,16 +26,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MeshService_GetStatus_FullMethodName             = "/p2pgames.mesh.v1.MeshService/GetStatus"
-	MeshService_Configure_FullMethodName             = "/p2pgames.mesh.v1.MeshService/Configure"
-	MeshService_SetPeers_FullMethodName              = "/p2pgames.mesh.v1.MeshService/SetPeers"
-	MeshService_ListPeers_FullMethodName             = "/p2pgames.mesh.v1.MeshService/ListPeers"
-	MeshService_SetRoutes_FullMethodName             = "/p2pgames.mesh.v1.MeshService/SetRoutes"
-	MeshService_SetHostedServices_FullMethodName     = "/p2pgames.mesh.v1.MeshService/SetHostedServices"
-	MeshService_SetInternalServices_FullMethodName   = "/p2pgames.mesh.v1.MeshService/SetInternalServices"
-	MeshService_BindInternalForward_FullMethodName   = "/p2pgames.mesh.v1.MeshService/BindInternalForward"
-	MeshService_UnbindInternalForward_FullMethodName = "/p2pgames.mesh.v1.MeshService/UnbindInternalForward"
-	MeshService_WatchEvents_FullMethodName           = "/p2pgames.mesh.v1.MeshService/WatchEvents"
+	MeshService_GetStatus_FullMethodName             = "/varde.mesh.v1.MeshService/GetStatus"
+	MeshService_Configure_FullMethodName             = "/varde.mesh.v1.MeshService/Configure"
+	MeshService_SetPeers_FullMethodName              = "/varde.mesh.v1.MeshService/SetPeers"
+	MeshService_ListPeers_FullMethodName             = "/varde.mesh.v1.MeshService/ListPeers"
+	MeshService_SetRoutes_FullMethodName             = "/varde.mesh.v1.MeshService/SetRoutes"
+	MeshService_SetHostedServices_FullMethodName     = "/varde.mesh.v1.MeshService/SetHostedServices"
+	MeshService_SetInternalServices_FullMethodName   = "/varde.mesh.v1.MeshService/SetInternalServices"
+	MeshService_BindInternalForward_FullMethodName   = "/varde.mesh.v1.MeshService/BindInternalForward"
+	MeshService_UnbindInternalForward_FullMethodName = "/varde.mesh.v1.MeshService/UnbindInternalForward"
+	MeshService_WatchEvents_FullMethodName           = "/varde.mesh.v1.MeshService/WatchEvents"
 )
 
 // MeshServiceClient is the client API for MeshService service.
@@ -431,7 +431,7 @@ type MeshService_WatchEventsServer = grpc.ServerStreamingServer[MeshEvent]
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var MeshService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "p2pgames.mesh.v1.MeshService",
+	ServiceName: "varde.mesh.v1.MeshService",
 	HandlerType: (*MeshServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

@@ -1,10 +1,10 @@
-module github.com/arnemolland/p2pgames/apps/mesh
+module github.com/grendalaget/varde/apps/mesh
 
 go 1.26.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/arnemolland/p2pgames/go v0.0.0
+	github.com/grendalaget/varde/go v0.0.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/quic-go/quic-go v0.63.0
 	google.golang.org/grpc v1.84.0
@@ -25,4 +25,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/arnemolland/p2pgames/go => ../../go
+replace github.com/grendalaget/varde/go => ../../go

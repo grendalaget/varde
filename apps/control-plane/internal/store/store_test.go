@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func postgresTestURL() string { return os.Getenv("P2PGAMES_TEST_POSTGRES_URL") }
+func postgresTestURL() string { return os.Getenv("VARDE_TEST_POSTGRES_URL") }
 
 func testStores(t *testing.T) map[string]*Store {
 	t.Helper()

@@ -15,13 +15,13 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/arnemolland/p2pgames/go/ids"
+	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
 )
 
 const (
-	SessionCookie = "p2pg_session"
+	SessionCookie = "varde_session"
 	sessionTTLms  = 30 * 24 * 3600 * 1000 // 30 days
 
 	argonTime    = 3

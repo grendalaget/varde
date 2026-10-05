@@ -98,7 +98,7 @@ type RelayRegister struct {
 	Token           string `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
 	NodeId          string `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	TimestampUnixMs int64  `protobuf:"varint,3,opt,name=timestamp_unix_ms,json=timestampUnixMs,proto3" json:"timestamp_unix_ms,omitempty"`
-	// ed25519 signature by the node key over "p2pgames-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
+	// ed25519 signature by the node key over "varde-relay-register|<relay_id>|<node_id>|<timestamp_unix_ms>".
 	Signature     []byte `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
 	RelayId       string `protobuf:"bytes,5,opt,name=relay_id,json=relayId,proto3" json:"relay_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -225,7 +225,7 @@ func (x *RelayRegistered) GetExpiresUnixMs() int64 {
 
 type RelayError struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          RelayError_Code        `protobuf:"varint,1,opt,name=code,proto3,enum=p2pgames.mesh.v1.RelayError_Code" json:"code,omitempty"`
+	Code          RelayError_Code        `protobuf:"varint,1,opt,name=code,proto3,enum=varde.mesh.v1.RelayError_Code" json:"code,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	NodeId        string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -287,7 +287,7 @@ var File_mesh_v1_relay_proto protoreflect.FileDescriptor
 
 const file_mesh_v1_relay_proto_rawDesc = "" +
 	"\n" +
-	"\x13mesh/v1/relay.proto\x12\x10p2pgames.mesh.v1\"\xa3\x01\n" +
+	"\x13mesh/v1/relay.proto\x12\rvarde.mesh.v1\"\xa3\x01\n" +
 	"\rRelayRegister\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12*\n" +
@@ -296,10 +296,10 @@ const file_mesh_v1_relay_proto_rawDesc = "" +
 	"\brelay_id\x18\x05 \x01(\tR\arelayId\"^\n" +
 	"\x0fRelayRegistered\x12#\n" +
 	"\robserved_addr\x18\x01 \x01(\tR\fobservedAddr\x12&\n" +
-	"\x0fexpires_unix_ms\x18\x02 \x01(\x03R\rexpiresUnixMs\"\xf7\x01\n" +
+	"\x0fexpires_unix_ms\x18\x02 \x01(\x03R\rexpiresUnixMs\"\xf4\x01\n" +
 	"\n" +
-	"RelayError\x125\n" +
-	"\x04code\x18\x01 \x01(\x0e2!.p2pgames.mesh.v1.RelayError.CodeR\x04code\x12\x18\n" +
+	"RelayError\x122\n" +
+	"\x04code\x18\x01 \x01(\x0e2\x1e.varde.mesh.v1.RelayError.CodeR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"\x7f\n" +
 	"\x04Code\x12\x14\n" +
@@ -307,7 +307,7 @@ const file_mesh_v1_relay_proto_rawDesc = "" +
 	"\x14CODE_UNAUTHENTICATED\x10\x01\x12\x1c\n" +
 	"\x18CODE_UNKNOWN_DESTINATION\x10\x02\x12\x12\n" +
 	"\x0eCODE_FORBIDDEN\x10\x03\x12\x15\n" +
-	"\x11CODE_RATE_LIMITED\x10\x04B7Z5github.com/arnemolland/p2pgames/go/gen/mesh/v1;meshv1b\x06proto3"
+	"\x11CODE_RATE_LIMITED\x10\x04B4Z2github.com/grendalaget/varde/go/gen/mesh/v1;meshv1b\x06proto3"
 
 var (
 	file_mesh_v1_relay_proto_rawDescOnce sync.Once
@@ -324,13 +324,13 @@ func file_mesh_v1_relay_proto_rawDescGZIP() []byte {
 var file_mesh_v1_relay_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_mesh_v1_relay_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_mesh_v1_relay_proto_goTypes = []any{
-	(RelayError_Code)(0),    // 0: p2pgames.mesh.v1.RelayError.Code
-	(*RelayRegister)(nil),   // 1: p2pgames.mesh.v1.RelayRegister
-	(*RelayRegistered)(nil), // 2: p2pgames.mesh.v1.RelayRegistered
-	(*RelayError)(nil),      // 3: p2pgames.mesh.v1.RelayError
+	(RelayError_Code)(0),    // 0: varde.mesh.v1.RelayError.Code
+	(*RelayRegister)(nil),   // 1: varde.mesh.v1.RelayRegister
+	(*RelayRegistered)(nil), // 2: varde.mesh.v1.RelayRegistered
+	(*RelayError)(nil),      // 3: varde.mesh.v1.RelayError
 }
 var file_mesh_v1_relay_proto_depIdxs = []int32{
-	0, // 0: p2pgames.mesh.v1.RelayError.code:type_name -> p2pgames.mesh.v1.RelayError.Code
+	0, // 0: varde.mesh.v1.RelayError.code:type_name -> varde.mesh.v1.RelayError.Code
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

@@ -8,8 +8,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
-	"github.com/arnemolland/p2pgames/go/meshproto"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
+	"github.com/grendalaget/varde/go/meshproto"
 )
 
 // hostedService is what this node accepts inbound traffic for.

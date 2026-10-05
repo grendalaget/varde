@@ -1,16 +1,16 @@
 //! Canonical agent request signing (control-plane.md §Node authentication),
 //! identical to go/identity: ed25519 over
-//! `"p2pgames-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))`.
+//! `"varde-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))`.
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 
-pub const SIG_VERSION: &str = "p2pgames-agent-v1";
+pub const SIG_VERSION: &str = "varde-agent-v1";
 /// Header names (also in go/identity).
-pub const HDR_NODE: &str = "X-P2PG-Node";
-pub const HDR_TIMESTAMP: &str = "X-P2PG-Timestamp";
-pub const HDR_SIGNATURE: &str = "X-P2PG-Signature";
+pub const HDR_NODE: &str = "X-Varde-Node";
+pub const HDR_TIMESTAMP: &str = "X-Varde-Timestamp";
+pub const HDR_SIGNATURE: &str = "X-Varde-Signature";
 
 pub fn signing_string(method: &str, path: &str, timestamp_unix_ms: i64, body: &[u8]) -> String {
     let digest = Sha256::digest(body);

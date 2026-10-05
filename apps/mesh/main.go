@@ -1,4 +1,4 @@
-// Command p2pgames-mesh is the per-node QUIC mesh daemon. The Rust agent
+// Command varde-mesh is the per-node QUIC mesh daemon. The Rust agent
 // spawns and supervises it; all control happens over local IPC (UDS on
 // Linux, named pipe on Windows) via MeshService.
 package main
@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	meshv1 "github.com/arnemolland/p2pgames/go/gen/mesh/v1"
+	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
 // Set by -ldflags "-X main.version=...".

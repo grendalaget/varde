@@ -1,6 +1,6 @@
 # Control plane
 
-Single Go binary `p2pgames-control-plane serve`. Modules (packages under `apps/control-plane/internal/`):
+Single Go binary `varde-control-plane serve`. Modules (packages under `apps/control-plane/internal/`):
 `store` (SQL), `auth`, `api` (public, OpenAPI-generated server), `agentapi`, `scheduler` (pure, deterministic),
 `reconciler` (the only writer of lease/execution state transitions besides agent reports), `events` (durable log +
 SSE fan-out), `relaytoken`, `catalog` (game catalog data), `webui` (embedded SPA), optional embedded relay.
@@ -9,7 +9,7 @@ SSE fan-out), `relaytoken`, `catalog` (game catalog data), `webui` (embedded SPA
 
 `database/sql` + `sqlx` with **portable SQL** and `sqlx.Rebind` for placeholders. Two drivers:
 
-* `sqlite` (default, `modernc.org/sqlite`, no cgo): `--db sqlite:///var/lib/p2pgames-cp/cp.db` (WAL, busy timeout,
+* `sqlite` (default, `modernc.org/sqlite`, no cgo): `--db sqlite:///var/lib/varde-cp/cp.db` (WAL, busy timeout,
   `_txlock=immediate`).
 * `postgres` (`pgx/v5/stdlib`): `--db postgres://...`.
 
@@ -59,13 +59,13 @@ execution_logs(execution_id, seq, at, stream{stdout,stderr,agent}, line)   -- ca
 
 ## Authentication
 
-* **Users:** email + password (argon2id). `POST /v1/auth/login` sets `p2pg_session` (HttpOnly, SameSite=Lax, Secure
+* **Users:** email + password (argon2id). `POST /v1/auth/login` sets `varde_session` (HttpOnly, SameSite=Lax, Secure
   when TLS) and also returns the token for API/CLI use as `Authorization: Bearer`. Signup policy
   `--signup=open|invite|closed` (default `open` until the first user exists, then `invite`). The very first user is
   `is_operator`. `auth.Provider` interface so OIDC can be added without touching handlers.
 * **Nodes:** every `/v1/agent/*` call after enrollment carries
-  `X-P2PG-Node`, `X-P2PG-Timestamp` (unix ms), `X-P2PG-Signature` = base64(ed25519 over
-  `"p2pgames-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))`). Skew > 60 s ⇒ 401.
+  `X-Varde-Node`, `X-Varde-Timestamp` (unix ms), `X-Varde-Signature` = base64(ed25519 over
+  `"varde-agent-v1\n" + METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + hex(sha256(body))`). Skew > 60 s ⇒ 401.
   Disabled nodes ⇒ 403. No bearer tokens to leak; the private key never leaves the node.
 * **Authorization** is enforced server-side per group role: `member` may start/stop/move servers and manage *own*
   nodes; `admin` additionally servers CRUD, invites, enrollment tokens, any node; `owner` group settings/deletion/roles.
@@ -80,7 +80,7 @@ execution_logs(execution_id, seq, at, stream{stdout,stderr,agent}, line)   -- ca
    {device_code}` → `202 pending` | `200 {node_id, group_id, control_plane_public_key}`.
 2. **Enrollment token** (headless Linux, anchors, provider fleets): admin creates
    `POST /v1/groups/{id}/enrollment-tokens {anchor, hosting_enabled, expires_at, max_uses}`; on the node
-   `p2pgames-agent enroll --server URL --token pge_…` → `POST /v1/agent/enroll/token {token, public_key, ...}`.
+   `varde-agent enroll --server URL --token vde_…` → `POST /v1/agent/enroll/token {token, public_key, ...}`.
 
 Group limits (`max_nodes`) are checked at approval/enrollment.
 

@@ -8,14 +8,14 @@ use std::path::Path;
 use tonic::transport::{Channel, Endpoint};
 
 pub mod pb {
-    tonic::include_proto!("p2pgames.mesh.v1");
+    tonic::include_proto!("varde.mesh.v1");
 }
 
 pub use pb::mesh_service_client::MeshServiceClient;
 
 /// Computes the IPC endpoint for a given data directory.
 ///
-/// Unix: `<data>/run/mesh.sock`. Windows: `\\.\pipe\p2pgames-mesh-<8 hex of
+/// Unix: `<data>/run/mesh.sock`. Windows: `\\.\pipe\varde-mesh-<8 hex of
 /// sha256(data dir)>` so multiple installs/users don't collide.
 pub fn ipc_endpoint(data_dir: &Path) -> String {
     platform_ipc_endpoint(data_dir)
@@ -30,7 +30,7 @@ fn platform_ipc_endpoint(data_dir: &Path) -> String {
 fn platform_ipc_endpoint(data_dir: &Path) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(data_dir.to_string_lossy().as_bytes());
-    format!("\\\\.\\pipe\\p2pgames-mesh-{}", &hex::encode(hash)[..8])
+    format!("\\\\.\\pipe\\varde-mesh-{}", &hex::encode(hash)[..8])
 }
 
 /// Connects to the mesh daemon over the platform IPC transport.

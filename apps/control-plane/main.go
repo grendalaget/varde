@@ -1,4 +1,4 @@
-// Command p2pgames-control-plane serves the control-plane HTTP API,
+// Command varde-control-plane serves the control-plane HTTP API,
 // embeds the web UI, and runs the reconciler.
 package main
 
@@ -20,14 +20,14 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/arnemolland/p2pgames/go/identity"
-	"github.com/arnemolland/p2pgames/go/relay"
+	"github.com/grendalaget/varde/go/identity"
+	"github.com/grendalaget/varde/go/relay"
 
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/api"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/auth"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/reconciler"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/store"
-	"github.com/arnemolland/p2pgames/apps/control-plane/internal/webui"
+	"github.com/grendalaget/varde/apps/control-plane/internal/api"
+	"github.com/grendalaget/varde/apps/control-plane/internal/auth"
+	"github.com/grendalaget/varde/apps/control-plane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/control-plane/internal/webui"
 )
 
 // Set by -ldflags "-X main.version=...".
@@ -67,19 +67,19 @@ func (r *relayFlags) Set(v string) error {
 
 func main() {
 	var (
-		listen         = flag.String("listen", envOr("P2PGAMES_LISTEN", ":8080"), "HTTP listen address")
-		dbURL          = flag.String("db", envOr("P2PGAMES_DB", "sqlite:///var/lib/p2pgames-cp/cp.db"), "database URL (sqlite:///path | postgres://…)")
-		publicURL      = flag.String("public-url", envOr("P2PGAMES_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
-		signup         = flag.String("signup", envOr("P2PGAMES_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
-		embeddedRelay  = flag.String("embedded-relay", envOr("P2PGAMES_EMBEDDED_RELAY", ""), "run an in-process relay on this UDP addr (e.g. :3478)")
-		embeddedAddr   = flag.String("embedded-relay-addr", envOr("P2PGAMES_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
+		listen         = flag.String("listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
+		dbURL          = flag.String("db", envOr("VARDE_DB", "sqlite:///var/lib/varde-cp/cp.db"), "database URL (sqlite:///path | postgres://…)")
+		publicURL      = flag.String("public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
+		signup         = flag.String("signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
+		embeddedRelay  = flag.String("embedded-relay", envOr("VARDE_EMBEDDED_RELAY", ""), "run an in-process relay on this UDP addr (e.g. :3478)")
+		embeddedAddr   = flag.String("embedded-relay-addr", envOr("VARDE_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
 		relays         relayFlags
-		heartbeatMs    = flag.Int64("heartbeat-interval-ms", envInt("P2PGAMES_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
-		leaseTTLMs     = flag.Int64("lease-ttl-ms", envInt("P2PGAMES_LEASE_TTL_MS", 20000), "execution lease TTL")
-		startGraceMs   = flag.Int64("start-grace-ms", envInt("P2PGAMES_START_GRACE_MS", 600000), "extra lease while preparing/restoring")
-		suspectAfterMs = flag.Int64("suspect-after-ms", envInt("P2PGAMES_SUSPECT_AFTER_MS", 15000), "node suspect threshold")
-		offlineAfterMs = flag.Int64("offline-after-ms", envInt("P2PGAMES_OFFLINE_AFTER_MS", 30000), "node offline threshold")
-		logLevel       = flag.String("log-level", envOr("P2PGAMES_LOG_LEVEL", "info"), "slog level")
+		heartbeatMs    = flag.Int64("heartbeat-interval-ms", envInt("VARDE_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
+		leaseTTLMs     = flag.Int64("lease-ttl-ms", envInt("VARDE_LEASE_TTL_MS", 20000), "execution lease TTL")
+		startGraceMs   = flag.Int64("start-grace-ms", envInt("VARDE_START_GRACE_MS", 600000), "extra lease while preparing/restoring")
+		suspectAfterMs = flag.Int64("suspect-after-ms", envInt("VARDE_SUSPECT_AFTER_MS", 15000), "node suspect threshold")
+		offlineAfterMs = flag.Int64("offline-after-ms", envInt("VARDE_OFFLINE_AFTER_MS", 30000), "node offline threshold")
+		logLevel       = flag.String("log-level", envOr("VARDE_LOG_LEVEL", "info"), "slog level")
 	)
 	flag.Var(&relays, "relay", "declared relay id=…,addr=… (repeatable)")
 	flag.Parse()
