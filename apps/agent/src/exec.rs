@@ -128,7 +128,9 @@ impl ExecCtl {
         self.finished.store(true, Ordering::SeqCst);
     }
     pub fn request_stop(&self, kind: StopKind) {
-        let _ = self.stop.send(Some(kind));
+        // send_replace stores even with no receivers yet — a stop requested
+        // before run() subscribes must not be lost
+        let _ = self.stop.send_replace(Some(kind));
     }
     fn stop_rx(&self) -> watch::Receiver<Option<StopKind>> {
         self.stop.subscribe()
@@ -255,6 +257,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     ctl.set_phase(Phase::Preparing);
     report(&agent, &ctl).await;
     driver.prepare(&ctx).await.map_err(dyn_err)?;
+    ensure_live(&ctl)?;
 
     // ---- restore ----
     if let Some(r) = &dir.restore {
@@ -274,8 +277,10 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         let dst = server_dir.clone();
         tokio::task::spawn_blocking(move || store.restore(&sid, &dst, &inc)).await??;
     }
+    ensure_live(&ctl)?;
 
     driver.configure(&ctx).await.map_err(dyn_err)?;
+    ensure_live(&ctl)?;
 
     // ---- spawn + probe + supervise ----
     let mut attempts: VecDeque<Instant> = VecDeque::new();
@@ -284,6 +289,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let mut stop_rx = ctl.stop_rx();
 
     'outer: loop {
+        ensure_live(&ctl)?;
         // restart policy: 3 attempts in 10 minutes
         let now = Instant::now();
         while attempts
@@ -571,6 +577,18 @@ async fn do_snapshot(
     Ok(info)
 }
 
+/// Bail if the execution has been fenced or a stop was requested — a
+/// fenced exec must never progress to spawn.
+fn ensure_live(ctl: &ExecCtl) -> Result<()> {
+    if ctl.is_fenced() {
+        bail!("fenced");
+    }
+    if ctl.stop.borrow().is_some() {
+        bail!("stop requested");
+    }
+    Ok(())
+}
+
 /// Allocate one contiguous block of local ports covering `service_ports`.
 /// Offsets are preserved relative to the lowest service port (so a game
 /// using p and p+1 gets base/base+1). The base is random in 20000–59999
@@ -731,5 +749,47 @@ mod port_alloc_tests {
     #[test]
     fn empty_is_empty() {
         assert!(alloc_port_block(&[]).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ensure_live_tests {
+    use super::*;
+
+    fn ctl() -> Arc<ExecCtl> {
+        ExecCtl::new(ExecutionDirective {
+            execution_id: "e".into(),
+            server_id: "s".into(),
+            server_name: "s".into(),
+            epoch: 1,
+            lease_expires_at_unix_ms: 0,
+            action: "run".into(),
+            stop_reason: None,
+            deployment: None,
+            config: None,
+            service: None,
+            restore: None,
+            snapshot_interval_s: None,
+            snapshot_requests: vec![],
+        })
+    }
+
+    #[test]
+    fn live_ctl_ok() {
+        assert!(ensure_live(&ctl()).is_ok());
+    }
+
+    #[test]
+    fn fenced_ctl_bails() {
+        let c = ctl();
+        c.mark_fenced();
+        assert!(ensure_live(&c).is_err());
+    }
+
+    #[test]
+    fn stop_requested_bails() {
+        let c = ctl();
+        c.request_stop(StopKind::Hard);
+        assert!(ensure_live(&c).is_err());
     }
 }
