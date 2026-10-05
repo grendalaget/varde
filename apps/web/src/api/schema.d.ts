@@ -1051,6 +1051,7 @@ export interface components {
             uptime_s?: number;
             /** Format: int64 */
             agent_started_at?: number;
+            draining?: boolean;
         };
         MeshReport: {
             listen_port?: number;

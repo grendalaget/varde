@@ -267,8 +267,13 @@ func caps() map[string]any {
 // heartbeat sends a heartbeat with optional execution reports; returns the
 // parsed directives.
 func (a *agent) heartbeat(execReports []map[string]any) (directives, apiResp) {
+	return a.heartbeatCaps(execReports, caps())
+}
+
+// heartbeatCaps is heartbeat with a caller-supplied capabilities body.
+func (a *agent) heartbeatCaps(execReports []map[string]any, c map[string]any) (directives, apiResp) {
 	a.e.t.Helper()
-	body := map[string]any{"capabilities": caps(), "executions": execReports}
+	body := map[string]any{"capabilities": c, "executions": execReports}
 	raw, _ := json.Marshal(body)
 	r := a.signedDo("POST", "/v1/agent/heartbeat", raw, 0, nil)
 	var d directives
@@ -355,6 +360,48 @@ func (e *env) startToRunning(srvID string, agents ...*agent) (*agent, string, in
 		e.t.Fatalf("observed=%s", got)
 	}
 	return host, execID, epoch
+}
+
+func TestDrainingNodeSkipped(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "s1", map[string]any{"preferred_node_id": a.nodeID})
+	host, execID, epoch := e.startToRunning(srv, a, b)
+	if host != a {
+		t.Fatalf("preferred node a did not host (on %s)", host.nodeID)
+	}
+
+	// A begins draining: heartbeat advertises draining, exec reports stopped.
+	dc := caps()
+	dc["draining"] = true
+	_, _ = a.heartbeatCaps(nil, dc)
+	if r := a.execStatus(execID, srv, epoch, "stopped"); r.Status != 204 {
+		t.Fatalf("stopped: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+
+	// the next execution must land on B, not on still-online-but-draining A
+	ex := e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("no re-activated execution")
+	}
+	if ex["node"] == a.nodeID {
+		t.Fatalf("re-placed on draining node A: %+v", ex)
+	}
+	if ex["node"] != b.nodeID {
+		t.Fatalf("expected B, got %+v", ex)
+	}
+	d, _ := b.heartbeat(nil)
+	found := false
+	for _, ed := range d.Executions {
+		if ed.ExecutionID == ex["id"] {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("B has no run directive: %+v", d.Executions)
+	}
 }
 
 // ===================== tests =====================

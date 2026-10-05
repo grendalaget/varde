@@ -1522,6 +1522,9 @@ components:
           items: { type: string }
         uptime_s: { type: integer }
         agent_started_at: { type: integer, format: int64 }
+        # true while the agent drains executions on shutdown; scheduler must
+        # not place new work on it
+        draining: { type: boolean }
     MeshReport:
       type: object
       properties:

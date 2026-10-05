@@ -94,6 +94,9 @@ pub struct Capabilities {
     pub uptime_s: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_started_at: Option<i64>,
+    /// true while the agent drains executions on shutdown
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draining: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

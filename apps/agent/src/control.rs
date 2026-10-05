@@ -24,6 +24,9 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
             &agent.data_dir,
             &agent.drivers.ids(),
             agent.started_at_ms,
+            agent
+                .shutting_down
+                .load(std::sync::atomic::Ordering::SeqCst),
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
@@ -177,6 +180,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                     .load(std::sync::atomic::Ordering::SeqCst)
                 {
                     info!(exec = %e.execution_id, "shutting down; refusing new execution");
+                    report_absent_stopped_msg(agent, e, "node shutting down").await;
                     continue;
                 }
                 let ctl = ExecCtl::new(e.clone());
@@ -231,12 +235,16 @@ fn proto_for(s: &str) -> i32 {
 }
 
 async fn report_absent_stopped(agent: &Agent, e: &cp_api::ExecutionDirective) {
+    report_absent_stopped_msg(agent, e, "not running locally").await
+}
+
+async fn report_absent_stopped_msg(agent: &Agent, e: &cp_api::ExecutionDirective, message: &str) {
     let body = cp_api::ExecutionStatusUpdate {
         server_id: e.server_id.clone(),
         epoch: e.epoch,
         state: "stopped".into(),
         health: None,
-        message: Some("not running locally".into()),
+        message: Some(message.to_string()),
     };
     let path = format!("/v1/agent/executions/{}/status", e.execution_id);
     let _ = agent

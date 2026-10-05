@@ -697,6 +697,7 @@ type Capabilities struct {
 	CachedDeployments *[]string `json:"cached_deployments,omitempty"`
 	CpuCores          *int      `json:"cpu_cores,omitempty"`
 	DiskFreeBytes     *int64    `json:"disk_free_bytes,omitempty"`
+	Draining          *bool     `json:"draining,omitempty"`
 	Drivers           *[]string `json:"drivers,omitempty"`
 	MemoryAvailableMb *int      `json:"memory_available_mb,omitempty"`
 	MemoryTotalMb     *int      `json:"memory_total_mb,omitempty"`

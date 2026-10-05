@@ -508,6 +508,7 @@ func (r *Reconciler) nodeView(ctx context.Context, n *store.Node, restore *store
 			UserActive        bool     `json:"user_active"`
 			UptimeS           int64    `json:"uptime_s"`
 			DiskTotalBytes    int64    `json:"disk_total_bytes"`
+			Draining          bool     `json:"draining"`
 		}
 		_ = json.Unmarshal([]byte(st.StatusJSON), &caps)
 		v.Drivers = caps.Drivers
@@ -519,6 +520,7 @@ func (r *Reconciler) nodeView(ctx context.Context, n *store.Node, restore *store
 		v.OnBattery = caps.OnBattery
 		v.UserActive = caps.UserActive
 		v.UptimeS = caps.UptimeS
+		v.Draining = caps.Draining
 		var mesh struct {
 			Peers []struct {
 				NodeID string `json:"node_id"`

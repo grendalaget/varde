@@ -6,6 +6,7 @@ pub fn capabilities(
     data_dir: &std::path::Path,
     drivers: &[&'static str],
     started_at_ms: i64,
+    draining: bool,
 ) -> Capabilities {
     Capabilities {
         os: Some(std::env::consts::OS.to_string()),
@@ -29,6 +30,7 @@ pub fn capabilities(
         drivers: Some(drivers.iter().map(|d| d.to_string()).collect()),
         uptime_s: Some(uptime()),
         agent_started_at: Some(started_at_ms),
+        draining: Some(draining),
     }
 }
 
@@ -79,4 +81,18 @@ fn uptime() -> i64 {
         .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
         .map(|f| f as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capabilities_reflects_draining() {
+        let dir = std::env::temp_dir();
+        let live = capabilities(&dir, &[], 0, false);
+        let draining = capabilities(&dir, &[], 0, true);
+        assert_eq!(live.draining, Some(false));
+        assert_eq!(draining.draining, Some(true));
+    }
 }

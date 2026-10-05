@@ -43,6 +43,7 @@ func TestPlaceHardConstraints(t *testing.T) {
 		mut  func(*NodeView)
 	}{
 		{"offline", func(n *NodeView) { n.Online = false }},
+		{"shutting down", func(n *NodeView) { n.Draining = true }},
 		{"drained", func(n *NodeView) { n.AdminState = "drained" }},
 		{"hosting disabled", func(n *NodeView) { n.HostingEnabled = false }},
 		{"missing driver", func(n *NodeView) { n.Drivers = nil }},
@@ -72,6 +73,28 @@ func TestPlaceHardConstraints(t *testing.T) {
 		if !ok || len(se.Reasons) == 0 {
 			t.Fatalf("%s: expected reasons", tc.name)
 		}
+	}
+}
+
+func TestPlaceSkipsDrainingNode(t *testing.T) {
+	// draining node has snapshot-local + preferred and still loses to an
+	// eligible node; with no eligible node the reason is reported
+	drain := okNode("node_drain")
+	drain.Draining = true
+	drain.HasRestoreLocal = true
+	srv := testSrv
+	srv.PreferredNodeID = drain.ID
+	d, err := Place(srv, testGame, []NodeView{drain, okNode("node_ok")}, SnapView{})
+	if err != nil {
+		t.Fatalf("place: %v", err)
+	}
+	if d.NodeID != "node_ok" {
+		t.Fatalf("placed on draining node: %+v", d)
+	}
+	_, err = Place(srv, testGame, []NodeView{drain}, SnapView{})
+	se, ok := err.(*Error)
+	if !ok || !contains(se.Reasons, "node_drain: shutting down") {
+		t.Fatalf("expected shutting-down reason, got %v", err)
 	}
 }
 

@@ -28,6 +28,7 @@ type GameView struct {
 type NodeView struct {
 	ID                string
 	Online            bool
+	Draining          bool // agent is draining executions on shutdown
 	AdminState        string
 	HostingEnabled    bool
 	Anchor            bool
@@ -92,6 +93,10 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 	for _, n := range sorted {
 		if !n.Online {
 			reasons = append(reasons, n.ID+": offline")
+			continue
+		}
+		if n.Draining {
+			reasons = append(reasons, n.ID+": shutting down")
 			continue
 		}
 		if n.AdminState != "active" {
