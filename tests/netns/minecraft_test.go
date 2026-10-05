@@ -606,9 +606,10 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	if err := arneProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("SIGTERM arne agent: %v", err)
 	}
+	// reap the process in the background so ProcessState populates
+	go func() { _ = arneProc.cmd.Wait() }()
 	waitFor(t, 3*time.Minute, "arne agent exited", func() bool {
-		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited() ||
-			arneProc.cmd.Process.Signal(syscall.Signal(0)) != nil
+		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited()
 	})
 	t.Logf("arne agent exited after SIGTERM")
 
