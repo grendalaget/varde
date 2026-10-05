@@ -446,7 +446,7 @@ async fn run(
     Ok(())
 }
 
-async fn wait_shutdown(ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {
+async fn wait_shutdown(mut ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
