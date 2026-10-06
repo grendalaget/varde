@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api/client";
-import Cairn from "../components/Cairn";
+import { Logo } from "../components/Logo";
 import { Button, ErrorNote, Field, inputClass } from "../components/ui";
 
 export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
@@ -35,19 +35,20 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-slate-100">
+    <main className="flex min-h-screen items-center justify-center bg-skifer-950 p-6 text-skifer-100">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <Cairn className="h-12 w-12" />
-          <h1 className="text-2xl font-semibold">Varde</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="vd-hover mb-2">
+            <Logo className="h-16" />
+          </h1>
+          <p className="text-sm text-skifer-400">
             Game servers your group owns together — they keep running and keep
             your saves safe, whoever's PC is on.
           </p>
         </div>
         <form
           onSubmit={submit}
-          className="space-y-4 rounded-lg border border-slate-800 bg-slate-900/60 p-6"
+          className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
         >
           {mode === "signup" && (
             <Field label="Your name">
@@ -94,11 +95,11 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
           >
             {mode === "login" ? "Sign in" : "Create account"}
           </Button>
-          <p className="text-center text-sm text-slate-400">
+          <p className="text-center text-sm text-skifer-400">
             {mode === "login" ? "New here? " : "Already have an account? "}
             <button
               type="button"
-              className="text-emerald-400 hover:underline"
+              className="text-take underline decoration-skifer-500 underline-offset-2 hover:decoration-take"
               onClick={() => {
                 setErr(null);
                 setMode(mode === "login" ? "signup" : "login");

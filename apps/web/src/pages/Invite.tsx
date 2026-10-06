@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api/client";
 import { Button, ErrorNote } from "../components/ui";
+import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
 
 export default function InvitePage({
@@ -17,15 +18,15 @@ export default function InvitePage({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="space-y-4 rounded-lg border border-slate-800 bg-slate-900/60 p-6">
+    <div className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6">
       {inv.error ? (
         <ErrorNote>This invite link is invalid or has expired.</ErrorNote>
       ) : !inv.data ? (
-        <p className="text-sm text-slate-400">Loading invite…</p>
+        <PageLoader label="Loading invite…" />
       ) : (
         <>
           <h1 className="text-lg font-semibold">Join {inv.data.group_name}?</h1>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-skifer-400">
             You'll be able to play the group's servers and add your own
             machines.
           </p>

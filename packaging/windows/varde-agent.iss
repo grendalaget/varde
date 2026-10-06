@@ -3,7 +3,8 @@
 ; registers and starts the Windows service, and opens enrollment at the end.
 ;
 ;   iscc /DVersion=0.1.0 varde-agent.iss
-; Expects alongside this script: dist\varde-agent.exe, dist\varde-mesh.exe
+; Expects alongside this script: varde.ico, dist\varde-agent.exe,
+; dist\varde-mesh.exe
 
 #ifndef Version
   #define Version "0.0.0-dev"
@@ -23,8 +24,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=varde.ico
+UninstallDisplayIcon={app}\varde.ico
 
 [Files]
+Source: "varde.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\varde-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\varde-mesh.exe"; DestDir: "{app}"; Flags: ignoreversion
 

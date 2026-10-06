@@ -1,4 +1,11 @@
-# Varde
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/svg/varde-logo-dark.svg" />
+    <img src="brand/svg/varde-logo.svg" alt="Varde" width="280" />
+  </picture>
+</h1>
+
+<p align="center">Game servers built by many hands.</p>
 
 Peer-hosted game servers for groups of friends. One active host at a time,
 replicated snapshots, automatic failover, stable loopback service addresses,
