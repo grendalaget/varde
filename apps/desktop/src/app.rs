@@ -311,6 +311,22 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
     }
 }
 
+/// Window background while the page loads: light or dark per the OS "apps"
+/// personalization setting, so the app doesn't flash the wrong theme color.
+/// Defaults to dark (Natt) when the preference can't be read.
+fn window_background() -> tauri::window::Color {
+    let light = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
+        .map(|v| v != 0)
+        .unwrap_or(false);
+    if light {
+        tauri::window::Color(0xf3, 0xf5, 0xf6, 0xff)
+    } else {
+        tauri::window::Color(0x10, 0x16, 0x1a, 0xff)
+    }
+}
+
 /// Where the service writes its logs (see packaging/windows).
 fn logs_dir() -> std::path::PathBuf {
     std::env::var_os("ProgramData")
@@ -338,8 +354,10 @@ fn open_main_window(app: &AppHandle) {
             .resizable(false)
             .maximizable(false)
             .center()
-            .theme(Some(tauri::Theme::Dark))
-            .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
+            // follow the OS light/dark theme; the page picks its Fluent
+            // theme from prefers-color-scheme
+            .theme(None)
+            .background_color(window_background())
             .build()
             .is_ok();
     if !built {
