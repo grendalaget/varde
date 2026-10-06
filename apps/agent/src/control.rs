@@ -261,10 +261,7 @@ mod tests {
 
     #[test]
     fn delete_acknowledgement_removes_only_sent_ids() {
-        let pending = Mutex::new(BTreeSet::from([
-            "snap_a".to_string(),
-            "snap_b".to_string(),
-        ]));
+        let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
         let sent = pending_delete_ack_ids(&pending);
         assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
 

@@ -15,8 +15,8 @@ mod sysinfo;
 
 pub use agent::Agent;
 
-use std::path::PathBuf;
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
