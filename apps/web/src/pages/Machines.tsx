@@ -11,6 +11,9 @@ import {
   PageHeader,
   Toggle,
 } from "../components/ui";
+import { Ember } from "../components/Logo";
+import { useLoad } from "../lib/data";
+import { useOnEvent } from "../lib/events";
 import { bytes, rtt, timeAgo } from "../lib/format";
 import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
@@ -24,6 +27,22 @@ type Conn = { node_id: string; name?: string; path: string; rtt_us?: number };
 export default function Machines() {
   const { nodes, group } = useSession();
   const hasAnchor = nodes.some((n) => n.anchor);
+  const servers = useLoad(
+    () =>
+      api.GET("/v1/groups/{groupId}/servers", {
+        params: { path: { groupId: group.group_id } },
+      }),
+    [group.group_id],
+  );
+  useOnEvent(
+    (e) => !!e.server_id || e.type.startsWith("node."),
+    servers.refresh,
+  );
+  const hosting = new Map<string, string[]>();
+  for (const s of servers.data?.servers ?? []) {
+    const id = s.summary.hosting_on?.node_id;
+    if (id) hosting.set(id, [...(hosting.get(id) ?? []), s.name]);
+  }
   return (
     <>
       <PageHeader
@@ -38,8 +57,8 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <div className="mb-4 rounded-md border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
-          <span className="font-medium text-slate-100">Tip:</span> add an{" "}
+        <div className="mb-4 rounded-md border border-skifer-800 bg-skifer-900/60 px-4 py-3 text-sm text-skifer-300">
+          <span className="font-medium text-skifer-100">Tip:</span> add an{" "}
           <span className="text-violet-300">always-on backup</span> (a NAS, home
           server or small VPS). It always has the latest save, even when
           everyone's PC is off.
@@ -52,7 +71,7 @@ export default function Machines() {
       ) : (
         <div className="space-y-3">
           {nodes.map((n) => (
-            <MachineRow key={n.id} n={n} />
+            <MachineRow key={n.id} n={n} hosting={hosting.get(n.id) ?? []} />
           ))}
         </div>
       )}
@@ -62,10 +81,10 @@ export default function Machines() {
 
 function liveTone(n: Node) {
   const l = n.liveness ?? (n.online ? "online" : "offline");
-  return l === "online" ? "green" : l === "suspect" ? "amber" : "slate";
+  return l === "online" ? "green" : l === "suspect" ? "warn" : "neutral";
 }
 
-function MachineRow({ n }: { n: Node }) {
+function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
   const { group, refreshNodes } = useSession();
   const admin = canAdmin(group.role);
   const [err, setErr] = useState<string | null>(null);
@@ -92,16 +111,28 @@ function MachineRow({ n }: { n: Node }) {
         <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-0 sm:flex-1">
           <Dot tone={liveTone(n)} />
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-medium text-slate-50">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate font-medium text-skifer-50">
                 {n.name}
               </span>
+              {hosting.length > 0 && (
+                <Badge
+                  tone="host"
+                  className="min-w-0 max-w-full"
+                  title={`Hosting ${hosting.join(", ")}`}
+                >
+                  <Ember />
+                  <span className="truncate">
+                    Hosting {hosting.join(", ")}
+                  </span>
+                </Badge>
+              )}
               {n.anchor && <Badge tone="violet">Always-on backup</Badge>}
               {n.admin_state !== "active" && (
-                <Badge tone="amber">{n.admin_state}</Badge>
+                <Badge tone="warn">{n.admin_state}</Badge>
               )}
             </div>
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-skifer-400">
               {live === "online"
                 ? "Online"
                 : `Last seen ${timeAgo(n.last_seen_at)}`}
@@ -121,7 +152,7 @@ function MachineRow({ n }: { n: Node }) {
             {conns.map((c) => (
               <Badge
                 key={c.node_id}
-                tone={c.path === "direct" ? "green" : "amber"}
+                tone={c.path === "direct" ? "green" : "warn"}
                 title={`Connection to ${c.name ?? c.node_id}`}
               >
                 {c.name ?? c.node_id}:{" "}
@@ -131,7 +162,7 @@ function MachineRow({ n }: { n: Node }) {
             ))}
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-slate-300">
+        <div className="flex items-center gap-2 text-sm text-skifer-300">
           <Toggle
             checked={n.hosting_enabled}
             disabled={!admin}
@@ -145,7 +176,7 @@ function MachineRow({ n }: { n: Node }) {
         </Button>
       </div>
       {open && (
-        <div className="space-y-4 border-t border-slate-800 px-4 py-4 text-sm">
+        <div className="space-y-4 border-t border-skifer-800 px-4 py-4 text-sm">
           <div className="flex items-start gap-3">
             <Toggle
               checked={n.anchor}
@@ -154,14 +185,14 @@ function MachineRow({ n }: { n: Node }) {
               label="Always-on backup"
             />
             <div>
-              <div className="text-slate-200">Always-on backup</div>
-              <div className="text-xs text-slate-400">
+              <div className="text-skifer-200">Always-on backup</div>
+              <div className="text-xs text-skifer-400">
                 Gets a copy of every save from every server. Use this for
                 machines that are always on.
               </div>
             </div>
           </div>
-          <div className="grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+          <div className="grid gap-2 text-xs text-skifer-400 sm:grid-cols-2">
             <div>Agent version: {n.agent_version ?? "—"}</div>
             <div>
               Uptime:{" "}

@@ -91,12 +91,12 @@ export default function NewServer() {
                 className={
                   "rounded-md border px-3 py-3 text-left text-sm " +
                   (g.id === gameId
-                    ? "border-emerald-500 bg-emerald-500/10"
-                    : "border-slate-800 hover:border-slate-600")
+                    ? "border-take bg-take/5"
+                    : "border-skifer-800 hover:border-skifer-600")
                 }
               >
                 <div className="font-medium">{g.name}</div>
-                <div className="mt-1 text-xs text-slate-400">
+                <div className="mt-1 text-xs text-skifer-400">
                   Needs {Math.round((g.min_memory_mb / 1024) * 10) / 10} GB RAM
                 </div>
               </button>
@@ -146,7 +146,7 @@ export default function NewServer() {
                 onChange={setStartNow}
                 label="Start now"
               />
-              <span className="text-sm text-slate-300">
+              <span className="text-sm text-skifer-300">
                 Start it right away
               </span>
             </div>
@@ -188,8 +188,8 @@ export function ConfigInput({
       <div className="flex items-start gap-3">
         <Toggle checked={!!value} onChange={onChange} label={label} />
         <div>
-          <div className="text-sm text-slate-200">{label}</div>
-          {f.help && <div className="text-xs text-slate-400">{f.help}</div>}
+          <div className="text-sm text-skifer-200">{label}</div>
+          {f.help && <div className="text-xs text-skifer-400">{f.help}</div>}
         </div>
       </div>
     );
