@@ -258,20 +258,24 @@ impl Store {
         // remove included paths that are not in the manifest
         let want: HashSet<&str> = m.files.iter().map(|e| e.path.as_str()).collect();
         let present = walk(dest);
+        // a dir holding excluded files stays; its other files are removed
+        // one by one as the walk reaches them
+        let mut keep: HashSet<&str> = HashSet::new();
+        for d in present.iter().filter(|d| is_excluded(&d.rel, include)) {
+            let mut rel = d.rel.as_str();
+            while let Some(i) = rel.rfind('/') {
+                rel = &rel[..i];
+                if !keep.insert(rel) {
+                    break;
+                }
+            }
+        }
         for f in &present {
             if want.contains(f.rel.as_str()) {
                 continue;
             }
-            // a dir holding excluded files stays; its other files are
-            // removed one by one as the walk reaches them
-            if f.kind == WalkKind::Dir {
-                let prefix = format!("{}/", f.rel);
-                if present
-                    .iter()
-                    .any(|d| d.rel.starts_with(&prefix) && is_excluded(&d.rel, include))
-                {
-                    continue;
-                }
+            if f.kind == WalkKind::Dir && keep.contains(f.rel.as_str()) {
+                continue;
             }
             // only remove paths at/under an included root, and only if some
             // pattern selects them or their subtree
