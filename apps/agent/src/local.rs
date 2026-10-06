@@ -328,7 +328,7 @@ impl Hub {
 
 /// Executions on this machine that haven't ended, with their latest safe save.
 fn hosting(a: &Agent) -> Vec<pb::Hosting> {
-    let saves = a.cp_view.lock().unwrap().latest_safe_save.clone();
+    let cp = a.cp_view.lock().unwrap().clone();
     let mut out: Vec<pb::Hosting> = a
         .execs
         .lock()
@@ -349,7 +349,12 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
             server_id: c.dir.server_id.clone(),
             server_name: c.dir.server_name.clone(),
             phase: c.phase().as_str().into(),
-            latest_safe_save_at_unix_ms: saves.get(&c.dir.server_id).copied().unwrap_or(0),
+            latest_safe_save_at_unix_ms: cp.to_local_ms(
+                cp.latest_safe_save
+                    .get(&c.dir.server_id)
+                    .copied()
+                    .unwrap_or(0),
+            ),
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));
