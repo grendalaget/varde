@@ -6,7 +6,7 @@ section: net
 priority: optional
 maintainer: Arne Molland and varde contributors
 description: Peer-hosted game servers for groups of friends.
-license: MIT
+license: AGPL-3.0-or-later
 contents:
   - src: dist/varde-agent
     dst: /usr/bin/varde-agent

@@ -6,7 +6,7 @@ section: net
 priority: optional
 maintainer: Arne Molland and varde contributors
 description: Varde control plane — peer-hosted game servers for groups of friends.
-license: MIT
+license: AGPL-3.0-or-later
 contents:
   - src: dist/varde-control-plane
     dst: /usr/bin/varde-control-plane

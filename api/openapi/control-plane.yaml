@@ -7,7 +7,7 @@ info:
     public endpoints; node agents use the `/v1/agent/*` endpoints (tag `agent`)
     with ed25519 request signing instead of bearer auth.
   license:
-    name: MIT
+    name: AGPL-3.0-or-later
 servers:
   - url: http://localhost:8080
 tags:

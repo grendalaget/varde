@@ -6,7 +6,7 @@ section: net
 priority: optional
 maintainer: Arne Molland and varde contributors
 description: Varde UDP relay — fallback path for the peer mesh.
-license: MIT
+license: AGPL-3.0-or-later
 contents:
   - src: dist/varde-relay
     dst: /usr/bin/varde-relay

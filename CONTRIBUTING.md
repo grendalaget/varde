@@ -24,3 +24,11 @@ make fmt lint test build
 
 Small, focused commits; describe intent, not mechanics. Generated files are
 committed alongside their schema changes.
+
+## Developer Certificate of Origin
+
+All contributions are accepted under the [Developer Certificate of
+Origin](https://developercertificate.org/) (DCO). Sign off each commit
+with `git commit -s`, which adds a `Signed-off-by` line certifying that
+you wrote or otherwise have the right to submit the contribution under
+the project's license (AGPL-3.0-or-later).
