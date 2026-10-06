@@ -5374,6 +5374,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows-service",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
