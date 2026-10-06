@@ -142,16 +142,51 @@ pub(crate) fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// JSON lines on stdout. Nothing reads a service's stdout, so under the SCM
+/// the agent writes daily files to <data>\logs instead, keeping a week.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn init_logging(cmd: &Cmd) {
+    let filter =
+        || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    #[cfg(windows)]
+    if matches!(
+        cmd,
+        Cmd::Service {
+            action: ServiceAction::Run
+        }
+    ) {
+        use tracing_appender::rolling::{Builder, Rotation};
+        match Builder::new()
+            .rotation(Rotation::DAILY)
+            .filename_prefix("agent")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(default_data_dir().join("logs"))
+        {
+            Ok(file) => {
+                tracing_subscriber::fmt()
+                    .json()
+                    .with_ansi(false)
+                    .with_writer(file)
+                    .with_env_filter(filter())
+                    .init();
+                return;
+            }
+            Err(e) => eprintln!("log files unavailable, logging to stdout: {e}"),
+        }
+    }
     tracing_subscriber::fmt()
         .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
+        .with_env_filter(filter())
         .init();
+}
 
-    match Cli::parse().command {
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    init_logging(&cli.command);
+
+    match cli.command {
         Cmd::Enroll {
             server,
             token,

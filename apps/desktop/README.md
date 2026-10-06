@@ -10,7 +10,7 @@ platforms the binary is a stub, so the workspace builds everywhere.
   running.
 - Menu: status, hosted server + phase, latest safe save, Open dashboard,
   Link this PC… / Re-link… (relaunches elevated with `--relink`; refused by
-  the service while hosting), Start at login, Quit tray (the service keeps
+  the service while hosting), Open logs folder, Start at login, Quit tray (the service keeps
   running).
 - Link window (`ui/`, static HTML, no build step): Varde address → code,
   Copy code / Open again / Cancel, countdown, "Linked to <group> as <name>".

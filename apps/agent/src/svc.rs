@@ -151,7 +151,7 @@ windows_service::define_windows_service!(ffi_service_main, service_main);
 
 fn service_main(_args: Vec<OsString>) {
     if let Err(e) = service_main_inner() {
-        eprintln!("service failed: {e:#}");
+        tracing::error!("service failed: {e:#}");
     }
 }
 
@@ -247,7 +247,7 @@ fn service_main_inner() -> Result<()> {
         Duration::from_secs(10),
     )?;
     if let Err(e) = &run_res {
-        eprintln!("agent failed: {e:#}");
+        tracing::error!("agent failed: {e:#}");
     }
     // a non-zero exit code makes the SCM apply the restart actions
     status_handle.set_service_status(ServiceStatus {
