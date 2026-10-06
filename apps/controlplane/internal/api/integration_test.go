@@ -296,6 +296,22 @@ func (a *agent) heartbeatCaps(execReports []map[string]any, c map[string]any) (d
 	return d, r
 }
 
+func (a *agent) heartbeatWithDeletedSnapshots(snapshotIDs []string) (directives, apiResp) {
+	a.e.t.Helper()
+	body := map[string]any{
+		"capabilities":      caps(),
+		"executions":        []map[string]any{},
+		"deleted_snapshots": snapshotIDs,
+	}
+	raw, _ := json.Marshal(body)
+	r := a.signedDo("POST", "/v1/agent/heartbeat", raw, 0, nil)
+	var d directives
+	if r.Status == 200 {
+		_ = json.Unmarshal(r.Raw, &d)
+	}
+	return d, r
+}
+
 func (a *agent) execStatus(execID, serverID string, epoch int64, state string) apiResp {
 	body, _ := json.Marshal(map[string]any{
 		"server_id": serverID, "epoch": epoch, "state": state,
@@ -840,6 +856,103 @@ func TestLatestSaveUnavailableAndAllowOlder(t *testing.T) {
 	r = e.do("POST", "/v1/servers/"+srv+"/start",
 		map[string]any{"allow_older_snapshot": true}, e.token)
 	e.mustOK(r)
+}
+
+func TestRetentionDeleteAck(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	settings := store.DefaultGroupSettings()
+	settings.SnapshotRetention = 1
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`UPDATE groups SET settings_json=? WHERE id=?`), string(settingsJSON), e.group); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := e.createServer("testgame", "retention", map[string]any{
+		"preferred_node_id":   a.nodeID,
+		"replication_factor":  1,
+		"min_commit_replicas": 1,
+	})
+	host, execID, epoch := e.startToRunning(srv, a)
+	snapshotIDs := []string{"snap_old_a", "snap_old_b", "snap_latest"}
+	for i, snapshotID := range snapshotIDs {
+		if r := host.createSnapshot(execID, srv, "dep_x", epoch, "scheduled", snapshotID, fmt.Sprintf("d%d", i)); r.Status != 201 {
+			t.Fatalf("create %s: %d %s", snapshotID, r.Status, r.Raw)
+		}
+	}
+	server, err := e.st.GetServer(context.Background(), srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.srv.ApplyRetention(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+
+	d, r := host.heartbeat(nil)
+	if r.Status != 200 {
+		t.Fatalf("heartbeat: %d %s", r.Status, r.Raw)
+	}
+	deleting := map[string]bool{}
+	for _, id := range d.DeleteSnapshots {
+		deleting[id] = true
+	}
+	for _, id := range snapshotIDs[:2] {
+		if !deleting[id] {
+			t.Fatalf("retention directive missing %s: %+v", id, d.DeleteSnapshots)
+		}
+	}
+
+	next, r := host.heartbeatWithDeletedSnapshots(d.DeleteSnapshots)
+	if r.Status != 200 {
+		t.Fatalf("delete acknowledgement heartbeat: %d %s", r.Status, r.Raw)
+	}
+	if len(next.DeleteSnapshots) != 0 {
+		t.Fatalf("delete list after acknowledgement: %+v", next.DeleteSnapshots)
+	}
+	for _, id := range snapshotIDs[:2] {
+		var count int
+		if err := e.st.DB.Get(&count, e.st.Rebind(
+			`SELECT COUNT(*) FROM snapshots WHERE id=?`), id); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("snapshot %s remains after final replica deletion", id)
+		}
+		if err := e.st.DB.Get(&count, e.st.Rebind(
+			`SELECT COUNT(*) FROM snapshot_replicas WHERE snapshot_id=?`), id); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("replicas remain for %s after acknowledgement", id)
+		}
+	}
+
+	afterReadyAck, r := host.heartbeatWithDeletedSnapshots([]string{"snap_latest"})
+	if r.Status != 200 {
+		t.Fatalf("ready-replica acknowledgement heartbeat: %d %s", r.Status, r.Raw)
+	}
+	if len(afterReadyAck.DeleteSnapshots) != 0 {
+		t.Fatalf("ready-replica ack produced delete directives: %+v", afterReadyAck.DeleteSnapshots)
+	}
+	var state string
+	if err := e.st.DB.Get(&state, e.st.Rebind(
+		`SELECT state FROM snapshot_replicas WHERE snapshot_id='snap_latest' AND node_id=?`), host.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if state != "ready" {
+		t.Fatalf("ready replica state after ignored acknowledgement=%q", state)
+	}
+	if err := e.st.DB.Get(&state, e.st.Rebind(
+		`SELECT state FROM snapshots WHERE id='snap_latest'`)); err != nil {
+		t.Fatal(err)
+	}
+	if state != "committed" {
+		t.Fatalf("snapshot state after ignored acknowledgement=%q", state)
+	}
 }
 
 // A newer save that lives only on an offline machine must block a normal

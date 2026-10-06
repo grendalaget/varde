@@ -1572,6 +1572,10 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ExecutionReport" }
         snapshots_stored_bytes: { type: integer, format: int64 }
+        deleted_snapshots:
+          type: array
+          description: Snapshot IDs deleted by this node per directive since its last acknowledged heartbeat.
+          items: { type: string }
     DirectivePeer:
       type: object
       required: [node_id, name, public_key]

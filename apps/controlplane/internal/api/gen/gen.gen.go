@@ -657,8 +657,11 @@ type AgentDirectivesNodeAdminState string
 
 // AgentHeartbeat defines model for AgentHeartbeat.
 type AgentHeartbeat struct {
-	AgentVersion         *string            `json:"agent_version,omitempty"`
-	Capabilities         *Capabilities      `json:"capabilities,omitempty"`
+	AgentVersion *string       `json:"agent_version,omitempty"`
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+
+	// DeletedSnapshots Snapshot IDs deleted by this node per directive since its last acknowledged heartbeat.
+	DeletedSnapshots     *[]string          `json:"deleted_snapshots,omitempty"`
 	Executions           *[]ExecutionReport `json:"executions,omitempty"`
 	Mesh                 *MeshReport        `json:"mesh,omitempty"`
 	SnapshotsStoredBytes *int64             `json:"snapshots_stored_bytes,omitempty"`

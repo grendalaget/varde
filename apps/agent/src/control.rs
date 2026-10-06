@@ -3,13 +3,13 @@
 //! replication/deletions), computes fencing deadlines, and drives the
 //! fencing watchdog (checked every 250 ms on a monotonic clock).
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use base64::Engine;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::exec::{self, ExecCtl, Phase, StopKind};
 use crate::Agent;
@@ -18,6 +18,7 @@ use crate::Agent;
 pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
     // capture send instant BEFORE the request — fencing math depends on it
     let sent = Instant::now();
+    let deleted_snapshots = pending_delete_ack_ids(&agent.pending_delete_acks);
     let hb = cp_api::AgentHeartbeat {
         agent_version: Some(env!("CARGO_PKG_VERSION").into()),
         capabilities: Some(crate::sysinfo::capabilities(
@@ -31,11 +32,13 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
         snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
+        deleted_snapshots: Some(deleted_snapshots.clone()),
     };
     let d: cp_api::AgentDirectives = agent
         .cp
         .json("POST", "/v1/agent/heartbeat", Some(&hb))
         .await?;
+    acknowledge_delete_acks(&agent.pending_delete_acks, &deleted_snapshots);
     apply(agent, &d, sent).await?;
     let elapsed_ms = sent.elapsed().as_millis() as u64;
     if elapsed_ms > 1000 {
@@ -82,6 +85,17 @@ async fn mesh_report(agent: &Agent) -> cp_api::MeshReport {
             .collect(),
     );
     r
+}
+
+fn pending_delete_ack_ids(pending: &Mutex<BTreeSet<String>>) -> Vec<String> {
+    pending.lock().unwrap().iter().cloned().collect()
+}
+
+fn acknowledge_delete_acks(pending: &Mutex<BTreeSet<String>>, sent: &[String]) {
+    let mut pending = pending.lock().unwrap();
+    for id in sent {
+        pending.remove(id);
+    }
 }
 
 /// Apply the directives: mesh state, execution diff, replication, deletes.
@@ -219,11 +233,46 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     }
     for id in &d.delete_snapshots {
         if let Some(sid) = snapshot_store::SnapshotId::parse(id) {
-            let _ = agent.store.delete_snapshot(&sid);
-            info!(snap = %id, "deleted snapshot per CP directive");
+            match agent.store.delete_snapshot(&sid) {
+                Ok(true) => {
+                    agent.pending_delete_acks.lock().unwrap().insert(id.clone());
+                    info!(snap = %id, "deleted snapshot per CP directive");
+                }
+                Ok(false) => {
+                    agent.pending_delete_acks.lock().unwrap().insert(id.clone());
+                    debug!(snap = %id, "snapshot already absent per CP directive");
+                }
+                Err(error) => {
+                    warn!(snap = %id, %error, "failed to delete snapshot per CP directive");
+                }
+            }
+        } else {
+            warn!(snap = %id, "invalid snapshot ID in delete directive");
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{acknowledge_delete_acks, pending_delete_ack_ids};
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    #[test]
+    fn delete_acknowledgement_removes_only_sent_ids() {
+        let pending = Mutex::new(BTreeSet::from([
+            "snap_a".to_string(),
+            "snap_b".to_string(),
+        ]));
+        let sent = pending_delete_ack_ids(&pending);
+        assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
+
+        pending.lock().unwrap().insert("snap_c".into());
+        acknowledge_delete_acks(&pending, &sent);
+
+        assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
+    }
 }
 
 fn proto_for(s: &str) -> i32 {

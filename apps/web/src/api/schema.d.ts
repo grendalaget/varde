@@ -1085,6 +1085,8 @@ export interface components {
             executions?: components["schemas"]["ExecutionReport"][];
             /** Format: int64 */
             snapshots_stored_bytes?: number;
+            /** @description Snapshot IDs deleted by this node per directive since its last acknowledged heartbeat. */
+            deleted_snapshots?: string[];
         };
         DirectivePeer: {
             node_id: string;

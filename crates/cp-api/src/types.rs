@@ -151,6 +151,8 @@ pub struct AgentHeartbeat {
     pub executions: Option<Vec<ExecutionReport>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots_stored_bytes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_snapshots: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

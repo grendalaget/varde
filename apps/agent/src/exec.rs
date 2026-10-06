@@ -1082,6 +1082,7 @@ mod requires_stop_tests {
             mesh: Arc::new(crate::mesh_ctl::MeshCtl::new("ipc".into())),
             execs: Mutex::new(std::collections::HashMap::new()),
             state: Mutex::new(crate::state::ExecState::load(tmp)),
+            pending_delete_acks: Mutex::new(std::collections::BTreeSet::new()),
             chunk_tracker: Arc::new(chunks::ServeTracker::default()),
             started_at_ms: 0,
             repl: Mutex::new(crate::agent::ReplQueue::default()),
