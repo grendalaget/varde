@@ -599,3 +599,147 @@ func TestMinecraftNoAnchor(t *testing.T) {
 	}
 	wd.check(t)
 }
+
+func TestMinecraftCutOff(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("kari", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-cut-off", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+	e.setHosting("kari", true)
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	e.waitCommitted(serverID, e.nodes["arne"].nodeID)
+
+	status, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get initial executions: %d %s", status, executionsJSON)
+	}
+	var executionList struct {
+		Executions []struct {
+			ID      string `json:"id"`
+			NodeID  string `json:"node_id"`
+			State   string `json:"state"`
+			EndedAt *int64 `json:"ended_at"`
+		} `json:"executions"`
+	}
+	if err := json.Unmarshal(executionsJSON, &executionList); err != nil {
+		t.Fatalf("decode initial executions: %v", err)
+	}
+	var arneExecutionID string
+	for _, execution := range executionList.Executions {
+		if execution.NodeID == e.nodes["arne"].nodeID && execution.State == "running" && execution.EndedAt == nil {
+			arneExecutionID = execution.ID
+			break
+		}
+	}
+	if arneExecutionID == "" {
+		t.Fatalf("no running execution on arne: %s", executionsJSON)
+	}
+
+	t0 := time.Now()
+	e.cutOff("arne")
+	t.Logf("[%s] cut off arne", t0.Format("15:04:05.000"))
+
+	var javaExitAt, lostAt time.Time
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) && (javaExitAt.IsZero() || lostAt.IsZero()) {
+		if javaExitAt.IsZero() {
+			if at, ok := wd.transitionTime("arne", ""); ok && !at.Before(t0) {
+				javaExitAt = at
+			}
+		}
+		if lostAt.IsZero() {
+			status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+			if status == 200 {
+				var executions struct {
+					Executions []struct {
+						ID        string `json:"id"`
+						State     string `json:"state"`
+						EndReason string `json:"end_reason"`
+					} `json:"executions"`
+				}
+				if json.Unmarshal(body, &executions) == nil {
+					for _, execution := range executions.Executions {
+						if execution.ID == arneExecutionID &&
+							(execution.State == "lost" || execution.EndReason == "lost") {
+							lostAt = time.Now()
+							break
+						}
+					}
+				}
+			}
+		}
+		if javaExitAt.IsZero() || lostAt.IsZero() {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if javaExitAt.IsZero() {
+		t.Errorf("watchdog did not observe arne's server.jar exit after cutoff")
+	}
+	if lostAt.IsZero() {
+		t.Errorf("control plane did not mark arne's execution lost")
+	}
+	if !javaExitAt.IsZero() && !lostAt.IsZero() && !javaExitAt.Before(lostAt) {
+		t.Errorf("server.jar exit was not observed before CP marked the execution lost: exit=%s lost=%s",
+			javaExitAt.Format(time.RFC3339Nano), lostAt.Format(time.RFC3339Nano))
+	}
+	if javaExitAt.IsZero() || lostAt.IsZero() {
+		_, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+		t.Logf("execution JSON after cutoff: %s", body)
+	}
+	arneLogs := e.nodes["arne"].proc.buf.String()
+	if !strings.Contains(arneLogs, arneExecutionID) || !strings.Contains(arneLogs, "lease deadline expired") {
+		t.Errorf("arne agent log did not show fencing for %s", arneExecutionID)
+	}
+
+	var rto time.Duration
+	waitFor(t, 4*time.Minute, "server recovered on kari", func() bool {
+		if e.hostOf(serverID) != e.nodes["kari"].nodeID {
+			return false
+		}
+		got, _, ok := e.botRead("player", svc, 0, ref)
+		if ok && got == nonce && rto == 0 {
+			rto = time.Since(t0)
+		}
+		return ok && got == nonce
+	})
+	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	if got != nonce {
+		t.Fatalf("col0 after cutoff recovery: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
+	}
+	t.Logf("recovered col0 on kari: %s", nonce)
+
+	e.restore("arne")
+	e.waitOnline(30*time.Second, "arne")
+	stableDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(stableDeadline) {
+		if host := e.hostOf(serverID); host != e.nodes["kari"].nodeID {
+			t.Fatalf("server left kari after arne rejoined: host=%s", e.nodeName(host))
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !javaExitAt.IsZero() {
+		t.Logf("fence latency (cutoff to arne server.jar exit): %s", javaExitAt.Sub(t0))
+	}
+	t.Logf("RTO (cutoff to first successful read): %s", rto)
+	wd.check(t)
+}

@@ -21,8 +21,15 @@ type gameWatchdog struct {
 	processMatch string
 	violations   []string
 	last         string
+	transitions  []hostTransition
 	stop         chan struct{}
 	done         chan struct{}
+}
+
+type hostTransition struct {
+	from string
+	to   string
+	at   time.Time
 }
 
 func processHosts(names []string, processMatch string) map[string]bool {
@@ -76,8 +83,10 @@ func startWatchdog(t *testing.T, names []string, processMatch string) *gameWatch
 					}
 				}
 				if cur != w.last {
+					at := time.Now()
 					t.Logf("[%s] watchdog: %s host %q -> %q",
-						time.Now().Format("15:04:05.000"), w.processMatch, w.last, cur)
+						at.Format("15:04:05.000"), w.processMatch, w.last, cur)
+					w.transitions = append(w.transitions, hostTransition{from: w.last, to: cur, at: at})
 					w.last = cur
 				}
 				w.mu.Unlock()
@@ -99,6 +108,17 @@ func (w *gameWatchdog) check(t *testing.T) {
 		t.Fatalf("watchdog: %s ran in multiple namespaces:\n%s",
 			w.processMatch, strings.Join(w.violations, "\n"))
 	}
+}
+
+func (w *gameWatchdog) transitionTime(from, to string) (time.Time, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, transition := range w.transitions {
+		if transition.from == from && transition.to == to {
+			return transition.at, true
+		}
+	}
+	return time.Time{}, false
 }
 
 type gameEnv struct {
