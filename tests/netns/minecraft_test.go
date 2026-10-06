@@ -1462,7 +1462,8 @@ func TestMinecraftSoak(t *testing.T) {
 			svc = addr + ":25565"
 		}
 		nonce := randNonce(t)
-		ref = e.botWrite("player", svc, cycle, nonce, ref)
+		column := cycle % 8
+		ref = e.botWrite("player", svc, column, nonce, ref)
 		hostID = e.hostOf(serverID)
 		if hostID == "" {
 			t.Fatalf("cycle %d: server stopped before snapshot", cycle)
@@ -1470,7 +1471,7 @@ func TestMinecraftSoak(t *testing.T) {
 		existingSnapshots := e.snapshotIDs(serverID)
 		apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
 		snapshotID := e.waitCommittedSnapshotOffHost(serverID, hostID, existingSnapshots)
-		markers = append(markers, minecraftSoakMarker{column: cycle, nonce: nonce})
+		markers = append(markers, minecraftSoakMarker{column: column, nonce: nonce})
 		t.Logf("cycle %d: committed marker nonce=%s snapshot=%s", cycle, nonce, snapshotID)
 
 		fault := faultNames[rng.Intn(len(faultNames))]

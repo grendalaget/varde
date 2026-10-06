@@ -106,7 +106,7 @@ const colX = (ref, spawnX) => (args.ref ? ref.x : spawnX) + 2 + 2 * col
 function columnBase(x, z, anchorY) {
   for (let y = anchorY + 16; y > anchorY - 16; y--) {
     const b = bot.blockAt(new Vec3(x, y, z))
-    if (b && b.name !== 'air' && b.name !== 'cave_air' && b.boundingBox === 'block') return b.position
+    if (b && b.name !== 'air' && b.name !== 'cave_air' && !b.name.endsWith('_wool') && b.boundingBox === 'block') return b.position
   }
   return null
 }
