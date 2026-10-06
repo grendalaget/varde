@@ -3,6 +3,9 @@
 //! flow: the tray runs as the logged-in user and can't write the data dir, so
 //! the service links itself and the tray only asks for it.
 
+// tonic::Status is the error type of every handler here
+#![allow(clippy::result_large_err)]
+
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -306,7 +309,6 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
 
 /// Linking a machine that isn't linked is open to any local user (that's
 /// the installer flow). Re-linking needs an administrator and an idle machine.
-#[allow(clippy::result_large_err)]
 fn check_link_allowed(
     linked: bool,
     relink: bool,
