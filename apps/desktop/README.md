@@ -16,7 +16,10 @@ platforms the binary is a stub, so the workspace builds everywhere.
   Copy code / Open again / Cancel, countdown, "Linked to <group> as <name>".
   Without WebView2 it falls back to message boxes.
 
-Flags: `--link [URL]` (installer; starts linking with URL), `--relink`,
+The address comes from the service: its control-plane URL once linked, before
+that the one the installer chose (`%ProgramData%\Varde\server.url`).
+
+Flags: `--link` (installer; starts linking with the service's address), `--relink`,
 `--autostart` (login; exits if the user turned it off).
 
 ```sh

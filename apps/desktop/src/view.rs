@@ -173,12 +173,12 @@ impl From<&pb::Status> for UiStatus {
     }
 }
 
-/// Command line: `--link [URL]` (installer: open the link window, optionally
-/// starting with URL), `--relink` (elevated re-link window), `--autostart`.
+/// Command line: `--link` (installer: open the link window and start linking
+/// with the address the service reports), `--relink` (elevated re-link
+/// window), `--autostart`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
-    pub url: Option<String>,
     pub relink: bool,
     pub autostart: bool,
 }
@@ -190,9 +190,8 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
         match a.as_str() {
             "--link" => {
                 l.open_link = true;
-                if let Some(u) = it.next_if(|n| !n.starts_with("--")) {
-                    l.url = Some(u);
-                }
+                // older installers passed the address; the service has it now
+                let _ = it.next_if(|n| !n.starts_with("--"));
             }
             "--relink" => l.relink = true,
             "--autostart" => l.autostart = true,
@@ -300,9 +299,9 @@ mod tests {
         let p = |a: &[&str]| parse_launch(a.iter().map(|s| s.to_string()));
         assert_eq!(p(&[]), Launch::default());
         let l = p(&["--link", "https://cp.example"]);
-        assert!(l.open_link && l.url.as_deref() == Some("https://cp.example"));
+        assert!(l.open_link && !l.autostart);
         let l = p(&["--link", "--autostart"]);
-        assert!(l.open_link && l.url.is_none() && l.autostart);
+        assert!(l.open_link && l.autostart);
         assert!(p(&["--relink"]).relink);
     }
 

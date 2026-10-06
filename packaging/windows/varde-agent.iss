@@ -38,7 +38,8 @@ Name: "autostart"; Description: "Start Varde at login (tray icon)"
 
 [Files]
 Source: "varde.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\varde-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\varde-agent.exe"; DestDir: "{app}"; Flags: ignoreversion; \
+  AfterInstall: WriteServerUrl
 Source: "dist\varde-mesh.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\varde-tray.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; \
@@ -112,12 +113,39 @@ begin
     Delete(Result, Length(Result), 1);
 end;
 
+// the service reports this address until the PC is linked; the tray links with it
+procedure WriteServerUrl();
+begin
+  if not IsLinked() then
+    SaveStringToFile(ExpandConstant('{commonappdata}\Varde\server.url'), CpUrl() + #13#10, False);
+end;
+
 function TrayArgs(Param: String): String;
 begin
   if IsLinked() then
     Result := ''
   else
-    Result := '--link "' + CpUrl() + '"';
+    Result := '--link';
+end;
+
+function IsLocalHttp(U: String): Boolean;
+var
+  H: String;
+  I: Integer;
+begin
+  H := Lowercase(Copy(U, Length('http://') + 1, MaxInt));
+  I := Pos('/', H);
+  if I > 0 then
+    H := Copy(H, 1, I - 1);
+  if (Length(H) > 0) and (H[1] = '[') then
+    Result := Pos('[::1]', H) = 1
+  else
+  begin
+    I := Pos(':', H);
+    if I > 0 then
+      H := Copy(H, 1, I - 1);
+    Result := (H = 'localhost') or (Pos('127.', H) = 1);
+  end;
 end;
 
 function TrayRunLabel(Param: String): String;
@@ -158,6 +186,15 @@ begin
     Result := False;
     Exit;
   end;
+  if (Pos('http://', Lowercase(U)) = 1) and not IsLocalHttp(U) and
+     (MsgBox(U + ' isn''t encrypted (http://). Anyone on the network between this PC and Varde ' +
+       'could read or change what it sends.' + #13#10#13#10 +
+       'Use it only for a Varde on your own network. Continue?',
+       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES) then
+  begin
+    Result := False;
+    Exit;
+  end;
   try
     DownloadTemporaryFile(U + '/v1/version', 'varde-version.json', '', nil);
   except
@@ -177,6 +214,13 @@ begin
   if FileExists(ExpandConstant('{app}\varde-agent.exe')) then
     Exec(ExpandConstant('{app}\varde-agent.exe'), 'service uninstall', '', SW_HIDE,
       ewWaitUntilTerminated, Code);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // upgrade with "Start Varde at login" unticked: drop the earlier Run value
+  if (CurStep = ssPostInstall) and not WizardIsTaskSelected('autostart') then
+    RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Varde');
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
