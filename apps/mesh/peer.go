@@ -13,6 +13,8 @@ import (
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
 
+const dedupeRaceWindow = 5 * time.Second
+
 // peerState tracks one remote node: candidate endpoints, the active
 // connection, path kind, RTT EWMA and byte counters.
 type peerState struct {
@@ -21,17 +23,18 @@ type peerState struct {
 	pubB64 string
 	pub    []byte
 
-	mu            sync.Mutex
-	endpoints     []string
-	relayIDs      []string
-	conn          *quic.Conn          // active connection
-	outboundFlows map[uint64]*udpFlow // flow_id → client-side flow on this peer
-	kind          meshv1.PathKind
-	relayID       string // set when kind==RELAYED
-	rttUS         int64  // EWMA
-	bytesTx       atomic.Uint64
-	bytesRx       atomic.Uint64
-	lastSeen      atomic.Int64
+	mu              sync.Mutex
+	endpoints       []string
+	relayIDs        []string
+	conn            *quic.Conn // active connection
+	connInstalledAt time.Time
+	outboundFlows   map[uint64]*udpFlow // flow_id → client-side flow on this peer
+	kind            meshv1.PathKind
+	relayID         string // set when kind==RELAYED
+	rttUS           int64  // EWMA
+	bytesTx         atomic.Uint64
+	bytesRx         atomic.Uint64
+	lastSeen        atomic.Int64
 
 	stopCh  chan struct{}
 	stopped atomic.Bool
@@ -95,23 +98,27 @@ func (p *peerState) installConn(conn *quic.Conn, kind meshv1.PathKind, inbound b
 	}
 	p.mu.Lock()
 	old := p.conn
-	p.mu.Unlock()
+	prevKind := p.kind
 	if old != nil && old != conn {
+		oldInstalledAt := p.connInstalledAt
+		oldAlive := old.Context().Err() == nil
 		oldInitiator := p.n.nodeID
 		if p.connInboundFlag(old) {
 			oldInitiator = p.id
 		}
-		if newInitiator > oldInitiator {
+		if oldAlive && time.Since(oldInstalledAt) < dedupeRaceWindow && newInitiator > oldInitiator {
+			p.mu.Unlock()
 			_ = conn.CloseWithError(3, "duplicate connection")
 			return
 		}
-		_ = old.CloseWithError(3, "superseded")
 	}
-	p.mu.Lock()
 	p.conn = conn
-	prevKind := p.kind
+	p.connInstalledAt = time.Now()
 	p.kind = kind
 	p.mu.Unlock()
+	if old != nil && old != conn {
+		_ = old.CloseWithError(3, "superseded")
+	}
 	p.lastSeen.Store(time.Now().UnixMilli())
 	p.setInbound(conn, inbound)
 	p.wg.Add(1)

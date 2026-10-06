@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
 
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
@@ -156,6 +157,56 @@ func pathOf(t *testing.T, tn *testNode, peerID string) meshv1.PathKind {
 		}
 	}
 	return meshv1.PathKind_PATH_KIND_NONE
+}
+
+func newPeerPair(t *testing.T) (*testNode, *testNode, *peerState, *peerState) {
+	t.Helper()
+	a := newTestNode(t, "node_a")
+	b := newTestNode(t, "node_b")
+	a.configure(t, nil, false)
+	b.configure(t, nil, false)
+	pa := newPeerState(a.n, peerOf(b))
+	pb := newPeerState(b.n, peerOf(a))
+	for _, item := range []struct {
+		node *testNode
+		peer *peerState
+	}{{a, pa}, {b, pb}} {
+		item.node.n.mu.Lock()
+		item.node.n.peers[item.peer.id] = item.peer
+		item.node.n.peersByPub[item.peer.pubB64] = item.peer
+		item.node.n.mu.Unlock()
+	}
+	t.Cleanup(func() {
+		pa.stop()
+		pb.stop()
+	})
+	return a, b, pa, pb
+}
+
+func dialPeerForTest(t *testing.T, from, to *testNode, localPeer *peerState) *quic.Conn {
+	t.Helper()
+	addr, err := net.ResolveUDPAddr("udp", peerOf(to).GetEndpoints()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := from.n.tr.Dial(ctx, addr, from.n.tlsConfigFor(to.id), quicConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	localPeer.installConn(conn, meshv1.PathKind_PATH_KIND_DIRECT, false)
+	remotePeer := to.n.peer(from.id)
+	waitFor(t, "inbound test connection", 5*time.Second, func() bool {
+		return remotePeer != nil && remotePeer.current() != nil
+	})
+	return conn
+}
+
+func setPeerConnInstalledAt(peer *peerState, installedAt time.Time) {
+	peer.mu.Lock()
+	peer.connInstalledAt = installedAt
+	peer.mu.Unlock()
 }
 
 // testRelay is a running go/relay server + its CP keypair.
@@ -330,6 +381,60 @@ func TestDirectConnectAndAuth(t *testing.T) {
 	}
 	if directSeen > 4 {
 		t.Fatalf("d held a connection despite wrong expected key (%d/20)", directSeen)
+	}
+}
+
+func TestDedupeRacePrefersLexicographicallySmallerInitiator(t *testing.T) {
+	a, b, pa, pb := newPeerPair(t)
+	oldA := dialPeerForTest(t, a, b, pa)
+	oldB := pb.current()
+	if oldB == nil {
+		t.Fatal("remote side did not install the first connection")
+	}
+	setPeerConnInstalledAt(pa, time.Now())
+	setPeerConnInstalledAt(pb, time.Now())
+
+	newB := dialPeerForTest(t, b, a, pb)
+	waitFor(t, "duplicate connection close", time.Second, func() bool {
+		return newB.Context().Err() != nil
+	})
+	if pa.current() != oldA || pb.current() != oldB {
+		t.Fatal("fresh simultaneous-dial race did not retain the lower-id initiator")
+	}
+}
+
+func TestOldConnectionOutsideDedupeWindowIsReplaced(t *testing.T) {
+	a, b, pa, pb := newPeerPair(t)
+	oldA := dialPeerForTest(t, a, b, pa)
+	oldB := pb.current()
+	installedAt := time.Now().Add(-dedupeRaceWindow - time.Second)
+	setPeerConnInstalledAt(pa, installedAt)
+	setPeerConnInstalledAt(pb, installedAt)
+
+	newB := dialPeerForTest(t, b, a, pb)
+	waitFor(t, "stale connection replacement", time.Second, func() bool {
+		return pb.current() == newB && pa.current() != oldA && oldA.Context().Err() != nil
+	})
+	if oldB.Context().Err() == nil {
+		t.Fatal("superseded stale connection remained open")
+	}
+}
+
+func TestClosedConnectionIsReplaced(t *testing.T) {
+	a, b, pa, pb := newPeerPair(t)
+	oldA := dialPeerForTest(t, a, b, pa)
+	oldB := pb.current()
+	_ = oldB.CloseWithError(0, "test closed old connection")
+	waitFor(t, "old connection close", time.Second, func() bool {
+		return oldA.Context().Err() != nil
+	})
+
+	newB := dialPeerForTest(t, b, a, pb)
+	waitFor(t, "closed connection replacement", time.Second, func() bool {
+		return pb.current() == newB && pa.current() != oldA
+	})
+	if pa.current() == oldA || oldB.Context().Err() == nil {
+		t.Fatal("closed old connection was not replaced")
 	}
 }
 

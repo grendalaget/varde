@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 
@@ -30,6 +32,21 @@ func activationErr(err error) *actErrData {
 		return &actErrData{Code: ae.Code, Message: ae.Message, Details: ae.Details}
 	}
 	return nil
+}
+
+func filterDialEndpoints(endpoints []string) []string {
+	filtered := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if addrPort, err := netip.ParseAddrPort(endpoint); err == nil {
+			if addrPort.Addr().IsUnspecified() {
+				continue
+			}
+		} else if addr, err := netip.ParseAddr(strings.Trim(endpoint, "[]")); err == nil && addr.IsUnspecified() {
+			continue
+		}
+		filtered = append(filtered, endpoint)
+	}
+	return filtered
 }
 
 // ---- heartbeat ----
@@ -333,7 +350,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 				RelayIds          []string `json:"relay_ids"`
 			}
 			if json.Unmarshal([]byte(st.MeshJSON), &mesh) == nil {
-				eps := append(mesh.LocalEndpoints, mesh.ObservedEndpoints...)
+				eps := filterDialEndpoints(append(mesh.LocalEndpoints, mesh.ObservedEndpoints...))
 				p.Endpoints = &eps
 				p.RelayIds = &mesh.RelayIds
 			}
