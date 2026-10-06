@@ -1362,6 +1362,26 @@ type minecraftSoakMarker struct {
 	nonce  string
 }
 
+func (e *gameEnv) dumpSoakFailureState(serverID string) {
+	e.dumpServerState()
+	for _, resource := range []struct {
+		name string
+		path string
+	}{
+		{name: "server", path: "/v1/servers/" + serverID},
+		{name: "executions", path: "/v1/servers/" + serverID + "/executions"},
+		{name: "snapshots", path: "/v1/servers/" + serverID + "/snapshots"},
+	} {
+		status, body := apiCall("GET", e.cpURL+resource.path, e.tok, nil)
+		e.t.Logf("soak failure %s JSON (status=%d): %s", resource.name, status, body)
+	}
+	for _, name := range mcNodeNames {
+		e.t.Logf("soak failure node %s connections: %v", name, e.nodeConnections(name))
+	}
+	status, body := apiCall("GET", e.cpURL+"/v1/groups/"+e.groupID+"/nodes", e.tok, nil)
+	e.t.Logf("soak failure node list JSON (status=%d): %s", status, body)
+}
+
 func TestMinecraftSoak(t *testing.T) {
 	durationText := os.Getenv("VARDE_SOAK_DURATION")
 	if durationText == "" {
@@ -1384,7 +1404,7 @@ func TestMinecraftSoak(t *testing.T) {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-soak`")
 	}
 
-	e := newGameEnv(t, mcNodeNames)
+	e := newGameEnvOpts(t, mcNodeNames, cpOpts{LogLevel: "info"})
 	wd := startWatchdog(t, mcNodeNames, "server.jar")
 	for _, name := range mcNodeNames {
 		e.enroll(name, name == "nas")
@@ -1483,7 +1503,7 @@ func TestMinecraftSoak(t *testing.T) {
 		}
 
 		var firstGoodRead time.Time
-		waitFor(t, 4*time.Minute, "server running with newest committed markers readable", func() bool {
+		recovered := waitUntil(4*time.Minute, func() bool {
 			host := e.hostOf(serverID)
 			if host != e.nodes["arne"].nodeID && host != e.nodes["kari"].nodeID {
 				return false
@@ -1513,6 +1533,12 @@ func TestMinecraftSoak(t *testing.T) {
 			}
 			return allReadable
 		})
+		if !recovered {
+			t.Logf("cycle %d recovery timed out after fault=%s host_before=%s fault_at=%s",
+				cycle, fault, hostBefore, faultAt.Format(time.RFC3339Nano))
+			e.dumpSoakFailureState(serverID)
+			t.Fatalf("timeout waiting for server running with newest committed markers readable")
+		}
 		rto := firstGoodRead.Sub(faultAt)
 		hostAfter := e.nodeName(e.hostOf(serverID))
 		t.Logf("cycle %d: fault=%s host=%s->%s RTO=%s", cycle, fault, hostBefore, hostAfter, rto)

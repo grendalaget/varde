@@ -60,15 +60,20 @@ func (p *proc) kill() {
 
 func spawnLogged(t *testing.T, name string, args ...string) *proc {
 	t.Helper()
+	p := spawnLoggedNoCleanup(t, name, args...)
+	t.Cleanup(p.kill)
+	return p
+}
+
+func spawnLoggedNoCleanup(t *testing.T, name string, args ...string) *proc {
+	t.Helper()
 	buf := &bytes.Buffer{}
 	c := exec.Command(name, args...)
 	c.Stdout, c.Stderr = buf, buf
 	if err := c.Start(); err != nil {
 		t.Fatalf("spawn %s %v: %v", name, args, err)
 	}
-	p := &proc{cmd: c, buf: buf}
-	t.Cleanup(p.kill)
-	return p
+	return &proc{cmd: c, buf: buf}
 }
 
 // ip/iptables live in /usr/sbin which a bare sudo PATH may drop — resolve
@@ -133,14 +138,21 @@ func nsTry(ns, name string, args ...string) (string, error) {
 
 func waitFor(t *testing.T, d time.Duration, what string, f func() bool) {
 	t.Helper()
+	if waitUntil(d, f) {
+		return
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}
+
+func waitUntil(d time.Duration, f func() bool) bool {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if f() {
-			return
+			return true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("timeout waiting for %s", what)
+	return false
 }
 
 // ---------- control-plane API ----------

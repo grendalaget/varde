@@ -145,6 +145,7 @@ type cpOpts struct {
 	HeartbeatMs int
 	SuspectMs   int
 	OfflineMs   int
+	LogLevel    string
 }
 
 func (o cpOpts) withDefaults() cpOpts {
@@ -159,6 +160,9 @@ func (o cpOpts) withDefaults() cpOpts {
 	}
 	if o.OfflineMs == 0 {
 		o.OfflineMs = 6000
+	}
+	if o.LogLevel == "" {
+		o.LogLevel = "warn"
 	}
 	return o
 }
@@ -204,9 +208,14 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 		"--offline-after-ms", fmt.Sprint(options.OfflineMs),
 		"--embedded-relay", fmt.Sprintf(":%d", relayUDP),
 		"--embedded-relay-addr", fmt.Sprintf("%s:%d", wanIP, relayUDP),
-		"--log-level", "warn",
+		"--log-level", options.LogLevel,
 	}
 	e.startCP()
+	t.Cleanup(func() {
+		if e.cp != nil {
+			e.cp.kill()
+		}
+	})
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -232,6 +241,7 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 				}
 				keep = append(keep, l)
 			}
+			keep = collapseRepeatedLogLines(keep)
 			if len(keep) > 400 {
 				keep = keep[len(keep)-400:]
 			}
@@ -251,8 +261,51 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 }
 
 func (e *gameEnv) startCP() {
-	e.cp = spawnLogged(e.t, bin("varde-control-plane"), e.cpArgs...)
+	e.cp = spawnLoggedNoCleanup(e.t, bin("varde-control-plane"), e.cpArgs...)
 	e.cpLogs = append(e.cpLogs, e.cp)
+}
+
+func collapseRepeatedLogLines(lines []string) []string {
+	withoutTimestamp := func(line string) string {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			return line
+		}
+		delete(fields, "timestamp")
+		delete(fields, "time")
+		normalized, err := json.Marshal(fields)
+		if err != nil {
+			return line
+		}
+		return string(normalized)
+	}
+
+	collapsed := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); {
+		key := withoutTimestamp(lines[i])
+		end := i + 1
+		for end < len(lines) && withoutTimestamp(lines[end]) == key {
+			end++
+		}
+		line := lines[i]
+		if count := end - i; count > 1 {
+			line += fmt.Sprintf(" (repeated %d×)", count)
+		}
+		collapsed = append(collapsed, line)
+		i = end
+	}
+	return collapsed
+}
+
+func TestCollapseRepeatedLogLines(t *testing.T) {
+	first := `{"timestamp":"2026-01-01T00:00:00Z","level":"INFO","fields":{"message":"deleted snapshot"}}`
+	second := `{"timestamp":"2026-01-01T00:00:01Z","level":"INFO","fields":{"message":"deleted snapshot"}}`
+	other := `{"timestamp":"2026-01-01T00:00:02Z","level":"INFO","fields":{"message":"server started"}}`
+
+	got := collapseRepeatedLogLines([]string{first, second, other})
+	if len(got) != 2 || got[0] != first+" (repeated 2×)" || got[1] != other {
+		t.Fatalf("collapseRepeatedLogLines() = %q", got)
+	}
 }
 
 func (e *gameEnv) waitCPUp(d time.Duration) {
