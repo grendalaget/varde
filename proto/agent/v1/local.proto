@@ -52,6 +52,9 @@ message Hosting {
   string phase = 3;
   // Latest committed snapshot of the server; 0 when there is none yet.
   int64 latest_safe_save_at_unix_ms = 4;
+  // Latest save this PC made in this execution, safe or not (it may not be
+  // on enough PCs yet); 0 when there is none.
+  int64 latest_save_at_unix_ms = 5;
 }
 
 message Status {

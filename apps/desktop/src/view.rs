@@ -66,14 +66,15 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
     };
     let hosting = hosting_line(&s.hosting);
     let safe_save = hosting_now.then(|| {
-        match s
-            .hosting
-            .iter()
-            .map(|h| h.latest_safe_save_at_unix_ms)
-            .max()
-        {
-            Some(t) if t > 0 => format!("Latest safe save: {}", ago(now_ms - t)),
-            _ => "No safe save yet".to_string(),
+        let latest = |f: fn(&pb::Hosting) -> i64| s.hosting.iter().map(f).max().unwrap_or(0);
+        let safe = latest(|h| h.latest_safe_save_at_unix_ms);
+        let any = latest(|h| h.latest_save_at_unix_ms);
+        if any > safe {
+            format!("Latest save: {} (not on enough PCs yet)", ago(now_ms - any))
+        } else if safe > 0 {
+            format!("Latest safe save: {}", ago(now_ms - safe))
+        } else {
+            "No safe save yet".to_string()
         }
     });
     let linked = matches!(
@@ -223,6 +224,7 @@ mod tests {
             server_name: name.into(),
             phase: phase.into(),
             latest_safe_save_at_unix_ms: save,
+            latest_save_at_unix_ms: 0,
         }
     }
 
@@ -285,6 +287,25 @@ mod tests {
         assert_eq!(
             tray_view(Some(&s), 5).safe_save.as_deref(),
             Some("No safe save yet")
+        );
+    }
+
+    #[test]
+    fn unsafe_save_until_it_has_enough_copies() {
+        let now = 1_000_000;
+        let mut s = status(pb::State::Online);
+        let mut h = hosting("Mc", "running", 0);
+        h.latest_save_at_unix_ms = now - 10_000;
+        s.hosting = vec![h.clone()];
+        assert_eq!(
+            tray_view(Some(&s), now).safe_save.as_deref(),
+            Some("Latest save: 10 s ago (not on enough PCs yet)")
+        );
+        h.latest_safe_save_at_unix_ms = now - 10_000;
+        s.hosting = vec![h];
+        assert_eq!(
+            tray_view(Some(&s), now).safe_save.as_deref(),
+            Some("Latest safe save: 10 s ago")
         );
     }
 
