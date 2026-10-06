@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
       - run: actionlint .github/workflows/build-release.yml .github/workflows/publish-release.yml .github/workflows/release.yml .github/workflows/nightly.yml .github/workflows/release-check.yml
       - name: Validate release helpers
         run: |
