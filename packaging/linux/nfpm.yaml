@@ -57,6 +57,8 @@ contents:
     dst: /usr/share/applications/varde.desktop
     file_info:
       mode: 0644
+  - src: LICENSE
+    dst: /usr/share/licenses/varde-agent/LICENSE
   - dst: /etc/varde
     type: dir
   - dst: /var/lib/varde

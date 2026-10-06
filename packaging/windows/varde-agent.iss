@@ -18,6 +18,7 @@ AppId=Varde Agent
 AppName=Varde
 AppVersion={#Version}
 AppPublisher=Varde contributors
+LicenseFile=..\..\LICENSE
 DefaultDirName={autopf}\Varde
 DefaultGroupName=Varde
 DisableProgramGroupPage=yes
@@ -41,6 +42,7 @@ Name: "autostart"; Description: "Start Varde at login (tray icon)"
 
 [Files]
 Source: "varde.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"
 Source: "dist\varde-agent.exe"; DestDir: "{app}"; Flags: ignoreversion; \
   AfterInstall: WriteServerUrl
 Source: "dist\varde-mesh.exe"; DestDir: "{app}"; Flags: ignoreversion

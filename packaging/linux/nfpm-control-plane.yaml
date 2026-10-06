@@ -22,6 +22,8 @@ contents:
     type: config|noreplace
     file_info:
       mode: 0640
+  - src: LICENSE
+    dst: /usr/share/licenses/varde-control-plane/LICENSE
   - dst: /var/lib/varde-cp
     type: dir
     file_info:
