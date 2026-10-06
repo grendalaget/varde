@@ -259,10 +259,11 @@ impl Store {
             }
             // only remove paths at/under an included root, and only if some
             // pattern selects them or their subtree
-            if include
-                .iter()
-                .any(|p| p.matches(&f.rel, f.kind == WalkKind::File))
-                || include.iter().any(|p| p.matches_dir(&f.rel))
+            if !is_excluded(&f.rel, include)
+                && (include
+                    .iter()
+                    .any(|p| p.matches(&f.rel, f.kind == WalkKind::File))
+                    || include.iter().any(|p| p.matches_dir(&f.rel)))
             {
                 let _ = if f.kind == WalkKind::Dir {
                     fs::remove_dir_all(&f.abs)
@@ -676,7 +677,11 @@ fn walk(base: &Path) -> Vec<WalkEntry> {
 }
 
 fn is_included_file(rel: &str, include: &[PathPattern]) -> bool {
-    include.iter().any(|pattern| pattern.matches(rel, true))
+    include.iter().any(|pattern| pattern.matches(rel, true)) && !is_excluded(rel, include)
+}
+
+fn is_excluded(rel: &str, include: &[PathPattern]) -> bool {
+    include.iter().any(|pattern| pattern.excludes(rel))
 }
 
 fn verify_unchanged(

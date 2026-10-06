@@ -2,6 +2,8 @@
 //! `/`-separated relative paths with `*` / `?` glob support. A trailing `/`
 //! makes it a directory pattern matching the dir and everything under it
 //! (e.g. `world*/`, `saves/worlds_local/`, `server.properties`, `saves/*.txt`).
+//! A leading `!` makes it an exclude pattern: files it matches are left out
+//! even when another pattern selects them (e.g. `!world*/session.lock`).
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathPattern(pub String);
@@ -15,9 +17,24 @@ impl PathPattern {
         self.0.ends_with('/')
     }
 
+    pub fn is_exclude(&self) -> bool {
+        self.0.starts_with('!')
+    }
+
+    /// Is `rel` left out by this exclude pattern? Always false for includes.
+    pub fn excludes(&self, rel: &str) -> bool {
+        match self.0.strip_prefix('!') {
+            Some(p) => PathPattern::new(p).matches(rel, true),
+            None => false,
+        }
+    }
+
     /// Does this pattern select `rel`? `is_file` distinguishes files from
-    /// directories for exact dir-pattern matches.
+    /// directories for exact dir-pattern matches. Exclude patterns select nothing.
     pub fn matches(&self, rel: &str, is_file: bool) -> bool {
+        if self.is_exclude() {
+            return false;
+        }
         if self.is_dir_pattern() {
             let dir = self.0.trim_end_matches('/');
             return path_under_pattern(rel, dir);
@@ -28,6 +45,9 @@ impl PathPattern {
 
     /// Matches the directory itself (for manifest dir entries / removals).
     pub fn matches_dir(&self, rel: &str) -> bool {
+        if self.is_exclude() {
+            return false;
+        }
         if self.is_dir_pattern() {
             let dir = self.0.trim_end_matches('/');
             return path_under_pattern(rel, dir);
@@ -119,5 +139,17 @@ mod tests {
         let g = PathPattern::new("saves/*.txt");
         assert!(g.matches("saves/a.txt", true));
         assert!(!g.matches("saves/deep/a.txt", true));
+    }
+
+    #[test]
+    fn exclude_patterns() {
+        let x = PathPattern::new("!world*/session.lock");
+        assert!(x.is_exclude());
+        assert!(x.excludes("world/session.lock"));
+        assert!(x.excludes("world_nether/session.lock"));
+        assert!(!x.excludes("world/level.dat"));
+        assert!(!x.matches("world/session.lock", true));
+        assert!(!x.matches_dir("world"));
+        assert!(!PathPattern::new("world*/").excludes("world/session.lock"));
     }
 }

@@ -428,3 +428,43 @@ fn filetime_back(p: &Path, ms_ago: u64) {
         filetime::set_file_mtime(p, t).unwrap();
     }
 }
+
+#[test]
+fn exclude_pattern_leaves_file_out_of_snapshot_and_restore() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    tree(
+        &src,
+        &[
+            ("world/level.dat", b"level"),
+            ("world/session.lock", b"lock"),
+        ],
+    );
+    let inc = vec![
+        PathPattern::new("world*/"),
+        PathPattern::new("!world*/session.lock"),
+    ];
+    let store = Store::open(tmp.path().join("store")).unwrap();
+
+    // Windows: the running game holds the lock file so no one else can read it
+    #[cfg(windows)]
+    let _held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(src.join("world/session.lock"))
+            .unwrap()
+    };
+    let info = store.snapshot(&src, &inc, meta()).unwrap();
+    let m = store.manifest(&info.id).unwrap();
+    assert!(m.files.iter().all(|e| e.path != "world/session.lock"));
+    assert!(m.files.iter().any(|e| e.path == "world/level.dat"));
+
+    let dest = tmp.path().join("dest");
+    tree(&dest, &[("world/session.lock", b"other")]);
+    store.restore(&info.id, &dest, &inc).unwrap();
+    assert_eq!(fs::read(dest.join("world/level.dat")).unwrap(), b"level");
+    assert_eq!(fs::read(dest.join("world/session.lock")).unwrap(), b"other");
+}
