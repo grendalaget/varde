@@ -1,5 +1,6 @@
 // varde-minecraft-bot: writes/reads an 8-hex-digit nonce encoded as a
-// column of 8 wool blocks in a creative-mode Minecraft server.
+// column of 8 wool blocks. Write mode uses /setblock and requires the
+// offline bot account to be an operator.
 //
 //   node bot.mjs write --host H --port 25565 --version 1.21.4 \
 //     --user varde_tester --col N --nonce HEX8 [--ref x,y,z]
@@ -10,7 +11,6 @@
 
 import mineflayer from 'mineflayer'
 import { Vec3 } from 'vec3'
-import prismarineItem from 'prismarine-item'
 
 const WOOL = [
   'white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink',
@@ -93,83 +93,6 @@ function stage(name, p, ms = 20_000) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// goTo walks the bot toward (x, z) — jumping over 1-block bumps — until it
-// stands on the column.
-async function goTo(x, z) {
-  const cx = x + 0.5, cz = z + 0.5
-  for (let i = 0; i < 300; i++) {
-    const p = bot.entity.position
-    if (Math.hypot(p.x - cx, p.z - cz) < 0.35) break
-    await bot.lookAt(new Vec3(cx, p.y, cz))
-    bot.setControlState('forward', true)
-    if (i % 20 === 19) {
-      bot.setControlState('jump', true)
-      setTimeout(() => bot.setControlState('jump', false), 250)
-    }
-    await sleep(50)
-  }
-  bot.setControlState('forward', false)
-}
-
-// pillarOnce jumps and places the held block directly beneath the bot;
-// resolves after the placement lands.
-async function waitLanded() {
-  for (let i = 0; i < 40; i++) {
-    if (bot.entity.onGround) return
-    await sleep(50)
-  }
-  throw new Error('never landed on ground')
-}
-
-async function pillarOnce(x, z) {
-  // the server can refuse a block placed at the apex if its view of the
-  // player's bounding box still overlaps the target cell — retry the whole
-  // jump+place until the block lands
-  let lastErr
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await waitLanded()
-    // make sure we stand on the column before referencing the block below
-    await goTo(x, z)
-    // reference = the block under our feet BEFORE jumping (at jump apex the
-    // position below is already the new air gap)
-    const below = bot.blockAt(bot.entity.position.offset(0, -0.5, 0))
-    if (!below || below.name === 'air' || below.name === 'cave_air') {
-      lastErr = new Error('no block under feet while pillaring')
-      continue
-    }
-    const jumpY = Math.floor(bot.entity.position.y) + 1.0
-    bot.setControlState('jump', true)
-    for (let i = 0; i < 40; i++) {
-      if (bot.entity.position.y > jumpY) break
-      await sleep(50)
-    }
-    bot.setControlState('jump', false)
-    if (bot.entity.position.y <= jumpY) {
-      // wedged (e.g. spawned inside a block, or a leaf/ceiling overhead):
-      // dig the blocks at head/ceiling level, step back, retry fresh
-      lastErr = new Error(`jump did not rise (y=${bot.entity.position.y.toFixed(2)} want >${jumpY})`)
-      for (const dy of [1, 2]) {
-        const b = bot.blockAt(bot.entity.position.offset(0, dy, 0))
-        if (b && b.name !== 'air' && b.name !== 'cave_air' && b.diggable) {
-          await bot.dig(b).catch(() => {})
-        }
-      }
-      bot.setControlState('back', true)
-      await sleep(400)
-      bot.setControlState('back', false)
-      continue
-    }
-    try {
-      await bot.placeBlock(below, new Vec3(0, 1, 0))
-      return
-    } catch (e) {
-      lastErr = e
-      await sleep(100)
-    }
-  }
-  throw lastErr
-}
-
 async function main() {
   await new Promise((res, rej) => {
     bot.once('spawn', res)
@@ -185,17 +108,22 @@ async function main() {
   if (mode === 'write') {
     const base = columnBase(x, z, ref.y)
     if (!base) die(`bot: no ground under column at ${x},${z}`)
-    await stage('walk to column', goTo(x, z), 15_000).catch((e) => die('bot: ' + e.message))
-    const Item = prismarineItem(bot.version)
     const digits = nonce.split('').map((c) => parseInt(c, 16))
+    const expected = digits.map((digit) => `${WOOL[digit]}_wool`)
     for (let i = 0; i < 8; i++) {
-      const item = new Item(bot.registry.itemsByName[WOOL[digits[i]] + '_wool'].id, 1)
-      await stage('setInventorySlot', bot.creative.setInventorySlot(36, item)).catch((e) => die('bot: ' + e.message))
-      bot.setQuickBarSlot(0)
-      // pillar: place the wool under ourselves while jumping — the bot
-      // lands on it and the column grows one block per iteration. No
-      // flight needed (allow-flight is off by default).
-      await stage(`pillar ${i}`, pillarOnce(x, z)).catch((e) => die('bot: ' + e.message))
+      bot.chat(`/setblock ${x} ${base.y + 1 + i} ${z} minecraft:${expected[i]} replace`)
+      if (i < 7) await sleep(50)
+    }
+    const deadline = Date.now() + 5000
+    let actual
+    while (true) {
+      actual = expected.map((_, i) =>
+        bot.blockAt(new Vec3(x, base.y + 1 + i, z))?.name ?? 'unloaded')
+      if (actual.every((name, i) => name === expected[i])) break
+      if (Date.now() >= deadline) {
+        die(`bot: setblock verify failed: ${actual.join(', ')}`)
+      }
+      await sleep(100)
     }
     console.log(JSON.stringify({ ok: true, ref: `${ref.x},${ref.y},${ref.z}` }))
   } else {

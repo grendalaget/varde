@@ -232,9 +232,6 @@ importers:
       mineflayer:
         specifier: 4.39.0
         version: 4.39.0(supports-color@10.2.2)
-      prismarine-item:
-        specifier: ^1.16.1
-        version: 1.18.0
       vec3:
         specifier: ^0.1.10
         version: 0.1.10

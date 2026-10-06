@@ -11,6 +11,7 @@
 package netns
 
 import (
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -67,6 +68,34 @@ func (e *gameEnv) createMCServer(name, preferred string) string {
 	id := srv["id"].(string)
 	e.serverIDs = append(e.serverIDs, id)
 	return id
+}
+
+func offlineMinecraftUUID(name string) string {
+	h := md5.Sum([]byte("OfflinePlayer:" + name))
+	h[6] = h[6]&0x0f | 0x30
+	h[8] = h[8]&0x3f | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
+}
+
+func (e *gameEnv) seedMinecraftOps(serverID string) {
+	e.t.Helper()
+	ops := fmt.Sprintf(`[{"uuid":"%s","name":"varde_tester","level":4,"bypassesPlayerLimit":false}]`,
+		offlineMinecraftUUID("varde_tester"))
+	for _, name := range mcNodeNames {
+		nd := e.nodes[name]
+		serverDir := filepath.Join(nd.dataDir, "servers", serverID)
+		nsExec(e.t, name, "mkdir", "-p", serverDir)
+		if err := os.WriteFile(filepath.Join(serverDir, "ops.json"), []byte(ops+"\n"), 0o644); err != nil {
+			e.t.Fatalf("write Minecraft ops on %s: %v", name, err)
+		}
+	}
+}
+
+func TestOfflineMinecraftUUID(t *testing.T) {
+	const want = "42a18005-ab18-37a2-8c21-96df97493ad3"
+	if got := offlineMinecraftUUID("varde_tester"); got != want {
+		t.Fatalf("offlineMinecraftUUID(varde_tester) = %s, want %s", got, want)
+	}
 }
 
 // ---------- bot ----------
@@ -191,6 +220,7 @@ func TestMinecraftFailover(t *testing.T) {
 	e.waitOnline(30*time.Second, mcNodeNames...)
 
 	serverID := e.createMCServer("mc-a", "arne")
+	e.seedMinecraftOps(serverID)
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
 
 	// first start downloads Temurin + server.jar on arne
@@ -272,6 +302,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	e.waitOnline(30*time.Second, "arne", "nas", "player")
 
 	serverID := e.createMCServer("mc-2a", "arne")
+	e.seedMinecraftOps(serverID)
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
 	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
 
@@ -367,6 +398,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	e.waitOnline(30*time.Second, "arne")
 
 	server2 := e.createMCServer("mc-2b", "arne")
+	e.seedMinecraftOps(server2)
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+server2+"/start", e.tok, map[string]any{}, 200)
 	svc2 := e.waitMinecraft(server2, "arne", 3*time.Minute)
 
