@@ -71,6 +71,91 @@ export const vardeLight: Theme = {
   colorBrandForegroundLinkHover: "#10161a",
 };
 
-export function vardeTheme(prefersDark: boolean): Theme {
-  return prefersDark ? vardeDark : vardeLight;
+// Fluent's ramps are 16 shades around a key color at index 80. Build one
+// from the OS accent color: indices below 80 mix toward black, above mix
+// toward white (approximates what the Fluent theme designer emits).
+const RAMP_STEPS = [
+  10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
+];
+
+function parseColor(c: string): [number, number, number] | null {
+  const m = /^(?:#([0-9a-f]{6})|rgb\(\s*(\d+),\s*(\d+),\s*(\d+)\s*\))$/i.exec(
+    c,
+  );
+  if (!m) return null;
+  if (m[1]) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  }
+  return [Number(m[2]), Number(m[3]), Number(m[4])];
+}
+
+function toHex(rgb: [number, number, number]): string {
+  return "#" + rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+export function brandFromAccent(accent: string): BrandVariants | null {
+  const rgb = parseColor(accent);
+  if (!rgb) return null;
+  const mix = (other: [number, number, number], t: number): string =>
+    toHex(
+      rgb.map((v, i) => Math.round(v + (other[i] - v) * t)) as [
+        number,
+        number,
+        number,
+      ],
+    );
+  const ramp = {} as BrandVariants;
+  for (const step of RAMP_STEPS) {
+    ramp[step as keyof BrandVariants] =
+      step <= 80
+        ? mix([0, 0, 0], ((80 - step) / 80) * 0.8)
+        : mix([255, 255, 255], ((step - 80) / 80) * 0.9);
+  }
+  ramp[80] = toHex(rgb);
+  return ramp;
+}
+
+const BRAND_TOKEN_KEYS = [
+  "colorBrandBackground",
+  "colorBrandBackgroundHover",
+  "colorBrandBackgroundPressed",
+  "colorBrandForeground1",
+  "colorBrandForeground2",
+  "colorBrandForegroundLink",
+  "colorBrandForegroundLinkHover",
+  "colorNeutralForegroundOnBrand",
+  "colorCompoundBrandForeground1",
+  "colorCompoundBrandForeground1Hover",
+  "colorCompoundBrandForeground1Pressed",
+  "colorCompoundBrandBackground",
+  "colorCompoundBrandBackgroundHover",
+  "colorCompoundBrandBackgroundPressed",
+] as const;
+
+export function vardeTheme(
+  prefersDark: boolean,
+  accent?: string | null,
+  glass = false,
+): Theme {
+  const base = prefersDark ? vardeDark : vardeLight;
+  const accentRamp = accent ? brandFromAccent(accent) : null;
+  if (!accentRamp && !glass) return base;
+
+  let theme = { ...base };
+  if (accentRamp) {
+    // OS accent owns the brand/compound tokens (buttons, links,
+    // checkboxes) like WinUI's SystemAccentColor; neutrals stay Varde
+    const themed = prefersDark
+      ? createDarkTheme(accentRamp)
+      : createLightTheme(accentRamp);
+    for (const key of BRAND_TOKEN_KEYS) {
+      theme = { ...theme, [key]: themed[key] };
+    }
+  }
+  if (glass) {
+    // the window sits over a Mica/acrylic backdrop; let it show through
+    theme = { ...theme, colorNeutralBackground1: "transparent" };
+  }
+  return theme;
 }

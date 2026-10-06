@@ -334,6 +334,50 @@ fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
     }
 }
 
+/// Whether this Windows build supports a composited window backdrop:
+/// acrylic needs 17763 (1809), Mica needs 22000 (11).
+fn glass_supported() -> bool {
+    winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+        .and_then(|k| k.get_value::<String, _>("CurrentBuildNumber"))
+        .ok()
+        .and_then(|b| b.parse::<u32>().ok())
+        .map(|b| b >= 17763)
+        .unwrap_or(false)
+}
+
+/// Mica on Windows 11; acrylic (blurred glass) as the fallback elsewhere.
+fn apply_glass(w: &WebviewWindow, dark: bool) {
+    if window_vibrancy::apply_mica(w, Some(dark)).is_ok() {
+        return;
+    }
+    // themed tint over the blur so the panel still matches the theme
+    let tint = if dark {
+        (0x10, 0x16, 0x1a, 0xcc)
+    } else {
+        (0xf3, 0xf5, 0xf6, 0xcc)
+    };
+    let _ = window_vibrancy::apply_acrylic(w, Some(tint));
+}
+
+/// The user's OS accent color (HKCU DWM\AccentColor, stored ABGR) as an
+/// sRGB hex string, so the page can accent-tone its brand controls the way
+/// WinUI does with SystemAccentColor. WebView2 doesn't expose it via the
+/// AccentColor CSS color, so it comes over the init script.
+fn os_accent() -> Option<String> {
+    let v: u32 = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\DWM")
+        .ok()?
+        .get_value("AccentColor")
+        .ok()?;
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        v & 0xff,
+        (v >> 8) & 0xff,
+        (v >> 16) & 0xff
+    ))
+}
+
 /// Where the service writes its logs (see packaging/windows).
 fn logs_dir() -> std::path::PathBuf {
     std::env::var_os("ProgramData")
@@ -354,6 +398,8 @@ fn open_main_window(app: &AppHandle) {
     } else {
         "Varde"
     };
+    let glass = glass_supported();
+    let accent = os_accent().unwrap_or_default();
     let built = tauri::webview_version().is_ok()
         && WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title(title)
@@ -365,15 +411,33 @@ fn open_main_window(app: &AppHandle) {
             // theme from prefers-color-scheme
             .theme(None)
             .background_color(window_background())
+            // glass panels: transparent webview over a Mica/acrylic backdrop
+            .transparent(glass)
+            .initialization_script(format!(
+                "window.__VARDE_GLASS__ = {}; window.__VARDE_ACCENT__ = {accent:?};",
+                glass
+            ))
             .build()
             .map(|w| {
-                // keep the pre-render background in sync when the OS theme
-                // flips while the window is open
+                if glass {
+                    let dark = matches!(w.theme(), Ok(tauri::Theme::Dark));
+                    apply_glass(&w, dark);
+                    let _ = w.set_background_color(None);
+                }
+                // keep the pre-render background + glass in sync when the
+                // OS theme flips while the window is open
                 let app = w.app_handle().clone();
                 w.on_window_event(move |event| {
                     if let tauri::WindowEvent::ThemeChanged(theme) = event {
                         if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
-                            let _ = w.set_background_color(Some(theme_background(*theme)));
+                            let _ = w.set_background_color(if glass {
+                                None
+                            } else {
+                                Some(theme_background(*theme))
+                            });
+                            if glass {
+                                apply_glass(&w, !matches!(*theme, tauri::Theme::Light));
+                            }
                         }
                     }
                 });
