@@ -70,9 +70,8 @@ fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     if let Ok(lvl) = std::env::var("VARDE_MESH_LOG_LEVEL") {
         cmd.arg("--log-level").arg(lvl);
     }
-    // If the agent dies abruptly, the mesh must not orphan: it would keep
-    // holding loopback routes and the QUIC socket.
-    #[cfg(unix)]
+    // Linux can kill the mesh on abrupt agent death to release its routes and socket.
+    #[cfg(target_os = "linux")]
     unsafe {
         cmd.pre_exec(|| {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {

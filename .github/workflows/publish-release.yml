@@ -19,13 +19,15 @@ on:
 permissions: {}
 
 jobs:
-
   upload:
     name: publish release assets
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
