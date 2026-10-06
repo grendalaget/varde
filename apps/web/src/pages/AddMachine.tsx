@@ -62,7 +62,7 @@ export default function AddMachine() {
         <Card>
           <CardHeader
             title="A gaming PC or laptop"
-            subtitle="Install Varde on it. The installer shows a short code: enter it here."
+            subtitle="Install Varde on that PC. Varde shows a short code there and opens this dashboard: enter the code here if it isn't filled in."
           />
           <form
             className="flex gap-2 p-4"

@@ -1,0 +1,25 @@
+[package]
+name = "varde-tray"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Varde tray app for Windows: link this PC, show status"
+
+[[bin]]
+name = "varde-tray"
+path = "src/main.rs"
+
+[dependencies]
+agent-ipc = { path = "../../crates/agent-ipc" }
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "custom-protocol"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+tokio = { workspace = true }
+winreg = "0.55"
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

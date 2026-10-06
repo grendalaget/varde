@@ -20,6 +20,7 @@ and a P2P QUIC mesh with relay fallback — no router configuration required.
 | `apps/mesh`          | Go         | Per-node QUIC mesh daemon, spawned by the agent     |
 | `apps/agent`         | Rust       | Local node agent: supervision, storage, executors   |
 | `apps/web`           | TypeScript | Web dashboard (React + Vite)                        |
+| `apps/desktop`       | Rust       | Windows tray (Tauri 2): link this PC, status        |
 | `go/`                | Go         | Shared libraries (identity, ids, generated protos)  |
 | `crates/`            | Rust       | Shared libraries (driver/executor APIs, storage)    |
 | `games/`             | Rust       | Game drivers (minecraft, valheim, testgame)         |
