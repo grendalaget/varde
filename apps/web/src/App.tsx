@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, type Me, type Node } from "./api/client";
-import Cairn from "./components/Cairn";
+import { Logo, PageLoader } from "./components/Logo";
 import { cx, Dot, ErrorNote } from "./components/ui";
 import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
 import { Link, match, navigate, useLocation } from "./lib/router";
@@ -57,7 +57,7 @@ export default function App() {
         {loadError ? (
           <ErrorNote>Can't reach the control plane: {loadError}</ErrorNote>
         ) : (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <PageLoader />
         )}
       </Centered>
     );
@@ -195,22 +195,25 @@ function Layout() {
   else if (p === "/members") page = <Members />;
   else if (p === "/activity") page = <Activity />;
   else if (p === "/settings") page = <Settings />;
-  else page = <p className="text-slate-400">Page not found.</p>;
+  else page = <p className="text-skifer-400">Page not found.</p>;
 
   return (
     <Shell
       sidebar={
         <>
-          <Link to="/" className="mb-6 hidden items-center gap-2 px-2 md:flex">
-            <Cairn />
-            <span className="text-lg font-semibold tracking-tight">Varde</span>
+          <Link
+            to="/"
+            className="vd-hover mb-6 hidden px-2 pt-1 md:block"
+            aria-label="Varde home"
+          >
+            <Logo className="h-8" />
           </Link>
           <label className="mb-4 px-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-skifer-500">
               Group
             </span>
             <select
-              className="mt-1 w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1.5 text-sm"
+              className="mt-1 w-full rounded-md border border-skifer-800 bg-skifer-900 px-2 py-1.5 text-sm"
               value={group.group_id}
               onChange={(e) => {
                 if (e.target.value === "__new") navigate("/settings?new=1");
@@ -236,24 +239,24 @@ function Layout() {
                 className={cx(
                   "rounded-md px-2 py-1.5 text-sm",
                   n.active(p)
-                    ? "bg-slate-800 font-medium text-white"
-                    : "text-slate-400 hover:bg-slate-900 hover:text-slate-200",
+                    ? "bg-skifer-800 font-medium text-take"
+                    : "text-skifer-400 hover:bg-skifer-900 hover:text-skifer-200",
                 )}
               >
                 {n.label}
               </Link>
             ))}
           </nav>
-          <div className="mt-auto space-y-3 px-2 text-xs text-slate-500">
+          <div className="mt-auto space-y-3 px-2 text-xs text-skifer-500">
             <div className="flex items-center gap-2" title="Live updates">
-              <Dot tone={connected ? "green" : "amber"} />
+              <Dot tone={connected ? "green" : "warn"} />
               {connected ? "Live" : "Reconnecting…"}
             </div>
-            <div className="truncate text-slate-400">
+            <div className="truncate text-skifer-400">
               {me.user.display_name}
             </div>
             <button
-              className="text-slate-500 hover:text-slate-300"
+              className="text-skifer-500 hover:text-skifer-300"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
                 window.location.href = "/";
@@ -285,18 +288,17 @@ function Shell({
     setOpen(false);
   }
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 md:flex">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur md:hidden">
-        <Link to="/" className="flex items-center gap-2">
-          <Cairn />
-          <span className="text-lg font-semibold tracking-tight">Varde</span>
+    <div className="min-h-screen bg-skifer-950 text-skifer-100 md:flex">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-skifer-800 bg-skifer-950/95 px-4 py-3 backdrop-blur md:hidden">
+        <Link to="/" className="vd-hover flex" aria-label="Varde home">
+          <Logo className="h-7" />
         </Link>
         <button
           type="button"
           aria-label={open ? "Close menu" : "Open menu"}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="-mr-2 rounded-md p-2 text-slate-300 hover:bg-slate-900"
+          className="-mr-2 rounded-md p-2 text-skifer-300 hover:bg-skifer-900"
         >
           <svg
             width="22"
@@ -323,7 +325,7 @@ function Shell({
       )}
       <aside
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-slate-800 bg-slate-950 px-3 py-4 transition-transform md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-skifer-800 bg-skifer-950 px-3 py-4 transition-transform md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -338,7 +340,7 @@ function Shell({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-slate-100">
+    <main className="flex min-h-screen items-center justify-center bg-skifer-950 p-6 text-skifer-100">
       <div className="w-full max-w-sm">{children}</div>
     </main>
   );

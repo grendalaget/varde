@@ -17,20 +17,20 @@ export default function EventList({
   const nodeName = useNodeName();
   if (events.length === 0) return <Empty>Nothing has happened yet.</Empty>;
   return (
-    <ul className="divide-y divide-slate-800">
+    <ul className="divide-y divide-skifer-800">
       {events.map((e) => (
         <li
           key={e.id}
           className="flex items-center justify-between gap-4 px-4 py-2 text-sm"
         >
-          <span className="text-slate-200">
+          <span className="min-w-0 text-skifer-200 [overflow-wrap:anywhere]">
             {describeEvent(e, nodeName)}
             {showServer && e.server_id && (
               <>
                 {" · "}
                 <Link
                   to={`/servers/${e.server_id}`}
-                  className="text-slate-400 hover:text-emerald-400"
+                  className="text-skifer-400 hover:text-take"
                 >
                   {serverNames?.[e.server_id] ?? "server"}
                 </Link>
@@ -38,7 +38,7 @@ export default function EventList({
             )}
           </span>
           <span
-            className="shrink-0 text-xs text-slate-500"
+            className="shrink-0 text-xs text-skifer-500"
             title={dateTime(e.created_at)}
           >
             {timeAgo(e.created_at)}

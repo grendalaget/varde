@@ -3,6 +3,7 @@
 `varde-agent.iss` (Inno Setup 6) builds `VardeSetup-<ver>.exe`, which:
 
 - installs `varde-agent.exe` + `varde-mesh.exe` into `Program Files\Varde`
+- uses `varde.ico` for setup and uninstall and installs it with the binaries
 - creates `%ProgramData%\Varde` with a SYSTEM/Administrators-only ACL on
   `identity\`
 - registers and starts the `VardeAgent` Windows service (the agent's own
