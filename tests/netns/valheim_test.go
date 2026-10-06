@@ -93,7 +93,7 @@ func TestValheimCrossplayFailover(t *testing.T) {
 	t.Logf("Valheim Crossplay RTO (kill -> running on kari): %s", runningAt.Sub(killedAt))
 	code2 := e.waitJoinCode(serverID, valheimStartupTimeout)
 	assertCrossplayAddressAndRoutes(t, e, serverID, "kari")
-	t.Logf("Valheim Crossplay join codes: code1=%s code2=%s changed=%t", code1, code2, code1 != code2)
+	t.Logf("Valheim Crossplay join code present before and after failover (codes withheld from logs); changed=%t", code1 != code2)
 	watch.check(t)
 }
 
