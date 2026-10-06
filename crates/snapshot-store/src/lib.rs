@@ -363,6 +363,26 @@ impl Store {
         Ok(out)
     }
 
+    pub fn missing_or_corrupt_chunks(&self, m: &Manifest) -> Result<Vec<ChunkId>> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for e in &m.files {
+            for c in e.chunks.iter().flatten() {
+                if !seen.insert(c.clone()) {
+                    continue;
+                }
+                match self.read_chunk_compressed(c) {
+                    Ok(_) => {}
+                    Err(Error::ChunkMissing(_) | Error::ChunkCorrupt(_) | Error::Manifest(_)) => {
+                        out.push(c.clone())
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn has_chunk(&self, id: &ChunkId) -> bool {
         self.chunk_path(id).exists()
     }
@@ -382,8 +402,15 @@ impl Store {
         match verify_compressed(id, &z) {
             Ok(()) => Ok(z),
             Err(e) => {
-                let q = self.root.join("chunks").join("quarantine").join(id);
-                let _ = fs::rename(&p, &q);
+                let qdir = self.root.join("chunks").join("quarantine");
+                fs::create_dir_all(&qdir)?;
+                let mut q = qdir.join(id);
+                let mut suffix = 1u64;
+                while q.exists() {
+                    q = qdir.join(format!("{id}.{suffix}"));
+                    suffix += 1;
+                }
+                fs::rename(&p, q)?;
                 Err(e)
             }
         }

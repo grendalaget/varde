@@ -1055,7 +1055,6 @@ func corruptMinecraftSnapshotChunks(t *testing.T, targetDir, sourceDir, snapshot
 	return chunks
 }
 
-// KNOWN FAILING: Kari restore fails on a corrupt local chunk instead of fetching Nas's good copy.
 func TestMinecraftCorruptReplica(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")

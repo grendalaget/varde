@@ -314,7 +314,7 @@ pub async fn fetch_snapshot(
     }
     let m = store.manifest(snapshot_id)?;
     fetch_missing(
-        store.missing_chunks(&m)?,
+        store.missing_or_corrupt_chunks(&m)?,
         source_node_ids,
         snapshot_id,
         |src, hashes| async move { batch_get(mesh, &src, snapshot_id, &hashes).await },
