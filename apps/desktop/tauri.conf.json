@@ -4,13 +4,13 @@
   "version": "0.1.0",
   "identifier": "games.varde.tray",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "ui/dist"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; img-src 'self'; style-src 'self'; font-src 'self'; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {

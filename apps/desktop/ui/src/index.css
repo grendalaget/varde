@@ -1,0 +1,20 @@
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/schibsted-grotesk-latin-600-normal.woff2")
+    format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: #10161a;
+}

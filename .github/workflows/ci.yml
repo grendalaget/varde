@@ -111,6 +111,9 @@ jobs:
       - run: pnpm --dir apps/web lint
       - run: pnpm --dir apps/web typecheck
       - run: pnpm --dir apps/web build
+      - run: pnpm --dir apps/desktop/ui lint
+      - run: pnpm --dir apps/desktop/ui typecheck
+      - run: pnpm --dir apps/desktop/ui build
 
   contracts:
     runs-on: ubuntu-latest
@@ -155,6 +158,16 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-msvc
           override: true
+      # the tray embeds the desktop UI at compile time (frontendDist)
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/desktop/ui build
       - name: build agent + mesh + tray (MSVC)
         shell: pwsh
         run: |
