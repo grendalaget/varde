@@ -44,6 +44,8 @@ function render(s) {
   seen = true;
   if (s.state === "linking" && s.user_code) {
     started = true;
+    // a new code: drop a refusal shown for the previous one
+    if ($("code").textContent !== s.user_code) codeError("");
     $("code").textContent = s.user_code;
     // only the elevated --relink window can cancel an administrator's re-link
     const locked = s.relink && !defaults.relink;
