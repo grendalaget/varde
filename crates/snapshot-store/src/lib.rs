@@ -235,6 +235,10 @@ impl Store {
         for e in &m.files {
             let src = staging.join(&e.path);
             let dst = dest.join(&e.path);
+            // older snapshots may still carry a file that is now excluded
+            if e.typ != "dir" && is_excluded(&e.path, include) {
+                continue;
+            }
             if e.typ == "dir" {
                 fs::create_dir_all(&dst)?;
                 apply_mode(&dst, e.mode);
@@ -253,16 +257,33 @@ impl Store {
         let _ = fs::remove_dir_all(&staging);
         // remove included paths that are not in the manifest
         let want: HashSet<&str> = m.files.iter().map(|e| e.path.as_str()).collect();
-        for f in walk(dest) {
+        let present = walk(dest);
+        // a dir holding excluded files stays; its other files are removed
+        // one by one as the walk reaches them
+        let mut keep: HashSet<&str> = HashSet::new();
+        for d in present.iter().filter(|d| is_excluded(&d.rel, include)) {
+            let mut rel = d.rel.as_str();
+            while let Some(i) = rel.rfind('/') {
+                rel = &rel[..i];
+                if !keep.insert(rel) {
+                    break;
+                }
+            }
+        }
+        for f in &present {
             if want.contains(f.rel.as_str()) {
+                continue;
+            }
+            if f.kind == WalkKind::Dir && keep.contains(f.rel.as_str()) {
                 continue;
             }
             // only remove paths at/under an included root, and only if some
             // pattern selects them or their subtree
-            if include
-                .iter()
-                .any(|p| p.matches(&f.rel, f.kind == WalkKind::File))
-                || include.iter().any(|p| p.matches_dir(&f.rel))
+            if !is_excluded(&f.rel, include)
+                && (include
+                    .iter()
+                    .any(|p| p.matches(&f.rel, f.kind == WalkKind::File))
+                    || include.iter().any(|p| p.matches_dir(&f.rel)))
             {
                 let _ = if f.kind == WalkKind::Dir {
                     fs::remove_dir_all(&f.abs)
@@ -676,7 +697,11 @@ fn walk(base: &Path) -> Vec<WalkEntry> {
 }
 
 fn is_included_file(rel: &str, include: &[PathPattern]) -> bool {
-    include.iter().any(|pattern| pattern.matches(rel, true))
+    include.iter().any(|pattern| pattern.matches(rel, true)) && !is_excluded(rel, include)
+}
+
+fn is_excluded(rel: &str, include: &[PathPattern]) -> bool {
+    include.iter().any(|pattern| pattern.excludes(rel))
 }
 
 fn verify_unchanged(
