@@ -184,6 +184,9 @@ impl GameDriver for MinecraftDriver {
     fn persistent_paths(&self, _config: &serde_json::Value) -> Vec<PathPattern> {
         vec![
             PathPattern::new("world*/"),
+            // held under an exclusive byte-range lock while running; on Windows
+            // reading it fails with os error 33, and it is not save data
+            PathPattern::new("!world*/session.lock"),
             PathPattern::new("server.properties"),
             PathPattern::new("ops.json"),
             PathPattern::new("whitelist.json"),

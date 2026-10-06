@@ -87,7 +87,7 @@ type relayClient struct {
 	ln   *quic.Listener
 
 	pingNonce atomic.Uint64
-	pingSent  sync.Map // nonce → sent unixnano
+	pingSent  sync.Map // nonce -> sent time.Time
 	stopCh    chan struct{}
 	stopped   atomic.Bool
 	wg        sync.WaitGroup
@@ -195,7 +195,7 @@ func (rc *relayClient) pingLoop() {
 		case <-time.After(rc.n.timings.RelayPingEvery):
 		}
 		nonce := rc.pingNonce.Add(1)
-		rc.pingSent.Store(nonce, time.Now().UnixNano())
+		rc.pingSent.Store(nonce, time.Now())
 		_, _ = rc.n.sock.WriteToUDP(meshproto.EncodePing(nonce), rc.addr)
 	}
 }
@@ -249,12 +249,12 @@ func (rc *relayClient) handleFrame(data []byte) {
 			return
 		}
 		if sentV, ok := rc.pingSent.LoadAndDelete(nonce); ok {
-			rtt := (time.Now().UnixNano() - sentV.(int64)) / 1000
+			rtt := rttMicros(sentV.(time.Time))
 			rc.mu.Lock()
 			if rc.rttUS == 0 {
 				rc.rttUS = rtt
 			} else {
-				rc.rttUS = rc.rttUS*7/8 + rtt/8
+				rc.rttUS = max(rc.rttUS*7/8+rtt/8, 1)
 			}
 			rc.mu.Unlock()
 		}

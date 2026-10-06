@@ -428,3 +428,83 @@ fn filetime_back(p: &Path, ms_ago: u64) {
         filetime::set_file_mtime(p, t).unwrap();
     }
 }
+
+#[test]
+fn exclude_pattern_leaves_file_out_of_snapshot_and_restore() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    tree(
+        &src,
+        &[
+            ("world/level.dat", b"level"),
+            ("world/session.lock", b"lock"),
+        ],
+    );
+    let inc = vec![
+        PathPattern::new("world*/"),
+        PathPattern::new("!world*/session.lock"),
+    ];
+    let store = Store::open(tmp.path().join("store")).unwrap();
+
+    // Windows: the running game holds the lock file so no one else can read it
+    #[cfg(windows)]
+    let _held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(src.join("world/session.lock"))
+            .unwrap()
+    };
+    let info = store.snapshot(&src, &inc, meta()).unwrap();
+    let m = store.manifest(&info.id).unwrap();
+    assert!(m.files.iter().all(|e| e.path != "world/session.lock"));
+    assert!(m.files.iter().any(|e| e.path == "world/level.dat"));
+
+    let dest = tmp.path().join("dest");
+    tree(&dest, &[("world/session.lock", b"other")]);
+    store.restore(&info.id, &dest, &inc).unwrap();
+    assert_eq!(fs::read(dest.join("world/level.dat")).unwrap(), b"level");
+    assert_eq!(fs::read(dest.join("world/session.lock")).unwrap(), b"other");
+}
+
+#[test]
+fn restore_keeps_excluded_files_from_old_snapshots_and_removed_dirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    tree(
+        &src,
+        &[
+            ("world/level.dat", b"level"),
+            ("world/session.lock", b"old-lock"),
+        ],
+    );
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    // taken before session.lock was excluded
+    let old = store
+        .snapshot(&src, &[PathPattern::new("world*/")], meta())
+        .unwrap();
+
+    let inc = vec![
+        PathPattern::new("world*/"),
+        PathPattern::new("!world*/session.lock"),
+    ];
+    let dest = tmp.path().join("dest");
+    tree(
+        &dest,
+        &[
+            ("world/session.lock", b"live"),
+            ("world_nether/session.lock", b"nether-live"),
+            ("world_nether/region.mca", b"gone"),
+        ],
+    );
+    store.restore(&old.id, &dest, &inc).unwrap();
+    assert_eq!(fs::read(dest.join("world/level.dat")).unwrap(), b"level");
+    assert_eq!(fs::read(dest.join("world/session.lock")).unwrap(), b"live");
+    assert_eq!(
+        fs::read(dest.join("world_nether/session.lock")).unwrap(),
+        b"nether-live"
+    );
+    assert!(!dest.join("world_nether/region.mca").exists());
+}
