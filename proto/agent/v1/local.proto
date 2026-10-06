@@ -1,0 +1,98 @@
+// Local IPC between the agent (server, runs as the OS service) and desktop
+// clients such as the tray (client, runs in the user's session).
+//
+// Typed, read-mostly operations only: status plus linking this machine to a
+// group. Never a generic command channel (invariant I9). Transport: named
+// pipe \\.\pipe\varde-agent on Windows (SYSTEM/Administrators full,
+// interactive users read/write), <data>/run/agent.sock on Unix.
+syntax = "proto3";
+
+package varde.agent.v1;
+
+option go_package = "github.com/grendalaget/varde/go/gen/agent/v1;agentv1";
+
+service LocalService {
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  // Streams the current status, then every change.
+  rpc WatchStatus(WatchStatusRequest) returns (stream WatchStatusResponse);
+  // Starts the device-code flow against control_plane_url. The code shows up
+  // in Status.link; the agent polls for approval and starts by itself.
+  rpc StartLink(StartLinkRequest) returns (StartLinkResponse);
+  rpc CancelLink(CancelLinkRequest) returns (CancelLinkResponse);
+}
+
+enum State {
+  STATE_UNSPECIFIED = 0;
+  // No config.toml yet: idle, waiting to be linked.
+  STATE_NOT_LINKED = 1;
+  // A device code is waiting for approval in the dashboard.
+  STATE_LINKING = 2;
+  // Linked, no successful heartbeat yet.
+  STATE_CONNECTING = 3;
+  STATE_ONLINE = 4;
+  // Linked, but the control plane hasn't answered recently.
+  STATE_OFFLINE = 5;
+  STATE_SHUTTING_DOWN = 6;
+}
+
+message Link {
+  string user_code = 1;
+  // <control plane>/link?code=<user_code>, built from the URL the user gave.
+  string link_url = 2;
+  int64 expires_at_unix_ms = 3;
+}
+
+message Hosting {
+  string server_id = 1;
+  string server_name = 2;
+  // preparing | restoring | starting | running | stopping
+  string phase = 3;
+  // Latest committed snapshot of the server; 0 when there is none yet.
+  int64 latest_safe_save_at_unix_ms = 4;
+}
+
+message Status {
+  State state = 1;
+  string control_plane_url = 2;
+  string group_id = 3;
+  string group_name = 4;
+  string node_id = 5;
+  string node_name = 6;
+  int64 last_contact_unix_ms = 7;
+  // Set while state == STATE_LINKING.
+  Link link = 8;
+  // Executions on this machine that haven't finished.
+  repeated Hosting hosting = 9;
+  // Why the last link attempt failed (expired, unreachable, …); empty if none.
+  string link_error = 10;
+  string agent_version = 11;
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  Status status = 1;
+}
+
+message WatchStatusRequest {}
+
+message WatchStatusResponse {
+  Status status = 1;
+}
+
+message StartLinkRequest {
+  string control_plane_url = 1;
+  // Required when this machine is already linked. Only Administrators may
+  // re-link, and never while the machine hosts a server.
+  bool relink = 2;
+}
+
+message StartLinkResponse {
+  Status status = 1;
+}
+
+message CancelLinkRequest {}
+
+message CancelLinkResponse {
+  Status status = 1;
+}

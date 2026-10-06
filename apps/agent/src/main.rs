@@ -8,6 +8,8 @@ mod config;
 mod control;
 mod exec;
 mod identity;
+mod link;
+mod local;
 mod mesh_child;
 mod mesh_ctl;
 mod state;
@@ -133,7 +135,7 @@ async fn service_dispatch(_action: ServiceAction) -> Result<()> {
     anyhow::bail!("service management is only supported on Windows")
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -201,13 +203,13 @@ async fn enroll(
     fence_margin_ms: Option<i64>,
 ) -> Result<()> {
     std::fs::create_dir_all(&data_dir)?;
-    let key_path = data_dir.join("identity").join("node.key");
+    let server = link::normalize_url(&server)?;
+    let key_path = link::key_path(&data_dir);
     identity::load_or_create(&key_path)?;
     let key = identity::load(&key_path)?;
     let public_key = identity::public_key_b64(&key);
 
     let client = cp_api::CpClient::new(&server)?;
-    let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
 
     let result: cp_api::EnrollResult = if let Some(token) = token {
         client
@@ -217,7 +219,7 @@ async fn enroll(
                 Some(&cp_api::TokenEnrollRequest {
                     token,
                     public_key,
-                    hostname: Some(hostname),
+                    hostname: Some(link::hostname()),
                     os: Some(std::env::consts::OS.into()),
                     arch: Some(std::env::consts::ARCH.into()),
                     agent_version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -226,22 +228,11 @@ async fn enroll(
             .await?
     } else {
         // device flow: POST device → print code → poll
-        let dev: cp_api::DeviceEnrollResponse = client
-            .json(
-                "POST",
-                "/v1/agent/enroll/device",
-                Some(&cp_api::DeviceEnrollRequest {
-                    public_key,
-                    hostname: Some(hostname),
-                    os: Some(std::env::consts::OS.into()),
-                    arch: Some(std::env::consts::ARCH.into()),
-                    agent_version: Some(env!("CARGO_PKG_VERSION").into()),
-                }),
-            )
-            .await?;
+        let dev = link::start_device(&client, public_key).await?;
         println!(
             "Visit {} and enter code: {}",
-            dev.verification_url, dev.user_code
+            link::link_url(&server, &dev),
+            dev.user_code
         );
         let deadline = now_ms() + dev.expires_in * 1000;
         loop {
@@ -249,38 +240,18 @@ async fn enroll(
                 bail!("device code expired");
             }
             tokio::time::sleep(std::time::Duration::from_secs(dev.interval.max(1) as u64)).await;
-            let (status, body) = client
-                .call(
-                    "POST",
-                    "/v1/agent/enroll/device/poll",
-                    Some(&serde_json::to_vec(&cp_api::DevicePollRequest {
-                        device_code: dev.device_code.clone(),
-                    })?),
-                )
-                .await?;
-            match status {
-                200 => break serde_json::from_slice(&body)?,
-                202 => continue, // pending
-                410 => bail!("device code expired"),
-                s => bail!("enroll poll failed: {s} {}", String::from_utf8_lossy(&body)),
+            match link::poll_device(&client, &dev.device_code).await? {
+                link::Poll::Approved(r) => break r,
+                link::Poll::Pending => continue,
+                link::Poll::Expired => bail!("device code expired"),
             }
         }
     };
 
-    let cfg = config::Config {
-        control_plane_url: server,
-        node_id: result.node_id.clone(),
-        group_id: result.group_id.clone(),
-        control_plane_public_key: result.control_plane_public_key.clone(),
-        anchor,
-        mesh_bin: None,
-        testgame_bin: None,
-        loopback_prefix,
-        fence_margin_ms: fence_margin_ms.unwrap_or(5000),
-        shutdown_replication_timeout_s: 60,
-        force_relay: false,
-        mesh_listen_port: 0,
-    };
+    let mut cfg = link::enrolled_config(&server, &result, None);
+    cfg.anchor = anchor;
+    cfg.loopback_prefix = loopback_prefix;
+    cfg.fence_margin_ms = fence_margin_ms.unwrap_or(5000);
     cfg.save(&data_dir)?;
     info!(node_id = %result.node_id, group = %result.group_id, "enrolled; wrote config.toml");
     Ok(())
@@ -301,6 +272,15 @@ fn status(data_dir: PathBuf) -> Result<()> {
 
 // ---------------- run ----------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunExit {
+    Stopped,
+    Relinked,
+}
+
+/// Runs until stopped. Not linked yet (no config.toml) is a normal, idle
+/// state: the local IPC is up, nothing else runs, and the agent starts as soon
+/// as a link (tray over IPC, or `varde-agent enroll`) writes the config.
 async fn run(
     data_dir: PathBuf,
     mesh_bin: Option<PathBuf>,
@@ -309,7 +289,81 @@ async fn run(
     fence_margin_ms: Option<i64>,
     ext_stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<()> {
-    let mut cfg = config::Config::load(&data_dir)?;
+    std::fs::create_dir_all(&data_dir)
+        .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    let hub = local::Hub::new(data_dir.clone());
+    match local::serve(hub.clone()) {
+        Ok(ep) => info!(endpoint = %ep, "local status IPC listening"),
+        Err(e) => tracing::warn!(error = %e, "local status IPC unavailable"),
+    }
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        wait_shutdown(ext_stop).await;
+        let _ = stop_tx.send(true);
+    });
+
+    loop {
+        let Some(cfg) = wait_linked(&data_dir, &hub, stop_rx.clone()).await? else {
+            hub.set_shutting_down();
+            info!("agent stopped");
+            return Ok(());
+        };
+        let exit = run_linked(
+            cfg,
+            &data_dir,
+            mesh_bin.clone(),
+            anchor_flag,
+            force_relay,
+            fence_margin_ms,
+            &hub,
+            stop_rx.clone(),
+        )
+        .await?;
+        match exit {
+            RunExit::Stopped => return Ok(()),
+            RunExit::Relinked => info!("re-linked; restarting with the new config"),
+        }
+    }
+}
+
+/// Waits for config.toml; `None` when stopped first.
+async fn wait_linked(
+    data_dir: &std::path::Path,
+    hub: &local::Hub,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) -> Result<Option<config::Config>> {
+    let mut logged = false;
+    loop {
+        if *stop.borrow() {
+            return Ok(None);
+        }
+        if let Some(c) = config::Config::load_opt(data_dir)? {
+            return Ok(Some(c));
+        }
+        if !logged {
+            info!(data = %data_dir.display(), "not linked yet: waiting (link from the Varde tray, or run `varde-agent enroll`)");
+            logged = true;
+        }
+        tokio::select! {
+            r = stop.changed() => if r.is_err() { return Ok(None) },
+            _ = hub.linked.notified() => {},
+            _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {},
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_linked(
+    mut cfg: config::Config,
+    data_dir: &std::path::Path,
+    mesh_bin: Option<PathBuf>,
+    anchor_flag: bool,
+    force_relay: bool,
+    fence_margin_ms: Option<i64>,
+    hub: &local::Hub,
+    mut ext_stop: tokio::sync::watch::Receiver<bool>,
+) -> Result<RunExit> {
+    let data_dir = data_dir.to_path_buf();
     if anchor_flag {
         cfg.anchor = true;
     }
@@ -319,7 +373,7 @@ async fn run(
     if let Some(m) = fence_margin_ms {
         cfg.fence_margin_ms = m;
     }
-    let key_path = data_dir.join("identity").join("node.key");
+    let key_path = link::key_path(&data_dir);
     let key: SigningKey = identity::load(&key_path)?;
     let mesh_bin = mesh_bin
         .or(cfg.mesh_bin.clone())
@@ -371,7 +425,9 @@ async fn run(
         repl_notify: tokio::sync::Notify::new(),
         last_heartbeat_ok: Mutex::new(None),
         shutting_down: AtomicBool::new(false),
+        cp_view: Mutex::new(Default::default()),
     });
+    hub.attach(agent.clone());
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
 
@@ -391,7 +447,7 @@ async fn run(
 
     // spawn background loops
     let mesh_data = data_dir.clone();
-    tokio::spawn(mesh.clone().supervise(mesh_data, mesh_bin, stop_rx.clone()));
+    let mesh_task = tokio::spawn(mesh.clone().supervise(mesh_data, mesh_bin, stop_rx.clone()));
     let a = agent.clone();
     let s = stop_rx.clone();
     tokio::spawn(async move { control::control_loop(a, s).await });
@@ -425,7 +481,24 @@ async fn run(
     // and the replication worker keep running — the node must stay CP-visible
     // and reachable as a snapshot source for the hold to succeed. Only after
     // the drain do the background loops get their stop signal.
-    wait_shutdown(ext_stop).await;
+    let exit = loop {
+        tokio::select! {
+            _ = ext_stop.wait_for(|s| *s) => break RunExit::Stopped,
+            _ = hub.linked.notified() => {
+                // a re-link from the tray wrote a config for a new node
+                let relinked = config::Config::load_opt(&data_dir)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|c| c.node_id != agent.cfg.node_id);
+                if relinked {
+                    break RunExit::Relinked;
+                }
+            }
+        }
+    };
+    if exit == RunExit::Stopped {
+        hub.set_shutting_down();
+    }
     info!("shutting down: draining executions");
     agent
         .shutting_down
@@ -452,8 +525,11 @@ async fn run(
     }
 
     let _ = stop_tx.send(true);
+    // let the mesh child exit before a re-link spawns a new one
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), mesh_task).await;
+    hub.detach();
     info!("agent stopped");
-    Ok(())
+    Ok(exit)
 }
 
 async fn wait_shutdown(ext_stop: Option<tokio::sync::oneshot::Receiver<()>>) {

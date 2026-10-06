@@ -2,7 +2,7 @@
 
 `varde-agent` (Rust, tokio). One OS service: Windows Service (`windows-service` crate, accepts STOP + PRESHUTDOWN)
 or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcommands: `run`, `enroll --server URL
-[--token vde_…]` (device-code flow if no token: prints/opens the link), `status`, `service install|uninstall`
+[--token vde_…]` (device-code flow if no token: prints the link), `status`, `service install|uninstall`
 (Windows), `version`.
 
 ## Local layout (spec §35)
@@ -11,7 +11,8 @@ or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcomm
 <data>/                     /var/lib/varde  |  %ProgramData%\Varde
   config.toml               control_plane_url, node_id, group_id, control_plane_public_key, overrides
   identity/node.key         ed25519 PKCS#8 PEM, 0600 / SYSTEM-only ACL
-  run/mesh.sock             IPC (Linux)
+  run/mesh.sock             mesh IPC (Linux; Windows: \\.\pipe\varde-mesh-<hash>)
+  run/agent.sock            local status/link IPC (Linux; Windows: \\.\pipe\varde-agent)
   deployments/<dep_id>/     prepared game installs (cache, keyed by deployment digest)
   runtimes/                 downloaded JREs, steamcmd
   chunks/  snapshots/       snapshot-store
@@ -19,6 +20,46 @@ or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcomm
   state/executions.json     last known executions + fencing status (survives agent restarts)
 logs: /var/log/varde (Linux) | <data>\logs (Windows); JSON lines, rotated
 ```
+
+## Lifecycle: not linked → linked
+
+The service starts and stays running whether or not the machine is linked (I10). Without `config.toml` it is
+**not linked**: only the local IPC is up — no heartbeats, no mesh, no games — and it waits for a config to appear
+(polled every 2 s, or signalled by its own link flow). Once the config exists the full agent starts in the same
+process; no service restart. A missing config is never a failure. Real failures stop the service with a non-zero
+service-specific exit code; `service install` sets SCM restart actions (5 s, 15 s, 60 s; reset after a day, also
+for non-crash failures). `service uninstall` waits (≤ 180 s) for the service to reach Stopped before deleting it,
+so the final save + replication hold finish before the installer removes the binaries.
+
+Two ways to link, both writing the same `config.toml` + `identity/node.key`:
+
+* **Desktop (tray)**: the tray runs as the logged-in user and can't write `%ProgramData%\Varde`, so it asks the
+  service over the local IPC (`StartLink{control_plane_url}`). The service runs the device-code flow itself,
+  publishes the code + link page in its status, polls for approval and writes the config. The link page is the
+  control plane's `verification_url`, except when that points at loopback while the user's address doesn't
+  (control plane without `--public-url`): then it is `<user's address>/link?code=…`. The control plane itself
+  falls back to the request's scheme + Host when `--public-url` is unset.
+* **Headless**: `varde-agent enroll --server URL [--token vde_…]` (needs Administrator/root); the idle service
+  picks the config up within 2 s.
+
+The device name sent with the link request is `%COMPUTERNAME%` on Windows, else `$HOSTNAME` / `gethostname()`.
+
+### Local IPC (`proto/agent/v1/local.proto`, `crates/agent-ipc`)
+
+gRPC over the named pipe `\\.\pipe\varde-agent` (Windows) or `<data>/run/agent.sock` (Unix, 0666). Never TCP.
+A fixed set of typed calls — `GetStatus`, `WatchStatus`, `StartLink`, `CancelLink` — and no command channel (I9).
+Status carries the state (`not_linked | linking | connecting | online | offline | shutting_down`; online = a
+heartbeat succeeded within max(3 × heartbeat interval, 15 s)), control-plane URL, group and machine names, last
+contact, the pending code, and each server this machine hosts with its phase and latest safe save
+(`node.group_name` / `executions[].latest_safe_save_at_unix_ms` in directives).
+
+* Pipe DACL (protected): SYSTEM + Administrators full; interactive users read + write data only, without
+  FILE_CREATE_PIPE_INSTANCE. Remote clients are rejected and the service creates the first instance itself.
+  Clients open with identification-level impersonation and refuse a pipe not served from session 0.
+* Linking an unlinked machine is open to any interactive user (the installer flow). **Re-link**
+  (`relink=true`) needs a client whose process token is in BUILTIN\Administrators (elevated; Unix: root or the
+  agent's user) and is refused while the machine hosts a server. It uses a fresh node key, written only once
+  approved, keeps local overrides, and restarts the agent in-process as the new node.
 
 ## Main loops
 

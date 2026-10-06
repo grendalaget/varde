@@ -643,10 +643,13 @@ type AgentDirectives struct {
 	HeartbeatIntervalMs int                   `json:"heartbeat_interval_ms"`
 	LeaseTtlMs          int                   `json:"lease_ttl_ms"`
 	Node                struct {
-		AdminState     AgentDirectivesNodeAdminState `json:"admin_state"`
-		Anchor         bool                          `json:"anchor"`
-		HostingEnabled bool                          `json:"hosting_enabled"`
-		Name           string                        `json:"name"`
+		AdminState AgentDirectivesNodeAdminState `json:"admin_state"`
+		Anchor     bool                          `json:"anchor"`
+
+		// GroupName Display name of the node's group (tray/status).
+		GroupName      *string `json:"group_name,omitempty"`
+		HostingEnabled bool    `json:"hosting_enabled"`
+		Name           string  `json:"name"`
 	} `json:"node"`
 	Peers            *[]DirectivePeer   `json:"peers,omitempty"`
 	Relays           *[]DirectiveRelay  `json:"relays,omitempty"`
@@ -877,10 +880,13 @@ type ExecutionDirective struct {
 		Id     string                 `json:"id"`
 		Spec   map[string]interface{} `json:"spec"`
 	} `json:"deployment,omitempty"`
-	Epoch                int64  `json:"epoch"`
-	ExecutionId          string `json:"execution_id"`
-	LeaseExpiresAtUnixMs int64  `json:"lease_expires_at_unix_ms"`
-	Restore              *struct {
+	Epoch       int64  `json:"epoch"`
+	ExecutionId string `json:"execution_id"`
+
+	// LatestSafeSaveAtUnixMs created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
+	LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms,omitempty"`
+	LeaseExpiresAtUnixMs   int64  `json:"lease_expires_at_unix_ms"`
+	Restore                *struct {
 		ManifestDigest string   `json:"manifest_digest"`
 		SnapshotId     string   `json:"snapshot_id"`
 		SourceNodeIds  []string `json:"source_node_ids"`

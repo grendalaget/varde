@@ -55,9 +55,22 @@ impl Config {
         toml::from_str(&s).with_context(|| format!("parse {}", p.display()))
     }
 
+    /// `None` while the machine isn't linked yet (no config.toml).
+    pub fn load_opt(data_dir: &Path) -> Result<Option<Config>> {
+        match Config::load(data_dir) {
+            Ok(c) => Ok(Some(c)),
+            Err(_) if !data_dir.join("config.toml").exists() => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Atomic (temp file + rename): the idle service polls for this file.
     pub fn save(&self, data_dir: &Path) -> Result<()> {
         let p = data_dir.join("config.toml");
-        std::fs::write(&p, toml::to_string_pretty(self)?)?;
+        let tmp = data_dir.join("config.toml.tmp");
+        std::fs::write(&tmp, toml::to_string_pretty(self)?)
+            .with_context(|| format!("write {}", tmp.display()))?;
+        std::fs::rename(&tmp, &p).with_context(|| format!("write {}", p.display()))?;
         Ok(())
     }
 

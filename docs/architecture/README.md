@@ -77,7 +77,7 @@ The same binaries serve both audiences:
 | I7 | Host change ≠ identity change | per-service stable loopback IP, routes keyed by `service_id` |
 | I8 | CP loss never corrupts stored state | agents only delete snapshots on explicit CP instruction; restore writes to staging then renames |
 | I9 | No remote shell | directives are typed; drivers build argv; no shell is ever invoked |
-| I10 | Clean Windows install needs no config | installer + device-code linking (packaging/windows) |
+| I10 | Clean Windows install needs no config | service runs idle until linked; device-code linking done by the service, asked for over local IPC (agent.md#lifecycle-not-linked--linked) |
 
 ## Glossary (engineering → user-facing, spec §41)
 

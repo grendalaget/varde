@@ -679,6 +679,18 @@ func (s *Store) SnapshotsForServer(ctx context.Context, serverID string) ([]Snap
 	return snaps, err
 }
 
+// LatestCommittedSnapshotAt returns created_at of the server's newest
+// committed snapshot ("Latest safe save"), or nil when it has none.
+func (s *Store) LatestCommittedSnapshotAt(ctx context.Context, serverID string) (*int64, error) {
+	var at sql.NullInt64
+	err := s.q().GetContext(ctx, &at, s.Rebind(
+		`SELECT MAX(created_at) FROM snapshots WHERE server_id=? AND state='committed'`), serverID)
+	if err != nil || !at.Valid {
+		return nil, err
+	}
+	return &at.Int64, nil
+}
+
 func (s *Store) SnapshotsForGroup(ctx context.Context, groupID string) ([]Snapshot, error) {
 	var snaps []Snapshot
 	err := s.q().SelectContext(ctx, &snaps, s.Rebind(

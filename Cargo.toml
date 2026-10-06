@@ -6,6 +6,7 @@ members = [
     "crates/executor-api",
     "crates/snapshot-store",
     "crates/mesh-ipc",
+    "crates/agent-ipc",
     "crates/executor-native",
     "crates/cp-api",
     "crates/runtimes",

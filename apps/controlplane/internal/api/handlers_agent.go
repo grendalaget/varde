@@ -253,6 +253,9 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 	d.Node.HostingEnabled = node.HostingEnabled == 1
 	d.Node.Anchor = node.Anchor == 1
 	d.Node.AdminState = gen.AgentDirectivesNodeAdminState(node.AdminState)
+	if g, err := s.Store.GetGroup(ctx, node.GroupID); err == nil {
+		d.Node.GroupName = &g.Name
+	}
 
 	// executions held by this node
 	execs, err := s.Store.ActiveExecutionsForNode(ctx, node.ID)
@@ -274,6 +277,9 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			LeaseExpiresAtUnixMs: e.LeaseExpiresAt,
 			Action:               gen.ExecutionDirectiveAction(e.Action),
 			SnapshotIntervalS:    ptr(int(srv.SnapshotIntervalS)),
+		}
+		if at, err := s.Store.LatestCommittedSnapshotAt(ctx, srv.ID); err == nil {
+			ed.LatestSafeSaveAtUnixMs = at
 		}
 		if e.StopReason != nil {
 			ed.StopReason = ptr(gen.ExecutionDirectiveStopReason(*e.StopReason))

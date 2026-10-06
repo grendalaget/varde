@@ -9,6 +9,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agent-ipc"
+version = "0.1.0"
+dependencies = [
+ "hyper-util",
+ "libc",
+ "prost",
+ "protoc-bin-vendored",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tower 0.5.3",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2205,6 +2221,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 name = "varde-agent"
 version = "0.1.0"
 dependencies = [
+ "agent-ipc",
  "anyhow",
  "async-trait",
  "base64",
@@ -2231,6 +2248,7 @@ dependencies = [
  "snapshot-store",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "toml",
  "tonic",
  "tracing",
