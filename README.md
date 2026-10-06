@@ -46,4 +46,10 @@ signing setup and download verification.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[AGPL-3.0-or-later](LICENSE). varde's core technology is free and open
+source forever: anyone may run, study, modify and redistribute it, and
+anyone offering a modified version to users over a network must share
+their source.
+
+Versions prior to October 2026 were released under the MIT License; those
+releases remain MIT-licensed.
