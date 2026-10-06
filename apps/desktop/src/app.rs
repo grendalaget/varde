@@ -26,8 +26,8 @@ static ICON_WARN: &[u8] = include_bytes!("../icons/tray-warn.png");
 struct State {
     status: Mutex<Option<pb::Status>>,
     view: Mutex<Option<TrayView>>,
-    /// URL from `--link URL`, used once to start linking right away.
-    link_arg: Mutex<Option<String>>,
+    /// Launched with `--link` (installer): start linking once the window opens.
+    auto_link: std::sync::atomic::AtomicBool,
     /// Elevated `--relink` instance: link window only, no tray.
     relink: bool,
 }
@@ -42,18 +42,25 @@ pub fn run() {
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let l = view::parse_launch(argv.into_iter().skip(1));
-            if l.url.is_some() {
-                *app.state::<State>().link_arg.lock().unwrap() = l.url;
+            if l.open_link {
+                app.state::<State>()
+                    .auto_link
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            // started again (Start menu, installer): show the window
+            // started again (Start menu, installer): show the window; an
+            // already open one re-reads its defaults (it may need to link)
             if !l.autostart {
+                let open = app.get_webview_window(LINK_WINDOW).is_some();
                 open_link_window(app);
+                if open {
+                    let _ = app.emit_to(LINK_WINDOW, "link-defaults", defaults(app));
+                }
             }
         }));
     }
     let app = builder
         .manage(State {
-            link_arg: Mutex::new(launch.url.clone()),
+            auto_link: launch.open_link.into(),
             relink,
             ..Default::default()
         })
@@ -343,17 +350,17 @@ fn get_status(state: tauri::State<'_, State>) -> Option<UiStatus> {
     state.status.lock().unwrap().as_ref().map(UiStatus::from)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct LinkDefaults {
+    /// The service's address (installer choice before linking), else varde.games.
     url: String,
-    /// Start linking right away (installer passed the address).
+    /// Start linking as soon as the service reports not_linked.
     auto: bool,
     relink: bool,
 }
 
 fn defaults(app: &AppHandle) -> LinkDefaults {
     let st = app.state::<State>();
-    let arg = st.link_arg.lock().unwrap().take();
     let known = st
         .status
         .lock()
@@ -362,8 +369,10 @@ fn defaults(app: &AppHandle) -> LinkDefaults {
         .map(|s| s.control_plane_url.clone())
         .filter(|u| !u.is_empty());
     LinkDefaults {
-        auto: arg.is_some(),
-        url: arg.or(known).unwrap_or_else(|| DEFAULT_CP.into()),
+        auto: st
+            .auto_link
+            .swap(false, std::sync::atomic::Ordering::SeqCst),
+        url: known.unwrap_or_else(|| DEFAULT_CP.into()),
         relink: st.relink,
     }
 }

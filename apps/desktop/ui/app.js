@@ -10,6 +10,8 @@ let defaults = { url: "https://varde.games", auto: false, relink: false };
 let current = null;
 let seen = false;
 let started = false; // this window asked for a code
+let autoPending = false; // installer launch: link as soon as not_linked shows
+let urlEdited = false;
 let closeTimer = null;
 
 function show(view) {
@@ -47,8 +49,14 @@ function render(s) {
     return show("done");
   }
   if (s.state === "not_linked" || (defaults.relink && LINKED.includes(s.state))) {
+    if (!urlEdited && s.control_plane_url) $("url").value = s.control_plane_url;
     formError(s.link_error);
-    return show("form");
+    show("form");
+    if (autoPending && s.state === "not_linked") {
+      autoPending = false;
+      link($("url").value.trim());
+    }
+    return;
   }
   if (LINKED.includes(s.state)) {
     $("linked-text").textContent = describe(s);
@@ -86,6 +94,7 @@ function close() {
   invoke("close_window");
 }
 
+$("url").addEventListener("input", () => (urlEdited = true));
 $("link-form").addEventListener("submit", (e) => {
   e.preventDefault();
   link($("url").value.trim());
@@ -113,15 +122,23 @@ $("cancel").addEventListener("click", async () => {
 $("open-dash").addEventListener("click", () => current && invoke("open_url", { url: current.control_plane_url }));
 for (const b of document.querySelectorAll("button.close")) b.addEventListener("click", close);
 
-(async () => {
-  defaults = await invoke("link_defaults");
-  $("url").value = defaults.url;
-  if (defaults.relink) {
+function applyDefaults(d) {
+  defaults = d;
+  if (!urlEdited) $("url").value = d.url;
+  if (d.relink) {
     $("form-title").textContent = "Re-link this PC";
     $("relink-note").hidden = false;
   }
+  if (d.auto) autoPending = true;
+}
+
+(async () => {
+  applyDefaults(await invoke("link_defaults"));
   await listen("status", (e) => render(e.payload));
-  const s = await invoke("get_status");
-  render(s);
-  if (defaults.auto && s && s.state === "not_linked") link(defaults.url);
+  // the tray was started again with --link while this window was open
+  await listen("link-defaults", (e) => {
+    applyDefaults(e.payload);
+    render(current);
+  });
+  render(await invoke("get_status"));
 })();

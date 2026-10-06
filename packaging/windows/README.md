@@ -7,7 +7,9 @@
   for the tray
 - uses `varde.ico` for setup and uninstall and installs it with the binaries
 - asks for the Varde address (prefilled `https://varde.games`; checked with
-  `GET /v1/version`, warning only). Skipped when the PC is already linked
+  `GET /v1/version`, warning only; plain `http://` other than loopback
+  needs an extra confirmation) and writes it to `%ProgramData%\Varde\server.url`,
+  which the unlinked service reports to the tray. Skipped when the PC is already linked
 - installs Microsoft Edge WebView2 if missing (for the link window; without
   it the tray links via message boxes)
 - creates `%ProgramData%\Varde` with a SYSTEM/Administrators-only ACL on
@@ -16,9 +18,10 @@
   `service install` path — STOP and PRESHUTDOWN map to the graceful-stop
   path, with a 120 s preshutdown timeout). Unlinked, the service waits idle
 - task "Start Varde at login" (on by default): HKLM `Run` value
-  `varde-tray.exe --autostart`; each user can turn it off in the tray
+  `varde-tray.exe --autostart`; each user can turn it off in the tray.
+  Unticking it on an upgrade removes the earlier value
 - at the end, launches the tray as the installing user with
-  `--link <address>`: the service starts the device flow, the tray shows
+  `--link`: the tray asks the service to link with that address, shows
   the code and opens the dashboard to approve it
 
 Upgrades stop the tray and remove the old service (waiting for it to stop)
