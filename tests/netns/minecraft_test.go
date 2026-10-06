@@ -743,3 +743,46 @@ func TestMinecraftCutOff(t *testing.T) {
 	t.Logf("RTO (cutoff to first successful read): %s", rto)
 	wd.check(t)
 }
+
+func TestMinecraftRelayed(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	blockDirectUDP(t, mcNodeNames)
+
+	for _, name := range mcNodeNames {
+		nd := e.enroll(name, name == "nas")
+		apiJSON(t, "PATCH", e.cpURL+"/v1/nodes/"+nd.nodeID, e.tok,
+			map[string]any{"name": name}, 200)
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("kari", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-relayed", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	waitFor(t, 90*time.Second, "player reports a relayed path to arne", func() bool {
+		return e.nodeConnections("player")["arne"] == "relayed"
+	})
+	waitFor(t, 30*time.Second, "arne reports a relayed path to player", func() bool {
+		return e.nodeConnections("arne")["player"] == "relayed"
+	})
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	if got != nonce {
+		t.Fatalf("col0 over relayed path: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
+	}
+	t.Logf("relayed player↔arne path preserved col0=%s", nonce)
+	wd.check(t)
+}
