@@ -39,6 +39,11 @@ make test   # run all tests
 make lint   # run all linters
 ```
 
+## Releases
+
+See [docs/releasing.md](docs/releasing.md) for release/nightly builds, assets,
+signing setup and download verification.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

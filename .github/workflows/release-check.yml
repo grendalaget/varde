@@ -1,0 +1,57 @@
+name: release dry run
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/publish-release.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/nightly.yml'
+      - '.github/workflows/release-check.yml'
+      - 'packaging/**'
+      - 'docs/releasing.md'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to exercise (including prerelease/metadata syntax)
+        type: string
+        default: 0.0.0-dev
+
+permissions: {}
+
+concurrency:
+  group: release-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - run: actionlint .github/workflows/build-release.yml .github/workflows/publish-release.yml .github/workflows/release.yml .github/workflows/nightly.yml .github/workflows/release-check.yml
+      - name: Validate release helpers
+        run: |
+          shellcheck packaging/release/*.sh
+          python3 -m py_compile packaging/release/version.py
+
+  build:
+    # Fork PR tokens cannot write attestations; maintainers can dispatch on a trusted branch instead.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: actionlint
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build-release.yml
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ inputs.version || format('0.0.0-nightly.20000101+{0}', github.sha) }}
+      channel: dry-run
+      dry_run: true
+    # Deliberately do not pass certificate/GPG secrets to PR builds.

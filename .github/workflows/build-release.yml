@@ -1,0 +1,243 @@
+name: build release assets
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Immutable source commit to build
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      dry_run:
+        type: boolean
+        default: true
+    secrets:
+      WINDOWS_CERT_PFX_BASE64:
+        required: false
+      WINDOWS_CERT_PASSWORD:
+        required: false
+      APPLE_CERT_P12_BASE64:
+        required: false
+      APPLE_CERT_PASSWORD:
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      APPLE_API_KEY_P8_BASE64:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      APPLE_API_KEY_ISSUER:
+        required: false
+      NFPM_GPG_KEY:
+        required: false
+      NFPM_GPG_PASSPHRASE:
+        required: false
+
+permissions: {}
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            arch: arm64
+          - runner: windows-latest
+            goos: windows
+            arch: amd64
+          - runner: macos-15
+            goos: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            goos: darwin
+            arch: amd64
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.version }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: '**/go.sum'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.goos }}-${{ matrix.arch }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Embed production web UI
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/web build
+          make webui-dist
+      - name: Set binary versions
+        run: python packaging/release/version.py
+      - name: Build release binaries
+        run: |
+          mkdir -p dist release-assets
+          crates=(-p varde-agent)
+          suffix=''
+          if [[ "$GOOS" == windows ]]; then
+            crates+=(-p varde-tray)
+            suffix='.exe'
+          fi
+          cargo build --locked --release "${crates[@]}"
+          cp "target/release/varde-agent$suffix" dist/
+          if [[ "$GOOS" == windows ]]; then
+            cp target/release/varde-tray.exe dist/
+          fi
+          for component in controlplane relay mesh; do
+            name="$component"
+            if [[ "$component" == controlplane ]]; then name=control-plane; fi
+            (cd "apps/$component" && go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              -o "../../dist/varde-$name$suffix" .)
+          done
+          cp LICENSE dist/
+      - name: Sign Windows binaries (provider adapter)
+        if: runner.os == 'Windows'
+        uses: ./packaging/release/windows-sign
+        with:
+          path: dist/varde-*.exe
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      - name: Windows installer prerequisites
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
+          Copy-Item dist/varde-*.exe packaging/windows/dist/
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' `
+            -OutFile packaging/windows/dist/MicrosoftEdgeWebview2Setup.exe
+          choco install innosetup -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DVersion="$env:VERSION" packaging/windows/varde-agent.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+      - name: Sign Windows installer (same provider adapter)
+        if: runner.os == 'Windows'
+        uses: ./packaging/release/windows-sign
+        with:
+          path: packaging/windows/dist/VardeSetup-*.exe
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      - name: Package Windows assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item packaging/windows/dist/VardeSetup-*.exe release-assets/
+          Compress-Archive -Path dist/* -DestinationPath "release-assets/varde-$env:VERSION-windows-amd64.zip"
+      - name: Developer ID signing and notarization
+        if: runner.os == 'macOS'
+        run: bash packaging/release/sign-macos.sh
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_ISSUER: ${{ secrets.APPLE_API_KEY_ISSUER }}
+      - name: Install nfpm
+        if: runner.os == 'Linux'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+      - name: Package Unix assets
+        if: runner.os != 'Windows'
+        run: bash packaging/release/package-unix.sh
+        env:
+          NFPM_GPG_KEY: ${{ secrets.NFPM_GPG_KEY }}
+          NFPM_GPG_PASSPHRASE: ${{ secrets.NFPM_GPG_PASSPHRASE }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-bundles-${{ matrix.goos }}-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: checksums and keyless signatures
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-bundles-*
+          path: release-assets
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.5.2
+      - name: Sign and verify every asset, including SHA256SUMS
+        env:
+          CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-release.yml@${{ github.ref }}
+        run: |
+          for asset in release-assets/*; do
+            cosign sign-blob --yes --bundle "$asset.sigstore.json" "$asset"
+            cosign verify-blob --bundle "$asset.sigstore.json" \
+              --certificate-identity "$CERT_IDENTITY" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$asset"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Dry-run summary
+        if: inputs.dry_run
+        run: echo 'Dry run complete. All platforms built, attested and keyless-signed; no release or tag changed.' >> "$GITHUB_STEP_SUMMARY"
+

@@ -1,0 +1,83 @@
+name: nightly binaries
+
+on:
+  schedule:
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build/sign only; do not move the nightly tag or publish assets
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: nightly-binaries
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # A manually selected feature branch may only run in dry-run mode.
+    if: github.ref == 'refs/heads/main' || inputs.dry_run
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      ref: ${{ steps.source.outputs.ref }}
+      version: ${{ steps.source.outputs.version }}
+      changed: ${{ steps.source.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "ref=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=0.0.0-nightly.$(date -u +%Y%m%d)+${sha:0:7}" >> "$GITHUB_OUTPUT"
+          if [[ "$DRY_RUN" != true ]]; then
+            if gh release view nightly --json body,assets > nightly.json 2> api.err; then
+              if jq -e --arg marker "<!-- nightly-commit:$sha -->" \
+                '(.body | contains($marker)) and (.assets | length > 0)' nightly.json >/dev/null; then
+                echo 'changed=false' >> "$GITHUB_OUTPUT"
+                echo 'Main is unchanged since the last successful nightly; skipped.' >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            elif ! grep -qiE 'HTTP 404|release not found' api.err; then
+              cat api.err >&2; exit 1
+            fi
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build-release.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      version: ${{ needs.prepare.outputs.version }}
+      channel: nightly
+      dry_run: ${{ inputs.dry_run || false }}
+    secrets: inherit
+
+  upload:
+    needs: [prepare, build]
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      version: ${{ needs.prepare.outputs.version }}
+      channel: nightly
+      tag: nightly
