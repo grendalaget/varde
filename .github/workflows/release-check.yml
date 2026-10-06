@@ -54,4 +54,3 @@ jobs:
       version: ${{ inputs.version || format('0.0.0-nightly.20000101+{0}', github.sha) }}
       channel: dry-run
       dry_run: true
-    # Deliberately do not pass certificate/GPG secrets to PR builds.

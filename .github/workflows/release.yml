@@ -43,7 +43,6 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       channel: release
       dry_run: false
-    secrets: inherit
 
   upload:
     needs: [prepare, build]

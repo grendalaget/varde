@@ -16,29 +16,6 @@ on:
       dry_run:
         type: boolean
         default: true
-    secrets:
-      WINDOWS_CERT_PFX_BASE64:
-        required: false
-      WINDOWS_CERT_PASSWORD:
-        required: false
-      APPLE_CERT_P12_BASE64:
-        required: false
-      APPLE_CERT_PASSWORD:
-        required: false
-      APPLE_SIGNING_IDENTITY:
-        required: false
-      APPLE_TEAM_ID:
-        required: false
-      APPLE_API_KEY_P8_BASE64:
-        required: false
-      APPLE_API_KEY_ID:
-        required: false
-      APPLE_API_KEY_ISSUER:
-        required: false
-      NFPM_GPG_KEY:
-        required: false
-      NFPM_GPG_PASSPHRASE:
-        required: false
 
 permissions: {}
 
@@ -129,14 +106,6 @@ jobs:
               -o "../../dist/varde-$name$suffix" .)
           done
           cp LICENSE dist/
-      - name: Sign Windows binaries (provider adapter)
-        if: runner.os == 'Windows'
-        uses: ./packaging/release/windows-sign
-        with:
-          path: dist/varde-*.exe
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
       - name: Windows installer prerequisites
         if: runner.os == 'Windows'
         shell: pwsh
@@ -153,40 +122,18 @@ jobs:
         run: |
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DVersion="$env:VERSION" packaging/windows/varde-agent.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
-      - name: Sign Windows installer (same provider adapter)
-        if: runner.os == 'Windows'
-        uses: ./packaging/release/windows-sign
-        with:
-          path: packaging/windows/dist/VardeSetup-*.exe
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
       - name: Package Windows assets
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Copy-Item packaging/windows/dist/VardeSetup-*.exe release-assets/
           Compress-Archive -Path dist/* -DestinationPath "release-assets/varde-$env:VERSION-windows-amd64.zip"
-      - name: Developer ID signing and notarization
-        if: runner.os == 'macOS'
-        run: bash packaging/release/sign-macos.sh
-        env:
-          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_KEY_ISSUER: ${{ secrets.APPLE_API_KEY_ISSUER }}
       - name: Install nfpm
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
       - name: Package Unix assets
         if: runner.os != 'Windows'
         run: bash packaging/release/package-unix.sh
-        env:
-          NFPM_GPG_KEY: ${{ secrets.NFPM_GPG_KEY }}
-          NFPM_GPG_PASSPHRASE: ${{ secrets.NFPM_GPG_PASSPHRASE }}
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: release-assets/*
