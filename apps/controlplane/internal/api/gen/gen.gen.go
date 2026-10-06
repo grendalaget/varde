@@ -167,11 +167,12 @@ func (e ExecutionAction) Valid() bool {
 
 // Defines values for ExecutionEndReason.
 const (
-	ExecutionEndReasonFailed   ExecutionEndReason = "failed"
-	ExecutionEndReasonFenced   ExecutionEndReason = "fenced"
-	ExecutionEndReasonLost     ExecutionEndReason = "lost"
-	ExecutionEndReasonMigrated ExecutionEndReason = "migrated"
-	ExecutionEndReasonStopped  ExecutionEndReason = "stopped"
+	ExecutionEndReasonFailed        ExecutionEndReason = "failed"
+	ExecutionEndReasonFenced        ExecutionEndReason = "fenced"
+	ExecutionEndReasonLost          ExecutionEndReason = "lost"
+	ExecutionEndReasonMigrated      ExecutionEndReason = "migrated"
+	ExecutionEndReasonRestoreFailed ExecutionEndReason = "restore_failed"
+	ExecutionEndReasonStopped       ExecutionEndReason = "stopped"
 )
 
 // Valid indicates whether the value is a known member of the ExecutionEndReason enum.
@@ -184,6 +185,8 @@ func (e ExecutionEndReason) Valid() bool {
 	case ExecutionEndReasonLost:
 		return true
 	case ExecutionEndReasonMigrated:
+		return true
+	case ExecutionEndReasonRestoreFailed:
 		return true
 	case ExecutionEndReasonStopped:
 		return true

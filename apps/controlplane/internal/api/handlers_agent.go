@@ -150,6 +150,7 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 		return fmt.Errorf("stale: lease expired")
 	}
 
+	previousState := exec.State
 	state := string(er.State)
 	exec.State = state
 	if er.Health != nil {
@@ -191,15 +192,25 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 			}
 			reason := "stopped"
 			typ := "server.stopped"
+			data := map[string]any{"execution_id": exec.ID, "epoch": exec.Epoch}
 			if state == "failed" {
 				reason = "failed"
 				typ = "server.failed"
+				if previousState == "restoring" {
+					reason = "restore_failed"
+					typ = "server.restore_failed"
+					message := ""
+					if exec.Message != nil {
+						message = *exec.Message
+					}
+					data["message"] = message
+				}
 			}
 			if err := s.Store.EndExecution(ctx, tx, exec.ID, reason, now); err != nil {
 				return err
 			}
 			return s.Store.EmitEvent(ctx, tx, node.GroupID, &exec.ServerID, &node.ID,
-				typ, map[string]any{"execution_id": exec.ID, "epoch": exec.Epoch})
+				typ, data)
 		default:
 			// preparing/restoring/starting/stopping: renew lease, keep state
 			exec.LeaseExpiresAt = leaseExp

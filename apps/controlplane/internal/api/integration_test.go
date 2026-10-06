@@ -319,6 +319,13 @@ func (a *agent) execStatus(execID, serverID string, epoch int64, state string) a
 	return a.signedDo("POST", "/v1/agent/executions/"+execID+"/status", body, 0, nil)
 }
 
+func (a *agent) execStatusWithMessage(execID, serverID string, epoch int64, state, message string) apiResp {
+	body, _ := json.Marshal(map[string]any{
+		"server_id": serverID, "epoch": epoch, "state": state, "message": message,
+	})
+	return a.signedDo("POST", "/v1/agent/executions/"+execID+"/status", body, 0, nil)
+}
+
 func (a *agent) execStatusJoinCode(execID, serverID string, epoch int64, state, joinCode string) apiResp {
 	body, _ := json.Marshal(map[string]any{
 		"server_id": serverID, "epoch": epoch, "state": state, "join_code": joinCode,
@@ -1438,6 +1445,14 @@ func TestCrashLoopGuard(t *testing.T) {
 	if e.observed(srv) != "failed" {
 		t.Fatalf("observed=%s", e.observed(srv))
 	}
+	var endReason string
+	if err := e.st.DB.Get(&endReason, e.st.Rebind(
+		`SELECT end_reason FROM server_executions WHERE id=?`), execID); err != nil {
+		t.Fatal(err)
+	}
+	if endReason != "failed" {
+		t.Fatalf("running failure end_reason=%q", endReason)
+	}
 	// several passes: never a new execution, and server.failed only once
 	for i := 0; i < 3; i++ {
 		e.reconcile()
@@ -1463,6 +1478,155 @@ func TestCrashLoopGuard(t *testing.T) {
 	}
 	if ex["epoch"].(int64) != epoch+1 {
 		t.Fatalf("epoch %d → %d", epoch, ex["epoch"])
+	}
+}
+
+func TestRestoreFailureRetries(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "restore-retry", map[string]any{
+		"preferred_node_id":   a.nodeID,
+		"replication_factor":  2,
+		"min_commit_replicas": 1,
+	})
+	host, execID, epoch := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+	const snapshotID = "snap_restore_retry"
+	if r := host.createSnapshot(execID, srv, "dep_x", epoch, "final", snapshotID, "restore"); r.Status != 201 {
+		t.Fatalf("create snapshot: %d %s", r.Status, r.Raw)
+	}
+	if r := other.replicaReady(snapshotID); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	other.heartbeat(nil)
+	e.reconcile()
+	first := e.activeExec(srv)
+	if first == nil || first["node"] != other.nodeID {
+		t.Fatalf("no recovery execution on online node: %+v", first)
+	}
+
+	reportRestoreFailure := func() string {
+		e.t.Helper()
+		active := e.activeExec(srv)
+		if active == nil || active["node"] != other.nodeID {
+			e.t.Fatalf("no recovery execution to fail: %+v", active)
+		}
+		recoveryID := active["id"].(string)
+		recoveryEpoch := active["epoch"].(int64)
+		d, r := other.heartbeat(nil)
+		if r.Status != 200 {
+			e.t.Fatalf("recovery heartbeat: %d %s", r.Status, r.Raw)
+		}
+		foundRestore := false
+		for _, directive := range d.Executions {
+			if directive.ExecutionID == recoveryID && directive.Restore != nil &&
+				directive.Restore.SnapshotID == snapshotID {
+				foundRestore = true
+			}
+		}
+		if !foundRestore {
+			e.t.Fatalf("recovery execution %s did not restore %s: %+v", recoveryID, snapshotID, d.Executions)
+		}
+		if r := other.execStatus(recoveryID, srv, recoveryEpoch, "restoring"); r.Status != 204 {
+			e.t.Fatalf("restoring report: %d %s", r.Status, r.Raw)
+		}
+		if r := other.execStatusWithMessage(recoveryID, srv, recoveryEpoch, "failed", "manifest fetch failed"); r.Status != 204 {
+			e.t.Fatalf("restore failed report: %d %s", r.Status, r.Raw)
+		}
+		return recoveryID
+	}
+
+	firstFailedID := reportRestoreFailure()
+	e.reconcile()
+	if got := e.observed(srv); got != "recovering" {
+		t.Fatalf("observed after first restore failure=%q", got)
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery retried before the backoff elapsed")
+	}
+	var endReason string
+	if err := e.st.DB.Get(&endReason, e.st.Rebind(
+		`SELECT end_reason FROM server_executions WHERE id=?`), firstFailedID); err != nil {
+		t.Fatal(err)
+	}
+	if endReason != "restore_failed" {
+		t.Fatalf("restore failure end_reason=%q", endReason)
+	}
+	var eventCount int
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.restore_failed'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("server.restore_failed event count=%d", eventCount)
+	}
+	var eventData string
+	if err := e.st.DB.Get(&eventData, e.st.Rebind(
+		`SELECT data_json FROM events WHERE server_id=? AND type='server.restore_failed' ORDER BY id DESC LIMIT 1`), srv); err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(eventData), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["execution_id"] != firstFailedID || data["message"] != "manifest fetch failed" {
+		t.Fatalf("restore failure event data=%+v", data)
+	}
+	if data["epoch"] != float64(first["epoch"].(int64)) {
+		t.Fatalf("restore failure event epoch=%v", data["epoch"])
+	}
+
+	e.clk.advance(9999)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery retried before 10 seconds")
+	}
+	e.clk.advance(1)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) == nil {
+		t.Fatal("recovery did not retry after 10 seconds")
+	}
+
+	reportRestoreFailure()
+	e.reconcile()
+	if e.observed(srv) != "recovering" || e.activeExec(srv) != nil {
+		t.Fatalf("state after second restore failure: observed=%s active=%+v", e.observed(srv), e.activeExec(srv))
+	}
+	e.clk.advance(10_000)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) == nil {
+		t.Fatal("third recovery execution was not created")
+	}
+
+	reportRestoreFailure()
+	e.reconcile()
+	if e.observed(srv) != "failed" {
+		t.Fatalf("observed after three restore failures=%q", e.observed(srv))
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery continued after three restore failures")
+	}
+	e.clk.advance(60_000)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) != nil || e.observed(srv) != "failed" {
+		t.Fatalf("server retried after restore failure limit: observed=%s active=%+v", e.observed(srv), e.activeExec(srv))
+	}
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.restore_failed'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 3 {
+		t.Fatalf("server.restore_failed event count=%d, want 3", eventCount)
 	}
 }
 

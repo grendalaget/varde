@@ -983,7 +983,7 @@ export interface components {
             /** Format: int64 */
             ended_at?: number | null;
             /** @enum {string|null} */
-            end_reason?: "stopped" | "lost" | "failed" | "migrated" | "fenced" | null;
+            end_reason?: "stopped" | "lost" | "failed" | "restore_failed" | "migrated" | "fenced" | null;
         };
         Snapshot: {
             id: string;

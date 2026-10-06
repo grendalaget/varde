@@ -191,6 +191,11 @@ Restore selection when activating:
   silently fork.)
 * `source_node_ids` = online nodes with a `ready` replica; the chosen host gets the snapshot as `restore`.
 
+An execution that reports `failed` while restoring ends with `end_reason=restore_failed` and is retried as a recovery
+after a 10 s backoff. The reconciler retries at most three consecutive restore failures; after the third it sets the
+server to `failed`. Failures reported from other execution states retain the crash-loop guard and require an explicit
+start.
+
 ## Scheduler (pure function)
 
 `Place(server, nodes []NodeView, snapshots, mode) (Decision{node_id, score, reasons[]}, error)` — deterministic: same
