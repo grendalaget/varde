@@ -168,6 +168,11 @@ pub trait GameDriver: Send + Sync {
         ctx: &DriverContext<'_>,
         p: &dyn ProcessHandle,
     ) -> Result<SnapshotBarrier>;
+    /// The game writes a complete save when it exits on graceful_stop, so the
+    /// final snapshot is taken from disk after the process has exited.
+    fn snapshot_after_stop(&self) -> bool {
+        false
+    }
     async fn resume_after_snapshot(
         &self,
         ctx: &DriverContext<'_>,

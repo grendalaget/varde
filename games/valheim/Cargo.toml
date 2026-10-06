@@ -12,8 +12,13 @@ game-driver-api = { path = "../../crates/game-driver-api" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 executor-native = { path = "../../crates/executor-native" }
 runtimes = { path = "../../crates/runtimes" }
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }

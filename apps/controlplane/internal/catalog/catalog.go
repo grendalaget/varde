@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 //go:embed catalog.json
@@ -24,6 +25,8 @@ type ConfigField struct {
 	Secret   bool     `json:"secret,omitempty"`
 	Options  []string `json:"options,omitempty"`
 	Help     string   `json:"help,omitempty"`
+	Min      *float64 `json:"min,omitempty"`
+	Max      *float64 `json:"max,omitempty"`
 }
 
 type Game struct {
@@ -96,8 +99,16 @@ func (g *Game) ValidateConfig(cfg map[string]any) []string {
 				errs = append(errs, fmt.Sprintf("%s: not one of %v", f.Name, f.Options))
 			}
 		case "int":
-			if _, ok := v.(float64); !ok {
+			n, ok := v.(float64)
+			if !ok || n != math.Trunc(n) {
 				errs = append(errs, fmt.Sprintf("%s: expected int", f.Name))
+				continue
+			}
+			if f.Min != nil && n < *f.Min {
+				errs = append(errs, fmt.Sprintf("%s: must be at least %g", f.Name, *f.Min))
+			}
+			if f.Max != nil && n > *f.Max {
+				errs = append(errs, fmt.Sprintf("%s: must be at most %g", f.Name, *f.Max))
 			}
 		case "bool":
 			if _, ok := v.(bool); !ok {

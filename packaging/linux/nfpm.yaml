@@ -67,9 +67,15 @@ overrides:
   deb:
     depends:
       - systemd
+    recommends:
+      - libatomic1
+      - libpulse0
   rpm:
     depends:
       - systemd
+    recommends:
+      - libatomic
+      - pulseaudio-libs
 scripts:
   postinstall: packaging/linux/scripts/varde-agent.postinstall
   preremove: packaging/linux/scripts/varde-agent.preremove

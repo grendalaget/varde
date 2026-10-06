@@ -98,7 +98,18 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
   Health: log `Done (` + TCP connect. Persistent paths: `world*/`, `server.properties`, `ops.json`, `whitelist.json`,
   `banned-*.json`.
 * **valheim**: SteamCMD app 896660 (`+force_install_dir … +login anonymous +app_update 896660 validate +quit`); start
-  `valheim_server(.x86_64|.exe) -nographics -batchmode -name -port 2456 -world -password -public 0 -savedir
-  <server_dir>/saves`; ports 2456–2457/udp; password ≥ 5 chars validated. Barrier: wait for the next `World saved`
-  log line (Valheim saves via write-then-rename, so files are consistent afterwards) bounded by 60 s, else
-  `RequiresStop`. Persistent paths: `saves/worlds_local/`, `saves/*.txt`. Stop: SIGINT (Linux) / CTRL_BREAK (Windows).
+  `valheim_server(.x86_64|.exe) -nographics -batchmode -name -port 2456 -world -password -public 0
+  -saveinterval 300 -backups 0 -savedir <server_dir>/saves`, plus `-preset <Normal|Casual|Easy|Hard|Hardcore|Immersive|Hammer>`
+  when `modifiers` is configured; ports 2456–2457/udp; password ≥ 5 chars; world names are non-empty and exclude
+  `/`, `\`, `*`, and `?`. `save_interval_s` defaults to 300 and is validated to 60..=3600 seconds.
+  Barrier: inspect the output tail for a `World save (n/5)` phase after the last `World save (5/5) done`;
+  only then wait up to 60 s for phase 5, otherwise snapshots are live immediately. Persistent paths include the
+  legacy `saves/worlds_local/<world_name>.db` and `saves/worlds_local/<world_name>.fwl` files, plus current
+  `_main.*.db2`, `_main.*.fwl2`, `_main.*.chunks`, `_main.*.ok`, and `*.chunk` files under
+  `saves/worlds_local/<world_name>/`, plus `saves/*.txt`.
+  Stop: SIGINT (Linux) / CTRL_BREAK (Windows). Valheim opts into `snapshot_after_stop`, so the agent skips the
+  barrier and snapshots after graceful stop. Generic `RequiresStop` barriers also snapshot after stopping. Both paths
+  require a clean exit (status 0, no signal) within 30 s and an unfenced execution; otherwise the final snapshot is
+  skipped.
+  Linux requires glibc ≥ 2.29; `ldd` checks linked libraries, while `ldconfig -p` warns if runtime-loaded
+  `libatomic.so.1` or `libpulse.so.0` is missing (`libatomic1` and `libpulse0` packages).

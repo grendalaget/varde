@@ -449,9 +449,8 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
 /// Graceful stop with the driver's snapshot barrier honoured: a `Live`
 /// barrier snapshots while the game runs, then resumes and stops it; a
 /// `RequiresStop` barrier stops first and snapshots the save written at exit
-/// (only when the process exited by itself, not killed, and the execution
-/// isn't fenced). Ends with the replication hold for whichever final
-/// snapshot was produced.
+/// only after a clean exit and if the execution isn't fenced. Ends with the
+/// replication hold for whichever final snapshot was produced.
 async fn graceful_stop_and_snapshot(
     agent: &Agent,
     ctl: &ExecCtl,
@@ -460,8 +459,8 @@ async fn graceful_stop_and_snapshot(
     proc: &Arc<dyn ProcessHandle>,
 ) {
     let mut final_snap = None;
-    let mut requires_stop = false;
-    if !ctl.is_fenced() {
+    let mut requires_stop = driver.snapshot_after_stop();
+    if !requires_stop && !ctl.is_fenced() {
         match driver.prepare_snapshot(ctx, &**proc).await.map_err(dyn_err) {
             Ok(SnapshotBarrier::Live) => {
                 match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
@@ -486,19 +485,22 @@ async fn graceful_stop_and_snapshot(
         .graceful_stop(ctx, &**proc)
         .await
         .map_err(|e| tracing::warn!("graceful stop: {e}"));
-    let exited_self = tokio::time::timeout(Duration::from_secs(30), proc.wait())
-        .await
-        .is_ok();
+    let exit_status = tokio::time::timeout(Duration::from_secs(30), proc.wait()).await;
+    let exited_cleanly = matches!(&exit_status, Ok(Ok(status)) if status.success());
     let _ = proc.kill().await;
 
-    // a RequiresStop driver writes its save at exit — snapshot it now, but
-    // only when the game really exited on its own (not killed) and the exec
-    // was not fenced meanwhile
-    if final_snap.is_none() && requires_stop && exited_self && !ctl.is_fenced() {
-        match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
-            Ok(info) => final_snap = Some(info),
-            Err(e) => {
-                tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+    if final_snap.is_none() && requires_stop {
+        if !exited_cleanly {
+            tracing::warn!(
+                status = ?exit_status,
+                "game did not exit cleanly; skipping final snapshot"
+            );
+        } else if !ctl.is_fenced() {
+            match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
+                Ok(info) => final_snap = Some(info),
+                Err(e) => {
+                    tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                }
             }
         }
     }
@@ -865,6 +867,9 @@ mod requires_stop_tests {
 
     struct StopDriver {
         stopped: AtomicUsize,
+        after_stop: bool,
+        prepare_calls: AtomicUsize,
+        live_barrier: bool,
     }
 
     #[async_trait::async_trait]
@@ -897,12 +902,20 @@ mod requires_stop_tests {
         ) -> game_driver_api::Result<GameHealth> {
             Ok(GameHealth::Healthy)
         }
+        fn snapshot_after_stop(&self) -> bool {
+            self.after_stop
+        }
         async fn prepare_snapshot(
             &self,
             _c: &DriverContext<'_>,
             _p: &dyn ProcessHandle,
         ) -> game_driver_api::Result<SnapshotBarrier> {
-            Ok(SnapshotBarrier::RequiresStop)
+            self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(if self.live_barrier {
+                SnapshotBarrier::Live
+            } else {
+                SnapshotBarrier::RequiresStop
+            })
         }
         async fn resume_after_snapshot(
             &self,
@@ -928,6 +941,7 @@ mod requires_stop_tests {
     struct FakeProc {
         tx: broadcast::Sender<OutputLine>,
         exited: AtomicBool,
+        exit_status: ExitStatus,
     }
 
     #[async_trait::async_trait]
@@ -951,10 +965,7 @@ mod requires_stop_tests {
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            Ok(ExitStatus {
-                code: Some(0),
-                signal: None,
-            })
+            Ok(self.exit_status.clone())
         }
         async fn terminate(&self) -> executor_api::Result<()> {
             self.exited.store(true, Ordering::SeqCst);
@@ -1058,6 +1069,10 @@ mod requires_stop_tests {
         let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
             tx,
             exited: AtomicBool::new(false),
+            exit_status: ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
         });
         ctl.set_proc(proc.clone());
         let server_dir = tmp.path().join("servers").join("srv_t");
@@ -1078,9 +1093,13 @@ mod requires_stop_tests {
         };
         let driver = StopDriver {
             stopped: AtomicUsize::new(0),
+            after_stop: false,
+            prepare_calls: AtomicUsize::new(0),
+            live_barrier: false,
         };
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
         assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
+        assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
         // the save written at exit must be in the store's snapshot
         let snaps = agent.store.list_snapshots().unwrap();
         assert_eq!(snaps.len(), 1, "expected one final snapshot");
@@ -1090,5 +1109,123 @@ mod requires_stop_tests {
             files.iter().any(|p| p == "saves/world.txt"),
             "manifest missing exit-time save: {files:?}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_after_stop_skips_barrier_and_captures_exit_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = test_agent(stub_cp().await, tmp.path());
+        let ctl = test_ctl();
+        let (tx, _rx) = broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+            tx,
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
+        });
+        ctl.set_proc(proc.clone());
+        let server_dir = tmp.path().join("servers").join("srv_t");
+        let deployment_dir = tmp.path().join("deployments").join("dep_t");
+        std::fs::create_dir_all(&server_dir).unwrap();
+        std::fs::create_dir_all(&deployment_dir).unwrap();
+        let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+        let config = serde_json::json!({});
+        let bindings: Vec<PortBinding> = vec![];
+        let ctx = DriverContext {
+            server_dir: &server_dir,
+            deployment_dir: &deployment_dir,
+            runtimes: &*agent.runtimes,
+            deployment: &deployment,
+            config: &config,
+            ports: &bindings,
+            memory_mb: 0,
+        };
+        let driver = StopDriver {
+            stopped: AtomicUsize::new(0),
+            after_stop: true,
+            prepare_calls: AtomicUsize::new(0),
+            live_barrier: true,
+        };
+        graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
+        assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
+        assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 0);
+
+        let snaps = agent.store.list_snapshots().unwrap();
+        assert_eq!(snaps.len(), 1, "expected one final snapshot");
+        let manifest = agent.store.manifest(&snaps[0]).unwrap();
+        let files: Vec<String> = manifest
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        assert!(
+            files.iter().any(|path| path == "saves/world.txt"),
+            "manifest missing exit-time save: {files:?}"
+        );
+        let restored = tmp.path().join("restored");
+        agent
+            .store
+            .restore(
+                &snaps[0],
+                &restored,
+                &[snapshot_store::PathPattern::new("saves/")],
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(restored.join("saves/world.txt")).unwrap(),
+            b"final"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_stop_snapshot_skips_non_clean_exit() {
+        for exit_status in [
+            ExitStatus {
+                code: Some(1),
+                signal: None,
+            },
+            ExitStatus {
+                code: None,
+                signal: Some(9),
+            },
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let agent = test_agent(stub_cp().await, tmp.path());
+            let ctl = test_ctl();
+            let (tx, _rx) = broadcast::channel(8);
+            let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+                tx,
+                exited: AtomicBool::new(false),
+                exit_status,
+            });
+            ctl.set_proc(proc.clone());
+            let server_dir = tmp.path().join("servers").join("srv_t");
+            let deployment_dir = tmp.path().join("deployments").join("dep_t");
+            std::fs::create_dir_all(&server_dir).unwrap();
+            std::fs::create_dir_all(&deployment_dir).unwrap();
+            let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+            let config = serde_json::json!({});
+            let bindings: Vec<PortBinding> = vec![];
+            let ctx = DriverContext {
+                server_dir: &server_dir,
+                deployment_dir: &deployment_dir,
+                runtimes: &*agent.runtimes,
+                deployment: &deployment,
+                config: &config,
+                ports: &bindings,
+                memory_mb: 0,
+            };
+            let driver = StopDriver {
+                stopped: AtomicUsize::new(0),
+                after_stop: true,
+                prepare_calls: AtomicUsize::new(0),
+                live_barrier: true,
+            };
+            graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
+            assert!(agent.store.list_snapshots().unwrap().is_empty());
+            assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 0);
+        }
     }
 }
