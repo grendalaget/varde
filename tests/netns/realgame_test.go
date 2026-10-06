@@ -134,8 +134,8 @@ type gameEnv struct {
 	cpArgs  []string
 	cpLogs  []*proc
 
-	serverIDs []string
-	runtimeSeed string
+	serverIDs     []string
+	runtimeSeed   string
 	runtimeSeeded map[string]bool
 }
 
@@ -186,6 +186,7 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 			if t.Failed() {
 				return
 			}
+			e.logRuntimeDownloadLines()
 			if err := e.saveRuntimeCaches(); err != nil {
 				t.Errorf("save runtime caches to %s: %v", e.runtimeSeed, err)
 			}
@@ -421,6 +422,19 @@ func copyRuntimeDir(src, dst string) error {
 		return fmt.Errorf("cp -a %s %s: %w: %s", src, dst, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (e *gameEnv) logRuntimeDownloadLines() {
+	for name, nd := range e.nodes {
+		if nd.proc == nil {
+			continue
+		}
+		for _, line := range strings.Split(nd.proc.buf.String(), "\n") {
+			if strings.Contains(line, "runtime download") {
+				e.t.Logf("agent %s: %s", name, line)
+			}
+		}
+	}
 }
 
 func (e *gameEnv) seedRuntimeCaches(dataDir string) error {
