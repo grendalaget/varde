@@ -134,9 +134,10 @@ type gameEnv struct {
 	cpArgs  []string
 	cpLogs  []*proc
 
-	serverIDs     []string
-	runtimeSeed   string
-	runtimeSeeded map[string]bool
+	serverIDs      []string
+	runtimeSeed    string
+	runtimeSeeded  map[string]bool
+	agentProcesses []agentProcessLog
 }
 
 type cpOpts struct {
@@ -367,6 +368,12 @@ func (e *gameEnv) startAgent(name string) {
 		[]string{"VARDE_MESH_LOG_LEVEL=debug"},
 		rustBin("varde-agent"), "run",
 		"--data-dir", nd.dataDir, "--mesh-bin", bin("varde-mesh"))
+	e.agentProcesses = append(e.agentProcesses, agentProcessLog{node: name, proc: nd.proc})
+}
+
+type agentProcessLog struct {
+	node string
+	proc *proc
 }
 
 type runtimeCacheDir struct {
@@ -425,13 +432,13 @@ func copyRuntimeDir(src, dst string) error {
 }
 
 func (e *gameEnv) logRuntimeDownloadLines() {
-	for name, nd := range e.nodes {
-		if nd.proc == nil {
+	for _, agent := range e.agentProcesses {
+		if agent.proc == nil {
 			continue
 		}
-		for _, line := range strings.Split(nd.proc.buf.String(), "\n") {
+		for _, line := range strings.Split(agent.proc.buf.String(), "\n") {
 			if strings.Contains(line, "runtime download") {
-				e.t.Logf("agent %s: %s", name, line)
+				e.t.Logf("agent %s: %s", agent.node, line)
 			}
 		}
 	}
