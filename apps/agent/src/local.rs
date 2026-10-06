@@ -355,6 +355,7 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
                     .copied()
                     .unwrap_or(0),
             ),
+            latest_save_at_unix_ms: cp.to_local_ms(c.latest_save_ms()),
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));
