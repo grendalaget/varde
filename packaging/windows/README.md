@@ -6,6 +6,9 @@
   (`apps/desktop`) into `Program Files\Varde`, plus a Start menu entry
   for the tray
 - uses `varde.ico` for setup and uninstall and installs it with the binaries
+- shows the brand art in the wizard: `wizard/wizard-*.bmp` (mark + wordmark on
+  Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
+  each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
 - asks for the Varde address (prefilled `https://varde.games`; checked with
   `GET /v1/version`, warning only; plain `http://` other than loopback
   needs an extra confirmation) and writes it to `%ProgramData%\Varde\server.url`,

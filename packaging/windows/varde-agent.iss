@@ -3,7 +3,7 @@
 ; Varde address, starts the service and opens the tray's link window.
 ;
 ;   iscc /DVersion=0.1.0 varde-agent.iss
-; Expects alongside this script: varde.ico, dist\varde-agent.exe,
+; Expects alongside this script: varde.ico, wizard\*.bmp, dist\varde-agent.exe,
 ; dist\varde-mesh.exe, dist\varde-tray.exe, dist\MicrosoftEdgeWebview2Setup.exe
 ;
 ; Silent: VardeSetup.exe /VERYSILENT /CPURL=https://cp.example [/TASKS=autostart]
@@ -30,6 +30,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=varde.ico
+; brand art per DPI (100/125/150/200/250%); Setup picks the closest
+WizardImageFile=wizard\wizard-100.bmp,wizard\wizard-125.bmp,wizard\wizard-150.bmp,wizard\wizard-200.bmp,wizard\wizard-250.bmp
+WizardSmallImageFile=wizard\wizard-small-100.bmp,wizard\wizard-small-125.bmp,wizard\wizard-small-150.bmp,wizard\wizard-small-200.bmp,wizard\wizard-small-250.bmp
 UninstallDisplayIcon={app}\varde.ico
 CloseApplications=force
 
