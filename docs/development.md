@@ -97,3 +97,19 @@ with DNAT — an endpoint-independent NAT. A restricted-cone (reply-only)
 map can't be modelled on a shared port pair because an unsolicited inbound
 punch creates a conntrack entry that collides with the outbound flow's
 reply tuple and starves it (`conntrack_confirm` fails).
+
+## Real-game network-namespace e2e
+
+`make e2e-minecraft` and `make e2e-valheim` run real server processes through
+the same network-namespace topology. Both require Linux and passwordless sudo.
+The Minecraft target also installs its bot dependencies and needs Node.js.
+
+The Valheim target runs failover and Crossplay scenarios and uses SteamCMD to
+install or validate the server. Set `VARDE_VALHEIM_SEED_DIR` to an existing
+server installation to copy it into each test node's deployment before startup,
+so SteamCMD can reuse the files instead of downloading the full server again.
+For example:
+
+```sh
+VARDE_VALHEIM_SEED_DIR=/path/to/deployment/server make e2e-valheim
+```
