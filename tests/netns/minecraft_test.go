@@ -81,8 +81,7 @@ func (e *gameEnv) seedMinecraftOps(serverID string) {
 	e.t.Helper()
 	ops := fmt.Sprintf(`[{"uuid":"%s","name":"varde_tester","level":4,"bypassesPlayerLimit":false}]`,
 		offlineMinecraftUUID("varde_tester"))
-	for _, name := range mcNodeNames {
-		nd := e.nodes[name]
+	for name, nd := range e.nodes {
 		serverDir := filepath.Join(nd.dataDir, "servers", serverID)
 		nsExec(e.t, name, "mkdir", "-p", serverDir)
 		if err := os.WriteFile(filepath.Join(serverDir, "ops.json"), []byte(ops+"\n"), 0o644); err != nil {
