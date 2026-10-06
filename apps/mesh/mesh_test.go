@@ -705,4 +705,23 @@ func TestWatchEventsEmitsPathChanges(t *testing.T) {
 	}
 }
 
+// Regression: retryDirectLoop evaluated p.current().Context() each select
+// iteration, so a nil conn (peer not yet connected, or relayed conn torn
+// down) panicked instead of returning.
+func TestRetryDirectLoopWithoutConn(t *testing.T) {
+	n := NewNode(testLog(), testTimings, nil)
+	t.Cleanup(func() { n.Close() })
+	p := &peerState{n: n, id: "node_b", stopCh: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.retryDirectLoop()
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("retryDirectLoop did not return within 1s")
+	}
+}
+
 var _ = atomic.Bool{}

@@ -333,13 +333,19 @@ func (p *peerState) retryDirectLoop() {
 	if p.n.isForceRelay() {
 		return
 	}
+	// Watch only the conn this loop started with: when it dies the loop exits
+	// and manage() re-runs establish, which restarts the loop for any new conn.
+	c := p.current()
+	if c == nil {
+		return
+	}
 	t := time.NewTicker(p.n.timings.RelayedRetryDirect)
 	defer t.Stop()
 	for {
 		select {
 		case <-p.stopCh:
 			return
-		case <-p.current().Context().Done():
+		case <-c.Context().Done():
 			return
 		case <-t.C:
 			if !p.kindIs(meshv1.PathKind_PATH_KIND_RELAYED) {
