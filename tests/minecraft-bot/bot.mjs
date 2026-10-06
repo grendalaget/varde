@@ -6,8 +6,10 @@
 //     --user varde_tester --col N --nonce HEX8 [--ref x,y,z]
 //   node bot.mjs read  --host H --port 25565 --version 1.21.4 \
 //     --user varde_tester --col N --ref x,y,z
+//   node bot.mjs hold  --host H --port 25565 --version 1.21.4 \
+//     --user varde_tester --seconds N
 //
-// One JSON line on stdout, exit 0 on success, non-zero on failure.
+// JSON events on stdout, exit 0 on success, non-zero on failure.
 
 import mineflayer from 'mineflayer'
 import { Vec3 } from 'vec3'
@@ -31,11 +33,13 @@ function die(msg, code = 1) {
 
 const args = parseArgs(process.argv)
 const mode = args._
-if (mode !== 'write' && mode !== 'read') die('usage: bot.mjs write|read --host H --port P --version V --user U --col N [--nonce HEX8] [--ref x,y,z]')
+if (mode !== 'write' && mode !== 'read' && mode !== 'hold') die('usage: bot.mjs write|read|hold --host H --port P --version V --user U --col N [--nonce HEX8] [--ref x,y,z]')
 const host = args.host, port = Number(args.port ?? 25565)
 const col = Number(args.col ?? 0)
 let nonce = (args.nonce ?? '').toLowerCase()
 if (mode === 'write' && !/^[0-9a-f]{8}$/.test(nonce)) die('--nonce must be 8 hex digits')
+const holdSeconds = Number(args.seconds ?? 0)
+if (mode === 'hold' && (!Number.isInteger(holdSeconds) || holdSeconds < 1)) die('--seconds must be a positive integer')
 
 const bot = mineflayer.createBot({
   host, port,
@@ -48,11 +52,36 @@ const hardTimeout = setTimeout(() => {
   console.error('bot: hard timeout')
   try { bot.quit() } catch {}
   process.exit(1)
-}, 60_000)
+}, mode === 'hold' ? holdSeconds * 1000 + 90_000 : 60_000)
 
 let errored = false
-bot.once('error', (e) => { errored = true; console.error('bot error:', e.message ?? e); process.exitCode = 1 })
-bot.once('kicked', (r) => { console.error('kicked:', r); process.exitCode = 1 })
+let holdDisconnect
+let holdDisconnectedByServer = false
+let holdFinished = false
+bot.once('error', (e) => {
+  console.error('bot error:', e.message ?? e)
+  if (mode === 'hold' && (holdDisconnect || holdFinished || holdDisconnectedByServer)) {
+    holdDisconnect?.(`error: ${e.message ?? e}`)
+    return
+  }
+  errored = true
+  process.exitCode = 1
+})
+bot.once('kicked', (r) => {
+  if (mode === 'hold') {
+    holdDisconnectedByServer = true
+    holdDisconnect?.(typeof r === 'string' ? r : JSON.stringify(r ?? 'kicked'))
+    return
+  }
+  console.error('kicked:', r)
+  process.exitCode = 1
+})
+bot.once('end', (r) => {
+  if (mode === 'hold') {
+    holdDisconnectedByServer = true
+    holdDisconnect?.(typeof r === 'string' ? r : JSON.stringify(r ?? 'disconnected'))
+  }
+})
 
 function parseRef(s, bot) {
   if (s) {
@@ -126,6 +155,22 @@ async function main() {
       await sleep(100)
     }
     console.log(JSON.stringify({ ok: true, ref: `${ref.x},${ref.y},${ref.z}` }))
+  } else if (mode === 'hold') {
+    console.log(JSON.stringify({ connected: true }))
+    await new Promise((resolve) => {
+      let finished = false
+      let timer
+      holdDisconnect = (reason) => {
+        if (finished) return
+        finished = true
+        holdFinished = true
+        clearTimeout(timer)
+        holdDisconnect = undefined
+        console.log(JSON.stringify({ disconnected: true, reason: String(reason ?? 'disconnected') }))
+        resolve()
+      }
+      timer = setTimeout(() => holdDisconnect(`timeout after ${holdSeconds}s`), holdSeconds * 1000)
+    })
   } else {
     // find the contiguous 8-wool run near the anchor height (the column
     // base is the column-local ground, which can differ from the anchor)
@@ -149,7 +194,7 @@ async function main() {
     }
   }
   clearTimeout(hardTimeout)
-  bot.quit()
+  if (!(mode === 'hold' && holdDisconnectedByServer)) bot.quit()
   setTimeout(() => process.exit(errored ? 1 : 0), 300)
 }
 

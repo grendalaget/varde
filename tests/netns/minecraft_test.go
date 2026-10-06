@@ -11,6 +11,8 @@
 package netns
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
@@ -167,6 +169,80 @@ func (e *gameEnv) botRead(ns, addr string, col int, ref string) (nonce string, b
 	return m["nonce"].(string), nil, true
 }
 
+type minecraftBotHold struct {
+	cmd    *exec.Cmd
+	events <-chan string
+	done   <-chan struct{}
+	stderr *bytes.Buffer
+}
+
+func (e *gameEnv) startBotHold(ns, addr string, seconds int) *minecraftBotHold {
+	e.t.Helper()
+	botScript := filepath.Join(repoRoot, "tests", "minecraft-bot", "bot.mjs")
+	args := e.botArgs("hold", addr, 0)
+	args = append(args, "--seconds", fmt.Sprint(seconds))
+	full := append([]string{"netns", "exec", ns, "env", "HOME=/root", nodePath(e.t), botScript}, args...)
+	cmd := exec.Command(toolPath()["ip"], full...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		e.t.Fatalf("hold bot stdout pipe: %v", err)
+	}
+	stderr := &bytes.Buffer{}
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		e.t.Fatalf("start hold bot: %v", err)
+	}
+	events := make(chan string, 4)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer close(events)
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			events <- scanner.Text()
+		}
+	}()
+	e.t.Cleanup(func() {
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	return &minecraftBotHold{cmd: cmd, events: events, done: done, stderr: stderr}
+}
+
+func (b *minecraftBotHold) nextEvent(t *testing.T, d time.Duration) map[string]any {
+	t.Helper()
+	select {
+	case line, ok := <-b.events:
+		if !ok {
+			<-b.done
+			_ = b.cmd.Wait()
+			t.Fatalf("hold bot exited before emitting an event: %s", b.stderr.String())
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid hold bot event %q: %v", line, err)
+		}
+		return event
+	case <-time.After(d):
+		t.Fatalf("timed out waiting for hold bot event")
+		return nil
+	}
+}
+
+func (b *minecraftBotHold) wait(t *testing.T, d time.Duration) {
+	t.Helper()
+	select {
+	case <-b.done:
+	case <-time.After(d):
+		t.Fatalf("timed out waiting for hold bot exit")
+	}
+	if err := b.cmd.Wait(); err != nil {
+		t.Fatalf("hold bot exited with error: %v\n%s", err, b.stderr.String())
+	}
+}
+
 func randNonce(t *testing.T) string {
 	t.Helper()
 	var b [4]byte
@@ -176,17 +252,20 @@ func randNonce(t *testing.T) string {
 	return hex.EncodeToString(b[:])
 }
 
-// waitMinecraft waits until the server runs on wantHost and a bot read
-// succeeds via the stable address from the player namespace. First start
-// downloads the JRE + server jar, so the deadline is generous.
+// waitMinecraft waits for a successful bot read through the stable address.
+// If wantHost is non-empty, it also requires the server to run there.
 func (e *gameEnv) waitMinecraft(serverID, wantHost string, d time.Duration) string {
 	t := e.t
 	var addr, cur string
 	polls := 0
-	waitFor(t, d, fmt.Sprintf("minecraft up on %s", wantHost), func() bool {
+	what := "minecraft up"
+	if wantHost != "" {
+		what += " on " + wantHost
+	}
+	waitFor(t, d, what, func() bool {
 		cur = e.hostOf(serverID)
 		addr = e.svcAddr(serverID)
-		if addr == "" || (wantHost != "" && cur != e.nodes[wantHost].nodeID) {
+		if addr == "" || cur == "" || (wantHost != "" && cur != e.nodes[wantHost].nodeID) {
 			return false
 		}
 		_, _, ok := e.botRead("player", addr+":25565", 0, "")
@@ -784,5 +863,85 @@ func TestMinecraftRelayed(t *testing.T) {
 		t.Fatalf("col0 over relayed path: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
 	}
 	t.Logf("relayed player↔arne path preserved col0=%s", nonce)
+	wd.check(t)
+}
+
+func TestMinecraftMoveAndRestart(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("kari", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-move-restart", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+	e.setHosting("kari", true)
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	hold := e.startBotHold("player", svc, 90)
+	connected := hold.nextEvent(t, 45*time.Second)
+	if connected["connected"] != true {
+		t.Fatalf("hold bot did not report connected: %v", connected)
+	}
+
+	moveStarted := time.Now()
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/move", e.tok,
+		map[string]any{"target_node_id": e.nodes["kari"].nodeID}, 200)
+	disconnected := hold.nextEvent(t, 2*time.Minute)
+	if disconnected["disconnected"] != true {
+		t.Fatalf("hold bot did not report disconnected: %v", disconnected)
+	}
+	reason, _ := disconnected["reason"].(string)
+	if strings.HasPrefix(reason, "timeout after") {
+		t.Fatalf("hold bot timed out instead of disconnecting during move: %s", reason)
+	}
+	hold.wait(t, 10*time.Second)
+	t.Logf("hold bot disconnected: %s", reason)
+
+	svc = e.waitMinecraft(serverID, "kari", 6*time.Minute)
+	got, blocks, ok := e.botRead("player", svc, 0, ref)
+	if !ok || got != nonce {
+		t.Fatalf("col0 after move: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
+	}
+	t.Logf("move downtime (request to readable on kari): %s", time.Since(moveStarted))
+
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/stop", e.tok, map[string]any{}, 200)
+	waitFor(t, 2*time.Minute, "server stopped", func() bool {
+		status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+		if status != 200 {
+			return false
+		}
+		var server map[string]any
+		if json.Unmarshal(body, &server) != nil {
+			return false
+		}
+		return server["observed_state"] == "stopped" && e.hostOf(serverID) == ""
+	})
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc = e.waitMinecraft(serverID, "", 6*time.Minute)
+
+	got, blocks, ok = e.botRead("player", svc, 0, ref)
+	if !ok || got != nonce {
+		t.Fatalf("col0 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
+	}
+	nextNonce := randNonce(t)
+	nextRef := e.botWrite("player", svc, 1, nextNonce, ref)
+	got, blocks, ok = e.botRead("player", svc, 1, nextRef)
+	if !ok || got != nextNonce {
+		t.Fatalf("col1 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nextNonce)
+	}
 	wd.check(t)
 }
