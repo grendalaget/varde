@@ -439,6 +439,7 @@ mod tests {
         }];
         let dep = DeploymentSpec::parse(&serde_json::json!({}));
         let ctx = DriverContext {
+            server_id: "minecraft-test",
             server_dir: &server_dir,
             deployment_dir: &dep_dir,
             runtimes: &rt,

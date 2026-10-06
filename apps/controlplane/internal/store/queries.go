@@ -530,6 +530,48 @@ func (s *Store) GetExecution(ctx context.Context, id string) (*Execution, error)
 	return &e, err
 }
 
+func (s *Store) SetExecutionJoinCode(ctx context.Context, tx *sqlx.Tx, executionID, joinCode string, now int64) (bool, error) {
+	var current sql.NullString
+	err := tx.GetContext(ctx, &current, s.Rebind(
+		`SELECT join_code FROM execution_info WHERE execution_id=?`), executionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if joinCode == "" {
+		if err != nil || !current.Valid || current.String == "" {
+			return false, nil
+		}
+		_, err = tx.ExecContext(ctx, s.Rebind(
+			`UPDATE execution_info SET join_code=NULL,updated_at=? WHERE execution_id=?`),
+			now, executionID)
+		return false, err
+	}
+	if err == nil && current.Valid && current.String == joinCode {
+		return false, nil
+	}
+	_, err = tx.ExecContext(ctx, s.Rebind(
+		`INSERT INTO execution_info (execution_id,join_code,updated_at) VALUES (?,?,?)
+		 ON CONFLICT(execution_id) DO UPDATE SET join_code=excluded.join_code,updated_at=excluded.updated_at`),
+		executionID, joinCode, now)
+	return err == nil, err
+}
+
+func (s *Store) ExecutionJoinCode(ctx context.Context, executionID string) (*string, error) {
+	var code sql.NullString
+	err := s.q().GetContext(ctx, &code, s.Rebind(
+		`SELECT join_code FROM execution_info WHERE execution_id=?`), executionID)
+	if err != nil {
+		return nil, err
+	}
+	if !code.Valid {
+		return nil, nil
+	}
+	if code.String == "" {
+		return nil, nil
+	}
+	return &code.String, nil
+}
+
 func (s *Store) ActiveExecution(ctx context.Context, serverID string) (*Execution, error) {
 	var e Execution
 	err := s.q().GetContext(ctx, &e, s.Rebind(

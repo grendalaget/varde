@@ -61,6 +61,7 @@ pub struct ExecCtl {
     phase: Mutex<Phase>,
     health: Mutex<String>,
     message: Mutex<String>,
+    join_code: Mutex<Option<String>>,
     /// fencing deadline; refreshed each heartbeat
     pub deadline: Mutex<Option<Instant>>,
     fenced: AtomicBool,
@@ -84,6 +85,7 @@ impl ExecCtl {
             phase: Mutex::new(Phase::Preparing),
             health: Mutex::new("unknown".into()),
             message: Mutex::new(String::new()),
+            join_code: Mutex::new(None),
             deadline: Mutex::new(None),
             fenced: AtomicBool::new(false),
             stop: tx,
@@ -113,6 +115,20 @@ impl ExecCtl {
     }
     pub fn set_message(&self, m: &str) {
         *self.message.lock().unwrap() = m.to_string();
+    }
+    pub fn join_code(&self) -> Option<String> {
+        self.join_code.lock().unwrap().clone()
+    }
+    pub fn clear_join_code(&self) {
+        *self.join_code.lock().unwrap() = None;
+    }
+    fn set_join_code(&self, code: String) -> bool {
+        let mut current = self.join_code.lock().unwrap();
+        if current.as_ref() == Some(&code) {
+            return false;
+        }
+        *current = Some(code);
+        true
     }
     pub fn is_fenced(&self) -> bool {
         self.fenced.load(Ordering::SeqCst)
@@ -182,6 +198,7 @@ pub async fn report(agent: &Agent, ctl: &ExecCtl) {
         state: ctl.phase().as_str().into(),
         health: Some(ctl.health()),
         message: Some(ctl.message()),
+        join_code: Some(ctl.join_code().unwrap_or_default()),
     };
     let path = format!("/v1/agent/executions/{}/status", ctl.dir.execution_id);
     if let Err(e) = agent
@@ -244,6 +261,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let bindings = alloc_port_block(&driver.ports(&config))?;
     *ctl.port_bindings.lock().unwrap() = bindings.clone();
     let ctx = DriverContext {
+        server_id: &dir.server_id,
         server_dir: &server_dir,
         deployment_dir: &deployment_dir,
         runtimes: &*agent.runtimes,
@@ -311,12 +329,14 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         ctl.set_phase(Phase::Starting);
         report(&agent, &ctl).await;
         let spec = driver.process_spec(&ctx).map_err(dyn_err)?;
+        ctl.clear_join_code();
         let proc = agent.executor.spawn(&spec).await.map_err(dyn_err)?;
         let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
         tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
         ctl.set_pgid(proc.pid());
         ctl.set_proc(proc.clone());
         agent.note_exec_pgid(&dir.execution_id, proc.pid());
+        spawn_join_code_watcher(&agent, &ctl, proc.clone(), game_id.clone());
         spawn_log_pump(&agent, &ctl, proc.clone());
 
         // watch the process while probing so an early crash restarts now
@@ -756,6 +776,30 @@ fn spawn_log_pump(agent: &Arc<Agent>, ctl: &Arc<ExecCtl>, proc: Arc<dyn ProcessH
     });
 }
 
+fn spawn_join_code_watcher(
+    agent: &Arc<Agent>,
+    ctl: &Arc<ExecCtl>,
+    proc: Arc<dyn ProcessHandle>,
+    game_id: String,
+) {
+    let mut rx = proc.output();
+    let agent = agent.clone();
+    let ctl = ctl.clone();
+    tokio::spawn(async move {
+        while let Ok(line) = rx.recv().await {
+            let code = agent
+                .drivers
+                .get(&game_id)
+                .and_then(|driver| driver.join_code_from_log(&line.line));
+            if let Some(code) = code {
+                if ctl.set_join_code(code) {
+                    report(&agent, &ctl).await;
+                }
+            }
+        }
+    });
+}
+
 async fn flush_logs(agent: &Agent, exec_id: &str, batch: &mut Vec<cp_api::LogLine>) {
     let body = cp_api::LogBatch {
         lines: std::mem::take(batch),
@@ -886,6 +930,11 @@ mod requires_stop_tests {
         fn validate(&self, _c: &serde_json::Value) -> game_driver_api::Result<()> {
             Ok(())
         }
+        fn join_code_from_log(&self, line: &str) -> Option<String> {
+            let code = line.strip_prefix("join code ")?;
+            (!code.is_empty() && code.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| code.to_string())
+        }
         async fn prepare(&self, _c: &DriverContext<'_>) -> game_driver_api::Result<()> {
             Ok(())
         }
@@ -1009,7 +1058,7 @@ mod requires_stop_tests {
     fn test_agent(cp: String, tmp: &Path) -> Agent {
         Agent {
             cfg: crate::config::Config {
-                control_plane_url: cp,
+                control_plane_url: cp.clone(),
                 node_id: "node_t".into(),
                 group_id: "grp_t".into(),
                 control_plane_public_key: String::new(),
@@ -1025,7 +1074,7 @@ mod requires_stop_tests {
             data_dir: tmp.to_path_buf(),
             key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
             key_path: tmp.join("key.pem"),
-            cp: cp_api::CpClient::new("http://127.0.0.1:1").unwrap(),
+            cp: cp_api::CpClient::new(&cp).unwrap(),
             store: Arc::new(Store::open(tmp.join("store")).unwrap()),
             drivers: game_driver_api::DriverRegistry::new(),
             runtimes: Arc::new(runtimes::HttpRuntimes::new(tmp.join("runtimes"))),
@@ -1061,6 +1110,55 @@ mod requires_stop_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn join_code_watcher_updates_execution_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        agent.drivers.register(Box::new(StopDriver {
+            stopped: AtomicUsize::new(0),
+            after_stop: false,
+            prepare_calls: AtomicUsize::new(0),
+            live_barrier: true,
+        }));
+        let agent = Arc::new(agent);
+        let ctl = test_ctl();
+        agent
+            .execs
+            .lock()
+            .unwrap()
+            .insert(ctl.dir.execution_id.clone(), ctl.clone());
+        let (tx, _rx) = broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+            tx: tx.clone(),
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
+        });
+        spawn_join_code_watcher(&agent, &ctl, proc, "stopgame".into());
+        tx.send(OutputLine {
+            at_unix_ms: 1,
+            stream: OutputStream::Stdout,
+            line: Arc::from("join code 124841"),
+        })
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while ctl.join_code().as_deref() != Some("124841") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("join-code watcher did not update the execution");
+        assert_eq!(ctl.join_code().as_deref(), Some("124841"));
+        assert_eq!(agent.exec_reports()[0].join_code.as_deref(), Some("124841"));
+        ctl.clear_join_code();
+        assert_eq!(ctl.join_code(), None);
+        assert!(ctl.set_join_code("589208".into()));
+        assert_eq!(ctl.join_code().as_deref(), Some("589208"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn requires_stop_snapshots_files_written_at_exit() {
         let tmp = tempfile::tempdir().unwrap();
         let agent = test_agent(stub_cp().await, tmp.path());
@@ -1083,6 +1181,7 @@ mod requires_stop_tests {
         let config = serde_json::json!({});
         let bindings: Vec<PortBinding> = vec![];
         let ctx = DriverContext {
+            server_id: "srv_t",
             server_dir: &server_dir,
             deployment_dir: &deployment_dir,
             runtimes: &*agent.runtimes,
@@ -1134,6 +1233,7 @@ mod requires_stop_tests {
         let config = serde_json::json!({});
         let bindings: Vec<PortBinding> = vec![];
         let ctx = DriverContext {
+            server_id: "srv_t",
             server_dir: &server_dir,
             deployment_dir: &deployment_dir,
             runtimes: &*agent.runtimes,
@@ -1209,6 +1309,7 @@ mod requires_stop_tests {
             let config = serde_json::json!({});
             let bindings: Vec<PortBinding> = vec![];
             let ctx = DriverContext {
+                server_id: "srv_t",
                 server_dir: &server_dir,
                 deployment_dir: &deployment_dir,
                 runtimes: &*agent.runtimes,

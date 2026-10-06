@@ -182,6 +182,7 @@ mod tests {
         }];
         let dep = DeploymentSpec::parse(&serde_json::json!({}));
         let ctx = DriverContext {
+            server_id: "testgame-test",
             server_dir: tmp.path(),
             deployment_dir: tmp.path(),
             runtimes: &rt,

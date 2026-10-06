@@ -40,3 +40,16 @@ the final snapshot is skipped.
 
 The Windows stop signal behavior remains unchanged; whether CTRL_BREAK
 triggers a complete save before exit still needs separate validation.
+
+### Crossplay
+
+Set `crossplay` to `true` to start Valheim with `-crossplay` and a
+server-specific `-instanceid`. Players join through Valheim's **Join game →
+Join by code** flow instead of using the Varde address. Varde displays the
+current join code on the server detail and list pages; it is read from the
+Valheim server log and is updated as soon as the agent sees it.
+
+Valheim printed a six-digit join code about two seconds after `Game server connected`, after an initial empty-code line. Across restarts with the same instance ID, port, server name and save directory, the code changed once (124841 → 589208) and stayed the same once (776580 on two quick restarts). Treat the code as able to change on any restart or move; Varde republishes whatever code the agent last saw.
+
+Console clients have not been tested; manual PS5 and Xbox validation is still
+needed.

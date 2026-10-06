@@ -925,6 +925,7 @@ export interface components {
             only_on_one_machine?: boolean;
             /** @example 127.77.12.34:25565 */
             address?: string;
+            join_code?: string | null;
         };
         Server: {
             id: string;
@@ -1075,6 +1076,7 @@ export interface components {
             health?: string;
             message?: string;
             player_count?: number | null;
+            join_code?: string;
         };
         AgentHeartbeat: {
             agent_version?: string;
@@ -2607,6 +2609,7 @@ export interface operations {
                     state: components["schemas"]["ExecutionState"];
                     health?: string;
                     message?: string;
+                    join_code?: string;
                 };
             };
         };

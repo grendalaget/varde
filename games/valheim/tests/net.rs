@@ -1,7 +1,8 @@
 //! Gated integration test (VARDE_NET_TESTS=1 and VARDE_VALHEIM_TEST=1):
 //! installs the dedicated server through steamcmd (~1-2 GB) and starts it
 //! until the log reports "Game server connected". VARDE_VALHEIM_ARTIFACTS
-//! can retain the installation and saves for inspection.
+//! can retain/reuse the installation and saves for inspection. With
+//! VARDE_VALHEIM_CROSSPLAY=1 it waits for and reports a join code.
 
 #![cfg(target_os = "linux")]
 
@@ -31,14 +32,19 @@ async fn real_valheim_install_and_start() {
     std::fs::create_dir_all(&server_dir).unwrap();
     std::fs::create_dir_all(&dep_dir).unwrap();
     let rt = runtimes::HttpRuntimes::new(root.join("runtimes"));
+    let crossplay = std::env::var("VARDE_VALHEIM_CROSSPLAY")
+        .map(|value| value == "1")
+        .unwrap_or(false);
     let cfg = serde_json::json!({
         "server_name": "Varde Test", "world_name": "Varde Test",
         "password": "hunter22", "modifiers": "hard", "save_interval_s": 60,
+        "crossplay": crossplay,
     });
     let d = ValheimDriver::new();
     d.validate(&cfg).unwrap();
     let bindings = vec![];
     let ctx = DriverContext {
+        server_id: "valheim-crossplay-test",
         server_dir: &server_dir,
         deployment_dir: &dep_dir,
         runtimes: &rt,
@@ -111,6 +117,49 @@ async fn real_valheim_install_and_start() {
         .map(|line| line.at_unix_ms)
         .unwrap_or_else(now_ms);
     println!("server reported Game server connected at {connected_ms}");
+    if crossplay {
+        if let Some(line) = proc
+            .output_tail(200)
+            .iter()
+            .find(|line| line.at_unix_ms == connected_ms)
+        {
+            println!("VALHEIM LOG [{}] {}", line.at_unix_ms, line.line);
+        }
+        let join_deadline = Instant::now() + Duration::from_secs(180);
+        let mut join_code = None;
+        while Instant::now() < join_deadline && join_code.is_none() {
+            for line in proc.output_tail(1000).iter() {
+                if line.at_unix_ms < connected_ms {
+                    continue;
+                }
+                if let Some(code) = d.join_code_from_log(&line.line) {
+                    if code.len() == 6 && code.bytes().all(|byte| byte.is_ascii_digit()) {
+                        join_code = Some((code, line.at_unix_ms, line.line.to_string()));
+                        break;
+                    }
+                }
+            }
+            if join_code.is_none() {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        let Some((code, at, line)) = join_code else {
+            let _ = d.graceful_stop(&ctx, &*proc).await;
+            let _ = tokio::time::timeout(Duration::from_secs(120), proc.wait()).await;
+            panic!("no six-digit crossplay join code within 180 seconds");
+        };
+        println!("CROSSPLAY JOIN CODE LOG [{at}] {line}");
+        println!("crossplay join code: {code}");
+        d.graceful_stop(&ctx, &*proc).await.unwrap();
+        let exit = tokio::time::timeout(Duration::from_secs(120), proc.wait())
+            .await
+            .expect("Valheim did not exit after SIGINT")
+            .expect("waiting for Valheim exit failed");
+        println!("SIGINT exit status: {exit:?}");
+        assert_eq!(exit.code, Some(0), "Valheim did not exit with status 0");
+        assert_eq!(exit.signal, None, "Valheim was signaled instead of exiting");
+        return;
+    }
     let save_deadline = Instant::now() + Duration::from_secs(120);
     let mut first_save = None;
     while Instant::now() < save_deadline {

@@ -124,6 +124,7 @@ pub trait RuntimeProvider: Send + Sync {
 }
 
 pub struct DriverContext<'a> {
+    pub server_id: &'a str,
     pub server_dir: &'a Path,
     pub deployment_dir: &'a Path,
     pub runtimes: &'a dyn RuntimeProvider,
@@ -172,6 +173,9 @@ pub trait GameDriver: Send + Sync {
     /// final snapshot is taken from disk after the process has exited.
     fn snapshot_after_stop(&self) -> bool {
         false
+    }
+    fn join_code_from_log(&self, _line: &str) -> Option<String> {
+        None
     }
     async fn resume_after_snapshot(
         &self,

@@ -39,6 +39,7 @@ async fn real_minecraft_end_to_end() {
     d.validate(&cfg).unwrap();
     let bindings = vec![];
     let ctx = DriverContext {
+        server_id: "minecraft-net-test",
         server_dir: &server_dir,
         deployment_dir: &dep_dir,
         runtimes: &rt,

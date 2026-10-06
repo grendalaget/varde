@@ -15,7 +15,7 @@ import { Link, navigate } from "../lib/router";
 import { useSession } from "../lib/session";
 import SaveSafety from "../components/SaveSafety";
 import { HostMarker, ServerMark } from "../components/Logo";
-import { useGames } from "../lib/games";
+import { isCrossplayEnabled, useGames } from "../lib/games";
 
 export default function Servers() {
   const { group } = useSession();
@@ -63,14 +63,27 @@ export default function Servers() {
       )}
       <div className="grid gap-4 md:grid-cols-2">
         {servers.map((s) => (
-          <ServerCard key={s.id} s={s} gameName={games.name(s.game_id)} />
+          <ServerCard
+            key={s.id}
+            s={s}
+            gameName={games.name(s.game_id)}
+            crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+          />
         ))}
       </div>
     </>
   );
 }
 
-function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
+function ServerCard({
+  s,
+  gameName,
+  crossplay,
+}: {
+  s: Server;
+  gameName: string;
+  crossplay: boolean;
+}) {
   const sum = s.summary;
   return (
     <Link
@@ -98,15 +111,34 @@ function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
             <span className="text-skifer-500">Not running</span>
           )}
         </Row>
-        <Row label="Address">
-          {sum.address ? (
-            <span onClick={(e) => e.preventDefault()}>
-              <CopyText text={sum.address} />
-            </span>
+        <Row label={crossplay ? "Join code" : "Address"}>
+          {crossplay ? (
+            sum.join_code ? (
+              <span onClick={(e) => e.preventDefault()}>
+                <CopyText text={sum.join_code} />
+              </span>
+            ) : (
+              <span className="text-skifer-500">
+                {s.observed_state === "running" ? "Waiting for code…" : "—"}
+              </span>
+            )
           ) : (
-            <span className="text-skifer-500">—</span>
+            sum.address ? (
+              <span onClick={(e) => e.preventDefault()}>
+                <CopyText text={sum.address} />
+              </span>
+            ) : (
+              <span className="text-skifer-500">—</span>
+            )
           )}
         </Row>
+        {crossplay && (
+          <p className="text-xs text-skifer-400">
+            Crossplay server: players join from Valheim&apos;s Join game → Join
+            by code. The code can change when the server restarts or moves to
+            another machine, so check here for the current one.
+          </p>
+        )}
         <Row label="Latest safe save">
           {sum.latest_safe_save ? (
             <span className="text-skifer-100">

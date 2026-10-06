@@ -30,7 +30,7 @@ import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "./NewServer";
 import SaveSafety from "../components/SaveSafety";
-import { useGames } from "../lib/games";
+import { isCrossplayEnabled, useGames } from "../lib/games";
 
 type Tab = "overview" | "saves" | "logs" | "settings" | "details";
 
@@ -130,7 +130,13 @@ export default function ServerDetail({ id }: { id: string }) {
           </button>
         ))}
       </div>
-      {tab === "overview" && <Overview s={s} snapshots={snapshots} />}
+      {tab === "overview" && (
+        <Overview
+          s={s}
+          snapshots={snapshots}
+          crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+        />
+      )}
       {tab === "saves" && (
         <Saves s={s} snapshots={snapshots} refresh={snaps.refresh} />
       )}
@@ -268,7 +274,15 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
   );
 }
 
-function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
+function Overview({
+  s,
+  snapshots,
+  crossplay,
+}: {
+  s: Server;
+  snapshots: Snapshot[];
+  crossplay: boolean;
+}) {
   const sum = s.summary;
   const events = useMergedEvents(
     (e) => e.server_id === s.id && e.type !== "execution.state",
@@ -289,18 +303,38 @@ function Overview({ s, snapshots }: { s: Server; snapshots: Snapshot[] }) {
               </WarnNote>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-skifer-400">Address</span>
-              {sum.address ? (
-                <CopyText text={sum.address} />
+              <span className="text-skifer-400">
+                {crossplay ? "Join code" : "Address"}
+              </span>
+              {crossplay ? (
+                sum.join_code ? (
+                  <CopyText text={sum.join_code} />
+                ) : (
+                  <span className="text-skifer-500">
+                    {s.observed_state === "running" ? "Waiting for code…" : "—"}
+                  </span>
+                )
               ) : (
-                <span className="text-skifer-500">—</span>
+                sum.address ? (
+                  <CopyText text={sum.address} />
+                ) : (
+                  <span className="text-skifer-500">—</span>
+                )
               )}
             </div>
-            <p className="text-xs text-skifer-400">
-              This address works from any machine in the group with Varde
-              running, and it stays the same when the server moves to another
-              machine.
-            </p>
+            {crossplay ? (
+              <p className="text-xs text-skifer-400">
+                Crossplay server: players join from Valheim&apos;s Join game →
+                Join by code. The code can change when the server restarts or
+                moves to another machine, so check here for the current one.
+              </p>
+            ) : (
+              <p className="text-xs text-skifer-400">
+                This address works from any machine in the group with Varde
+                running, and it stays the same when the server moves to another
+                machine.
+              </p>
+            )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-skifer-400">Hosting on</span>
               {sum.hosting_on ? (

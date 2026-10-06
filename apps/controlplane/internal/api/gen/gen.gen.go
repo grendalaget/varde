@@ -898,6 +898,7 @@ type ExecutionReport struct {
 	Epoch       int64          `json:"epoch"`
 	ExecutionId string         `json:"execution_id"`
 	Health      *string        `json:"health,omitempty"`
+	JoinCode    *string        `json:"join_code,omitempty"`
 	Message     *string        `json:"message,omitempty"`
 	PlayerCount *int           `json:"player_count,omitempty"`
 	ServerId    string         `json:"server_id"`
@@ -1136,6 +1137,7 @@ type ServerSummary struct {
 		Name   string `json:"name"`
 		NodeId string `json:"node_id"`
 	} `json:"hosting_on,omitempty"`
+	JoinCode       *string `json:"join_code,omitempty"`
 	LatestSafeSave *struct {
 		CreatedAt int64 `json:"created_at"`
 		Replicas  *[]struct {
@@ -1266,6 +1268,7 @@ type AgentExecutionLogsJSONBody struct {
 type AgentExecutionStatusJSONBody struct {
 	Epoch    int64          `json:"epoch"`
 	Health   *string        `json:"health,omitempty"`
+	JoinCode *string        `json:"join_code,omitempty"`
 	Message  *string        `json:"message,omitempty"`
 	ServerId string         `json:"server_id"`
 	State    ExecutionState `json:"state"`

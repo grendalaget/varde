@@ -981,6 +981,7 @@ paths:
                 state: { $ref: "#/components/schemas/ExecutionState" }
                 health: { type: string }
                 message: { type: string }
+                join_code: { type: string }
       responses:
         "204": { description: Recorded. }
         "401": { $ref: "#/components/responses/Error" }
@@ -1379,6 +1380,7 @@ components:
             created_at: { type: integer, format: int64 }
         only_on_one_machine: { type: boolean }
         address: { type: string, example: "127.77.12.34:25565" }
+        join_code: { type: string, nullable: true }
     Server:
       type: object
       required: [id, group_id, name, game_id, desired_state, observed_state, epoch,
@@ -1559,6 +1561,7 @@ components:
         health: { type: string }
         message: { type: string }
         player_count: { type: integer, nullable: true }
+        join_code: { type: string }
     AgentHeartbeat:
       type: object
       properties:
