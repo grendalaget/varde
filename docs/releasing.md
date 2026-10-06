@@ -37,11 +37,14 @@ prerelease (never marked Latest), moves its lightweight tag to the built commit,
 deletes all previous assets, and uploads the new set. The release notes record
 the commit **only after** a successful upload; any previous success marker is
 cleared before replacing assets, so interrupted same-commit retries cannot look
-complete. Scheduled/publishing runs skip if
-that successful-commit marker matches main and assets exist. A failed build or
-partial upload is retried on the next run, even if the tag has already moved.
+complete. Scheduled/publishing runs skip only if that successful-commit marker
+matches main and the current asset names exactly match the recorded
+`<!-- nightly-assets:[...] -->` manifest, including checksums and signature
+bundles. Missing assets or a missing/malformed manifest trigger a rebuild. A
+failed build or partial upload is retried on the next run, even if the tag has
+already moved.
 Publication is not atomic; downloads can temporarily be unavailable during the
-asset replacement. Do not delete the commit marker from the nightly notes.
+asset replacement. Do not edit the commit or asset-manifest markers in the notes.
 
 Concurrency serializes the entire nightly run, including manual runs, so two
 nightlies cannot race. A publishing dispatch must select `main`; feature branches

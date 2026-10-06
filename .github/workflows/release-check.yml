@@ -39,6 +39,7 @@ jobs:
         run: |
           shellcheck packaging/release/*.sh
           python3 -m py_compile packaging/release/version.py
+          python3 -m unittest discover -s packaging/release -p 'test_*.py'
 
   build:
     # Fork PR tokens cannot write attestations; maintainers can dispatch on a trusted branch instead.

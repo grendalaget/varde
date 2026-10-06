@@ -44,7 +44,11 @@ jobs:
           if [[ "$DRY_RUN" != true ]]; then
             if gh release view nightly --json body,assets > nightly.json 2> api.err; then
               if jq -e --arg marker "<!-- nightly-commit:$sha -->" \
-                '(.body | contains($marker)) and (.assets | length > 0)' nightly.json >/dev/null; then
+                '(.body | contains($marker)) and (
+                  (.body | capture("<!-- nightly-assets:(?<names>\\[[^\\r\\n]*\\]) -->").names | fromjson) as $expected |
+                  ($expected | length > 0) and
+                  (($expected | sort) == ([.assets[].name] | sort))
+                )' nightly.json >/dev/null; then
                 echo 'changed=false' >> "$GITHUB_OUTPUT"
                 echo 'Main is unchanged since the last successful nightly; skipped.' >> "$GITHUB_STEP_SUMMARY"
                 exit 0

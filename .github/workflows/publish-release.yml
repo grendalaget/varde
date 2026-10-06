@@ -79,5 +79,8 @@ jobs:
         run: |
           printf 'Rolling nightly **%s**, built from %s.\n\n<!-- nightly-commit:%s -->\n' \
             "$VERSION" "$COMMIT" "$COMMIT" > notes.md
+          manifest=$(find release-assets -maxdepth 1 -type f -printf '%f\n' |
+            jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+          printf '<!-- nightly-assets:%s -->\n' "$manifest" >> notes.md
           gh release edit nightly --prerelease --latest=false --target "$COMMIT" \
             --title "Nightly $VERSION" --notes-file notes.md
