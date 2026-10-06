@@ -12,8 +12,9 @@
   which the unlinked service reports to the tray. Skipped when the PC is already linked
 - installs Microsoft Edge WebView2 if missing (for the link window; without
   it the tray links via message boxes)
-- creates `%ProgramData%\Varde` with a SYSTEM/Administrators-only ACL on
-  `identity\`
+- creates `%ProgramData%\Varde`; `service install` makes it SYSTEM/Administrators-only
+  (drops what it inherits from ProgramData, takes ownership back, resets explicit
+  entries below it; `logs\` stays readable by Users)
 - registers and starts the `VardeAgent` Windows service (the agent's own
   `service install` path — STOP and PRESHUTDOWN map to the graceful-stop
   path, with a 120 s preshutdown timeout). Unlinked, the service waits idle

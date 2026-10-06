@@ -65,25 +65,41 @@ pub fn install() -> Result<()> {
         .ok();
     svc.set_preshutdown_timeout(Duration::from_millis(PRESHUTDOWN_MS as u64))
         .context("set preshutdown timeout")?;
-    // %ProgramData%\Varde\identity holds the node key — restrict to
-    // SYSTEM + Administrators only.
-    let ident = std::env::var_os("ProgramData")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"))
-        .join("Varde")
-        .join("identity");
-    std::fs::create_dir_all(&ident).ok();
-    let _ = std::process::Command::new("icacls")
-        .arg(&ident)
-        .args([
-            "/inheritance:r",
-            "/grant:r",
-            "*S-1-5-18:(OI)(CI)F",
-            "Administrators:(OI)(CI)F",
-        ])
-        .output();
+    secure_data_dir();
     println!("service {SERVICE_NAME} installed (LocalSystem, auto-start)");
     Ok(())
+}
+
+/// %ProgramData%\Varde is SYSTEM + Administrators only: the service runs as
+/// SYSTEM and trusts config.toml and server.url there. ProgramData lets any
+/// user create files and folders, so drop what the folder inherits, take back
+/// ownership of anything a user created first, and reset explicit entries
+/// below it. identity\ (the node key) and logs\ are then set up again.
+fn secure_data_dir() {
+    const OWNERS: [&str; 2] = ["*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"];
+    let data = crate::default_data_dir();
+    let ident = data.join("identity");
+    std::fs::create_dir_all(&ident).ok();
+    let icacls = |path: &std::path::Path, args: &[&str]| {
+        let _ = std::process::Command::new("icacls")
+            .arg(path)
+            .args(args)
+            .output();
+    };
+    icacls(&data, &["/setowner", "*S-1-5-32-544", "/T", "/C", "/Q"]);
+    icacls(
+        &data,
+        &[&["/inheritance:r", "/grant:r"][..], &OWNERS].concat(),
+    );
+    icacls(&data.join("*"), &["/reset", "/T", "/C", "/Q"]);
+    icacls(
+        &ident,
+        &[&["/inheritance:r", "/grant:r"][..], &OWNERS].concat(),
+    );
+    let logs = data.join("logs");
+    if logs.is_dir() {
+        icacls(&logs, &["/grant", "*S-1-5-32-545:(OI)(CI)RX"]);
+    }
 }
 
 pub fn uninstall() -> Result<()> {
