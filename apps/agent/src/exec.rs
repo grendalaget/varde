@@ -717,10 +717,13 @@ async fn snapshot_files(
         .await
     {
         Ok(v) => {
-            // the CP's created_at, the same clock as latest_safe_save_at
-            let at = v.get("created_at").and_then(|t| t.as_i64());
-            ctl.latest_save_ms
-                .store(at.unwrap_or(created_at), Ordering::SeqCst);
+            // the CP's created_at, the same clock as latest_safe_save_at;
+            // without one, ours moved onto the CP's clock
+            let at = v
+                .get("created_at")
+                .and_then(|t| t.as_i64())
+                .unwrap_or_else(|| created_at + agent.cp_view.lock().unwrap().cp_clock_offset_ms);
+            ctl.latest_save_ms.store(at, Ordering::SeqCst);
             tracing::info!(exec = %ctl.dir.execution_id, snap = %info.id, reason = %reason, "snapshot accepted");
         }
         Err(e) if e.api_code() == Some("stale_epoch") => {
