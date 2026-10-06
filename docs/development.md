@@ -111,3 +111,12 @@ For example:
 ```sh
 VARDE_VALHEIM_SEED_DIR=/path/to/deployment/server make e2e-valheim
 ```
+
+Set `VARDE_E2E_RUNTIME_SEED` to reuse completed JRE and game-server runtime
+caches across real-game runs. Completed caches are copied into each test node
+before its agent starts and copied back after a passing test:
+
+```sh
+VARDE_E2E_RUNTIME_SEED="$HOME/.cache/varde-e2e-runtimes" make e2e-minecraft
+VARDE_E2E_RUNTIME_SEED="$HOME/.cache/varde-e2e-runtimes" make e2e-valheim
+```

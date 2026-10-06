@@ -135,6 +135,8 @@ type gameEnv struct {
 	cpLogs  []*proc
 
 	serverIDs []string
+	runtimeSeed string
+	runtimeSeeded map[string]bool
 }
 
 type cpOpts struct {
@@ -171,7 +173,24 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 	setupTopology(t, names)
 	cpPort := 18080
 	cpURL := fmt.Sprintf("http://%s:%d", wanIP, cpPort)
-	e := &gameEnv{t: t, tmp: tmp, cpURL: cpURL, nodes: map[string]*node{}}
+	e := &gameEnv{
+		t:             t,
+		tmp:           tmp,
+		cpURL:         cpURL,
+		nodes:         map[string]*node{},
+		runtimeSeed:   os.Getenv("VARDE_E2E_RUNTIME_SEED"),
+		runtimeSeeded: map[string]bool{},
+	}
+	if e.runtimeSeed != "" {
+		t.Cleanup(func() {
+			if t.Failed() {
+				return
+			}
+			if err := e.saveRuntimeCaches(); err != nil {
+				t.Errorf("save runtime caches to %s: %v", e.runtimeSeed, err)
+			}
+		})
+	}
 	e.cpArgs = []string{
 		"--listen", fmt.Sprintf("%s:%d", wanIP, cpPort),
 		"--db", "sqlite://" + filepath.Join(tmp, "cp.db"),
@@ -337,10 +356,147 @@ func (e *gameEnv) nodeConnections(name string) map[string]string {
 func (e *gameEnv) startAgent(name string) {
 	t := e.t
 	nd := e.nodes[name]
+	if !e.runtimeSeeded[name] {
+		if err := e.seedRuntimeCaches(nd.dataDir); err != nil {
+			t.Fatalf("seed runtime caches for %s: %v", name, err)
+		}
+		e.runtimeSeeded[name] = true
+	}
 	nd.proc = spawnInEnv(t, name,
 		[]string{"VARDE_MESH_LOG_LEVEL=debug"},
 		rustBin("varde-agent"), "run",
 		"--data-dir", nd.dataDir, "--mesh-bin", bin("varde-mesh"))
+}
+
+type runtimeCacheDir struct {
+	kind string
+	id   string
+	path string
+}
+
+func completeRuntimeDirs(root string) ([]runtimeCacheDir, error) {
+	kinds, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var caches []runtimeCacheDir
+	for _, kind := range kinds {
+		if !kind.IsDir() {
+			continue
+		}
+		ids, err := os.ReadDir(filepath.Join(root, kind.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if !id.IsDir() || strings.Contains(id.Name(), ".staging-") || strings.Contains(id.Name(), ".tmp-") {
+				continue
+			}
+			path := filepath.Join(root, kind.Name(), id.Name())
+			marker, err := os.Stat(filepath.Join(path, ".complete"))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if !marker.Mode().IsRegular() {
+				continue
+			}
+			caches = append(caches, runtimeCacheDir{kind: kind.Name(), id: id.Name(), path: path})
+		}
+	}
+	return caches, nil
+}
+
+func copyRuntimeDir(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := exec.Command("cp", "-a", src, dst).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cp -a %s %s: %w: %s", src, dst, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (e *gameEnv) seedRuntimeCaches(dataDir string) error {
+	if e.runtimeSeed == "" {
+		return nil
+	}
+	info, err := os.Stat(e.runtimeSeed)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runtime seed is not a directory")
+	}
+	caches, err := completeRuntimeDirs(e.runtimeSeed)
+	if err != nil {
+		return err
+	}
+	for _, cache := range caches {
+		dst := filepath.Join(dataDir, "runtimes", cache.kind, cache.id)
+		if _, err := os.Stat(filepath.Join(dst, ".complete")); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+		if err := copyRuntimeDir(cache.path, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *gameEnv) saveRuntimeCaches() error {
+	if err := os.MkdirAll(e.runtimeSeed, 0o755); err != nil {
+		return err
+	}
+	for _, nd := range e.nodes {
+		caches, err := completeRuntimeDirs(filepath.Join(nd.dataDir, "runtimes"))
+		if err != nil {
+			return err
+		}
+		for _, cache := range caches {
+			dst := filepath.Join(e.runtimeSeed, cache.kind, cache.id)
+			if _, err := os.Stat(filepath.Join(dst, ".complete")); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			tmp := fmt.Sprintf("%s.tmp-%d", dst, os.Getpid())
+			if err := os.RemoveAll(tmp); err != nil {
+				return err
+			}
+			if err := copyRuntimeDir(cache.path, tmp); err != nil {
+				return err
+			}
+			uid, gid := os.Getenv("SUDO_UID"), os.Getenv("SUDO_GID")
+			if uid != "" && gid != "" {
+				out, err := exec.Command("chown", "-R", uid+":"+gid, tmp).CombinedOutput()
+				if err != nil {
+					return fmt.Errorf("chown runtime cache %s: %w: %s", tmp, err, strings.TrimSpace(string(out)))
+				}
+			}
+			if err := os.RemoveAll(dst); err != nil {
+				return err
+			}
+			if err := os.Rename(tmp, dst); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *gameEnv) setHosting(name string, enabled bool) {

@@ -105,6 +105,7 @@ e2e-minecraft: test-bins
 	pnpm --filter varde-minecraft-bot install
 	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
 	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
+		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
 		../../bin/netns-minecraft.test -test.run TestMinecraft -test.v -test.count=1 -test.timeout 40m
 
 # Valheim real-server e2e on the same netns topology (failover + Crossplay).
@@ -113,4 +114,5 @@ e2e-valheim: test-bins
 	@if ! sudo -n true 2>/dev/null; then echo "e2e-valheim needs root: run 'sudo -v' first"; exit 1; fi
 	cd tests/netns && go test -c -tags 'netns valheim' -o ../../bin/netns-valheim.test .
 	cd tests/netns && sudo VARDE_VALHEIM_SEED_DIR="$(VARDE_VALHEIM_SEED_DIR)" \
+		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
 		../../bin/netns-valheim.test -test.run TestValheim -test.v -test.count=1 -test.timeout 75m
