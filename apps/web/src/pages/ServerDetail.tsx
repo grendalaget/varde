@@ -20,6 +20,7 @@ import {
   ServerStateBadge,
   WarnNote,
 } from "../components/ui";
+import { HostMarker, PageLoader, ServerMark } from "../components/Logo";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { bytes, dateTime, timeAgo } from "../lib/format";
@@ -78,7 +79,7 @@ export default function ServerDetail({ id }: { id: string }) {
     );
   }
   const s = server.data;
-  if (!s) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (!s) return <PageLoader />;
 
   const tabs: [Tab, string][] = [
     ["overview", "Overview"],
@@ -91,13 +92,14 @@ export default function ServerDetail({ id }: { id: string }) {
   return (
     <>
       <div className="mb-2 text-sm">
-        <Link to="/" className="text-slate-400 hover:text-slate-200">
+        <Link to="/" className="text-skifer-400 hover:text-skifer-200">
           ← Servers
         </Link>
       </div>
       <PageHeader
         title={
-          <span className="flex items-center gap-3">
+          <span className="flex flex-wrap items-center gap-3">
+            <ServerMark state={s.observed_state} className="h-9 w-9" />
             {s.name} <ServerStateBadge state={s.observed_state} />
           </span>
         }
@@ -112,7 +114,7 @@ export default function ServerDetail({ id }: { id: string }) {
           />
         }
       />
-      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-slate-800 [scrollbar-width:none]">
+      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-skifer-800 [scrollbar-width:none]">
         {tabs.map(([t, label]) => (
           <button
             key={t}
@@ -120,8 +122,8 @@ export default function ServerDetail({ id }: { id: string }) {
             className={
               "-mb-px border-b-2 px-3 py-2 text-sm " +
               (tab === t
-                ? "border-emerald-400 text-slate-50"
-                : "border-transparent text-slate-400 hover:text-slate-200")
+                ? "border-take text-skifer-50"
+                : "border-transparent text-skifer-400 hover:text-skifer-200")
             }
           >
             {label}
@@ -233,8 +235,8 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         )}
       </div>
       {moving && (
-        <div className="absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 p-2 text-sm shadow-lg">
-          <span className="text-slate-400">Move to</span>
+        <div className="absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-skifer-700 bg-skifer-900 p-2 text-sm shadow-lg">
+          <span className="text-skifer-400">Move to</span>
           {targets.map((n) => (
             <Button
               key={n.id}
@@ -301,14 +303,14 @@ function Overview({
               </WarnNote>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-400">
+              <span className="text-skifer-400">
                 {crossplay ? "Join code" : "Address"}
               </span>
               {crossplay ? (
                 sum.join_code ? (
                   <CopyText text={sum.join_code} />
                 ) : (
-                  <span className="text-slate-500">
+                  <span className="text-skifer-500">
                     {s.observed_state === "running" ? "Waiting for code…" : "—"}
                   </span>
                 )
@@ -316,30 +318,33 @@ function Overview({
                 sum.address ? (
                   <CopyText text={sum.address} />
                 ) : (
-                  <span className="text-slate-500">—</span>
+                  <span className="text-skifer-500">—</span>
                 )
               )}
             </div>
             {crossplay ? (
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-skifer-400">
                 Crossplay server: players join from Valheim&apos;s Join game →
                 Join by code. The code can change when the server restarts or
                 moves to another machine, so check here for the current one.
               </p>
             ) : (
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-skifer-400">
                 This address works from any machine in the group with Varde
                 running, and it stays the same when the server moves to another
                 machine.
               </p>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-400">Hosting on</span>
-              <span>
-                {sum.hosting_on?.name ?? (
-                  <span className="text-slate-500">Not running</span>
-                )}
-              </span>
+              <span className="text-skifer-400">Hosting on</span>
+              {sum.hosting_on ? (
+                <HostMarker
+                  nodeId={sum.hosting_on.node_id}
+                  name={sum.hosting_on.name}
+                />
+              ) : (
+                <span className="text-skifer-500">Not running</span>
+              )}
             </div>
           </div>
         </Card>
@@ -353,20 +358,20 @@ function Overview({
         <div className="space-y-3 p-4 text-sm">
           {sum.latest_safe_save ? (
             <>
-              <div className="text-slate-100">
+              <div className="text-skifer-100">
                 {timeAgo(sum.latest_safe_save.created_at)}
-                <span className="block text-xs text-slate-500">
+                <span className="block text-xs text-skifer-500">
                   {dateTime(sum.latest_safe_save.created_at)}
                 </span>
               </div>
               {latestSafe?.size_bytes != null && (
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-skifer-400">
                   {bytes(latestSafe.size_bytes)} of game data
                 </div>
               )}
             </>
           ) : (
-            <p className="text-slate-400">
+            <p className="text-skifer-400">
               No safe save yet. One is taken automatically while the server
               runs.
             </p>
@@ -380,12 +385,12 @@ function Overview({
 
 const SNAP_STATE: Record<
   string,
-  { label: string; tone: "green" | "amber" | "slate" | "red" | "blue" }
+  { label: string; tone: "green" | "warn" | "neutral" | "red" | "blue" }
 > = {
   committed: { label: "Safe", tone: "green" },
   replicating: { label: "Backing up", tone: "blue" },
-  local: { label: "Only on host", tone: "amber" },
-  superseded: { label: "Older", tone: "slate" },
+  local: { label: "Only on host", tone: "warn" },
+  superseded: { label: "Older", tone: "neutral" },
   invalid: { label: "Invalid", tone: "red" },
 };
 
@@ -419,7 +424,7 @@ function Saves({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wider text-slate-500">
+            <thead className="text-left text-xs uppercase tracking-wider text-skifer-500">
               <tr>
                 <th className="px-4 py-2 font-medium">Taken</th>
                 <th className="hidden px-4 py-2 font-medium sm:table-cell">
@@ -432,28 +437,28 @@ function Saves({
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-skifer-800">
               {snapshots.map((x) => {
                 const st = SNAP_STATE[x.state] ?? {
                   label: x.state,
-                  tone: "slate" as const,
+                  tone: "neutral" as const,
                 };
                 return (
                   <tr key={x.id}>
                     <td className="px-4 py-2">
                       <div
-                        className="text-slate-100"
+                        className="text-skifer-100"
                         title={dateTime(x.created_at)}
                       >
                         {timeAgo(x.created_at)}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div className="text-xs text-skifer-500">
                         {REASON[x.reason] ?? x.reason} · on{" "}
                         {nodeName(x.node_id)}
                       </div>
                       <div className="mt-1 flex items-center gap-2 sm:hidden">
                         <Badge tone={st.tone}>{st.label}</Badge>
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-skifer-500">
                           {bytes(x.size_bytes)}
                         </span>
                       </div>
@@ -469,14 +474,14 @@ function Saves({
                             <Badge
                               key={r.node_id}
                               tone={
-                                anchorIds.has(r.node_id) ? "violet" : "slate"
+                                anchorIds.has(r.node_id) ? "violet" : "neutral"
                               }
                             >
                               {nodeName(r.node_id)}
                             </Badge>
                           ))}
                         {x.replicas.some((r) => r.state === "assigned") && (
-                          <span className="text-xs text-slate-500">
+                          <span className="text-xs text-skifer-500">
                             +
                             {
                               x.replicas.filter((r) => r.state === "assigned")
@@ -487,7 +492,7 @@ function Saves({
                         )}
                       </div>
                     </td>
-                    <td className="hidden px-4 py-2 text-slate-400 sm:table-cell">
+                    <td className="hidden px-4 py-2 text-skifer-400 sm:table-cell">
                       {bytes(x.size_bytes)}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -549,7 +554,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
         actions={
           executions.length > 0 && (
             <select
-              className="max-w-48 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm sm:max-w-none"
+              className="max-w-48 rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm sm:max-w-none"
               value={effective}
               onChange={(e) => setExecId(e.target.value)}
             >
@@ -566,7 +571,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
       />
       <pre
         ref={box}
-        className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-slate-300"
+        className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-skifer-300"
       >
         {(logs.data?.lines ?? []).length === 0
           ? "No log lines."
@@ -775,7 +780,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
         />
         <div className="overflow-x-auto">
           <table className="w-full font-mono text-xs">
-            <thead className="text-left uppercase tracking-wider text-slate-500">
+            <thead className="text-left uppercase tracking-wider text-skifer-500">
               <tr>
                 <th className="px-4 py-2">epoch</th>
                 <th className="px-4 py-2">node</th>
@@ -785,7 +790,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
                 <th className="px-4 py-2">id</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-skifer-800">
               {executions.map((e) => (
                 <tr key={e.id}>
                   <td className="px-4 py-1.5">{e.epoch}</td>
@@ -798,7 +803,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
                     {e.ended_at ? "—" : dateTime(e.lease_expires_at)}
                   </td>
                   <td className="px-4 py-1.5">{e.end_reason ?? ""}</td>
-                  <td className="px-4 py-1.5 text-slate-500">{e.id}</td>
+                  <td className="px-4 py-1.5 text-skifer-500">{e.id}</td>
                 </tr>
               ))}
             </tbody>
@@ -812,8 +817,8 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
 function KV({ k, v }: { k: string; v?: string | null }) {
   return (
     <div className="flex gap-3">
-      <dt className="w-28 shrink-0 text-slate-500 sm:w-36">{k}</dt>
-      <dd className="min-w-0 break-all text-slate-200">{v ?? "—"}</dd>
+      <dt className="w-28 shrink-0 text-skifer-500 sm:w-36">{k}</dt>
+      <dd className="min-w-0 break-all text-skifer-200">{v ?? "—"}</dd>
     </div>
   );
 }

@@ -74,6 +74,8 @@ Produces `varde-agent`, `varde-control-plane` and `varde-relay` packages
 (systemd units, `varde` system user, `/var/lib/varde` 0700, env files under
 `/etc/varde`). The Windows installer is `packaging/windows/varde-agent.iss`
 (Inno Setup) — built by the `windows-installer` CI job on windows-latest.
+The agent package also installs hicolor application icons (16–512 px and
+scalable) and a Varde desktop entry.
 
 ## Root-only network-namespace demo (e2e-netns)
 

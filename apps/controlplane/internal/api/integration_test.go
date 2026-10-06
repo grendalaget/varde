@@ -1665,19 +1665,24 @@ func TestReplicaReadyRequiresAssignment(t *testing.T) {
 	a := e.newAgent("nodeA")
 	b := e.newAgent("nodeB")
 	c := e.newAgent("nodeC")
-	e.mustOK(e.do("PATCH", "/v1/nodes/"+c.nodeID,
-		map[string]any{"hosting_enabled": false}, e.token))
 	srv := e.createServer("testgame", "s1", nil)
-	host, execA, epA := e.startToRunning(srv, a, b)
+	host, execA, epA := e.startToRunning(srv, a, b, c)
+	var others []*agent
+	for _, n := range []*agent{a, b, c} {
+		if n != host {
+			others = append(others, n)
+		}
+	}
+	outsider, assigned := others[0], others[1]
 	if r := host.createSnapshot(execA, srv, "dep_x", epA, "final", "snap_x", "aa"); r.Status != 201 {
 		t.Fatalf("snap %d %s", r.Status, r.Raw)
 	}
-	// remove c's replica row entirely — it was never assigned
+	// remove the outsider's replica row entirely — it was never assigned
 	if _, err := e.st.DB.Exec(e.st.Rebind(
-		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_x' AND node_id=?`), c.nodeID); err != nil {
+		`DELETE FROM snapshot_replicas WHERE snapshot_id='snap_x' AND node_id=?`), outsider.nodeID); err != nil {
 		t.Fatal(err)
 	}
-	if r := c.replicaReady("snap_x"); r.Status != 409 {
+	if r := outsider.replicaReady("snap_x"); r.Status != 409 {
 		t.Fatalf("unassigned replica ready: want 409, got %d %s", r.Status, r.Raw)
 	}
 	var state string
@@ -1689,14 +1694,7 @@ func TestReplicaReadyRequiresAssignment(t *testing.T) {
 		t.Fatal("unassigned ready report committed the snapshot")
 	}
 	// an assigned node can still report ready
-	if r := otherOf(a, b, host).replicaReady("snap_x"); r.Status != 204 {
+	if r := assigned.replicaReady("snap_x"); r.Status != 204 {
 		t.Fatalf("assigned replica ready: want 204, got %d %s", r.Status, r.Raw)
 	}
-}
-
-func otherOf(a, b, host *agent) *agent {
-	if host == a {
-		return b
-	}
-	return a
 }
