@@ -486,7 +486,16 @@ async fn graceful_stop_and_snapshot(
                 match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
                     Ok(info) => final_snap = Some(info),
                     Err(e) => {
-                        tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                        if let Some(path) = is_changed_during_snapshot(&e) {
+                            requires_stop = true;
+                            tracing::warn!(
+                                exec = %ctl.dir.execution_id,
+                                path,
+                                "live final snapshot changed; falling back to a post-stop snapshot"
+                            );
+                        } else {
+                            tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                        }
                     }
                 }
                 let _ = driver
@@ -544,22 +553,78 @@ async fn do_snapshot(
     if ctl.is_fenced() {
         bail!("fenced execution never uploads snapshots");
     }
-    match driver
-        .prepare_snapshot(ctx, &**proc)
-        .await
-        .map_err(dyn_err)?
-    {
-        SnapshotBarrier::Live => {}
-        SnapshotBarrier::RequiresStop => {
-            bail!("driver requires stop for snapshot")
+    retry_changed_snapshot(&ctl.dir.execution_id, move |_| async move {
+        if ctl.is_fenced() {
+            bail!("fenced execution never uploads snapshots");
+        }
+        match driver
+            .prepare_snapshot(ctx, &**proc)
+            .await
+            .map_err(dyn_err)?
+        {
+            SnapshotBarrier::Live => {}
+            SnapshotBarrier::RequiresStop => {
+                bail!("driver requires stop for snapshot")
+            }
+        }
+        let info = match snapshot_files(agent, ctl, driver, ctx, reason, request_id).await {
+            Ok(info) => info,
+            Err(e) => {
+                if is_changed_during_snapshot(&e).is_some() {
+                    driver
+                        .resume_after_snapshot(ctx, &**proc)
+                        .await
+                        .map_err(dyn_err)?;
+                }
+                return Err(e);
+            }
+        };
+        driver
+            .resume_after_snapshot(ctx, &**proc)
+            .await
+            .map_err(dyn_err)?;
+        Ok(info)
+    })
+    .await
+}
+
+async fn retry_changed_snapshot<T, Attempt, Fut>(exec: &str, mut attempt: Attempt) -> Result<T>
+where
+    Attempt: FnMut(u8) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    for attempt_number in 1..=3 {
+        match attempt(attempt_number).await {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let Some(path) = is_changed_during_snapshot(&error) else {
+                    return Err(error);
+                };
+                if attempt_number == 3 {
+                    return Err(error);
+                }
+                tracing::warn!(
+                    exec = %exec,
+                    attempt = attempt_number,
+                    path,
+                    "save files changed during snapshot; retrying"
+                );
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     }
-    let info = snapshot_files(agent, ctl, driver, ctx, reason, request_id).await?;
-    driver
-        .resume_after_snapshot(ctx, &**proc)
-        .await
-        .map_err(dyn_err)?;
-    Ok(info)
+    unreachable!("snapshot retry loop always returns on the third attempt")
+}
+
+fn is_changed_during_snapshot(error: &anyhow::Error) -> Option<&str> {
+    for cause in error.chain() {
+        if let Some(snapshot_store::Error::ChangedDuringSnapshot(path)) =
+            cause.downcast_ref::<snapshot_store::Error>()
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Store::snapshot → POST /v1/agent/snapshots, with no barrier and no resume —
@@ -853,6 +918,68 @@ mod port_alloc_tests {
     #[test]
     fn empty_is_empty() {
         assert!(alloc_port_block(&[]).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_retry_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn changed_error() -> anyhow::Error {
+        anyhow::Error::new(snapshot_store::Error::ChangedDuringSnapshot(
+            "saves/world.db".into(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn retries_two_changes_then_succeeds() {
+        let attempts = AtomicUsize::new(0);
+        let result = retry_changed_snapshot("exec_t", |attempt_number| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(if attempt_number < 3 {
+                Err(changed_error())
+            } else {
+                Ok("snapshot")
+            })
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), "snapshot");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn returns_the_third_change_error() {
+        let attempts = AtomicUsize::new(0);
+        let result: Result<()> = retry_changed_snapshot("exec_t", |_| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Err(changed_error()))
+        })
+        .await;
+
+        let error = result.unwrap_err();
+        assert_eq!(is_changed_during_snapshot(&error), Some("saves/world.db"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn returns_non_change_errors_without_retrying() {
+        let attempts = AtomicUsize::new(0);
+        let result: Result<()> = retry_changed_snapshot("exec_t", |_| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Err(anyhow::anyhow!("other failure")))
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn finds_changed_snapshot_error_in_the_anyhow_chain() {
+        let error = changed_error().context("snapshot failed");
+        assert_eq!(is_changed_during_snapshot(&error), Some("saves/world.db"));
     }
 }
 
