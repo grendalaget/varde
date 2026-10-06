@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -255,6 +256,10 @@ func randNonce(t *testing.T) string {
 // waitMinecraft waits for a successful bot read through the stable address.
 // If wantHost is non-empty, it also requires the server to run there.
 func (e *gameEnv) waitMinecraft(serverID, wantHost string, d time.Duration) string {
+	return e.waitMinecraftFrom(serverID, wantHost, "player", d)
+}
+
+func (e *gameEnv) waitMinecraftFrom(serverID, wantHost, clientNS string, d time.Duration) string {
 	t := e.t
 	var addr, cur string
 	polls := 0
@@ -268,7 +273,7 @@ func (e *gameEnv) waitMinecraft(serverID, wantHost string, d time.Duration) stri
 		if addr == "" || cur == "" || (wantHost != "" && cur != e.nodes[wantHost].nodeID) {
 			return false
 		}
-		_, _, ok := e.botRead("player", addr+":25565", 0, "")
+		_, _, ok := e.botRead(clientNS, addr+":25565", 0, "")
 		if polls%20 == 0 {
 			t.Logf("waitMinecraft: host=%q svc=%s bot=%v", cur, addr, ok)
 		}
@@ -943,5 +948,240 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	if !ok || got != nextNonce {
 		t.Fatalf("col1 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nextNonce)
 	}
+	wd.check(t)
+}
+
+func (e *gameEnv) waitCommittedReplicas(serverID string, names ...string) string {
+	e.t.Helper()
+	required := make(map[string]bool, len(names))
+	for _, name := range names {
+		required[e.nodes[name].nodeID] = false
+	}
+	var snapshotID string
+	waitFor(e.t, 120*time.Second, "committed snapshot replicas on "+strings.Join(names, ", "), func() bool {
+		status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil)
+		if status != 200 {
+			return false
+		}
+		var response struct {
+			Snapshots []struct {
+				ID       string `json:"id"`
+				State    string `json:"state"`
+				Replicas []struct {
+					NodeID string `json:"node_id"`
+					State  string `json:"state"`
+				} `json:"replicas"`
+			} `json:"snapshots"`
+		}
+		if json.Unmarshal(body, &response) != nil {
+			return false
+		}
+		for _, snapshot := range response.Snapshots {
+			if snapshot.State != "committed" {
+				continue
+			}
+			for nodeID := range required {
+				required[nodeID] = false
+			}
+			for _, replica := range snapshot.Replicas {
+				if replica.State == "ready" {
+					if _, ok := required[replica.NodeID]; ok {
+						required[replica.NodeID] = true
+					}
+				}
+			}
+			ready := true
+			for _, found := range required {
+				ready = ready && found
+			}
+			if ready {
+				snapshotID = snapshot.ID
+				return true
+			}
+		}
+		return false
+	})
+	return snapshotID
+}
+
+func corruptMinecraftSnapshotChunks(t *testing.T, targetDir, sourceDir, snapshotID string) []string {
+	t.Helper()
+	manifestPath := filepath.Join(targetDir, "storage", "snapshots", snapshotID+".json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read Kari snapshot manifest: %v", err)
+	}
+	var manifest struct {
+		Files []struct {
+			Chunks []string `json:"chunks"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode snapshot manifest: %v", err)
+	}
+	chunkSet := map[string]bool{}
+	for _, file := range manifest.Files {
+		for _, chunk := range file.Chunks {
+			chunkSet[chunk] = true
+		}
+	}
+	chunks := make([]string, 0, len(chunkSet))
+	for chunk := range chunkSet {
+		chunks = append(chunks, chunk)
+	}
+	sort.Strings(chunks)
+	if len(chunks) == 0 {
+		t.Fatal("snapshot manifest has no chunks")
+	}
+	for _, chunk := range chunks {
+		if len(chunk) < 2 {
+			t.Fatalf("invalid chunk ID in manifest: %q", chunk)
+		}
+		targetPath := filepath.Join(targetDir, "storage", "chunks", chunk[:2], chunk)
+		sourcePath := filepath.Join(sourceDir, "storage", "chunks", chunk[:2], chunk)
+		target, err := os.ReadFile(targetPath)
+		if err != nil {
+			t.Fatalf("read Kari chunk %s: %v", chunk, err)
+		}
+		source, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read Nas chunk %s: %v", chunk, err)
+		}
+		if !bytes.Equal(target, source) {
+			t.Fatalf("chunk %s differs between Kari and Nas before corruption", chunk)
+		}
+		if len(target) == 0 {
+			t.Fatalf("chunk %s is empty", chunk)
+		}
+		target[len(target)/2] ^= 0xff
+		if err := os.WriteFile(targetPath, target, 0o644); err != nil {
+			t.Fatalf("corrupt Kari chunk %s: %v", chunk, err)
+		}
+	}
+	return chunks
+}
+
+// KNOWN FAILING: Kari restore fails on a corrupt local chunk instead of fetching Nas's good copy.
+func TestMinecraftCorruptReplica(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range []string{"arne", "kari", "nas"} {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range []string{"arne", "kari", "nas"} {
+		e.startAgent(name)
+	}
+	e.setHosting("kari", false)
+	e.setHosting("nas", false)
+	e.waitOnline(30*time.Second, "arne", "kari", "nas")
+
+	serverID := e.createMCServer("mc-corrupt-replica", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraftFrom(serverID, "arne", "nas", 6*time.Minute)
+
+	nonce := randNonce(t)
+	ref := e.botWrite("nas", svc, 0, nonce, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	snapshotID := e.waitCommittedReplicas(serverID, "kari", "nas")
+	t.Logf("committed snapshot %s has ready replicas on Kari and Nas", snapshotID)
+
+	chunks := corruptMinecraftSnapshotChunks(
+		t, e.nodes["kari"].dataDir, e.nodes["nas"].dataDir, snapshotID)
+	t.Logf("corrupted %d committed snapshot chunks on Kari; first=%s", len(chunks), chunks[0])
+	e.setHosting("kari", true)
+	killNamespace(t, "arne")
+	t.Log("killed Arne; Nas is the only other enrolled replica source")
+
+	var svcAfter string
+	waitFor(t, 6*time.Minute, "Minecraft recovery with the committed nonce on kari", func() bool {
+		if e.hostOf(serverID) != e.nodes["kari"].nodeID {
+			return false
+		}
+		addr := e.svcAddr(serverID)
+		if addr == "" {
+			return false
+		}
+		got, blocks, ok := e.botRead("nas", addr+":25565", 0, ref)
+		if !ok {
+			return false
+		}
+		if got != nonce {
+			unloaded := len(blocks) > 0
+			for _, block := range blocks {
+				if block != "unloaded" {
+					unloaded = false
+					break
+				}
+			}
+			if unloaded {
+				return false
+			}
+			_, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+			t.Fatalf("recovery on Kari lost col0: got nonce=%q blocks=%v, want %q; execution JSON: %s",
+				got, blocks, nonce, executionsJSON)
+		}
+		svcAfter = addr + ":25565"
+		return true
+	})
+	t.Logf("recovered col0=%s on Kari at %s", nonce, svcAfter)
+
+	status, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get executions after recovery: %d %s", status, executionsJSON)
+	}
+	t.Logf("execution JSON after recovery: %s", executionsJSON)
+	var executionList map[string]any
+	if err := json.Unmarshal(executionsJSON, &executionList); err != nil {
+		t.Fatalf("decode executions after recovery: %v", err)
+	}
+	executions, ok := executionList["executions"].([]any)
+	if !ok {
+		t.Fatalf("execution JSON has no executions list: %s", executionsJSON)
+	}
+	restored := false
+	for _, value := range executions {
+		execution, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if execution["node_id"] == e.nodes["kari"].nodeID &&
+			execution["state"] == "running" && execution["ended_at"] == nil {
+			restored = execution["restore_snapshot_id"] == snapshotID
+			break
+		}
+	}
+	if !restored {
+		t.Fatalf("Kari is not running from snapshot %s: %s", snapshotID, executionsJSON)
+	}
+
+	quarantineDir := filepath.Join(e.nodes["kari"].dataDir, "storage", "chunks", "quarantine")
+	quarantined, err := os.ReadDir(quarantineDir)
+	if err != nil {
+		t.Fatalf("read Kari chunk quarantine: %v", err)
+	}
+	kariLogs := e.nodes["kari"].proc.buf.String()
+	if len(quarantined) == 0 && !strings.Contains(kariLogs, "hash mismatch") {
+		t.Fatalf("no evidence of corrupt chunk rejection in quarantine or Kari agent logs")
+	}
+	for _, chunk := range chunks {
+		kariPath := filepath.Join(e.nodes["kari"].dataDir, "storage", "chunks", chunk[:2], chunk)
+		nasPath := filepath.Join(e.nodes["nas"].dataDir, "storage", "chunks", chunk[:2], chunk)
+		kariChunk, err := os.ReadFile(kariPath)
+		if err != nil {
+			t.Fatalf("read recovered Kari chunk %s: %v", chunk, err)
+		}
+		nasChunk, err := os.ReadFile(nasPath)
+		if err != nil {
+			t.Fatalf("read Nas chunk %s: %v", chunk, err)
+		}
+		if !bytes.Equal(kariChunk, nasChunk) {
+			t.Fatalf("Kari chunk %s was not restored byte-for-byte from Nas", chunk)
+		}
+	}
+	t.Logf("corrupt chunks were rejected and all %d snapshot chunks on Kari match Nas", len(chunks))
 	wd.check(t)
 }
