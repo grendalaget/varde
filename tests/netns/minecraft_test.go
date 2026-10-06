@@ -1178,3 +1178,119 @@ func TestMinecraftCorruptReplica(t *testing.T) {
 	t.Logf("corrupt chunks were rejected and all %d snapshot chunks on Kari match Nas", len(chunks))
 	wd.check(t)
 }
+
+func serverJarPIDsInNamespace(t *testing.T, node string) []string {
+	t.Helper()
+	namespace := strings.TrimSpace(nsExec(t, node, "readlink", "/proc/self/ns/net"))
+	pids := strings.Fields(nsExec(t, node, "pgrep", "-f", "server.jar"))
+	var matching []string
+	for _, pid := range pids {
+		pidNamespace := strings.TrimSpace(nsExec(t, node, "readlink", "/proc/"+pid+"/ns/net"))
+		if pidNamespace == namespace {
+			matching = append(matching, pid)
+		}
+	}
+	return matching
+}
+
+func TestMinecraftCPRestart(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnvOpts(t, mcNodeNames, cpOpts{
+		LeaseTTLms:  20000,
+		HeartbeatMs: 2000,
+		SuspectMs:   15000,
+		OfflineMs:   30000,
+	})
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+
+	for _, name := range mcNodeNames {
+		e.enrollWithMargin(name, name == "nas", 5000)
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	for _, name := range []string{"kari", "nas", "player"} {
+		e.setHosting(name, false)
+	}
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-cp-restart", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+	nonce0 := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce0, "")
+
+	activeExecution := func() map[string]any {
+		status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+		if status != 200 {
+			t.Fatalf("get executions: %d %s", status, body)
+		}
+		var response map[string]any
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatalf("decode executions: %v", err)
+		}
+		executions, ok := response["executions"].([]any)
+		if !ok {
+			t.Fatalf("executions response has no list: %s", body)
+		}
+		for _, value := range executions {
+			execution, ok := value.(map[string]any)
+			if ok && execution["state"] == "running" && execution["ended_at"] == nil {
+				return execution
+			}
+		}
+		t.Fatalf("no active running execution: %s", body)
+		return nil
+	}
+	executionBefore := activeExecution()
+	executionID, _ := executionBefore["id"].(string)
+	epoch, _ := executionBefore["epoch"].(float64)
+	if executionID == "" || epoch == 0 || executionBefore["node_id"] != e.nodes["arne"].nodeID {
+		t.Fatalf("initial execution was not running on Arne: %v", executionBefore)
+	}
+	pids := serverJarPIDsInNamespace(t, "arne")
+	if len(pids) != 1 {
+		t.Fatalf("expected one server.jar PID on Arne, got %v", pids)
+	}
+	serverPID := pids[0]
+
+	restartStarted := time.Now()
+	e.restartCP()
+	cpDowntime := time.Since(restartStarted)
+	t.Logf("control-plane downtime: %.3fs", cpDowntime.Seconds())
+	if cpDowntime >= 10*time.Second {
+		t.Fatalf("control-plane downtime %s exceeded 10 seconds", cpDowntime)
+	}
+
+	time.Sleep(30 * time.Second)
+	e.waitOnline(10*time.Second, mcNodeNames...)
+	executionAfter := activeExecution()
+	afterID, _ := executionAfter["id"].(string)
+	afterEpoch, _ := executionAfter["epoch"].(float64)
+	if afterID != executionID || afterEpoch != epoch || executionAfter["node_id"] != e.nodes["arne"].nodeID {
+		t.Fatalf("active execution changed across control-plane restart: before=%v after=%v",
+			executionBefore, executionAfter)
+	}
+	pids = serverJarPIDsInNamespace(t, "arne")
+	if len(pids) != 1 || pids[0] != serverPID {
+		t.Fatalf("server.jar PID changed across control-plane restart: before=%s after=%v", serverPID, pids)
+	}
+	if strings.Contains(e.nodes["arne"].proc.buf.String(), "fenced") {
+		t.Fatal("Arne agent log contains a fenced line")
+	}
+
+	nonce1 := randNonce(t)
+	e.botWrite("player", svc, 1, nonce1, ref)
+	got0, blocks0, ok := e.botRead("player", svc, 0, ref)
+	if !ok || got0 != nonce0 {
+		t.Fatalf("col0 after control-plane restart: got %q blocks=%v, want %q", got0, blocks0, nonce0)
+	}
+	got1, blocks1, ok := e.botRead("player", svc, 1, ref)
+	if !ok || got1 != nonce1 {
+		t.Fatalf("col1 after control-plane restart: got %q blocks=%v, want %q", got1, blocks1, nonce1)
+	}
+	wd.check(t)
+}

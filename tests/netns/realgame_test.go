@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -246,8 +247,8 @@ func (e *gameEnv) restartCP() {
 	if old == nil || old.cmd.Process == nil {
 		e.t.Fatal("control plane process is not running")
 	}
-	if err := old.cmd.Process.Kill(); err != nil {
-		e.t.Fatalf("kill control plane: %v", err)
+	if err := old.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		e.t.Fatalf("send SIGTERM to control plane: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- old.cmd.Wait() }()
