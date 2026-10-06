@@ -163,8 +163,11 @@ type Hosting struct {
 	Phase string `protobuf:"bytes,3,opt,name=phase,proto3" json:"phase,omitempty"`
 	// Latest committed snapshot of the server; 0 when there is none yet.
 	LatestSafeSaveAtUnixMs int64 `protobuf:"varint,4,opt,name=latest_safe_save_at_unix_ms,json=latestSafeSaveAtUnixMs,proto3" json:"latest_safe_save_at_unix_ms,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Latest save this PC made in this execution, safe or not (it may not be
+	// on enough PCs yet); 0 when there is none.
+	LatestSaveAtUnixMs int64 `protobuf:"varint,5,opt,name=latest_save_at_unix_ms,json=latestSaveAtUnixMs,proto3" json:"latest_save_at_unix_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Hosting) Reset() {
@@ -221,6 +224,13 @@ func (x *Hosting) GetPhase() string {
 func (x *Hosting) GetLatestSafeSaveAtUnixMs() int64 {
 	if x != nil {
 		return x.LatestSafeSaveAtUnixMs
+	}
+	return 0
+}
+
+func (x *Hosting) GetLatestSaveAtUnixMs() int64 {
+	if x != nil {
+		return x.LatestSaveAtUnixMs
 	}
 	return 0
 }
@@ -698,13 +708,14 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x04Link\x12\x1b\n" +
 	"\tuser_code\x18\x01 \x01(\tR\buserCode\x12\x19\n" +
 	"\blink_url\x18\x02 \x01(\tR\alinkUrl\x12+\n" +
-	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\"\x9a\x01\n" +
+	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\"\xce\x01\n" +
 	"\aHosting\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1f\n" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +
 	"serverName\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12;\n" +
-	"\x1blatest_safe_save_at_unix_ms\x18\x04 \x01(\x03R\x16latestSafeSaveAtUnixMs\"\xa3\x03\n" +
+	"\x1blatest_safe_save_at_unix_ms\x18\x04 \x01(\x03R\x16latestSafeSaveAtUnixMs\x122\n" +
+	"\x16latest_save_at_unix_ms\x18\x05 \x01(\x03R\x12latestSaveAtUnixMs\"\xa3\x03\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +

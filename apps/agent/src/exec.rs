@@ -4,7 +4,7 @@
 //! replication hold; fencing watchdog targets the same handles.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -75,6 +75,8 @@ pub struct ExecCtl {
     /// service ports -> agent-allocated local target ports; fixed for the
     /// whole execution so in-execution restarts reuse them
     pub port_bindings: Mutex<Vec<PortBinding>>,
+    /// created_at of the latest snapshot the CP accepted in this execution
+    latest_save_ms: AtomicI64,
 }
 
 impl ExecCtl {
@@ -95,7 +97,12 @@ impl ExecCtl {
             task: Mutex::new(None),
             finished: AtomicBool::new(false),
             port_bindings: Mutex::new(Vec::new()),
+            latest_save_ms: AtomicI64::new(0),
         })
+    }
+
+    pub fn latest_save_ms(&self) -> i64 {
+        self.latest_save_ms.load(Ordering::SeqCst)
     }
 
     pub fn phase(&self) -> Phase {
@@ -654,6 +661,7 @@ async fn snapshot_files(
         .map(|d| d.id.clone())
         .unwrap_or_else(|| game_id(ctx));
     let node_id = agent.cfg.node_id.clone();
+    let created_at = unix_ms();
     let info = tokio::task::spawn_blocking(move || {
         store.snapshot(
             &server_dir,
@@ -666,7 +674,7 @@ async fn snapshot_files(
                 // parent is advisory; the CP derives it from its own rows
                 parent: None,
                 deployment_id: dep_id,
-                created_at_unix_ms: unix_ms(),
+                created_at_unix_ms: created_at,
                 reason: reason2,
             },
         )
@@ -709,6 +717,7 @@ async fn snapshot_files(
         .await
     {
         Ok(_) => {
+            ctl.latest_save_ms.store(created_at, Ordering::SeqCst);
             tracing::info!(exec = %ctl.dir.execution_id, snap = %info.id, reason = %reason, "snapshot accepted");
         }
         Err(e) if e.api_code() == Some("stale_epoch") => {

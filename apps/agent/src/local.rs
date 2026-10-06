@@ -349,6 +349,7 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
             server_name: c.dir.server_name.clone(),
             phase: c.phase().as_str().into(),
             latest_safe_save_at_unix_ms: saves.get(&c.dir.server_id).copied().unwrap_or(0),
+            latest_save_at_unix_ms: c.latest_save_ms(),
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));
