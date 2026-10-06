@@ -320,10 +320,17 @@ fn window_background() -> tauri::window::Color {
         .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
         .map(|v| v != 0)
         .unwrap_or(false);
-    if light {
-        tauri::window::Color(0xf3, 0xf5, 0xf6, 0xff)
+    theme_background(if light {
+        tauri::Theme::Light
     } else {
-        tauri::window::Color(0x10, 0x16, 0x1a, 0xff)
+        tauri::Theme::Dark
+    })
+}
+
+fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Light => tauri::window::Color(0xf3, 0xf5, 0xf6, 0xff),
+        _ => tauri::window::Color(0x10, 0x16, 0x1a, 0xff),
     }
 }
 
@@ -359,6 +366,18 @@ fn open_main_window(app: &AppHandle) {
             .theme(None)
             .background_color(window_background())
             .build()
+            .map(|w| {
+                // keep the pre-render background in sync when the OS theme
+                // flips while the window is open
+                let app = w.app_handle().clone();
+                w.on_window_event(move |event| {
+                    if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                        if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
+                            let _ = w.set_background_color(Some(theme_background(*theme)));
+                        }
+                    }
+                });
+            })
             .is_ok();
     if !built {
         // no WebView2: link with message boxes instead
