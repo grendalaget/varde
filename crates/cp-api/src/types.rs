@@ -253,11 +253,16 @@ pub struct ExecutionDirective {
     pub snapshot_interval_s: Option<i64>,
     #[serde(default, deserialize_with = "null_vec")]
     pub snapshot_requests: Vec<SnapshotRequest>,
+    /// Latest committed snapshot of the server (display only).
+    #[serde(default)]
+    pub latest_safe_save_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeFlags {
     pub name: String,
+    #[serde(default)]
+    pub group_name: Option<String>,
     pub hosting_enabled: bool,
     pub anchor: bool,
     pub admin_state: String,

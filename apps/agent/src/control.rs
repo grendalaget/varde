@@ -45,6 +45,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         warn!(elapsed_ms, "slow heartbeat");
     }
     *agent.last_heartbeat_ok.lock().unwrap() = Some(Instant::now());
+    agent.cp_view.lock().unwrap().last_contact_unix_ms = crate::now_ms();
     Ok(d.heartbeat_interval_ms)
 }
 
@@ -100,6 +101,17 @@ fn acknowledge_delete_acks(pending: &Mutex<BTreeSet<String>>, sent: &[String]) {
 
 /// Apply the directives: mesh state, execution diff, replication, deletes.
 async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -> Result<()> {
+    {
+        let mut v = agent.cp_view.lock().unwrap();
+        v.node_name = d.node.name.clone();
+        v.group_name = d.node.group_name.clone().unwrap_or_default();
+        v.heartbeat_interval_ms = d.heartbeat_interval_ms;
+        v.latest_safe_save = d
+            .executions
+            .iter()
+            .filter_map(|e| Some((e.server_id.clone(), e.latest_safe_save_at_unix_ms?)))
+            .collect();
+    }
     // ---- mesh: configure + peers + routes ----
     agent
         .mesh

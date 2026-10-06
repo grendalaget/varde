@@ -1002,6 +1002,7 @@ mod ensure_live_tests {
             restore: None,
             snapshot_interval_s: None,
             snapshot_requests: vec![],
+            latest_safe_save_at_unix_ms: None,
         })
     }
 
@@ -1216,6 +1217,7 @@ mod requires_stop_tests {
             repl_notify: tokio::sync::Notify::new(),
             last_heartbeat_ok: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
+            cp_view: Mutex::new(Default::default()),
         }
     }
 
@@ -1234,6 +1236,7 @@ mod requires_stop_tests {
             restore: None,
             snapshot_interval_s: None,
             snapshot_requests: vec![],
+            latest_safe_save_at_unix_ms: None,
         })
     }
 

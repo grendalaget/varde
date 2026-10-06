@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -43,7 +44,7 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		case strings.HasPrefix(p, "/v1/agent/"):
 			// enroll endpoints are unsigned; everything else needs the signature
 			if strings.HasPrefix(p, "/v1/agent/enroll/") {
-				genMux.ServeHTTP(w, r)
+				genMux.ServeHTTP(w, r.WithContext(withRequestBase(r.Context(), r)))
 			} else {
 				agentSigned.ServeHTTP(w, r)
 			}
@@ -57,6 +58,33 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 			spa.ServeHTTP(w, r)
 		}
 	})
+}
+
+type requestBaseKey struct{}
+
+// withRequestBase records scheme://host of the request so handlers can build
+// URLs the caller can reach when no public URL is configured. Only echoed back
+// to the same caller, so trusting X-Forwarded-Proto is harmless.
+func withRequestBase(ctx context.Context, r *http.Request) context.Context {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	if r.Host == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestBaseKey{}, scheme+"://"+r.Host)
+}
+
+// publicBase is the configured public URL, else the request's own base.
+func (s *Server) publicBase(ctx context.Context) string {
+	if s.Cfg.PublicURL != "" {
+		return strings.TrimRight(s.Cfg.PublicURL, "/")
+	}
+	if b, ok := ctx.Value(requestBaseKey{}).(string); ok {
+		return b
+	}
+	return "http://localhost:8080"
 }
 
 var _ = json.Marshal

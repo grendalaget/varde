@@ -40,6 +40,18 @@ pub struct Agent {
     /// shutdown requested: drain executions while heartbeats, the mesh, the
     /// chunk server and replication keep running; refuse new work
     pub shutting_down: AtomicBool,
+    /// What the control plane last told us, for local status (tray).
+    pub cp_view: Mutex<CpView>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct CpView {
+    pub node_name: String,
+    pub group_name: String,
+    pub heartbeat_interval_ms: i64,
+    pub last_contact_unix_ms: i64,
+    /// server_id -> latest committed snapshot created_at
+    pub latest_safe_save: HashMap<String, i64>,
 }
 
 #[derive(Default)]

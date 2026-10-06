@@ -3,6 +3,9 @@
 //! `run` path on a tokio runtime; SCM STOP and PRESHUTDOWN both feed the
 //! same graceful-stop channel as SIGTERM/ctrl-c, with a 120 s preshutdown
 //! hint so the final snapshot + replication hold can finish.
+//!
+//! Not linked yet is a running (idle) state, not a failure. Real failures
+//! exit with a service-specific code, and the SCM restarts the service.
 
 use anyhow::{Context, Result};
 use std::ffi::OsString;
@@ -10,7 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use windows_service::service::{
-    ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+    ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
+    ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
     ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
@@ -41,8 +45,22 @@ pub fn install() -> Result<()> {
         account_password: None,
     };
     let svc = mgr
-        .create_service(&info, ServiceAccess::CHANGE_CONFIG)
+        .create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
         .context("create service")?;
+    let restart = |s| ServiceAction {
+        action_type: ServiceActionType::Restart,
+        delay: Duration::from_secs(s),
+    };
+    svc.update_failure_actions(ServiceFailureActions {
+        reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86_400)),
+        reboot_msg: None,
+        command: None,
+        actions: Some(vec![restart(5), restart(15), restart(60)]),
+    })
+    .context("set failure actions")?;
+    // also restart when we stop ourselves with a non-zero exit code
+    svc.set_failure_actions_on_non_crash_failures(true)
+        .context("set failure actions flag")?;
     svc.set_description("Varde node agent: peer-hosted game servers.")
         .ok();
     svc.set_preshutdown_timeout(Duration::from_millis(PRESHUTDOWN_MS as u64))
@@ -72,9 +90,31 @@ pub fn uninstall() -> Result<()> {
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("open SCM")?;
     let svc = mgr
-        .open_service(SERVICE_NAME, ServiceAccess::DELETE | ServiceAccess::STOP)
+        .open_service(
+            SERVICE_NAME,
+            ServiceAccess::DELETE | ServiceAccess::STOP | ServiceAccess::QUERY_STATUS,
+        )
         .context("open service")?;
     let _ = svc.stop();
+    // wait for the graceful stop (final save + replication hold) before the
+    // installer removes the binaries; bounded like the preshutdown budget
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        match svc.query_status() {
+            Ok(st) if st.current_state == ServiceState::Stopped => break,
+            Ok(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(500))
+            }
+            Ok(_) => {
+                eprintln!("service {SERVICE_NAME} did not stop within 180 s; removing anyway");
+                break;
+            }
+            Err(e) => {
+                eprintln!("query service status: {e}");
+                break;
+            }
+        }
+    }
     svc.delete().context("delete service")?;
     println!("service {SERVICE_NAME} removed");
     Ok(())
@@ -183,10 +223,22 @@ fn service_main_inner() -> Result<()> {
         ServiceControlAccept::empty(),
         Duration::from_secs(10),
     )?;
-    set_status(
-        ServiceState::Stopped,
-        ServiceControlAccept::empty(),
-        Duration::ZERO,
-    )?;
+    if let Err(e) = &run_res {
+        eprintln!("agent failed: {e:#}");
+    }
+    // a non-zero exit code makes the SCM apply the restart actions
+    status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: if run_res.is_err() {
+            ServiceExitCode::ServiceSpecific(1)
+        } else {
+            ServiceExitCode::Win32(0)
+        },
+        checkpoint: 0,
+        wait_hint: Duration::ZERO,
+        process_id: None,
+    })?;
     run_res
 }

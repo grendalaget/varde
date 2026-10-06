@@ -302,10 +302,7 @@ func (s *Server) AgentEnrollDevice(ctx context.Context, req gen.AgentEnrollDevic
 	if err := s.Store.CreateDeviceLink(ctx, d); err != nil {
 		return nil, err
 	}
-	base := s.Cfg.PublicURL
-	if base == "" {
-		base = "http://localhost:8080"
-	}
+	base := s.publicBase(ctx)
 	return gen.AgentEnrollDevice200JSONResponse{
 		DeviceCode:      devCode,
 		UserCode:        userCode,

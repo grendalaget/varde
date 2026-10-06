@@ -1668,6 +1668,13 @@ components:
         snapshot_requests:
           type: array
           items: { $ref: "#/components/schemas/SnapshotRequest" }
+        latest_safe_save_at_unix_ms:
+          description: >-
+            created_at of the server's latest committed snapshot ("Latest
+            safe save"); absent when it has none. Display only.
+          type: integer
+          format: int64
+          nullable: true
     AgentDirectives:
       type: object
       required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]
@@ -1680,6 +1687,9 @@ components:
           required: [name, hosting_enabled, anchor, admin_state]
           properties:
             name: { type: string }
+            group_name:
+              description: Display name of the node's group (tray/status).
+              type: string
             hosting_enabled: { type: boolean }
             anchor: { type: boolean }
             admin_state:

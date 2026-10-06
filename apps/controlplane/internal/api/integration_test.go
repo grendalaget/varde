@@ -247,12 +247,17 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
+	Node struct {
+		Name      string  `json:"name"`
+		GroupName *string `json:"group_name"`
+	} `json:"node"`
 	Executions []struct {
-		ExecutionID string `json:"execution_id"`
-		ServerID    string `json:"server_id"`
-		Epoch       int64  `json:"epoch"`
-		Action      string `json:"action"`
-		StopReason  string `json:"stop_reason"`
+		ExecutionID            string `json:"execution_id"`
+		ServerID               string `json:"server_id"`
+		Epoch                  int64  `json:"epoch"`
+		Action                 string `json:"action"`
+		StopReason             string `json:"stop_reason"`
+		LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms"`
 		Restore     *struct {
 			SnapshotID    string   `json:"snapshot_id"`
 			SourceNodeIDs []string `json:"source_node_ids"`
@@ -642,6 +647,10 @@ func TestEnrollDeviceFlow(t *testing.T) {
 	if userCode == "" || devCode == "" {
 		t.Fatal("missing codes")
 	}
+	// no --public-url: the link points at the address the agent used
+	if want := e.http.URL + "/link?code=" + userCode; b["verification_url"] != want {
+		t.Fatalf("verification_url = %v, want %s", b["verification_url"], want)
+	}
 	// poll before approval → 202
 	p := e.do("POST", "/v1/agent/enroll/device/poll", map[string]any{"device_code": devCode}, "")
 	if p.Status != 202 {
@@ -655,6 +664,53 @@ func TestEnrollDeviceFlow(t *testing.T) {
 	eb := e.mustOK(p)
 	if eb["node_id"] == "" {
 		t.Fatal("no node_id")
+	}
+}
+
+func TestDeviceVerificationURLUsesPublicURL(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Cfg.PublicURL = "https://varde.example.com/"
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	b := e.mustOK(e.do("POST", "/v1/agent/enroll/device", map[string]any{
+		"public_key": base64.StdEncoding.EncodeToString(pub),
+	}, ""))
+	want := "https://varde.example.com/link?code=" + b["user_code"].(string)
+	if b["verification_url"] != want {
+		t.Fatalf("verification_url = %v, want %s", b["verification_url"], want)
+	}
+}
+
+func TestDirectivesCarryGroupNameAndLatestSafeSave(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	var groupName string
+	if err := e.st.DB.Get(&groupName, `SELECT name FROM groups WHERE id=?`, e.group); err != nil {
+		t.Fatal(err)
+	}
+	srv := e.createServer("testgame", "s1", nil)
+	_, execA, epA := e.startToRunning(srv, a)
+	d, _ := a.heartbeat([]map[string]any{{
+		"execution_id": execA, "server_id": srv, "epoch": epA, "state": "running",
+	}})
+	if d.Node.GroupName == nil || *d.Node.GroupName != groupName {
+		t.Fatalf("group_name = %v, want %q", d.Node.GroupName, groupName)
+	}
+	if len(d.Executions) != 1 || d.Executions[0].LatestSafeSaveAtUnixMs != nil {
+		t.Fatalf("before any save: %+v", d.Executions)
+	}
+	if r := a.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_c", "ee"); r.Status != 201 {
+		t.Fatalf("%d %s", r.Status, r.Raw)
+	}
+	var createdAt int64
+	if err := e.st.DB.Get(&createdAt, `SELECT created_at FROM snapshots WHERE id='snap_c'`); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = a.heartbeat([]map[string]any{{
+		"execution_id": execA, "server_id": srv, "epoch": epA, "state": "running",
+	}})
+	if len(d.Executions) != 1 || d.Executions[0].LatestSafeSaveAtUnixMs == nil ||
+		*d.Executions[0].LatestSafeSaveAtUnixMs != createdAt {
+		t.Fatalf("latest_safe_save_at_unix_ms after commit: %+v, want %d", d.Executions, createdAt)
 	}
 }
 

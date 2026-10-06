@@ -69,3 +69,22 @@ fn restrict_permissions(_path: &Path) -> Result<()> {
     // already admin-only. Fine-grained ACLing lands with the Windows service.
     Ok(())
 }
+
+/// A fresh key, not yet on disk (re-link: written only once approved).
+pub fn generate() -> SigningKey {
+    SigningKey::generate(&mut rand::rngs::OsRng)
+}
+
+/// Writes `key` to `path` (replacing any previous key).
+pub fn save(path: &Path, key: &SigningKey) -> Result<()> {
+    let pem = key
+        .to_pkcs8_pem(LineEnding::LF)
+        .context("encode PKCS#8 PEM")?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
+    }
+    let tmp = path.with_extension("key.tmp");
+    fs::write(&tmp, pem.as_bytes()).with_context(|| format!("write key {}", tmp.display()))?;
+    restrict_permissions(&tmp)?;
+    fs::rename(&tmp, path).with_context(|| format!("write key {}", path.display()))
+}

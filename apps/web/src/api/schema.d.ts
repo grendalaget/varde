@@ -1153,6 +1153,11 @@ export interface components {
             } | null;
             snapshot_interval_s?: number;
             snapshot_requests?: components["schemas"]["SnapshotRequest"][];
+            /**
+             * Format: int64
+             * @description created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
+             */
+            latest_safe_save_at_unix_ms?: number | null;
         };
         AgentDirectives: {
             /** Format: int64 */
@@ -1161,6 +1166,8 @@ export interface components {
             lease_ttl_ms: number;
             node: {
                 name: string;
+                /** @description Display name of the node's group (tray/status). */
+                group_name?: string;
                 hosting_enabled: boolean;
                 anchor: boolean;
                 /** @enum {string} */
