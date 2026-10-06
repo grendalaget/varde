@@ -100,8 +100,11 @@ type Link struct {
 	// <control plane>/link?code=<user_code>, built from the URL the user gave.
 	LinkUrl         string `protobuf:"bytes,2,opt,name=link_url,json=linkUrl,proto3" json:"link_url,omitempty"`
 	ExpiresAtUnixMs int64  `protobuf:"varint,3,opt,name=expires_at_unix_ms,json=expiresAtUnixMs,proto3" json:"expires_at_unix_ms,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// An administrator started this as a re-link; only an administrator may
+	// cancel it.
+	Relink        bool `protobuf:"varint,4,opt,name=relink,proto3" json:"relink,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Link) Reset() {
@@ -153,6 +156,13 @@ func (x *Link) GetExpiresAtUnixMs() int64 {
 		return x.ExpiresAtUnixMs
 	}
 	return 0
+}
+
+func (x *Link) GetRelink() bool {
+	if x != nil {
+		return x.Relink
+	}
+	return false
 }
 
 type Hosting struct {
@@ -704,11 +714,12 @@ var File_agent_v1_local_proto protoreflect.FileDescriptor
 
 const file_agent_v1_local_proto_rawDesc = "" +
 	"\n" +
-	"\x14agent/v1/local.proto\x12\x0evarde.agent.v1\"k\n" +
+	"\x14agent/v1/local.proto\x12\x0evarde.agent.v1\"\x83\x01\n" +
 	"\x04Link\x12\x1b\n" +
 	"\tuser_code\x18\x01 \x01(\tR\buserCode\x12\x19\n" +
 	"\blink_url\x18\x02 \x01(\tR\alinkUrl\x12+\n" +
-	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\"\xce\x01\n" +
+	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\x12\x16\n" +
+	"\x06relink\x18\x04 \x01(\bR\x06relink\"\xce\x01\n" +
 	"\aHosting\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1f\n" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +

@@ -10,10 +10,12 @@ platforms the binary is a stub, so the workspace builds everywhere.
   running.
 - Menu: status, hosted server + phase, latest safe save, Open dashboard,
   Link this PC… / Re-link… (relaunches elevated with `--relink`; refused by
-  the service while hosting), Start at login, Quit tray (the service keeps
+  the service while hosting), Open logs folder, Start at login, Quit tray (the service keeps
   running).
 - Link window (`ui/`, static HTML, no build step): Varde address → code,
   Copy code / Open again / Cancel, countdown, "Linked to <group> as <name>".
+  An administrator's pending re-link shows "An administrator is re-linking this
+  PC" instead of Cancel outside the elevated window; refused calls show inline.
   Without WebView2 it falls back to message boxes.
 
 The address comes from the service: its control-plane URL once linked, before

@@ -208,6 +208,7 @@ impl Hub {
             user_code: dev.user_code.clone(),
             link_url: link::link_url(&url, &dev),
             expires_at_unix_ms: crate::now_ms() + dev.expires_in * 1000,
+            relink: linked,
         };
         info!(code = %dev.user_code, url = %active.link_url, relink, "linking: waiting for approval");
         {

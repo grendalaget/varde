@@ -40,6 +40,9 @@ message Link {
   // <control plane>/link?code=<user_code>, built from the URL the user gave.
   string link_url = 2;
   int64 expires_at_unix_ms = 3;
+  // An administrator started this as a re-link; only an administrator may
+  // cancel it.
+  bool relink = 4;
 }
 
 message Hosting {

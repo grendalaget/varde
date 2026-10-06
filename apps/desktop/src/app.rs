@@ -200,6 +200,13 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         v.link_enabled,
         none,
     )?)?;
+    m.append(&MenuItem::with_id(
+        app,
+        "logs",
+        "Open logs folder",
+        true,
+        none,
+    )?)?;
     m.append(&CheckMenuItem::with_id(
         app,
         "autostart",
@@ -231,6 +238,11 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
             Some(v) if v.relink => elevate_relink(),
             _ => open_link_window(app),
         },
+        "logs" => {
+            let _ = app
+                .opener()
+                .open_path(logs_dir().to_string_lossy(), None::<&str>);
+        }
         "autostart" => {
             let _ = autostart::set(!autostart::enabled());
             render(app, true);
@@ -238,6 +250,14 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
         "quit" => app.exit(0),
         _ => {}
     }
+}
+
+/// Where the service writes its logs (see packaging/windows).
+fn logs_dir() -> std::path::PathBuf {
+    std::env::var_os("ProgramData")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| r"C:\ProgramData".into())
+        .join(r"Varde\logs")
 }
 
 fn open_link_window(app: &AppHandle) {

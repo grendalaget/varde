@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -23,6 +24,7 @@ var version = "dev"
 
 func main() {
 	ipc := flag.String("ipc", "", "IPC endpoint: unix socket path (Linux) or named pipe path (Windows)")
+	parentPID := flag.Int("parent-pid", 0, "exit when this spawning parent disappears (0 disables monitoring)")
 	debugListen := flag.String("debug-listen", "", "optional 127.0.0.1:port for /metrics")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
 	flag.Parse()
@@ -68,6 +70,18 @@ func main() {
 
 	srv := grpc.NewServer()
 	meshv1.RegisterMeshServiceServer(srv, newMeshServer(log, n))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parentGone := watchParent(ctx, *parentPID)
+	go func() {
+		select {
+		case <-parentGone:
+			log.Info("spawning parent exited", "parent_pid", *parentPID)
+			// Active IPC streams must not prevent releasing the orphan's listeners.
+			srv.Stop()
+		case <-ctx.Done():
+		}
+	}()
 
 	go func() {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -81,4 +95,28 @@ func main() {
 		log.Error("serve failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func watchParent(ctx context.Context, parentPID int) <-chan struct{} {
+	if parentPID <= 0 {
+		return nil
+	}
+	gone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			// Reparenting detects exit even if the original PID has been reused.
+			if os.Getppid() != parentPID {
+				close(gone)
+				return
+			}
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return gone
 }

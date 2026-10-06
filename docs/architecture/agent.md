@@ -18,7 +18,7 @@ or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcomm
   chunks/  snapshots/       snapshot-store
   servers/<srv_id>/         live working directory of a hosted server
   state/executions.json     last known executions + fencing status (survives agent restarts)
-logs: /var/log/varde (Linux) | <data>\logs (Windows); JSON lines, rotated
+logs: /var/log/varde (Linux) | <data>\logs (Windows service: agent.YYYY-MM-DD.log, daily, 7 kept, Users may read); JSON lines, rotated
 ```
 
 ## Lifecycle: not linked → linked

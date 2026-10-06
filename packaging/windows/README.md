@@ -6,14 +6,18 @@
   (`apps/desktop`) into `Program Files\Varde`, plus a Start menu entry
   for the tray
 - uses `varde.ico` for setup and uninstall and installs it with the binaries
+- shows the brand art in the wizard: `wizard/wizard-*.bmp` (mark + wordmark on
+  Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
+  each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
 - asks for the Varde address (prefilled `https://varde.games`; checked with
   `GET /v1/version`, warning only; plain `http://` other than loopback
   needs an extra confirmation) and writes it to `%ProgramData%\Varde\server.url`,
   which the unlinked service reports to the tray. Skipped when the PC is already linked
 - installs Microsoft Edge WebView2 if missing (for the link window; without
   it the tray links via message boxes)
-- creates `%ProgramData%\Varde` with a SYSTEM/Administrators-only ACL on
-  `identity\`
+- creates `%ProgramData%\Varde`; `service install` makes it SYSTEM/Administrators-only
+  (drops what it inherits from ProgramData, takes ownership back, resets explicit
+  entries below it; `logs\` stays readable by Users)
 - registers and starts the `VardeAgent` Windows service (the agent's own
   `service install` path — STOP and PRESHUTDOWN map to the graceful-stop
   path, with a 120 s preshutdown timeout). Unlinked, the service waits idle

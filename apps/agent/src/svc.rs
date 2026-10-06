@@ -65,27 +65,50 @@ pub fn install() -> Result<()> {
         .ok();
     svc.set_preshutdown_timeout(Duration::from_millis(PRESHUTDOWN_MS as u64))
         .context("set preshutdown timeout")?;
-    // %ProgramData%\Varde\identity holds the node key — restrict to
-    // SYSTEM + Administrators only.
-    let ident = std::env::var_os("ProgramData")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"))
-        .join("Varde")
-        .join("identity");
-    std::fs::create_dir_all(&ident).ok();
-    let _ = std::process::Command::new("icacls")
-        .arg(&ident)
-        .args([
-            "/inheritance:r",
-            "/grant:r",
-            "*S-1-5-18:(OI)(CI)F",
-            "Administrators:(OI)(CI)F",
-        ])
-        .output();
+    secure_data_dir().context("restrict the data dir to SYSTEM and Administrators")?;
     println!("service {SERVICE_NAME} installed (LocalSystem, auto-start)");
     Ok(())
 }
 
+/// %ProgramData%\Varde is SYSTEM + Administrators only: the service runs as
+/// SYSTEM and trusts config.toml and server.url there. ProgramData lets any
+/// user create files and folders, so drop what the folder inherits, take back
+/// ownership of anything a user created first, and reset explicit entries
+/// below it. identity\ (the node key) and logs\ are then set up again.
+fn secure_data_dir() -> Result<()> {
+    const ADMINS: &str = "*S-1-5-32-544";
+    const OWNERS: [&str; 2] = ["*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"];
+    let data = crate::default_data_dir();
+    let ident = data.join("identity");
+    std::fs::create_dir_all(&ident).context("create data dir")?;
+    let icacls = |path: &std::path::Path, args: &[&str]| -> Result<()> {
+        let out = std::process::Command::new("icacls")
+            .arg(path)
+            .args(args)
+            .output()
+            .context("run icacls")?;
+        anyhow::ensure!(
+            out.status.success(),
+            "icacls {} {}: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&out.stdout).trim()
+        );
+        Ok(())
+    };
+    let protect = [&["/inheritance:r", "/grant:r"][..], &OWNERS].concat();
+    icacls(&data, &["/setowner", ADMINS, "/T", "/C", "/Q"])?;
+    // drop explicit entries on the folder itself, then what it inherits
+    icacls(&data, &["/reset", "/Q"])?;
+    icacls(&data, &protect)?;
+    icacls(&data.join("*"), &["/reset", "/T", "/C", "/Q"])?;
+    icacls(&ident, &protect)?;
+    let logs = data.join("logs");
+    if logs.is_dir() {
+        icacls(&logs, &["/grant", "*S-1-5-32-545:(OI)(CI)RX"])?;
+    }
+    Ok(())
+}
 pub fn uninstall() -> Result<()> {
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("open SCM")?;
@@ -128,7 +151,7 @@ windows_service::define_windows_service!(ffi_service_main, service_main);
 
 fn service_main(_args: Vec<OsString>) {
     if let Err(e) = service_main_inner() {
-        eprintln!("service failed: {e:#}");
+        tracing::error!("service failed: {e:#}");
     }
 }
 
@@ -224,7 +247,7 @@ fn service_main_inner() -> Result<()> {
         Duration::from_secs(10),
     )?;
     if let Err(e) = &run_res {
-        eprintln!("agent failed: {e:#}");
+        tracing::error!("agent failed: {e:#}");
     }
     // a non-zero exit code makes the SCM apply the restart actions
     status_handle.set_service_status(ServiceStatus {

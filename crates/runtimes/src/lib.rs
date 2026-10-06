@@ -578,3 +578,25 @@ mod tests {
         assert!(p1.join(".complete").is_file());
     }
 }
+
+#[cfg(test)]
+mod zip_tests {
+    use std::io::Write;
+
+    #[test]
+    fn extracts_deflated_zip() {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("bin/file.txt", opts).unwrap();
+        w.write_all(b"hello zip runtime").unwrap();
+        let body = w.finish().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        zip::ZipArchive::new(body)
+            .unwrap()
+            .extract(tmp.path())
+            .unwrap();
+        let got = std::fs::read_to_string(tmp.path().join("bin").join("file.txt")).unwrap();
+        assert_eq!(got, "hello zip runtime");
+    }
+}
