@@ -52,6 +52,19 @@ pub struct CpView {
     pub last_contact_unix_ms: i64,
     /// server_id -> latest committed snapshot created_at
     pub latest_safe_save: HashMap<String, i64>,
+    /// control-plane clock minus this PC's, as of the last heartbeat
+    pub cp_clock_offset_ms: i64,
+}
+
+impl CpView {
+    /// A control-plane timestamp on this PC's clock; 0 (none) stays 0.
+    pub fn to_local_ms(&self, cp_ms: i64) -> i64 {
+        if cp_ms == 0 {
+            0
+        } else {
+            cp_ms - self.cp_clock_offset_ms
+        }
+    }
 }
 
 #[derive(Default)]

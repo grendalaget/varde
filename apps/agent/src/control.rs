@@ -34,10 +34,14 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
         deleted_snapshots: Some(deleted_snapshots.clone()),
     };
+    // not sent: building the report (disk walks) isn't part of the round trip
+    let posted = Instant::now();
     let d: cp_api::AgentDirectives = agent
         .cp
         .json("POST", "/v1/agent/heartbeat", Some(&hb))
         .await?;
+    agent.cp_view.lock().unwrap().cp_clock_offset_ms =
+        cp_clock_offset_ms(d.server_time_unix_ms, crate::now_ms(), posted.elapsed());
     acknowledge_delete_acks(&agent.pending_delete_acks, &deleted_snapshots);
     apply(agent, &d, sent).await?;
     let elapsed_ms = sent.elapsed().as_millis() as u64;
@@ -97,6 +101,11 @@ fn acknowledge_delete_acks(pending: &Mutex<BTreeSet<String>>, sent: &[String]) {
     for id in sent {
         pending.remove(id);
     }
+}
+
+/// The CP stamps server_time about halfway through the heartbeat round trip.
+fn cp_clock_offset_ms(server_time_ms: i64, now_ms: i64, round_trip: Duration) -> i64 {
+    server_time_ms - (now_ms - round_trip.as_millis() as i64 / 2)
 }
 
 /// Apply the directives: mesh state, execution diff, replication, deletes.
@@ -267,9 +276,24 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_delete_acks, pending_delete_ack_ids};
+    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
+    use crate::agent::CpView;
     use std::collections::BTreeSet;
     use std::sync::Mutex;
+    use std::time::Duration;
+
+    #[test]
+    fn cp_timestamps_move_to_this_pcs_clock() {
+        // CP 30 s ahead; heartbeat sent at PC 1_000_000, answered 200 ms later
+        let offset = cp_clock_offset_ms(1_030_100, 1_000_200, Duration::from_millis(200));
+        assert_eq!(offset, 30_000);
+        let v = CpView {
+            cp_clock_offset_ms: offset,
+            ..Default::default()
+        };
+        assert_eq!(v.to_local_ms(1_025_000), 995_000);
+        assert_eq!(v.to_local_ms(0), 0);
+    }
 
     #[test]
     fn delete_acknowledgement_removes_only_sent_ids() {
