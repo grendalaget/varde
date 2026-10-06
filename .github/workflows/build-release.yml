@@ -214,7 +214,7 @@ jobs:
           merge-multiple: true
       - name: SHA256SUMS
         working-directory: release-assets
-        run: sha256sum * > SHA256SUMS
+        run: sha256sum -- * > SHA256SUMS
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: release-assets/SHA256SUMS
@@ -240,4 +240,3 @@ jobs:
       - name: Dry-run summary
         if: inputs.dry_run
         run: echo 'Dry run complete. All platforms built, attested and keyless-signed; no release or tag changed.' >> "$GITHUB_STEP_SUMMARY"
-

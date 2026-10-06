@@ -72,7 +72,7 @@ jobs:
       - name: Mark nightly commit successfully published
         if: inputs.channel == 'nightly'
         run: |
-          printf 'Rolling nightly **%s**, built from `%s`.\n\n<!-- nightly-commit:%s -->\n' \
+          printf 'Rolling nightly **%s**, built from %s.\n\n<!-- nightly-commit:%s -->\n' \
             "$VERSION" "$COMMIT" "$COMMIT" > notes.md
           gh release edit nightly --prerelease --latest=false --target "$COMMIT" \
             --title "Nightly $VERSION" --notes-file notes.md
