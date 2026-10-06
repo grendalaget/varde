@@ -106,6 +106,7 @@ e2e-minecraft: test-bins
 	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
 	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
 		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
+		VARDE_E2E_LOG_DIR="$(VARDE_E2E_LOG_DIR)" \
 		../../bin/netns-minecraft.test -test.run TestMinecraft -test.v -test.count=1 -test.timeout 40m
 
 # Randomized Minecraft fault soak. Set VARDE_SOAK_SEED to reproduce a run.
@@ -117,6 +118,7 @@ e2e-soak: test-bins
 	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
 	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
 		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
+		VARDE_E2E_LOG_DIR="$(VARDE_E2E_LOG_DIR)" \
 		VARDE_SOAK_DURATION=$(SOAK_MINUTES)m VARDE_SOAK_SEED="$(VARDE_SOAK_SEED)" \
 		../../bin/netns-minecraft.test -test.run '^TestMinecraftSoak$$' -test.v -test.count=1 \
 		-test.timeout $$(expr $(SOAK_MINUTES) + 30)m
@@ -128,4 +130,5 @@ e2e-valheim: test-bins
 	cd tests/netns && go test -c -tags 'netns valheim' -o ../../bin/netns-valheim.test .
 	cd tests/netns && sudo VARDE_VALHEIM_SEED_DIR="$(VARDE_VALHEIM_SEED_DIR)" \
 		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
+		VARDE_E2E_LOG_DIR="$(VARDE_E2E_LOG_DIR)" \
 		../../bin/netns-valheim.test -test.run TestValheim -test.v -test.count=1 -test.timeout 75m

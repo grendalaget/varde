@@ -25,6 +25,8 @@ jobs:
   minecraft:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      VARDE_E2E_LOG_DIR: ${{ github.workspace }}/e2e-logs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,13 +57,17 @@ jobs:
         if: always()
         with:
           name: e2e-minecraft
-          path: e2e-minecraft.log
+          path: |
+            e2e-minecraft.log
+            e2e-logs/
           if-no-files-found: warn
 
   soak:
     if: github.event_name == 'workflow_dispatch' && inputs.soak_minutes != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      VARDE_E2E_LOG_DIR: ${{ github.workspace }}/e2e-logs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -94,13 +100,17 @@ jobs:
         if: always()
         with:
           name: e2e-soak
-          path: e2e-soak.log
+          path: |
+            e2e-soak.log
+            e2e-logs/
           if-no-files-found: warn
 
   valheim:
     if: github.event_name == 'workflow_dispatch' && inputs.valheim
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      VARDE_E2E_LOG_DIR: ${{ github.workspace }}/e2e-logs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -133,5 +143,7 @@ jobs:
         if: always()
         with:
           name: e2e-valheim
-          path: e2e-valheim.log
+          path: |
+            e2e-valheim.log
+            e2e-logs/
           if-no-files-found: warn

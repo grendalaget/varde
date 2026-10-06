@@ -47,14 +47,85 @@ const (
 )
 
 type proc struct {
-	cmd *exec.Cmd
-	buf *bytes.Buffer
+	cmd       *exec.Cmd
+	buf       *bytes.Buffer
+	outputMu  sync.Mutex
+	logFile   *os.File
+	closeOnce sync.Once
+	waitOnce  sync.Once
+	waitErr   error
+}
+
+func (p *proc) Write(data []byte) (int, error) {
+	p.outputMu.Lock()
+	defer p.outputMu.Unlock()
+	if _, err := p.buf.Write(data); err != nil {
+		return 0, err
+	}
+	if p.logFile != nil {
+		n, err := p.logFile.Write(data)
+		if err != nil {
+			return n, err
+		}
+		if n != len(data) {
+			return n, io.ErrShortWrite
+		}
+	}
+	return len(data), nil
+}
+
+func (p *proc) output() string {
+	p.outputMu.Lock()
+	defer p.outputMu.Unlock()
+	return p.buf.String()
+}
+
+func (p *proc) closeLog() {
+	p.closeOnce.Do(func() {
+		if p.logFile != nil {
+			_ = p.logFile.Close()
+		}
+	})
+}
+
+func (p *proc) wait() error {
+	p.waitOnce.Do(func() {
+		p.waitErr = p.cmd.Wait()
+		p.closeLog()
+	})
+	return p.waitErr
 }
 
 func (p *proc) kill() {
-	if p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
-		go func() { _ = p.cmd.Wait() }()
+	if p.cmd.Process == nil || p.cmd.ProcessState != nil {
+		p.closeLog()
+		return
+	}
+	_ = p.cmd.Process.Kill()
+	go func() { _ = p.wait() }()
+}
+
+func TestProcWritesToMemoryAndFile(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "nested", "agent.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &proc{buf: &bytes.Buffer{}, logFile: logFile}
+	want := "stdout and stderr"
+	if n, err := p.Write([]byte(want)); err != nil || n != len(want) {
+		t.Fatalf("Write() = %d, %v; want %d, nil", n, err, len(want))
+	}
+	p.closeLog()
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.output() != want || string(got) != want {
+		t.Fatalf("output = %q, file = %q; want %q", p.output(), got, want)
 	}
 }
 
@@ -66,14 +137,37 @@ func spawnLogged(t *testing.T, name string, args ...string) *proc {
 }
 
 func spawnLoggedNoCleanup(t *testing.T, name string, args ...string) *proc {
+	return spawnLoggedNoCleanupWithLog(t, "", name, args...)
+}
+
+func spawnLoggedNoCleanupWithLog(t *testing.T, logPath, name string, args ...string) *proc {
 	t.Helper()
-	buf := &bytes.Buffer{}
 	c := exec.Command(name, args...)
-	c.Stdout, c.Stderr = buf, buf
+	p := startLoggedCmd(t, c, logPath, name, args...)
+	return p
+}
+
+func startLoggedCmd(t *testing.T, c *exec.Cmd, logPath, name string, args ...string) *proc {
+	t.Helper()
+	p := &proc{buf: &bytes.Buffer{}}
+	if logPath != "" {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			t.Fatalf("create process log directory for %s: %v", name, err)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("create process log %s: %v", logPath, err)
+		}
+		p.logFile = logFile
+		t.Logf("process log: %s", logPath)
+	}
+	c.Stdout, c.Stderr = p, p
 	if err := c.Start(); err != nil {
+		p.closeLog()
 		t.Fatalf("spawn %s %v: %v", name, args, err)
 	}
-	return &proc{cmd: c, buf: buf}
+	p.cmd = c
+	return p
 }
 
 // ip/iptables live in /usr/sbin which a bare sudo PATH may drop — resolve
@@ -100,16 +194,15 @@ func spawnIn(t *testing.T, ns, name string, args ...string) *proc {
 
 // spawnInEnv is spawnIn with extra environment variables.
 func spawnInEnv(t *testing.T, ns string, env []string, name string, args ...string) *proc {
+	return spawnInEnvWithLog(t, ns, env, "", name, args...)
+}
+
+func spawnInEnvWithLog(t *testing.T, ns string, env []string, logPath, name string, args ...string) *proc {
 	t.Helper()
-	buf := &bytes.Buffer{}
 	full := append([]string{"netns", "exec", ns, name}, args...)
 	c := exec.Command(toolPath()["ip"], full...)
-	c.Stdout, c.Stderr = buf, buf
 	c.Env = append(os.Environ(), env...)
-	if err := c.Start(); err != nil {
-		t.Fatalf("spawn %s %v: %v", name, args, err)
-	}
-	p := &proc{cmd: c, buf: buf}
+	p := startLoggedCmd(t, c, logPath, name, args...)
 	t.Cleanup(p.kill)
 	return p
 }
@@ -439,7 +532,7 @@ func TestNetnsDemo(t *testing.T) {
 	defer cp.kill()
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("--- cp log ---\n%s", cp.buf.String())
+			t.Logf("--- cp log ---\n%s", cp.output())
 		}
 	})
 
@@ -496,7 +589,7 @@ func TestNetnsDemo(t *testing.T) {
 			// keep the last 40 non-heartbeat lines; per-heartbeat mesh
 			// "configured" spam drowns the useful output
 			var keep []string
-			for _, l := range strings.Split(nd.proc.buf.String(), "\n") {
+			for _, l := range strings.Split(nd.proc.output(), "\n") {
 				if strings.Contains(l, `"msg":"configured"`) ||
 					strings.Contains(l, "direct dial failed") {
 					continue

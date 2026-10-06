@@ -405,7 +405,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		t.Fatalf("SIGTERM arne agent: %v", err)
 	}
 	// reap the process in the background so ProcessState populates
-	go func() { _ = arneProc.cmd.Wait() }()
+	go func() { _ = arneProc.wait() }()
 	waitFor(t, 3*time.Minute, "arne agent exited", func() bool {
 		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited()
 	})
@@ -786,7 +786,7 @@ func TestMinecraftCutOff(t *testing.T) {
 		_, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
 		t.Logf("execution JSON after cutoff: %s", body)
 	}
-	arneLogs := e.nodes["arne"].proc.buf.String()
+	arneLogs := e.nodes["arne"].proc.output()
 	if !strings.Contains(arneLogs, arneExecutionID) || !strings.Contains(arneLogs, "lease deadline expired") {
 		t.Errorf("arne agent log did not show fencing for %s", arneExecutionID)
 	}
@@ -1158,7 +1158,7 @@ func TestMinecraftCorruptReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Kari chunk quarantine: %v", err)
 	}
-	kariLogs := e.nodes["kari"].proc.buf.String()
+	kariLogs := e.nodes["kari"].proc.output()
 	if len(quarantined) == 0 && !strings.Contains(kariLogs, "hash mismatch") {
 		t.Fatalf("no evidence of corrupt chunk rejection in quarantine or Kari agent logs")
 	}
@@ -1280,7 +1280,7 @@ func TestMinecraftCPRestart(t *testing.T) {
 	if len(pids) != 1 || pids[0] != serverPID {
 		t.Fatalf("server.jar PID changed across control-plane restart: before=%s after=%v", serverPID, pids)
 	}
-	if strings.Contains(e.nodes["arne"].proc.buf.String(), "fenced") {
+	if strings.Contains(e.nodes["arne"].proc.output(), "fenced") {
 		t.Fatal("Arne agent log contains a fenced line")
 	}
 
@@ -1492,7 +1492,7 @@ func TestMinecraftSoak(t *testing.T) {
 			if err := proc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Fatalf("cycle %d: SIGTERM %s agent: %v", cycle, hostBefore, err)
 			}
-			go func() { _ = proc.cmd.Wait() }()
+			go func() { _ = proc.wait() }()
 			waitFor(t, 3*time.Minute, hostBefore+" agent exited", func() bool {
 				return proc.cmd.ProcessState != nil && proc.cmd.ProcessState.Exited()
 			})

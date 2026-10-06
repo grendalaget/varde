@@ -133,11 +133,14 @@ type gameEnv struct {
 	cp      *proc
 	cpArgs  []string
 	cpLogs  []*proc
+	logDir  string
 
 	serverIDs      []string
 	runtimeSeed    string
 	runtimeSeeded  map[string]bool
 	agentProcesses []agentProcessLog
+	cpLogCount     int
+	agentLogCounts map[string]int
 }
 
 type cpOpts struct {
@@ -179,12 +182,14 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 	cpPort := 18080
 	cpURL := fmt.Sprintf("http://%s:%d", wanIP, cpPort)
 	e := &gameEnv{
-		t:             t,
-		tmp:           tmp,
-		cpURL:         cpURL,
-		nodes:         map[string]*node{},
-		runtimeSeed:   os.Getenv("VARDE_E2E_RUNTIME_SEED"),
-		runtimeSeeded: map[string]bool{},
+		t:              t,
+		tmp:            tmp,
+		cpURL:          cpURL,
+		nodes:          map[string]*node{},
+		logDir:         os.Getenv("VARDE_E2E_LOG_DIR"),
+		runtimeSeed:    os.Getenv("VARDE_E2E_RUNTIME_SEED"),
+		runtimeSeeded:  map[string]bool{},
+		agentLogCounts: map[string]int{},
 	}
 	if e.runtimeSeed != "" {
 		t.Cleanup(func() {
@@ -221,7 +226,7 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 			return
 		}
 		for i, p := range e.cpLogs {
-			t.Logf("--- cp log %d ---\n%s", i+1, p.buf.String())
+			t.Logf("--- cp log %d ---\n%s", i+1, p.output())
 		}
 	})
 	e.waitCPUp(15 * time.Second)
@@ -235,7 +240,7 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 				continue
 			}
 			var keep []string
-			for _, l := range strings.Split(nd.proc.buf.String(), "\n") {
+			for _, l := range strings.Split(nd.proc.output(), "\n") {
 				if strings.HasPrefix(l, `{"time":`) {
 					continue
 				}
@@ -261,8 +266,24 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 }
 
 func (e *gameEnv) startCP() {
-	e.cp = spawnLoggedNoCleanup(e.t, bin("varde-control-plane"), e.cpArgs...)
+	e.cp = spawnLoggedNoCleanupWithLog(e.t, e.nextProcessLogPath("cp"),
+		bin("varde-control-plane"), e.cpArgs...)
 	e.cpLogs = append(e.cpLogs, e.cp)
+}
+
+func (e *gameEnv) nextProcessLogPath(name string) string {
+	if e.logDir == "" {
+		return ""
+	}
+	var index int
+	if name == "cp" {
+		e.cpLogCount++
+		index = e.cpLogCount
+	} else {
+		e.agentLogCounts[name]++
+		index = e.agentLogCounts[name]
+	}
+	return filepath.Join(e.logDir, e.t.Name(), fmt.Sprintf("%s-%d.log", name, index))
 }
 
 func collapseRepeatedLogLines(lines []string) []string {
@@ -325,7 +346,7 @@ func (e *gameEnv) restartCP() {
 		e.t.Fatalf("send SIGTERM to control plane: %v", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- old.cmd.Wait() }()
+	go func() { done <- old.wait() }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -417,8 +438,9 @@ func (e *gameEnv) startAgent(name string) {
 		}
 		e.runtimeSeeded[name] = true
 	}
-	nd.proc = spawnInEnv(t, name,
+	nd.proc = spawnInEnvWithLog(t, name,
 		[]string{"VARDE_MESH_LOG_LEVEL=debug"},
+		e.nextProcessLogPath(name),
 		rustBin("varde-agent"), "run",
 		"--data-dir", nd.dataDir, "--mesh-bin", bin("varde-mesh"))
 	e.agentProcesses = append(e.agentProcesses, agentProcessLog{node: name, proc: nd.proc})
@@ -489,7 +511,7 @@ func (e *gameEnv) logRuntimeDownloadLines() {
 		if agent.proc == nil {
 			continue
 		}
-		for _, line := range strings.Split(agent.proc.buf.String(), "\n") {
+		for _, line := range strings.Split(agent.proc.output(), "\n") {
 			if strings.Contains(line, "runtime download") {
 				e.t.Logf("agent %s: %s", agent.node, line)
 			}
@@ -619,6 +641,11 @@ func (e *gameEnv) waitOnline(d time.Duration, names ...string) {
 }
 
 func (e *gameEnv) dumpServerState() {
+	for _, name := range realGameNodeNames {
+		if nd := e.nodes[name]; nd != nil {
+			e.t.Logf("harness node %s: id=%s", name, nd.nodeID)
+		}
+	}
 	for _, id := range e.serverIDs {
 		st, b := apiCall("GET", e.cpURL+"/v1/servers/"+id+"/executions", e.tok, nil)
 		e.t.Logf("server %s executions (%d): %s", id, st, b)
