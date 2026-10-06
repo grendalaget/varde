@@ -12,7 +12,7 @@ export default function CreateGroup({
   const [err, setErr] = useState<string | null>(null);
   return (
     <form
-      className="space-y-4 rounded-lg border border-slate-800 bg-slate-900/60 p-6"
+      className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
@@ -26,7 +26,7 @@ export default function CreateGroup({
     >
       <div>
         <h1 className="text-lg font-semibold">Create your group</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <p className="mt-1 text-sm text-skifer-400">
           A group is you and your friends. Machines and servers belong to the
           group, so anyone's PC can host.
         </p>

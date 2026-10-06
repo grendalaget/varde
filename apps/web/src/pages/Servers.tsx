@@ -14,6 +14,7 @@ import { timeAgo } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { useSession } from "../lib/session";
 import SaveSafety from "../components/SaveSafety";
+import { HostMarker, ServerMark } from "../components/Logo";
 import { useGames } from "../lib/games";
 
 export default function Servers() {
@@ -52,7 +53,7 @@ export default function Servers() {
             No servers yet.{" "}
             <Link
               to="/servers/new"
-              className="text-emerald-400 hover:underline"
+              className="text-take underline decoration-skifer-500 underline-offset-2 hover:decoration-take"
             >
               Create your first one
             </Link>
@@ -74,21 +75,27 @@ function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
   return (
     <Link
       to={`/servers/${s.id}`}
-      className="block rounded-lg border border-slate-800 bg-slate-900/60 p-4 transition-colors hover:border-slate-600"
+      className="block rounded-lg border border-skifer-800 bg-skifer-900/60 p-4 transition-colors hover:border-skifer-600"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate font-semibold text-slate-50">{s.name}</h3>
-          <p className="text-xs text-slate-400">{gameName}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          <ServerMark state={s.observed_state} />
+          <div className="min-w-0">
+            <h3 className="truncate font-semibold text-skifer-50">{s.name}</h3>
+            <p className="text-xs text-skifer-400">{gameName}</p>
+          </div>
         </div>
         <ServerStateBadge state={s.observed_state} />
       </div>
       <dl className="mt-4 space-y-2 text-sm">
         <Row label="Hosting on">
           {sum.hosting_on ? (
-            <span className="text-slate-100">{sum.hosting_on.name}</span>
+            <HostMarker
+              nodeId={sum.hosting_on.node_id}
+              name={sum.hosting_on.name}
+            />
           ) : (
-            <span className="text-slate-500">Not running</span>
+            <span className="text-skifer-500">Not running</span>
           )}
         </Row>
         <Row label="Address">
@@ -97,16 +104,16 @@ function ServerCard({ s, gameName }: { s: Server; gameName: string }) {
               <CopyText text={sum.address} />
             </span>
           ) : (
-            <span className="text-slate-500">—</span>
+            <span className="text-skifer-500">—</span>
           )}
         </Row>
         <Row label="Latest safe save">
           {sum.latest_safe_save ? (
-            <span className="text-slate-100">
+            <span className="text-skifer-100">
               {timeAgo(sum.latest_safe_save.created_at)}
             </span>
           ) : (
-            <span className="text-slate-500">None yet</span>
+            <span className="text-skifer-500">None yet</span>
           )}
         </Row>
       </dl>
@@ -131,7 +138,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <dt className="text-slate-400">{label}</dt>
+      <dt className="text-skifer-400">{label}</dt>
       <dd className="min-w-0 truncate text-right">{children}</dd>
     </div>
   );

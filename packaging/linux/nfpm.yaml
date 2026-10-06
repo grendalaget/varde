@@ -21,6 +21,42 @@ contents:
     type: config
     file_info:
       mode: 0644
+  - src: packaging/linux/icons/scalable/apps/varde.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/varde.svg
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/16x16/apps/varde.png
+    dst: /usr/share/icons/hicolor/16x16/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/32x32/apps/varde.png
+    dst: /usr/share/icons/hicolor/32x32/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/48x48/apps/varde.png
+    dst: /usr/share/icons/hicolor/48x48/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/64x64/apps/varde.png
+    dst: /usr/share/icons/hicolor/64x64/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/128x128/apps/varde.png
+    dst: /usr/share/icons/hicolor/128x128/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/256x256/apps/varde.png
+    dst: /usr/share/icons/hicolor/256x256/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/512x512/apps/varde.png
+    dst: /usr/share/icons/hicolor/512x512/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/varde.desktop
+    dst: /usr/share/applications/varde.desktop
+    file_info:
+      mode: 0644
   - dst: /etc/varde
     type: dir
   - dst: /var/lib/varde
