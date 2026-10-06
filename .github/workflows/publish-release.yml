@@ -1,0 +1,86 @@
+name: publish release assets
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  upload:
+    name: publish release assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CHANNEL: ${{ inputs.channel }}
+      TAG: ${{ inputs.tag }}
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.ref }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Prepare rolling nightly
+        if: inputs.channel == 'nightly'
+        run: |
+          test "$TAG" = nightly
+          # A 404 is expected on the first run; all other API errors are fatal.
+          if gh api "repos/$GH_REPO/git/ref/tags/nightly" > tag.json 2> api.err; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$COMMIT" -F force=true
+          elif grep -q 'HTTP 404' api.err; then
+            gh api --method POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/nightly -f sha="$COMMIT"
+          else
+            cat api.err >&2; exit 1
+          fi
+          if gh release view nightly > /dev/null 2> api.err; then
+            # Clear the success marker before replacement, including same-commit retries.
+            gh release edit nightly --prerelease --latest=false \
+              --title 'Nightly (upload in progress)' --notes 'Upload in progress; retry the workflow if interrupted.'
+            # Asset filenames include the version: --clobber alone would leave yesterday's files.
+            gh release view nightly --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do gh release delete-asset nightly "$asset" --yes; done
+          elif grep -qiE 'HTTP 404|release not found' api.err; then
+            gh release create nightly --verify-tag --prerelease --latest=false \
+              --title 'Nightly (upload in progress)' --notes 'Upload in progress; retry the workflow if interrupted.'
+          else
+            cat api.err >&2; exit 1
+          fi
+      - name: Upload (idempotent)
+        run: |
+          if [[ "$CHANNEL" == release ]]; then
+            [[ "$TAG" == v* ]] && [[ "$TAG" != nightly ]]
+            gh release view "$TAG" >/dev/null
+          elif [[ "$CHANNEL" != nightly ]]; then
+            echo 'Unsupported publishing channel' >&2; exit 1
+          fi
+          gh release upload "$TAG" release-assets/* --clobber
+      - name: Mark nightly commit successfully published
+        if: inputs.channel == 'nightly'
+        run: |
+          printf 'Rolling nightly **%s**, built from %s.\n\n<!-- nightly-commit:%s -->\n' \
+            "$VERSION" "$COMMIT" "$COMMIT" > notes.md
+          manifest=$(find release-assets -maxdepth 1 -type f -printf '%f\n' |
+            jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+          printf '<!-- nightly-assets:%s -->\n' "$manifest" >> notes.md
+          gh release edit nightly --prerelease --latest=false --target "$COMMIT" \
+            --title "Nightly $VERSION" --notes-file notes.md
