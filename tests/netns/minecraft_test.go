@@ -60,9 +60,13 @@ func nodePath(t *testing.T) string {
 }
 
 func (e *gameEnv) createMCServer(name, preferred string) string {
+	return e.createMCServerWithReplication(name, preferred, 3, 1)
+}
+
+func (e *gameEnv) createMCServerWithReplication(name, preferred string, replicationFactor, minCommitReplicas int) string {
 	srv := apiJSON(e.t, "POST", e.cpURL+"/v1/groups/"+e.groupID+"/servers", e.tok, map[string]any{
 		"name": name, "game_id": "minecraft", "config": mcServerConfig,
-		"replication_factor": 3, "min_commit_replicas": 1,
+		"replication_factor": replicationFactor, "min_commit_replicas": minCommitReplicas,
 		"preferred_node_id": e.nodes[preferred].nodeID,
 	}, 201)
 	id := srv["id"].(string)
@@ -445,5 +449,153 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		t.Fatalf("2b: col1 corrupt: got %q blocks=%v, want %q or empty", gotb1, blockb1, n2b)
 	}
 	t.Logf("2b: col0=%s survived; col1=%s (nonce match=%v)", gotb0, gotb1, gotb1 == n2b)
+	wd.check(t)
+}
+
+// KNOWN FAILING: recovery starts fresh when the only committed replica is offline.
+func TestMinecraftNoAnchor(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	names := []string{"arne", "kari", "player"}
+	e := newGameEnv(t, names)
+	wd := startWatchdog(t, names, "server.jar")
+
+	for _, name := range names {
+		nd := e.enroll(name, false)
+		apiJSON(t, "PATCH", e.cpURL+"/v1/nodes/"+nd.nodeID, e.tok,
+			map[string]any{"name": name}, 200)
+	}
+	e.startAgent("arne")
+	e.startAgent("player")
+	e.setHosting("player", false)
+	e.waitOnline(30*time.Second, "arne", "player")
+
+	serverID := e.createMCServerWithReplication("mc-no-anchor", "arne", 1, 1)
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	e.waitCommitted(serverID, "")
+
+	status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get server summary: %d %s", status, body)
+	}
+	var server map[string]any
+	if err := json.Unmarshal(body, &server); err != nil {
+		t.Fatalf("decode server summary: %v", err)
+	}
+	summary, ok := server["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("server response has no summary: %s", body)
+	}
+	latestSafeSave, ok := summary["latest_safe_save"].(map[string]any)
+	if !ok {
+		t.Fatalf("server response has no latest_safe_save: %s", body)
+	}
+	replicas, ok := latestSafeSave["replicas"].([]any)
+	if !ok || len(replicas) != 1 {
+		t.Fatalf("latest_safe_save should have exactly one ready replica, got %v", latestSafeSave["replicas"])
+	}
+	replica, ok := replicas[0].(map[string]any)
+	if !ok || replica["name"] != "arne" || replica["anchor"] != false {
+		t.Fatalf("latest_safe_save replica should be arne and not an anchor, got %v", replicas[0])
+	}
+	t.Logf("latest safe save replica: %v", replica)
+	t.Log("expected post-snapshot loss: none; col0 was the only write and it reached the committed snapshot")
+
+	killNamespace(t, "arne")
+	t.Logf("[%s] killed arne's namespace", time.Now().Format("15:04:05.000"))
+	e.startAgent("kari")
+	e.waitOnline(30*time.Second, "kari")
+
+	var unsafeExecutionJSON []byte
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		execStatus, executionsJSON := apiCall("GET",
+			e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+		if execStatus == 200 {
+			var executionList map[string]any
+			if err := json.Unmarshal(executionsJSON, &executionList); err == nil {
+				if executions, ok := executionList["executions"].([]any); ok {
+					for _, value := range executions {
+						execution, ok := value.(map[string]any)
+						if ok && execution["node_id"] == e.nodes["kari"].nodeID &&
+							execution["state"] == "running" && execution["restore_snapshot_id"] == nil {
+							unsafeExecutionJSON = executionsJSON
+							break
+						}
+					}
+				}
+			}
+		}
+		if unsafeExecutionJSON != nil {
+			t.Logf("execution JSON for Kari running without a restore snapshot: %s", unsafeExecutionJSON)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if unsafeExecutionJSON == nil {
+		status, body = apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+		if status != 200 {
+			t.Errorf("get waiting server state: %d %s", status, body)
+		} else {
+			_ = json.Unmarshal(body, &server)
+			observed, _ := server["observed_state"].(string)
+			if observed != "recovering" && observed != "failed" {
+				t.Errorf("server should remain waiting in recovering/failed state, got %q: %s", observed, body)
+			}
+		}
+		_, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+		var executionList map[string]any
+		hasOfflineMessage := false
+		if json.Unmarshal(executionsJSON, &executionList) == nil {
+			if executions, ok := executionList["executions"].([]any); ok {
+				for _, value := range executions {
+					execution, ok := value.(map[string]any)
+					if ok && strings.Contains(strings.ToLower(fmt.Sprint(execution["message"])), "offline") {
+						hasOfflineMessage = true
+						break
+					}
+				}
+			}
+		}
+		if !hasOfflineMessage {
+			t.Errorf("waiting server did not report that its save is only on offline machines: %s", executionsJSON)
+		}
+	} else {
+		t.Errorf("kari ran without restoring the only committed save on arne")
+		if e.hostOf(serverID) == e.nodes["kari"].nodeID {
+			killNamespace(t, "kari")
+		}
+	}
+
+	e.startAgent("arne")
+	e.waitOnline(30*time.Second, "arne")
+	var recoveredHost string
+	recovered := false
+	recoveryDeadline := time.Now().Add(4 * time.Minute)
+	for time.Now().Before(recoveryDeadline) {
+		host := e.hostOf(serverID)
+		if host == e.nodes["arne"].nodeID || host == e.nodes["kari"].nodeID {
+			got, _, ok := e.botRead("player", svc, 0, ref)
+			if ok && got == nonce {
+				recovered, recoveredHost = true, e.nodeName(host)
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !recovered {
+		_, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
+		t.Errorf("server did not recover col0=%s from the committed snapshot: %s", nonce, executionsJSON)
+	} else {
+		t.Logf("recovered committed col0 on %s: %s", recoveredHost, nonce)
+	}
 	wd.check(t)
 }
