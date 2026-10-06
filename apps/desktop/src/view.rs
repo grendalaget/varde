@@ -184,7 +184,7 @@ impl From<&pb::Status> for UiStatus {
 /// Command line: `--link` (installer: open the link window and start linking
 /// with the address the service reports), `--relink` (elevated re-link
 /// window), `--autostart`, `--service-start` / `--service-stop` (elevated
-/// headless service control).
+/// headless service control; start also restarts a running-but-dead one).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
