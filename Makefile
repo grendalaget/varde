@@ -10,6 +10,7 @@ gen:
 	pnpm --dir apps/web gen:api
 
 build:
+	pnpm --dir apps/desktop/ui build
 	cargo build --workspace
 	pnpm --dir apps/web build
 	$(MAKE) webui-dist
@@ -54,11 +55,14 @@ lint:
 	cargo clippy --workspace -- -D warnings
 	pnpm --dir apps/web lint
 	pnpm --dir apps/web typecheck
+	pnpm --dir apps/desktop/ui lint
+	pnpm --dir apps/desktop/ui typecheck
 
 fmt:
 	@for m in $(GO_MODULES); do (cd $$m && gofmt -w .) || exit 1; done
 	cargo fmt
 	pnpm --dir apps/web format
+	pnpm --dir apps/desktop/ui format
 
 # Linux packages (.deb + .rpm) via nfpm. Requires nfpm on PATH.
 #   make package VERSION=0.1.0
@@ -87,7 +91,7 @@ gen-go-api:
 	cd api/openapi && oapi-codegen -config oapi-codegen.yaml control-plane.yaml
 
 clean:
-	rm -rf $(BIN) target apps/web/dist
+	rm -rf $(BIN) target apps/web/dist apps/desktop/ui/dist
 
 # Root-only Linux netns demo (networking.md §64): builds as the normal
 # user, then runs only the test binary as root (sudo loses HOME/rustup).

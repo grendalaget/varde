@@ -16,7 +16,12 @@ use crate::svcctl;
 use crate::view::{self, Icon, TrayView, UiStatus};
 
 const TRAY_ID: &str = "varde";
-const LINK_WINDOW: &str = "link";
+/// The app window (Fluent 2 UI in ui/): linking, this-PC status, service
+/// start/stop.
+const MAIN_WINDOW: &str = "main";
+/// The dashboard running inside the app: an external webview on the
+/// control-plane address, not a browser tab.
+const DASHBOARD_WINDOW: &str = "dashboard";
 const DEFAULT_CP: &str = "https://varde.games";
 
 static ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
@@ -31,6 +36,9 @@ struct State {
     auto_link: std::sync::atomic::AtomicBool,
     /// Elevated `--relink` instance: link window only, no tray.
     relink: bool,
+    /// Origin the dashboard window may navigate within; a re-link to a
+    /// different control plane re-arms it before `navigate`.
+    dashboard_url: Mutex<Option<tauri::Url>>,
 }
 
 pub fn run() {
@@ -65,10 +73,10 @@ pub fn run() {
             // started again (Start menu, installer): show the window; an
             // already open one re-reads its defaults (it may need to link)
             if !l.autostart {
-                let open = app.get_webview_window(LINK_WINDOW).is_some();
-                open_link_window(app);
+                let open = app.get_webview_window(MAIN_WINDOW).is_some();
+                open_main_window(app);
                 if open {
-                    let _ = app.emit_to(LINK_WINDOW, "link-defaults", defaults(app));
+                    let _ = app.emit_to(MAIN_WINDOW, "link-defaults", defaults(app));
                 }
             }
         }));
@@ -86,6 +94,7 @@ pub fn run() {
             cancel_link,
             start_service,
             stop_service,
+            open_dashboard,
             open_url,
             close_window
         ])
@@ -106,7 +115,7 @@ pub fn run() {
                             ..
                         } = e
                         {
-                            open_link_window(tray.app_handle());
+                            open_main_window(tray.app_handle());
                         }
                     })
                     .build(app)?;
@@ -114,7 +123,7 @@ pub fn run() {
             }
             tauri::async_runtime::spawn(watch(h.clone()));
             if relink || launch.open_link {
-                open_link_window(&h);
+                open_main_window(&h);
             }
             Ok(())
         })
@@ -174,7 +183,7 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
     let ui = s.as_ref().map(UiStatus::from);
     *app.state::<State>().status.lock().unwrap() = s;
     render(app, false);
-    let _ = app.emit_to(LINK_WINDOW, "status", ui);
+    let _ = app.emit_to(MAIN_WINDOW, "status", ui);
 }
 
 fn render(app: &AppHandle, force: bool) {
@@ -272,7 +281,7 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
 fn on_menu(app: &AppHandle, e: MenuEvent) {
     let v = app.state::<State>().view.lock().unwrap().clone();
     match e.id().as_ref() {
-        "open" => open_link_window(app),
+        "open" => open_main_window(app),
         "svcstart" => {
             let _ = elevate_self("--service-start");
         }
@@ -281,12 +290,12 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
         }
         "dashboard" => {
             if let Some(url) = v.and_then(|v| v.dashboard_url) {
-                let _ = app.opener().open_url(url, None::<&str>);
+                let _ = open_dashboard_window(app, &url);
             }
         }
         "link" => match v {
             Some(v) if v.relink => elevate_relink(),
-            _ => open_link_window(app),
+            _ => open_main_window(app),
         },
         "logs" => {
             let _ = app
@@ -310,8 +319,8 @@ fn logs_dir() -> std::path::PathBuf {
         .join(r"Varde\logs")
 }
 
-fn open_link_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(LINK_WINDOW) {
+fn open_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -323,7 +332,7 @@ fn open_link_window(app: &AppHandle) {
         "Varde"
     };
     let built = tauri::webview_version().is_ok()
-        && WebviewWindowBuilder::new(app, LINK_WINDOW, WebviewUrl::App("index.html".into()))
+        && WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title(title)
             .inner_size(440.0, 540.0)
             .resizable(false)
@@ -337,6 +346,49 @@ fn open_link_window(app: &AppHandle) {
         // no WebView2: link with message boxes instead
         tauri::async_runtime::spawn(fallback_link(app.clone()));
     }
+}
+
+/// The dashboard lives in the app, not the browser: a plain external
+/// webview on the control-plane address (it can't reach app commands —
+/// remote IPC is off — and keeps its own cookies, so the sign-in sticks).
+fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
+    let parsed = tauri::Url::parse(url).map_err(|e| e.to_string())?;
+    if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
+        // a re-link may have moved the group to another control plane;
+        // same origin: keep the user's place in the dashboard
+        if w.url()
+            .map(|u| u.origin() != parsed.origin())
+            .unwrap_or(true)
+        {
+            *app.state::<State>().dashboard_url.lock().unwrap() = Some(parsed.clone());
+            w.navigate(parsed).map_err(|e| e.to_string())?;
+        }
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    *app.state::<State>().dashboard_url.lock().unwrap() = Some(parsed.clone());
+    WebviewWindowBuilder::new(app, DASHBOARD_WINDOW, WebviewUrl::External(parsed))
+        .title("Varde")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(720.0, 480.0)
+        .center()
+        .theme(Some(tauri::Theme::Dark))
+        .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
+        // stay on the control-plane origin: a remote page must never reach
+        // the app origin (the local frontend's command bridge)
+        .on_navigation({
+            let ah = app.clone();
+            move |u| {
+                let st = ah.state::<State>();
+                let g = st.dashboard_url.lock().unwrap();
+                g.as_ref().is_some_and(|d| d.origin() == u.origin())
+            }
+        })
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 async fn fallback_link(app: AppHandle) {
@@ -501,6 +553,24 @@ fn start_service() -> Result<(), String> {
 #[tauri::command]
 fn stop_service() -> Result<(), String> {
     elevate_self("--service-stop")
+}
+
+/// The app's dashboard: the control-plane address comes from the service,
+/// never from the page, so it can't be swapped under the user.
+#[tauri::command]
+fn open_dashboard(app: AppHandle) -> Result<(), String> {
+    let url = app
+        .state::<State>()
+        .status
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.control_plane_url.clone())
+        .filter(|u| !u.is_empty());
+    match url {
+        Some(u) => open_dashboard_window(&app, &u),
+        None => Err("This PC isn't linked yet.".into()),
+    }
 }
 
 #[tauri::command]

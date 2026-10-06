@@ -24,7 +24,8 @@ This directory is the contract between components. Read in order:
 | Relay | Go | `varde-relay` | anywhere with a public UDP port; optional when direct paths work |
 | Mesh node | Go | `varde-mesh` | every machine, as a child process of the agent |
 | Agent | Rust | `varde-agent` | every machine (Windows service / systemd unit) |
-| Web dashboard | TypeScript | static SPA served by the control plane | browser |
+| Desktop app | Rust (Tauri 2) + TypeScript webview | `varde-tray` | Windows user session: tray + Fluent 2 app window; hosts the dashboard in-app |
+| Web dashboard | TypeScript | static SPA served by the control plane | browser, or the desktop app's dashboard window |
 
 ```
            browser ──HTTPS(JSON, OpenAPI)──▶ control plane ◀──HTTPS(JSON, signed)── agent (every node)
