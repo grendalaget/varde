@@ -48,6 +48,8 @@ Source: "dist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; \
 [Dirs]
 Name: "{commonappdata}\Varde\identity"; Permissions: system-full admins-full
 Name: "{commonappdata}\Varde"; Permissions: system-full admins-full
+; service logs; readable so "Open logs folder" works for any user
+Name: "{commonappdata}\Varde\logs"; Permissions: system-full admins-full users-readexec
 
 [Registry]
 ; all users; each user can turn it off from the tray (HKCU opt-out)
