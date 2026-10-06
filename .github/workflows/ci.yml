@@ -1,0 +1,180 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      # install golangci-lint once and run it per module: the action's
+      # default run at the workspace root trips on go.work
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          install-mode: binary
+          skip-cache: true
+          working-directory: go
+      - name: webui placeholder (for go:embed)
+        shell: bash
+        run: |
+          mkdir -p apps/controlplane/internal/webui/dist
+          cp apps/controlplane/internal/webui/placeholder.html \
+            apps/controlplane/internal/webui/dist/index.html
+      - name: lint
+        shell: bash
+        run: |
+          LINT=$(find "$RUNNER_WORK_SPACE" -name golangci-lint -type f 2>/dev/null | head -1)
+          [ -n "$LINT" ] || LINT=golangci-lint
+          for m in go apps/controlplane apps/relay apps/mesh; do
+            (cd $m && "$LINT" run ./...) || exit 1
+          done
+        env:
+          RUNNER_WORK_SPACE: ${{ github.workspace }}/..
+      # services: containers are Linux-only; run postgres via docker on the
+      # ubuntu leg so the windows leg can share this job
+      - name: postgres (linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=varde -e POSTGRES_PASSWORD=varde \
+            -e POSTGRES_DB=varde_test postgres:16
+          for i in $(seq 1 30); do
+            docker exec pg pg_isready -U varde >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "postgres did not become ready"; exit 1
+      - name: vet
+        run: |
+          for m in go apps/controlplane apps/relay apps/mesh; do
+            (cd $m && go vet ./...) || exit 1
+          done
+        shell: bash
+      - name: test
+        run: |
+          RACE=""
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            RACE="-race"
+            # postgres only runs on the linux leg
+            export VARDE_TEST_POSTGRES_URL=postgres://varde:varde@localhost:5432/varde_test?sslmode=disable
+          fi
+          for m in go apps/controlplane apps/relay apps/mesh; do
+            (cd $m && go test $RACE ./...) || exit 1
+          done
+        shell: bash
+
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  web:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web lint
+      - run: pnpm --dir apps/web typecheck
+      - run: pnpm --dir apps/web build
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - run: buf lint
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web add -D openapi-typescript
+      - name: check generated files are up to date
+        run: |
+          buf generate
+          pnpm --dir apps/web gen:api
+          git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+          override: true
+      - name: build agent + mesh (MSVC)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
+          cargo build --release -p varde-agent
+          cd apps/mesh
+          go build -o ../../packaging/windows/dist/varde-mesh.exe .
+          cd ../..
+          Copy-Item target/release/varde-agent.exe packaging/windows/dist/
+      - name: Inno Setup
+        run: choco install innosetup -y
+      - name: build installer
+        shell: pwsh
+        run: |
+          # ref_name is e.g. "1/merge" on PRs; sanitize for the filename
+          $ver = "${{ github.ref_name }}" -replace '[^0-9A-Za-z._-]','-'
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DVersion="$ver" `
+            packaging/windows/varde-agent.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VardeSetup
+          path: packaging/windows/dist/VardeSetup-*.exe

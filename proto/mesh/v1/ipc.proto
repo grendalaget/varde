@@ -1,0 +1,178 @@
+// Local IPC between the Rust agent (client) and the Go mesh node (server).
+//
+// Boundary rule: the agent decides WHAT should be reachable (peers, routes,
+// hosted services); the mesh decides HOW packets get there (direct, punched,
+// relayed). All "Set*" calls are declarative full replacements so the agent can
+// re-sync idempotently after either process restarts.
+syntax = "proto3";
+
+package varde.mesh.v1;
+
+option go_package = "github.com/grendalaget/varde/go/gen/mesh/v1;meshv1";
+
+service MeshService {
+  rpc GetStatus(GetStatusRequest) returns (MeshStatus);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc SetPeers(SetPeersRequest) returns (SetPeersResponse);
+  rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
+  // Client side: loopback listeners that forward to the current host.
+  rpc SetRoutes(SetRoutesRequest) returns (SetRoutesResponse);
+  // Host side: services this node accepts inbound traffic for.
+  rpc SetHostedServices(SetHostedServicesRequest) returns (SetHostedServicesResponse);
+  // Agent-internal services (e.g. "agent.chunks") reachable by group peers.
+  rpc SetInternalServices(SetInternalServicesRequest) returns (SetInternalServicesResponse);
+  // Opens a 127.0.0.1:<ephemeral> TCP listener forwarding to a peer's internal service.
+  rpc BindInternalForward(BindInternalForwardRequest) returns (BindInternalForwardResponse);
+  rpc UnbindInternalForward(UnbindInternalForwardRequest) returns (UnbindInternalForwardResponse);
+  rpc WatchEvents(WatchEventsRequest) returns (stream MeshEvent);
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_TCP = 1;
+  PROTOCOL_UDP = 2;
+}
+
+enum PathKind {
+  PATH_KIND_UNSPECIFIED = 0;
+  PATH_KIND_NONE = 1;
+  PATH_KIND_DIRECT = 2;
+  PATH_KIND_RELAYED = 3;
+}
+
+message GetStatusRequest {}
+
+message MeshStatus {
+  string node_id = 1;
+  string version = 2;
+  bool configured = 3;
+  // Local socket addresses the QUIC transport listens on ("ip:port").
+  repeated string listen_addrs = 4;
+  // Public endpoints as observed by relays/reflectors ("ip:port").
+  repeated string observed_endpoints = 5;
+  repeated RelayState relays = 6;
+  int64 started_at_unix_ms = 7;
+}
+
+message RelayState {
+  string relay_id = 1;
+  string addr = 2;
+  bool registered = 3;
+  int64 rtt_us = 4;
+}
+
+message Relay {
+  string relay_id = 1;
+  // "host:port" UDP address.
+  string addr = 2;
+  // Control-plane-signed relay token (opaque to the mesh).
+  string token = 3;
+}
+
+message ConfigureRequest {
+  string node_id = 1;
+  // Path to the node's ed25519 private key (PKCS#8 PEM). The key never leaves the node.
+  string identity_key_path = 2;
+  // UDP port for the QUIC transport; 0 = ephemeral.
+  uint32 listen_port = 3;
+  repeated Relay relays = 4;
+  // When true, never attempt direct paths (used by tests and restrictive networks).
+  bool force_relay = 5;
+}
+message ConfigureResponse {}
+
+message Peer {
+  string node_id = 1;
+  // Raw 32-byte ed25519 public key. Peers are authenticated by pinning this key.
+  bytes public_key = 2;
+  // Candidate endpoints "ip:port" (private, public observed, IPv6), in preference order.
+  repeated string endpoints = 3;
+  // Relays the peer is registered with.
+  repeated string relay_ids = 4;
+}
+message SetPeersRequest { repeated Peer peers = 1; }
+message SetPeersResponse {}
+
+message PeerState {
+  string node_id = 1;
+  PathKind path = 2;
+  string remote_addr = 3;
+  string relay_id = 4;
+  int64 rtt_us = 5;
+  uint64 bytes_tx = 6;
+  uint64 bytes_rx = 7;
+  int64 last_seen_unix_ms = 8;
+}
+message ListPeersRequest {}
+message ListPeersResponse { repeated PeerState peers = 1; }
+
+message PortSpec {
+  uint32 port = 1;
+  Protocol protocol = 2;
+}
+
+message ServiceRoute {
+  string service_id = 1;
+  // Stable loopback IP in 127.77.0.0/16 assigned by the control plane.
+  string loopback_ip = 2;
+  repeated PortSpec ports = 3;
+  // Current host; empty when the server is not running (listeners stay bound and refuse/drop).
+  string host_node_id = 4;
+  // Execution epoch of the current host; the host rejects streams with a different epoch.
+  uint64 epoch = 5;
+}
+message SetRoutesRequest { repeated ServiceRoute routes = 1; }
+message SetRoutesResponse { repeated RouteBindError errors = 1; }
+message RouteBindError {
+  string service_id = 1;
+  string message = 2;
+}
+
+message HostedPort {
+  uint32 port = 1;
+  Protocol protocol = 2;
+  // Local port of the game process on 127.0.0.1 (usually equal to port).
+  uint32 target_port = 3;
+}
+message HostedService {
+  string service_id = 1;
+  uint64 epoch = 2;
+  repeated HostedPort ports = 3;
+}
+message SetHostedServicesRequest { repeated HostedService services = 1; }
+message SetHostedServicesResponse {}
+
+message InternalService {
+  string name = 1;
+  uint32 target_port = 2;
+}
+message SetInternalServicesRequest { repeated InternalService services = 1; }
+message SetInternalServicesResponse {}
+
+message BindInternalForwardRequest {
+  string peer_node_id = 1;
+  string name = 2;
+}
+message BindInternalForwardResponse {
+  string forward_id = 1;
+  // "127.0.0.1:port"
+  string local_addr = 2;
+}
+message UnbindInternalForwardRequest { string forward_id = 1; }
+message UnbindInternalForwardResponse {}
+
+message WatchEventsRequest {}
+message MeshEvent {
+  int64 at_unix_ms = 1;
+  oneof event {
+    PeerState peer_path_changed = 2;
+    RouteRejected route_rejected = 3;
+    RelayState relay_changed = 4;
+    string observed_endpoints_changed = 5;
+  }
+}
+message RouteRejected {
+  string service_id = 1;
+  string peer_node_id = 2;
+  string reason = 3;
+}

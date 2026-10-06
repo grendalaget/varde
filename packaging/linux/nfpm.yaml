@@ -1,0 +1,76 @@
+name: varde-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: Arne Molland and varde contributors
+description: Peer-hosted game servers for groups of friends.
+license: MIT
+contents:
+  - src: dist/varde-agent
+    dst: /usr/bin/varde-agent
+    file_info:
+      mode: 0755
+  - src: dist/varde-mesh
+    dst: /usr/lib/varde/varde-mesh
+    file_info:
+      mode: 0755
+  - src: packaging/linux/varde-agent.service
+    dst: /usr/lib/systemd/system/varde-agent.service
+    type: config
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/scalable/apps/varde.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/varde.svg
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/16x16/apps/varde.png
+    dst: /usr/share/icons/hicolor/16x16/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/32x32/apps/varde.png
+    dst: /usr/share/icons/hicolor/32x32/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/48x48/apps/varde.png
+    dst: /usr/share/icons/hicolor/48x48/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/64x64/apps/varde.png
+    dst: /usr/share/icons/hicolor/64x64/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/128x128/apps/varde.png
+    dst: /usr/share/icons/hicolor/128x128/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/256x256/apps/varde.png
+    dst: /usr/share/icons/hicolor/256x256/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/icons/512x512/apps/varde.png
+    dst: /usr/share/icons/hicolor/512x512/apps/varde.png
+    file_info:
+      mode: 0644
+  - src: packaging/linux/varde.desktop
+    dst: /usr/share/applications/varde.desktop
+    file_info:
+      mode: 0644
+  - dst: /etc/varde
+    type: dir
+  - dst: /var/lib/varde
+    type: dir
+    file_info:
+      mode: 0700
+overrides:
+  deb:
+    depends:
+      - systemd
+  rpm:
+    depends:
+      - systemd
+scripts:
+  postinstall: packaging/linux/scripts/varde-agent.postinstall
+  preremove: packaging/linux/scripts/varde-agent.preremove
+  postremove: packaging/linux/scripts/postremove

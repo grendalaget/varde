@@ -1,0 +1,26 @@
+[package]
+name = "game-testgame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "game_testgame"
+path = "src/lib.rs"
+
+[[bin]]
+name = "varde-testgame"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+executor-api = { path = "../../crates/executor-api" }
+game-driver-api = { path = "../../crates/game-driver-api" }
+serde.workspace = true
+serde_json.workspace = true
+snapshot-store = { path = "../../crates/snapshot-store" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

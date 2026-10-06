@@ -1,0 +1,25 @@
+[Unit]
+Description=Varde node agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=varde
+ExecStart=/usr/bin/varde-agent run
+# the agent drains executions (final snapshot + replication hold, default 60 s)
+# before stopping; give it the hold plus stop overhead before SIGKILL
+TimeoutStopSec=105
+Restart=always
+RestartSec=5
+StateDirectory=varde
+StateDirectoryMode=0700
+ConfigurationDirectory=varde
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/varde /etc/varde
+
+[Install]
+WantedBy=multi-user.target

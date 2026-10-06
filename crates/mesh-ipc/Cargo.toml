@@ -1,0 +1,20 @@
+[package]
+name = "mesh-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+prost.workspace = true
+prost-types.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tower.workspace = true
+hyper-util.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[build-dependencies]
+protoc-bin-vendored.workspace = true
+tonic-build.workspace = true

@@ -1,0 +1,15 @@
+{
+  "body_sha256_hex": "ca91ed191bed4b2d68cae8893de41ece721c4c59e99e4beccccc292619eae81a",
+  "description": "Canonical agent request-signing test vector (see control-plane.md §Agent authentication). The signing string is 'varde-agent-v1\\n' + METHOD + '\\n' + PATH + '\\n' + TIMESTAMP + '\\n' + hex(sha256(body)), signed with ed25519; X-Varde-Signature is base64(sig).",
+  "expected_signature_base64": "h3XpRH0XBm0y918cqQzLiHfPMLt/D86KYrFh2WcAi0pcSPbyfhMW5f/7QcDJRM1GbNVt+1IRoivVyrObCyfyCw==",
+  "note_on_key": "private_key is given as the 32-byte ed25519 seed (hex); expand to a PKCS#8 key before signing",
+  "private_key_pkcs8_pem_b64_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "public_key_base64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "request": {
+    "body": "{\"executions\":[],\"mesh\":{\"listen_port\":7777}}",
+    "method": "POST",
+    "path": "/v1/agent/heartbeat",
+    "timestamp_unix_ms": 1735689600000
+  },
+  "signing_string": "varde-agent-v1\nPOST\n/v1/agent/heartbeat\n1735689600000\nca91ed191bed4b2d68cae8893de41ece721c4c59e99e4beccccc292619eae81a"
+}

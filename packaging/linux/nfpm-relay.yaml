@@ -1,0 +1,35 @@
+name: varde-relay
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: Arne Molland and varde contributors
+description: Varde UDP relay — fallback path for the peer mesh.
+license: MIT
+contents:
+  - src: dist/varde-relay
+    dst: /usr/bin/varde-relay
+    file_info:
+      mode: 0755
+  - src: packaging/linux/varde-relay.service
+    dst: /usr/lib/systemd/system/varde-relay.service
+    type: config
+    file_info:
+      mode: 0644
+  - src: packaging/linux/relay.env
+    dst: /etc/varde/relay.env
+    type: config|noreplace
+    file_info:
+      mode: 0640
+overrides:
+  deb:
+    depends:
+      - systemd
+  rpm:
+    depends:
+      - systemd
+scripts:
+  postinstall: packaging/linux/scripts/varde-relay.postinstall
+  preremove: packaging/linux/scripts/varde-relay.preremove
+  postremove: packaging/linux/scripts/postremove

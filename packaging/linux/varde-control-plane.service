@@ -1,0 +1,21 @@
+[Unit]
+Description=Varde control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/varde-control-plane
+EnvironmentFile=-/etc/varde/control-plane.env
+Restart=always
+RestartSec=5
+StateDirectory=varde-cp
+StateDirectoryMode=0750
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/varde-cp /etc/varde
+
+[Install]
+WantedBy=multi-user.target

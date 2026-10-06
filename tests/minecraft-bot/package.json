@@ -1,0 +1,11 @@
+{
+  "name": "varde-minecraft-bot",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "mineflayer": "4.39.0",
+    "prismarine-item": "^1.16.1",
+    "vec3": "^0.1.10"
+  }
+}

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Varde
+Comment=Peer-hosted game servers for groups of friends
+Exec=xdg-open https://varde.games
+Icon=varde
+Terminal=false
+Type=Application
+Categories=Game;
