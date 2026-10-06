@@ -114,3 +114,8 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
   skipped.
   Linux requires glibc ≥ 2.29; `ldd` checks linked libraries, while `ldconfig -p` warns if runtime-loaded
   `libatomic.so.1` or `libpulse.so.0` is missing (`libatomic1` and `libpulse0` packages).
+
+For live snapshots, the store rejects a file set that changes while it is read. The agent resumes the game and retries
+the full barrier-and-snapshot attempt up to three times, so drivers such as Valheim can wait for an in-progress save
+to finish on the next barrier. A changing live save during graceful stop instead falls back to the existing
+stop-first, clean-exit snapshot path.

@@ -8,6 +8,11 @@ agent's replication module (transfer over the mesh).
 A game's working directory (`servers/<srv_id>/`) is mutable and local. Only **immutable snapshots** taken behind a
 game-specific *save barrier* (see `agent.md`) leave the machine.
 
+The store validates each snapshot as an optimistic consistent read: it records full-precision stamps for included
+files during the first walk, checks file lengths after reading, then restats the included file set before writing the
+manifest. Any changed, added, or removed included file aborts the snapshot without a manifest; unreferenced chunks
+already written are reclaimed by periodic GC after its one-hour grace period.
+
 ## Chunk store
 
 * Content-defined chunking: FastCDC (`fastcdc` crate, 2020 variant), min 256 KiB / avg 1 MiB / max 4 MiB.

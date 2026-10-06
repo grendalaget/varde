@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub const CHUNK_MIN: usize = 256 * 1024;
 pub const CHUNK_AVG: usize = 1024 * 1024;
@@ -44,6 +45,8 @@ pub enum Error {
     SnapshotNotFound(String),
     #[error("snapshot id mismatch: digest says {0}")]
     IdMismatch(String),
+    #[error("{0} changed while the snapshot was being taken")]
+    ChangedDuringSnapshot(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -105,6 +108,7 @@ impl Store {
         let mut chunk_count = 0usize;
         let mut new_chunks = 0usize;
 
+        let mut before = HashMap::new();
         for f in walk(base) {
             let rel = f.rel.clone();
             match f.kind {
@@ -119,9 +123,10 @@ impl Store {
                     continue;
                 }
                 WalkKind::File => {
-                    if !include.iter().any(|p| p.matches(&rel, true)) {
+                    if !is_included_file(&rel, include) {
                         continue;
                     }
+                    before.insert(rel.clone(), f.stamp);
                 }
             }
             validate_rel_path(&rel).map_err(|e| Error::Path(rel.clone(), e))?;
@@ -129,6 +134,9 @@ impl Store {
             record_ancestors(&rel, base, &mut dirs)?;
 
             let data = fs::read(&f.abs)?;
+            if data.len() as u64 != f.stamp.len {
+                return Err(Error::ChangedDuringSnapshot(rel));
+            }
             size_bytes += data.len() as u64;
             let whole = blake3::hash(&data).to_hex().to_string();
             let mut chunk_ids = Vec::new();
@@ -154,6 +162,7 @@ impl Store {
                 chunks: Some(chunk_ids),
             });
         }
+        verify_unchanged(base, include, &before)?;
         for (d, mode) in dirs {
             entries.push(ManifestEntry {
                 path: d,
@@ -578,6 +587,40 @@ struct WalkEntry {
     kind: WalkKind,
     mode: u32,
     mtime_ms: i64,
+    stamp: FileStamp,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    ctime_ns: i128,
+}
+
+impl FileStamp {
+    fn from_metadata(md: &fs::Metadata) -> Self {
+        let modified = md.modified().ok();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Self {
+                len: md.len(),
+                modified,
+                ino: md.ino(),
+                ctime_ns: md.ctime() as i128 * 1_000_000_000 + md.ctime_nsec() as i128,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {
+                len: md.len(),
+                modified,
+            }
+        }
+    }
 }
 
 /// Recursive pre-order walk; yields dirs before their children.
@@ -622,6 +665,7 @@ fn walk(base: &Path) -> Vec<WalkEntry> {
                 kind,
                 mode,
                 mtime_ms,
+                stamp: FileStamp::from_metadata(&md),
             });
             if kind == WalkKind::Dir {
                 stack.push(abs);
@@ -629,6 +673,132 @@ fn walk(base: &Path) -> Vec<WalkEntry> {
         }
     }
     out
+}
+
+fn is_included_file(rel: &str, include: &[PathPattern]) -> bool {
+    include.iter().any(|pattern| pattern.matches(rel, true))
+}
+
+fn verify_unchanged(
+    base: &Path,
+    include: &[PathPattern],
+    before: &HashMap<String, FileStamp>,
+) -> Result<()> {
+    let after: HashMap<String, FileStamp> = walk(base)
+        .into_iter()
+        .filter(|entry| entry.kind == WalkKind::File && is_included_file(&entry.rel, include))
+        .map(|entry| (entry.rel, entry.stamp))
+        .collect();
+    let mut paths: Vec<_> = before.keys().chain(after.keys()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    for rel in paths {
+        if before.get(rel) != after.get(rel) {
+            return Err(Error::ChangedDuringSnapshot(rel.clone()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod snapshot_consistency_tests {
+    use super::*;
+    use filetime::{set_file_mtime, FileTime};
+
+    fn included_files(base: &Path, include: &[PathPattern]) -> HashMap<String, FileStamp> {
+        walk(base)
+            .into_iter()
+            .filter(|entry| entry.kind == WalkKind::File && is_included_file(&entry.rel, include))
+            .map(|entry| (entry.rel, entry.stamp))
+            .collect()
+    }
+
+    fn include() -> Vec<PathPattern> {
+        vec![PathPattern::new("data/")]
+    }
+
+    fn changed_path(result: Result<()>, expected: &str) {
+        assert!(
+            matches!(result, Err(Error::ChangedDuringSnapshot(path)) if path == expected),
+            "expected {expected:?} to be reported as changed"
+        );
+    }
+
+    #[test]
+    fn unchanged_tree_is_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("server");
+        fs::create_dir_all(base.join("data")).unwrap();
+        fs::write(base.join("data/world.db"), b"save").unwrap();
+        let include = include();
+        let before = included_files(&base, &include);
+
+        assert!(verify_unchanged(&base, &include, &before).is_ok());
+    }
+
+    #[test]
+    fn same_length_rewrite_is_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("server");
+        fs::create_dir_all(base.join("data")).unwrap();
+        let file = base.join("data/world.db");
+        fs::write(&file, b"save-a").unwrap();
+        set_file_mtime(&file, FileTime::from_unix_time(1_700_000_000, 0)).unwrap();
+        let include = include();
+        let before = included_files(&base, &include);
+
+        fs::write(&file, b"save-b").unwrap();
+        set_file_mtime(&file, FileTime::from_unix_time(1_700_000_001, 0)).unwrap();
+
+        changed_path(verify_unchanged(&base, &include, &before), "data/world.db");
+    }
+
+    #[test]
+    fn new_included_file_is_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("server");
+        fs::create_dir_all(base.join("data")).unwrap();
+        fs::write(base.join("data/world.db"), b"save").unwrap();
+        let include = include();
+        let before = included_files(&base, &include);
+
+        fs::write(base.join("data/new.db"), b"new").unwrap();
+
+        changed_path(verify_unchanged(&base, &include, &before), "data/new.db");
+    }
+
+    #[test]
+    fn removed_included_file_is_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("server");
+        fs::create_dir_all(base.join("data")).unwrap();
+        let file = base.join("data/world.db");
+        fs::write(&file, b"save").unwrap();
+        let include = include();
+        let before = included_files(&base, &include);
+
+        fs::remove_file(file).unwrap();
+
+        changed_path(verify_unchanged(&base, &include, &before), "data/world.db");
+    }
+
+    #[test]
+    fn non_included_files_are_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("server");
+        fs::create_dir_all(base.join("data")).unwrap();
+        fs::create_dir_all(base.join("logs")).unwrap();
+        fs::write(base.join("data/world.db"), b"save").unwrap();
+        let ignored = base.join("logs/server.log");
+        fs::write(&ignored, b"old log").unwrap();
+        let include = include();
+        let before = included_files(&base, &include);
+
+        fs::write(&ignored, b"new log").unwrap();
+        fs::write(base.join("logs/extra.log"), b"new file").unwrap();
+
+        assert!(verify_unchanged(&base, &include, &before).is_ok());
+    }
 }
 
 fn record_ancestors(rel: &str, base: &Path, dirs: &mut HashMap<String, u32>) -> Result<()> {
