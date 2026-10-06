@@ -29,6 +29,8 @@ export function describeEvent(
       return `Failed on ${node}${d.message ? `: ${String(d.message)}` : ""}`;
     case "server.join_code":
       return `Join code is now ${String(d.join_code ?? "")}`;
+    case "server.save_unavailable":
+      return "Waiting for the newest save: it's only on offline machines";
     case "server.unschedulable":
       return `No machine can host it right now${d.reasons ? ` (${JSON.stringify(d.reasons)})` : ""}`;
     case "server.move":

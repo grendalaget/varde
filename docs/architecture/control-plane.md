@@ -184,7 +184,7 @@ One goroutine, tick 1 s (and woken by API mutations / heartbeats), processes ser
 | exec reports running+healthy | — | `running` |
 
 Restore selection when activating:
-* **Recovery (previous exec lost)**: newest `committed` snapshot that has a `ready` replica on an online node (I4).
+* **Recovery (previous exec lost)**: newest `committed` snapshot that has a `ready` replica on an online node (I4). If the newest committed save is only on offline nodes and no older committed save is reachable, wait for a copy instead of starting fresh.
 * **Normal start**: newest non-invalid snapshot of the server. If none of its replicas are online, refuse with
   `409 latest_save_unavailable {snapshot_id, created_at, nodes}` unless the request sets `allow_older_snapshot:true`,
   in which case use the newest available. (This is the "Alice shut down her PC with the latest save" case — we never

@@ -536,7 +536,6 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 	wd.check(t)
 }
 
-// KNOWN FAILING: recovery starts fresh when the only committed replica is offline.
 func TestMinecraftNoAnchor(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
@@ -597,7 +596,6 @@ func TestMinecraftNoAnchor(t *testing.T) {
 	e.startAgent("kari")
 	e.waitOnline(30*time.Second, "kari")
 
-	var unsafeExecutionJSON []byte
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		execStatus, executionsJSON := apiCall("GET",
@@ -608,55 +606,51 @@ func TestMinecraftNoAnchor(t *testing.T) {
 				if executions, ok := executionList["executions"].([]any); ok {
 					for _, value := range executions {
 						execution, ok := value.(map[string]any)
-						if ok && execution["node_id"] == e.nodes["kari"].nodeID &&
-							execution["state"] == "running" && execution["restore_snapshot_id"] == nil {
-							unsafeExecutionJSON = executionsJSON
-							break
+						if ok && execution["node_id"] == e.nodes["kari"].nodeID {
+							t.Fatalf("Kari received an execution while the only committed save was offline: %s", executionsJSON)
 						}
 					}
 				}
 			}
 		}
-		if unsafeExecutionJSON != nil {
-			t.Logf("execution JSON for Kari running without a restore snapshot: %s", unsafeExecutionJSON)
-			break
-		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	if unsafeExecutionJSON == nil {
-		status, body = apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
-		if status != 200 {
-			t.Errorf("get waiting server state: %d %s", status, body)
-		} else {
-			_ = json.Unmarshal(body, &server)
-			observed, _ := server["observed_state"].(string)
-			if observed != "recovering" && observed != "failed" {
-				t.Errorf("server should remain waiting in recovering/failed state, got %q: %s", observed, body)
+	status, body = apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get waiting server state: %d %s", status, body)
+	}
+	if err := json.Unmarshal(body, &server); err != nil {
+		t.Fatalf("decode waiting server state: %v", err)
+	}
+	if observed, _ := server["observed_state"].(string); observed != "recovering" {
+		t.Fatalf("server observed state = %q, want recovering: %s", observed, body)
+	}
+
+	status, body = apiCall("GET", e.cpURL+"/v1/groups/"+e.groupID+"/events?limit=200", e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get group events: %d %s", status, body)
+	}
+	var eventList map[string]any
+	if err := json.Unmarshal(body, &eventList); err != nil {
+		t.Fatalf("decode group events: %v", err)
+	}
+	foundUnavailable := false
+	if events, ok := eventList["events"].([]any); ok {
+		for _, value := range events {
+			event, ok := value.(map[string]any)
+			if !ok || event["server_id"] != serverID || event["type"] != "server.save_unavailable" {
+				continue
+			}
+			eventData, _ := event["data"].(map[string]any)
+			if eventData["snapshot_id"] == latestSafeSave["snapshot_id"] {
+				foundUnavailable = true
+				break
 			}
 		}
-		_, executionsJSON := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
-		var executionList map[string]any
-		hasOfflineMessage := false
-		if json.Unmarshal(executionsJSON, &executionList) == nil {
-			if executions, ok := executionList["executions"].([]any); ok {
-				for _, value := range executions {
-					execution, ok := value.(map[string]any)
-					if ok && strings.Contains(strings.ToLower(fmt.Sprint(execution["message"])), "offline") {
-						hasOfflineMessage = true
-						break
-					}
-				}
-			}
-		}
-		if !hasOfflineMessage {
-			t.Errorf("waiting server did not report that its save is only on offline machines: %s", executionsJSON)
-		}
-	} else {
-		t.Errorf("kari ran without restoring the only committed save on arne")
-		if e.hostOf(serverID) == e.nodes["kari"].nodeID {
-			killNamespace(t, "kari")
-		}
+	}
+	if !foundUnavailable {
+		t.Fatalf("missing server.save_unavailable event for snapshot %v: %s", latestSafeSave["snapshot_id"], body)
 	}
 
 	e.startAgent("arne")
