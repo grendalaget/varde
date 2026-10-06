@@ -34,10 +34,14 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
         deleted_snapshots: Some(deleted_snapshots.clone()),
     };
+    // not sent: building the report (disk walks) isn't part of the round trip
+    let posted = Instant::now();
     let d: cp_api::AgentDirectives = agent
         .cp
         .json("POST", "/v1/agent/heartbeat", Some(&hb))
         .await?;
+    agent.cp_view.lock().unwrap().cp_clock_offset_ms =
+        cp_clock_offset_ms(d.server_time_unix_ms, crate::now_ms(), posted.elapsed());
     acknowledge_delete_acks(&agent.pending_delete_acks, &deleted_snapshots);
     apply(agent, &d, sent).await?;
     let elapsed_ms = sent.elapsed().as_millis() as u64;
@@ -111,8 +115,6 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         v.node_name = d.node.name.clone();
         v.group_name = d.node.group_name.clone().unwrap_or_default();
         v.heartbeat_interval_ms = d.heartbeat_interval_ms;
-        v.cp_clock_offset_ms =
-            cp_clock_offset_ms(d.server_time_unix_ms, crate::now_ms(), sent.elapsed());
         v.latest_safe_save = d
             .executions
             .iter()
