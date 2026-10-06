@@ -59,7 +59,8 @@ pub struct ProcessSpec { pub program: PathBuf, pub args: Vec<OsString>, pub env:
 }
 ```
 `native` executor: Linux `setsid`/process group, Windows Job Object with `KILL_ON_JOB_CLOSE` and
-`CREATE_NEW_PROCESS_GROUP`. Programs are always executed directly with argv — **never through a shell** (I9).
+`CREATE_NEW_PROCESS_GROUP`. A consoleless agent (Windows service) allocates a hidden console before spawning so
+CTRL_BREAK can reach the child's process group. Programs are always executed directly with argv — **never through a shell** (I9).
 Runtime installers (`java` → Eclipse Temurin via Adoptium API, `steamcmd`) live in the agent and are invoked by drivers
 through a `RuntimeProvider` with checksum verification.
 

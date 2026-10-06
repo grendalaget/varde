@@ -1,6 +1,8 @@
 //! Native executor: Linux `setsid` process groups (SIGTERM/SIGKILL to the
 //! whole group), Windows Job Objects (KILL_ON_JOB_CLOSE + CREATE_NEW_PROCESS_
-//! GROUP, CTRL_BREAK for terminate). Never a shell.
+//! GROUP, CTRL_BREAK for terminate). Consoleless agents (Windows services)
+//! first allocate a hidden console so CTRL_BREAK can reach the child.
+//! Never a shell.
 
 use std::collections::VecDeque;
 use std::io;
@@ -308,8 +310,40 @@ fn platform_rusage(pid: u32) -> Option<ResourceUsage> {
 
 #[cfg(windows)]
 fn platform_configure(cmd: &mut Command) {
+    ensure_console();
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+}
+
+/// Services run with no console, and `GenerateConsoleCtrlEvent` only reaches
+/// processes attached to one. On the first spawn, give a consoleless agent a
+/// hidden console so children inherit it and CTRL_BREAK reaches their group.
+#[cfg(windows)]
+fn ensure_console() {
+    use windows_sys::Win32::System::Console::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+    unsafe extern "system" fn handler(ctrl: u32) -> i32 {
+        // SCM STOP/PRESHUTDOWN drive service shutdown; don't let these reach
+        // the default handler, which would ExitProcess.
+        match ctrl {
+            CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT => 1,
+            _ => 0,
+        }
+    }
+
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        // Fails (ERROR_ACCESS_DENIED) when the process already has a console.
+        if AllocConsole() == 0 {
+            return;
+        }
+        let hwnd = GetConsoleWindow();
+        if !hwnd.is_null() {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+        SetConsoleCtrlHandler(Some(handler), 1);
+    });
 }
 
 #[cfg(windows)]

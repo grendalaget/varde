@@ -553,6 +553,7 @@ dependencies = [
  "libc",
  "tempfile",
  "tokio",
+ "windows-service",
  "windows-sys 0.59.0",
 ]
 
