@@ -63,10 +63,10 @@ func (p *peerState) update(p2 *meshv1.Peer) {
 }
 
 func (p *peerState) stop() {
+	p.mu.Lock()
 	if p.stopped.CompareAndSwap(false, true) {
 		close(p.stopCh)
 	}
-	p.mu.Lock()
 	c := p.conn
 	p.conn = nil
 	p.mu.Unlock()
@@ -84,7 +84,13 @@ func (p *peerState) current() *quic.Conn {
 
 // start launches the path manager.
 func (p *peerState) start() {
+	p.mu.Lock()
+	if p.stopped.Load() {
+		p.mu.Unlock()
+		return
+	}
 	p.wg.Add(1)
+	p.mu.Unlock()
 	go p.manage()
 }
 
@@ -97,6 +103,11 @@ func (p *peerState) installConn(conn *quic.Conn, kind meshv1.PathKind, inbound b
 		newInitiator = p.id
 	}
 	p.mu.Lock()
+	if p.stopped.Load() {
+		p.mu.Unlock()
+		_ = conn.CloseWithError(0, "peer removed")
+		return
+	}
 	old := p.conn
 	prevKind := p.kind
 	if old != nil && old != conn {
@@ -115,13 +126,13 @@ func (p *peerState) installConn(conn *quic.Conn, kind meshv1.PathKind, inbound b
 	p.conn = conn
 	p.connInstalledAt = time.Now()
 	p.kind = kind
+	p.wg.Add(1)
 	p.mu.Unlock()
 	if old != nil && old != conn {
 		_ = old.CloseWithError(3, "superseded")
 	}
 	p.lastSeen.Store(time.Now().UnixMilli())
 	p.setInbound(conn, inbound)
-	p.wg.Add(1)
 	go p.serveConn(conn, kind)
 	if prevKind != kind {
 		p.n.events.emit(&meshv1.MeshEvent{
