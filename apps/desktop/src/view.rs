@@ -147,6 +147,8 @@ pub struct UiStatus {
     pub expires_at_unix_ms: i64,
     pub link_error: String,
     pub hosting: bool,
+    /// The pending code is an administrator's re-link.
+    pub relink: bool,
 }
 
 impl From<&pb::Status> for UiStatus {
@@ -169,6 +171,7 @@ impl From<&pb::Status> for UiStatus {
             expires_at_unix_ms: link.expires_at_unix_ms,
             link_error: s.link_error.clone(),
             hosting: !s.hosting.is_empty(),
+            relink: link.relink,
         }
     }
 }
@@ -312,10 +315,12 @@ mod tests {
             user_code: "WXYZ-1234".into(),
             link_url: "https://varde.games/link?code=WXYZ-1234".into(),
             expires_at_unix_ms: 42,
+            relink: true,
         });
         let u = UiStatus::from(&s);
         assert_eq!(u.state, "linking");
         assert_eq!(u.user_code, "WXYZ-1234");
         assert_eq!(u.expires_at_unix_ms, 42);
+        assert!(u.relink);
     }
 }

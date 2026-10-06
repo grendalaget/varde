@@ -23,6 +23,11 @@ function formError(msg) {
   $("form-error").hidden = !msg;
 }
 
+function codeError(msg) {
+  $("code-error").textContent = msg || "";
+  $("code-error").hidden = !msg;
+}
+
 function describe(s) {
   if (s.group_name && s.node_name) return `Linked to ${s.group_name} as ${s.node_name}.`;
   if (s.group_name) return `Linked to ${s.group_name}.`;
@@ -40,6 +45,10 @@ function render(s) {
   if (s.state === "linking" && s.user_code) {
     started = true;
     $("code").textContent = s.user_code;
+    // only the elevated --relink window can cancel an administrator's re-link
+    const locked = s.relink && !defaults.relink;
+    $("cancel").hidden = locked;
+    $("relink-by-admin").hidden = !locked;
     tickExpiry();
     return show("code");
   }
@@ -115,8 +124,13 @@ $("copy").addEventListener("click", async () => {
 });
 $("reopen").addEventListener("click", () => current && invoke("open_url", { url: current.link_url }));
 $("cancel").addEventListener("click", async () => {
+  codeError("");
+  try {
+    await invoke("cancel_link");
+  } catch (e) {
+    return codeError(String(e));
+  }
   started = false;
-  await invoke("cancel_link").catch(() => {});
   show("form");
 });
 $("open-dash").addEventListener("click", () => current && invoke("open_url", { url: current.control_plane_url }));
