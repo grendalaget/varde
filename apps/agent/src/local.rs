@@ -38,6 +38,10 @@ struct LinkState {
     active: Option<pb::Link>,
     error: String,
     task: Option<tokio::task::JoinHandle<()>>,
+    /// The active flow is a re-link (only an administrator may cancel it).
+    relink: bool,
+    /// Bumped by every start/cancel so an overlapping start_link loses.
+    gen: u64,
 }
 
 const CODE_EXPIRED: &str = "The code expired. Start linking again.";
@@ -124,6 +128,9 @@ impl Hub {
         } else {
             pb::State::NotLinked
         };
+        if s.control_plane_url.is_empty() {
+            s.control_plane_url = link::preset_url(&self.data_dir).unwrap_or_default();
+        }
         s.state = state as i32;
         s
     }
@@ -138,8 +145,22 @@ impl Hub {
             t.abort();
         }
         l.active = None;
+        l.relink = false;
+        l.gen = l.gen.wrapping_add(1);
         drop(l);
         self.bump();
+    }
+
+    /// CancelLink over IPC: a pending re-link was started by an administrator,
+    /// so only an administrator may abort it.
+    pub fn cancel_link_by(&self, peer: &PeerInfo) -> Result<(), Status> {
+        if self.link.lock().unwrap().relink && !peer.is_admin {
+            return Err(Status::permission_denied(
+                "cancelling a re-link needs an administrator",
+            ));
+        }
+        self.cancel_link();
+        Ok(())
     }
 
     pub async fn start_link(
@@ -170,6 +191,7 @@ impl Hub {
         let client =
             cp_api::CpClient::new(&url).map_err(|e| Status::invalid_argument(format!("{e}")))?;
         self.cancel_link();
+        let gen = self.link.lock().unwrap().gen;
         let dev = match tokio::time::timeout(
             Duration::from_secs(15),
             link::start_device(&client, identity::public_key_b64(&key)),
@@ -188,16 +210,22 @@ impl Hub {
             expires_at_unix_ms: crate::now_ms() + dev.expires_in * 1000,
         };
         info!(code = %dev.user_code, url = %active.link_url, relink, "linking: waiting for approval");
-        let task = tokio::spawn(
-            self.clone()
-                .finish_link(client, dev, url.clone(), key, linked),
-        );
         {
             let mut l = self.link.lock().unwrap();
+            if l.gen != gen {
+                return Err(Status::aborted("another link was started or cancelled"));
+            }
+            l.task = Some(tokio::spawn(self.clone().finish_link(
+                client,
+                dev,
+                url.clone(),
+                key,
+                linked,
+            )));
             l.cp_url = url;
             l.active = Some(active);
             l.error.clear();
-            l.task = Some(task);
+            l.relink = linked;
         }
         self.bump();
         Ok(self.status())
@@ -232,6 +260,10 @@ impl Hub {
             match link::poll_device(&client, &dev.device_code).await {
                 Ok(link::Poll::Pending) => {}
                 Ok(link::Poll::Expired) => break CODE_EXPIRED.to_string(),
+                Ok(link::Poll::Approved(_)) if relink && self.hosting_now() => {
+                    break "This PC started hosting a server, so the re-link was cancelled."
+                        .to_string();
+                }
                 Ok(link::Poll::Approved(r)) => match self.write_link(&url, &r, &key, relink) {
                     Ok(()) => {
                         info!(node_id = %r.node_id, group = %r.group_id, "linked; wrote config.toml");
@@ -239,6 +271,7 @@ impl Hub {
                             let mut l = self.link.lock().unwrap();
                             l.active = None;
                             l.task = None;
+                            l.relink = false;
                         }
                         self.bump();
                         self.linked.notify_one();
@@ -256,6 +289,7 @@ impl Hub {
             l.active = None;
             l.error = err;
             l.task = None;
+            l.relink = false;
         }
         self.bump();
     }
@@ -267,13 +301,27 @@ impl Hub {
         key: &ed25519_dalek::SigningKey,
         relink: bool,
     ) -> anyhow::Result<()> {
-        let prev = if relink {
-            identity::save(&link::key_path(&self.data_dir), key)?;
-            Config::load_opt(&self.data_dir).ok().flatten()
-        } else {
-            None
-        };
-        link::enrolled_config(url, r, prev).save(&self.data_dir)
+        if !relink {
+            return link::enrolled_config(url, r, None).save(&self.data_dir);
+        }
+        // new key + new config; if the config can't be written, put the old
+        // key back so the existing node keeps working
+        let kp = link::key_path(&self.data_dir);
+        let old = identity::load(&kp).ok();
+        let prev = Config::load_opt(&self.data_dir).ok().flatten();
+        identity::save(&kp, key)?;
+        if let Err(e) = link::enrolled_config(url, r, prev).save(&self.data_dir) {
+            if let Some(old) = old {
+                let _ = identity::save(&kp, &old);
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    fn hosting_now(&self) -> bool {
+        let agent = self.agent.lock().unwrap().clone();
+        agent.is_some_and(|a| !hosting(&a).is_empty())
     }
 }
 
@@ -406,9 +454,14 @@ impl pb::local_service_server::LocalService for Svc {
 
     async fn cancel_link(
         &self,
-        _req: Request<pb::CancelLinkRequest>,
+        req: Request<pb::CancelLinkRequest>,
     ) -> Result<Response<pb::CancelLinkResponse>, Status> {
-        self.0.cancel_link();
+        let peer = req
+            .extensions()
+            .get::<PeerInfo>()
+            .cloned()
+            .unwrap_or_default();
+        self.0.cancel_link_by(&peer)?;
         Ok(Response::new(pb::CancelLinkResponse {
             status: Some(self.0.status()),
         }))
@@ -593,6 +646,37 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn installer_address_shown_before_linking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = Hub::new(tmp.path().to_path_buf());
+        assert_eq!(hub.status().control_plane_url, "");
+        std::fs::write(
+            tmp.path().join("server.url"),
+            "\u{feff}https://cp.example/\r\n",
+        )
+        .unwrap();
+        let s = hub.status();
+        assert_eq!(s.state(), pb::State::NotLinked);
+        assert_eq!(s.control_plane_url, "https://cp.example");
+    }
+
+    #[test]
+    fn cancelling_a_relink_needs_admin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = Hub::new(tmp.path().to_path_buf());
+        hub.link.lock().unwrap().relink = true;
+        let user = PeerInfo::default();
+        assert_eq!(
+            hub.cancel_link_by(&user).unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+        let admin = PeerInfo { is_admin: true };
+        hub.cancel_link_by(&admin).unwrap();
+        // first-time links stay cancellable by the user who started them
+        hub.cancel_link_by(&user).unwrap();
     }
 
     #[tokio::test]

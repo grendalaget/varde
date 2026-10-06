@@ -484,16 +484,17 @@ async fn run_linked(
     let exit = loop {
         tokio::select! {
             _ = ext_stop.wait_for(|s| *s) => break RunExit::Stopped,
-            _ = hub.linked.notified() => {
-                // a re-link from the tray wrote a config for a new node
-                let relinked = config::Config::load_opt(&data_dir)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|c| c.node_id != agent.cfg.node_id);
-                if relinked {
-                    break RunExit::Relinked;
-                }
-            }
+            // a re-link from the tray signals; `varde-agent enroll` only
+            // rewrites config.toml, so also look every few seconds
+            _ = hub.linked.notified() => {}
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+        }
+        let relinked = config::Config::load_opt(&data_dir)
+            .ok()
+            .flatten()
+            .is_some_and(|c| c.node_id != agent.cfg.node_id);
+        if relinked {
+            break RunExit::Relinked;
         }
     };
     if exit == RunExit::Stopped {
