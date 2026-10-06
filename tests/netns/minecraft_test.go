@@ -18,10 +18,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	mathrand "math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -1293,4 +1295,252 @@ func TestMinecraftCPRestart(t *testing.T) {
 		t.Fatalf("col1 after control-plane restart: got %q blocks=%v, want %q", got1, blocks1, nonce1)
 	}
 	wd.check(t)
+}
+
+type minecraftSnapshotView struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Replicas []struct {
+		NodeID string `json:"node_id"`
+		State  string `json:"state"`
+	} `json:"replicas"`
+}
+
+func (e *gameEnv) snapshotViews(serverID string) ([]minecraftSnapshotView, bool) {
+	status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil)
+	if status != 200 {
+		return nil, false
+	}
+	var response struct {
+		Snapshots []minecraftSnapshotView `json:"snapshots"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, false
+	}
+	return response.Snapshots, true
+}
+
+func (e *gameEnv) snapshotIDs(serverID string) map[string]bool {
+	e.t.Helper()
+	snapshots, ok := e.snapshotViews(serverID)
+	if !ok {
+		e.t.Fatalf("get snapshots for server %s", serverID)
+	}
+	ids := make(map[string]bool, len(snapshots))
+	for _, snapshot := range snapshots {
+		ids[snapshot.ID] = true
+	}
+	return ids
+}
+
+func (e *gameEnv) waitCommittedSnapshotOffHost(serverID, hostID string, existing map[string]bool) string {
+	e.t.Helper()
+	var committedID string
+	waitFor(e.t, 120*time.Second, "new committed snapshot replicated off-host", func() bool {
+		snapshots, ok := e.snapshotViews(serverID)
+		if !ok {
+			return false
+		}
+		for _, snapshot := range snapshots {
+			if existing[snapshot.ID] || snapshot.State != "committed" {
+				continue
+			}
+			for _, replica := range snapshot.Replicas {
+				if replica.State == "ready" && replica.NodeID != hostID {
+					committedID = snapshot.ID
+					return true
+				}
+			}
+		}
+		return false
+	})
+	return committedID
+}
+
+type minecraftSoakMarker struct {
+	column int
+	nonce  string
+}
+
+func TestMinecraftSoak(t *testing.T) {
+	durationText := os.Getenv("VARDE_SOAK_DURATION")
+	if durationText == "" {
+		t.Skip("set VARDE_SOAK_DURATION to run the soak")
+	}
+	duration, err := time.ParseDuration(durationText)
+	if err != nil || duration <= 0 {
+		t.Fatalf("invalid VARDE_SOAK_DURATION %q", durationText)
+	}
+	seed := time.Now().UnixNano()
+	if seedText := os.Getenv("VARDE_SOAK_SEED"); seedText != "" {
+		seed, err = strconv.ParseInt(seedText, 10, 64)
+		if err != nil {
+			t.Fatalf("invalid VARDE_SOAK_SEED %q: %v", seedText, err)
+		}
+	}
+	t.Logf("soak seed: %d", seed)
+	rng := mathrand.New(mathrand.NewSource(seed))
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-soak`")
+	}
+
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("arne", true)
+	e.setHosting("kari", true)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-soak", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	faultNames := []string{"hard-kill", "cut-off", "restart-cp", "move", "clean-stop-start", "agent-sigterm"}
+	rtoByFault := make(map[string][]time.Duration, len(faultNames))
+	for _, name := range faultNames {
+		rtoByFault[name] = nil
+	}
+	var markers []minecraftSoakMarker
+	var ref string
+	deadline := time.Now().Add(duration)
+	for cycle := 0; time.Now().Before(deadline); cycle++ {
+		hostID := e.hostOf(serverID)
+		hostBefore := e.nodeName(hostID)
+		if hostBefore != "arne" && hostBefore != "kari" {
+			t.Fatalf("cycle %d: unexpected current host %q (%s)", cycle, hostBefore, hostID)
+		}
+		if addr := e.svcAddr(serverID); addr != "" {
+			svc = addr + ":25565"
+		}
+		nonce := randNonce(t)
+		ref = e.botWrite("player", svc, cycle, nonce, ref)
+		hostID = e.hostOf(serverID)
+		if hostID == "" {
+			t.Fatalf("cycle %d: server stopped before snapshot", cycle)
+		}
+		existingSnapshots := e.snapshotIDs(serverID)
+		apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+		snapshotID := e.waitCommittedSnapshotOffHost(serverID, hostID, existingSnapshots)
+		markers = append(markers, minecraftSoakMarker{column: cycle, nonce: nonce})
+		t.Logf("cycle %d: committed marker nonce=%s snapshot=%s", cycle, nonce, snapshotID)
+
+		fault := faultNames[rng.Intn(len(faultNames))]
+		faultAt := time.Now()
+		t.Logf("cycle %d: fault=%s host_before=%s", cycle, fault, hostBefore)
+		switch fault {
+		case "hard-kill":
+			killNamespace(t, hostBefore)
+		case "cut-off":
+			e.cutOff(hostBefore)
+			delay := time.Duration(20+rng.Intn(21)) * time.Second
+			t.Logf("cycle %d: cut-off duration=%s", cycle, delay)
+			time.Sleep(delay)
+			e.restore(hostBefore)
+		case "restart-cp":
+			e.restartCP()
+		case "move":
+			target := "arne"
+			if hostBefore == "arne" {
+				target = "kari"
+			}
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/move", e.tok,
+				map[string]any{"target_node_id": e.nodes[target].nodeID}, 200)
+		case "clean-stop-start":
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/stop", e.tok, map[string]any{}, 200)
+			waitFor(t, 2*time.Minute, "soak server stopped", func() bool {
+				status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+				if status != 200 {
+					return false
+				}
+				var server map[string]any
+				if json.Unmarshal(body, &server) != nil {
+					return false
+				}
+				return server["observed_state"] == "stopped" && e.hostOf(serverID) == ""
+			})
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+		case "agent-sigterm":
+			proc := e.nodes[hostBefore].proc
+			if err := proc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatalf("cycle %d: SIGTERM %s agent: %v", cycle, hostBefore, err)
+			}
+			go func() { _ = proc.cmd.Wait() }()
+			waitFor(t, 3*time.Minute, hostBefore+" agent exited", func() bool {
+				return proc.cmd.ProcessState != nil && proc.cmd.ProcessState.Exited()
+			})
+			delay := time.Duration(10+rng.Intn(21)) * time.Second
+			t.Logf("cycle %d: agent restart delay=%s", cycle, delay)
+			time.Sleep(delay)
+			e.startAgent(hostBefore)
+		}
+
+		var firstGoodRead time.Time
+		waitFor(t, 4*time.Minute, "server running with newest committed markers readable", func() bool {
+			host := e.hostOf(serverID)
+			if host != e.nodes["arne"].nodeID && host != e.nodes["kari"].nodeID {
+				return false
+			}
+			addr := e.svcAddr(serverID)
+			if addr == "" {
+				return false
+			}
+			markerStart := len(markers) - 3
+			if markerStart < 0 {
+				markerStart = 0
+			}
+			allReadable := true
+			for _, marker := range markers[markerStart:] {
+				got, _, ok := e.botRead("player", addr+":25565", marker.column, ref)
+				if !ok {
+					allReadable = false
+					continue
+				}
+				if got != marker.nonce {
+					t.Fatalf("cycle %d after %s: col%d nonce=%q, want %q",
+						cycle, fault, marker.column, got, marker.nonce)
+				}
+				if firstGoodRead.IsZero() {
+					firstGoodRead = time.Now()
+				}
+			}
+			return allReadable
+		})
+		rto := firstGoodRead.Sub(faultAt)
+		hostAfter := e.nodeName(e.hostOf(serverID))
+		t.Logf("cycle %d: fault=%s host=%s->%s RTO=%s", cycle, fault, hostBefore, hostAfter, rto)
+		rtoByFault[fault] = append(rtoByFault[fault], rto)
+
+		if fault == "hard-kill" {
+			e.startAgent(hostBefore)
+		}
+		e.waitOnline(60*time.Second, mcNodeNames...)
+		wd.check(t)
+	}
+	if len(markers) == 0 {
+		t.Fatal("soak duration elapsed without completing a cycle")
+	}
+
+	t.Log("soak summary:")
+	t.Log("fault\tcount\tmedian RTO\tmax RTO")
+	for _, fault := range faultNames {
+		rtoValues := append([]time.Duration(nil), rtoByFault[fault]...)
+		if len(rtoValues) == 0 {
+			t.Logf("%s\t0\t-\t-", fault)
+			continue
+		}
+		sort.Slice(rtoValues, func(i, j int) bool { return rtoValues[i] < rtoValues[j] })
+		median := rtoValues[len(rtoValues)/2]
+		if len(rtoValues)%2 == 0 {
+			median = (rtoValues[len(rtoValues)/2-1] + rtoValues[len(rtoValues)/2]) / 2
+		}
+		t.Logf("%s\t%d\t%s\t%s", fault, len(rtoValues), median, rtoValues[len(rtoValues)-1])
+	}
 }
