@@ -53,6 +53,9 @@ jobs:
             cat api.err >&2; exit 1
           fi
           if gh release view nightly > /dev/null 2> api.err; then
+            # Clear the success marker before replacement, including same-commit retries.
+            gh release edit nightly --prerelease --latest=false \
+              --title 'Nightly (upload in progress)' --notes 'Upload in progress; retry the workflow if interrupted.'
             # Asset filenames include the version: --clobber alone would leave yesterday's files.
             gh release view nightly --json assets --jq '.assets[].name' |
               while IFS= read -r asset; do gh release delete-asset nightly "$asset" --yes; done

@@ -28,13 +28,16 @@ this design: immutability prevents `--clobber` and moving the nightly tag.
 ## Rolling nightly
 
 **nightly binaries** runs daily at 04:43 UTC and via `workflow_dispatch`. It
-resolves `main` once, then builds that exact commit across all platforms. The
+builds the exact main commit captured when the run is triggered across all
+platforms, keeping GitHub provenance's source SHA aligned with the checkout. The
 version is `0.0.0-nightly.YYYYMMDD+<7-character-sha>`, with the date in UTC.
 
 After successful builds/signing, publishing creates or updates the `nightly`
 prerelease (never marked Latest), moves its lightweight tag to the built commit,
 deletes all previous assets, and uploads the new set. The release notes record
-the commit **only after** a successful upload. Scheduled/publishing runs skip if
+the commit **only after** a successful upload; any previous success marker is
+cleared before replacing assets, so interrupted same-commit retries cannot look
+complete. Scheduled/publishing runs skip if
 that successful-commit marker matches main and assets exist. A failed build or
 partial upload is retried on the next run, even if the tag has already moved.
 Publication is not atomic; downloads can temporarily be unavailable during the
@@ -42,7 +45,7 @@ asset replacement. Do not delete the commit marker from the nightly notes.
 
 Concurrency serializes the entire nightly run, including manual runs, so two
 nightlies cannot race. A publishing dispatch must select `main`; feature branches
-can only dispatch with `dry_run: true`. Manual dispatch defaults to dry-run mode.
+can only dispatch their selected commit with `dry_run: true`. Manual dispatch defaults to dry-run mode.
 Dry runs bypass the unchanged-main check and never create/move tags or releases.
 
 ## Assets
