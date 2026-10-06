@@ -39,6 +39,13 @@ fn os_hostname() -> Option<String> {
 }
 
 /// Validates a user-entered control-plane address: http(s), no path noise.
+/// Address the installer chose (`<data>/server.url`), reported while not
+/// linked so the tray can start the device flow without asking again.
+pub fn preset_url(data_dir: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(data_dir.join("server.url")).ok()?;
+    normalize_url(raw.trim_start_matches('\u{feff}').lines().next()?).ok()
+}
+
 pub fn normalize_url(raw: &str) -> Result<String> {
     let s = raw.trim().trim_end_matches('/');
     let rest = s
