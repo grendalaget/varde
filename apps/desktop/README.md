@@ -14,6 +14,8 @@ platforms the binary is a stub, so the workspace builds everywhere.
   running).
 - Link window (`ui/`, static HTML, no build step): Varde address → code,
   Copy code / Open again / Cancel, countdown, "Linked to <group> as <name>".
+  An administrator's pending re-link shows "An administrator is re-linking this
+  PC" instead of Cancel outside the elevated window; refused calls show inline.
   Without WebView2 it falls back to message boxes.
 
 The address comes from the service: its control-plane URL once linked, before
