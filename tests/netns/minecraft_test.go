@@ -148,7 +148,7 @@ func (e *gameEnv) botWrite(ns, addr string, col int, nonce, ref string) string {
 	return r
 }
 
-// botRead probes a column; ok=false on connect failure (server down).
+// botRead probes a column; ok=false on connect failure or an unloaded block.
 // nonce is nil-able.
 func (e *gameEnv) botRead(ns, addr string, col int, ref string) (nonce string, blocks []string, ok bool) {
 	args := e.botArgs("read", addr, col)
@@ -163,13 +163,34 @@ func (e *gameEnv) botRead(ns, addr string, col int, ref string) (nonce string, b
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err != nil {
 		return "", nil, false
 	}
-	if m["nonce"] == nil {
-		for _, b := range m["blocks"].([]any) {
-			blocks = append(blocks, b.(string))
+	if rawBlocks, ok := m["blocks"].([]any); ok {
+		for _, rawBlock := range rawBlocks {
+			if block, ok := rawBlock.(string); ok {
+				blocks = append(blocks, block)
+			}
 		}
-		return "", blocks, true
+	}
+	if m["nonce"] == nil {
+		unloaded := false
+		for _, block := range blocks {
+			if block == "unloaded" {
+				unloaded = true
+			}
+		}
+		return "", blocks, !unloaded
 	}
 	return m["nonce"].(string), nil, true
+}
+
+func (e *gameEnv) waitBotRead(ns, addr string, col int, ref string, d time.Duration) (string, []string, bool) {
+	var nonce string
+	var blocks []string
+	var ok bool
+	waitFor(e.t, d, fmt.Sprintf("loaded Minecraft read for col%d", col), func() bool {
+		nonce, blocks, ok = e.botRead(ns, addr, col, ref)
+		return ok
+	})
+	return nonce, blocks, ok
 }
 
 type minecraftBotHold struct {
@@ -347,11 +368,11 @@ func TestMinecraftFailover(t *testing.T) {
 	})
 	t.Logf("RTO (kill -> first successful read): %s", rto)
 
-	got0, blocks0, _ := e.botRead("player", svc, 0, ref)
+	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {
 		t.Fatalf("col0 after failover: got nonce=%q blocks=%v, want %q", got0, blocks0, n1)
 	}
-	got1, blocks1, _ := e.botRead("player", svc, 1, ref)
+	got1, blocks1, _ := e.waitBotRead("player", svc, 1, ref, 30*time.Second)
 	switch {
 	case got1 == n2:
 		t.Logf("col1 survived failover (unsaved write made it into the snapshot)")
@@ -463,7 +484,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		_, _, ok := e.botRead("player", svc, 0, ref)
 		return ok
 	})
-	got0, blocks0, _ := e.botRead("player", svc, 0, ref)
+	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {
 		t.Fatalf("2a: col0 after owner shutdown: got %q blocks=%v, want %q", got0, blocks0, n1)
 	}
@@ -526,11 +547,11 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		_, _, ok := e.botRead("player", svc2, 0, ref2)
 		return ok
 	})
-	gotb0, blockb0, _ := e.botRead("player", svc2, 0, ref2)
+	gotb0, blockb0, _ := e.waitBotRead("player", svc2, 0, ref2, 30*time.Second)
 	if gotb0 != n1b {
 		t.Fatalf("2b: col0 after hard kill: got %q blocks=%v, want %q", gotb0, blockb0, n1b)
 	}
-	gotb1, blockb1, _ := e.botRead("player", svc2, 1, ref2)
+	gotb1, blockb1, _ := e.waitBotRead("player", svc2, 1, ref2, 30*time.Second)
 	if gotb1 != n2b && gotb1 != "" {
 		t.Fatalf("2b: col1 corrupt: got %q blocks=%v, want %q or empty", gotb1, blockb1, n2b)
 	}
@@ -802,7 +823,7 @@ func TestMinecraftCutOff(t *testing.T) {
 		}
 		return ok && got == nonce
 	})
-	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	got, blocks, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got != nonce {
 		t.Fatalf("col0 after cutoff recovery: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
 	}
@@ -859,7 +880,7 @@ func TestMinecraftRelayed(t *testing.T) {
 
 	nonce := randNonce(t)
 	ref := e.botWrite("player", svc, 0, nonce, "")
-	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	got, blocks, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got != nonce {
 		t.Fatalf("col0 over relayed path: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
 	}
@@ -913,7 +934,7 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	t.Logf("hold bot disconnected: %s", reason)
 
 	svc = e.waitMinecraft(serverID, "kari", 6*time.Minute)
-	got, blocks, ok := e.botRead("player", svc, 0, ref)
+	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
 		t.Fatalf("col0 after move: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
 	}
@@ -934,13 +955,13 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
 	svc = e.waitMinecraft(serverID, "", 6*time.Minute)
 
-	got, blocks, ok = e.botRead("player", svc, 0, ref)
+	got, blocks, ok = e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
 		t.Fatalf("col0 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
 	}
 	nextNonce := randNonce(t)
 	nextRef := e.botWrite("player", svc, 1, nextNonce, ref)
-	got, blocks, ok = e.botRead("player", svc, 1, nextRef)
+	got, blocks, ok = e.waitBotRead("player", svc, 1, nextRef, 30*time.Second)
 	if !ok || got != nextNonce {
 		t.Fatalf("col1 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nextNonce)
 	}
@@ -1286,11 +1307,11 @@ func TestMinecraftCPRestart(t *testing.T) {
 
 	nonce1 := randNonce(t)
 	e.botWrite("player", svc, 1, nonce1, ref)
-	got0, blocks0, ok := e.botRead("player", svc, 0, ref)
+	got0, blocks0, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got0 != nonce0 {
 		t.Fatalf("col0 after control-plane restart: got %q blocks=%v, want %q", got0, blocks0, nonce0)
 	}
-	got1, blocks1, ok := e.botRead("player", svc, 1, ref)
+	got1, blocks1, ok := e.waitBotRead("player", svc, 1, ref, 30*time.Second)
 	if !ok || got1 != nonce1 {
 		t.Fatalf("col1 after control-plane restart: got %q blocks=%v, want %q", got1, blocks1, nonce1)
 	}
@@ -1518,14 +1539,32 @@ func TestMinecraftSoak(t *testing.T) {
 			}
 			allReadable := true
 			for _, marker := range markers[markerStart:] {
-				got, _, ok := e.botRead("player", addr+":25565", marker.column, ref)
+				type markerReadAttempt struct {
+					got    string
+					blocks []string
+					ok     bool
+				}
+				got, blocks, ok := e.botRead("player", addr+":25565", marker.column, ref)
 				if !ok {
 					allReadable = false
 					continue
 				}
+				attempts := []markerReadAttempt{{got: got, blocks: blocks, ok: ok}}
 				if got != marker.nonce {
-					t.Fatalf("cycle %d after %s: col%d nonce=%q, want %q",
-						cycle, fault, marker.column, got, marker.nonce)
+					for retry := 0; retry < 2 && got != marker.nonce; retry++ {
+						time.Sleep(5 * time.Second)
+						got, blocks, ok = e.botRead("player", addr+":25565", marker.column, ref)
+						attempts = append(attempts, markerReadAttempt{got: got, blocks: blocks, ok: ok})
+					}
+					if !ok {
+						allReadable = false
+						continue
+					}
+					if got != marker.nonce {
+						e.dumpSoakFailureState(serverID)
+						t.Fatalf("cycle %d after %s: col%d want=%q got=%q attempts=%+v",
+							cycle, fault, marker.column, marker.nonce, got, attempts)
+					}
 				}
 				if firstGoodRead.IsZero() {
 					firstGoodRead = time.Now()

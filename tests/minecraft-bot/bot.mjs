@@ -190,7 +190,7 @@ async function main() {
       const expected = names.slice(16, 24)
       console.log(JSON.stringify({ nonce: null, blocks: expected }))
     } else {
-      console.log(JSON.stringify({ nonce }))
+      console.log(JSON.stringify({ nonce, blocks: names.slice(16, 24) }))
     }
   }
   clearTimeout(hardTimeout)
