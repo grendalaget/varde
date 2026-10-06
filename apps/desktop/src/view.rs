@@ -26,6 +26,8 @@ pub struct TrayView {
     /// Re-link (needs an administrator) rather than a first link.
     pub relink: bool,
     pub dashboard_url: Option<String>,
+    /// The agent service answered: it can be stopped, not started.
+    pub service_running: bool,
 }
 
 pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
@@ -40,6 +42,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             link_enabled: false,
             relink: false,
             dashboard_url: None,
+            service_running: false,
         };
     };
     let state = s.state();
@@ -102,6 +105,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         link_enabled,
         relink: linked,
         dashboard_url: (!s.control_plane_url.is_empty()).then(|| s.control_plane_url.clone()),
+        service_running: true,
     }
 }
 
@@ -179,12 +183,15 @@ impl From<&pb::Status> for UiStatus {
 
 /// Command line: `--link` (installer: open the link window and start linking
 /// with the address the service reports), `--relink` (elevated re-link
-/// window), `--autostart`.
+/// window), `--autostart`, `--service-start` / `--service-stop` (elevated
+/// headless service control).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
     pub relink: bool,
     pub autostart: bool,
+    pub service_start: bool,
+    pub service_stop: bool,
 }
 
 pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
@@ -199,6 +206,8 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
             }
             "--relink" => l.relink = true,
             "--autostart" => l.autostart = true,
+            "--service-start" => l.service_start = true,
+            "--service-stop" => l.service_stop = true,
             _ => {}
         }
     }
@@ -327,6 +336,8 @@ mod tests {
         let l = p(&["--link", "--autostart"]);
         assert!(l.open_link && l.autostart);
         assert!(p(&["--relink"]).relink);
+        assert!(p(&["--service-start"]).service_start);
+        assert!(p(&["--service-stop"]).service_stop);
     }
 
     #[test]

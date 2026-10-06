@@ -40,14 +40,18 @@
       <section id="v-done" hidden>
         <h1>Linked</h1>
         <p id="done-text"></p>
+        <p class="muted">The Varde service is running on this PC.</p>
         <div class="row"><button class="primary close">Close</button></div>
       </section>
 
       <section id="v-linked" hidden>
         <h1>This PC is linked</h1>
         <p id="linked-text"></p>
+        <p class="muted">The Varde service is running on this PC.</p>
+        <p id="linked-error" class="warn" role="alert" hidden></p>
         <div class="row">
           <button id="open-dash" class="primary">Open dashboard</button>
+          <button id="svc-stop" title="Stop the Varde service">Stop Varde</button>
           <button class="close">Close</button>
         </div>
       </section>
@@ -55,10 +59,17 @@
       <section id="v-noagent" hidden>
         <h1>Varde isn't running</h1>
         <p class="warn">
-          The Varde service on this PC isn't answering. It starts with Windows; if this keeps
-          happening, reinstall Varde.
+          The Varde service on this PC isn't answering. Varde can't host or join servers
+          until it runs again.
         </p>
-        <div class="row"><button class="close">Close</button></div>
+        <p class="muted">
+          It normally starts with Windows. Starting it needs administrator approval once.
+        </p>
+        <p id="noagent-error" class="warn" role="alert" hidden></p>
+        <div class="row">
+          <button id="svc-start" class="primary">Start Varde</button>
+          <button class="close">Close</button>
+        </div>
       </section>
     </main>
     <script src="app.js"></script>
