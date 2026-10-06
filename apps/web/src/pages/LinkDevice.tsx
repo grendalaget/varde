@@ -44,8 +44,8 @@ export default function LinkDevice({ code }: { code: string }) {
         <div className="space-y-4 p-4">
           {link.error ? (
             <ErrorNote>
-              That code wasn't found or has expired. Check the code shown on the
-              machine.
+              That code wasn't found or has expired. Check the code in the Varde
+              window on that PC.
             </ErrorNote>
           ) : !d ? (
             <p className="text-sm text-skifer-400">Looking up code…</p>

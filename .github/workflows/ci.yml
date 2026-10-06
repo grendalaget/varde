@@ -155,15 +155,21 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-msvc
           override: true
-      - name: build agent + mesh (MSVC)
+      - name: build agent + mesh + tray (MSVC)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
-          cargo build --release -p varde-agent
+          cargo build --release -p varde-agent -p varde-tray
           cd apps/mesh
           go build -o ../../packaging/windows/dist/varde-mesh.exe .
           cd ../..
           Copy-Item target/release/varde-agent.exe packaging/windows/dist/
+          Copy-Item target/release/varde-tray.exe packaging/windows/dist/
+      - name: WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+            -OutFile packaging/windows/dist/MicrosoftEdgeWebview2Setup.exe
       - name: Inno Setup
         run: choco install innosetup -y
       - name: build installer

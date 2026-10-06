@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>Varde</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header><img src="mark.svg" alt="" class="mark" /><span class="brand">varde</span></header>
+    <main>
+      <section id="v-form" hidden>
+        <h1 id="form-title">Link this PC</h1>
+        <p id="form-lead">Enter your Varde address. You'll approve this PC in your browser.</p>
+        <p id="relink-note" class="warn" hidden>
+          This PC leaves its current group and gets a new identity.
+        </p>
+        <form id="link-form">
+          <label for="url">Varde address</label>
+          <input id="url" type="url" required spellcheck="false" autocomplete="url" />
+          <button type="submit" class="primary" id="link-btn">Link</button>
+        </form>
+        <p id="form-error" class="warn" role="alert" hidden></p>
+      </section>
+
+      <section id="v-code" hidden>
+        <h1>Approve this PC in your browser</h1>
+        <p>Your browser opened Varde. Check that it shows this code, then approve:</p>
+        <div id="code" class="code" aria-live="polite"></div>
+        <p id="expires" class="muted"></p>
+        <div class="row">
+          <button id="copy">Copy code</button>
+          <button id="reopen">Open again</button>
+          <button id="cancel">Cancel</button>
+        </div>
+      </section>
+
+      <section id="v-done" hidden>
+        <h1>Linked</h1>
+        <p id="done-text"></p>
+        <div class="row"><button class="primary close">Close</button></div>
+      </section>
+
+      <section id="v-linked" hidden>
+        <h1>This PC is linked</h1>
+        <p id="linked-text"></p>
+        <div class="row">
+          <button id="open-dash" class="primary">Open dashboard</button>
+          <button class="close">Close</button>
+        </div>
+      </section>
+
+      <section id="v-noagent" hidden>
+        <h1>Varde isn't running</h1>
+        <p class="warn">
+          The Varde service on this PC isn't answering. It starts with Windows; if this keeps
+          happening, reinstall Varde.
+        </p>
+        <div class="row"><button class="close">Close</button></div>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
