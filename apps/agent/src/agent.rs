@@ -1,7 +1,7 @@
 //! The `Agent` — shared state for the control loop, supervisors, chunk server
 //! and the replication worker.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,7 @@ pub struct Agent {
     pub mesh: Arc<MeshCtl>,
     pub execs: Mutex<HashMap<String, Arc<ExecCtl>>>,
     pub state: Mutex<ExecState>,
+    pub pending_delete_acks: Mutex<BTreeSet<String>>,
     pub chunk_tracker: Arc<ServeTracker>,
     pub started_at_ms: i64,
     /// replication queue + in-flight set

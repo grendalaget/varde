@@ -460,11 +460,11 @@ impl Store {
         Ok(r)
     }
 
-    pub fn delete_snapshot(&self, id: &SnapshotId) -> Result<()> {
+    pub fn delete_snapshot(&self, id: &SnapshotId) -> Result<bool> {
         let p = self.root.join("snapshots").join(format!("{}.json", id.0));
         match fs::remove_file(&p) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(e.into()),
         }
     }

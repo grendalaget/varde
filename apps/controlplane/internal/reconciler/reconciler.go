@@ -218,10 +218,32 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 		if err != nil {
 			return err
 		}
-		if len(execs) > 0 && execs[0].EndReason != nil && *execs[0].EndReason == "failed" {
+		restoreFailures := 0
+		if len(execs) > 0 && execs[0].EndReason != nil && *execs[0].EndReason == "restore_failed" {
+			for _, ex := range execs {
+				if ex.EndReason == nil || *ex.EndReason != "restore_failed" {
+					break
+				}
+				restoreFailures++
+			}
+			if restoreFailures < 3 {
+				lastFailure := execs[0].EndedAt
+				if lastFailure != nil && now >= *lastFailure+10_000 {
+					return r.activate(ctx, srv, nil, true)
+				}
+				if srv.ObservedState != "recovering" {
+					if err := s.SetObservedState(ctx, s.DB, srv.ID, "recovering", now); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+		}
+		if len(execs) > 0 && execs[0].EndReason != nil &&
+			(*execs[0].EndReason == "failed" || *execs[0].EndReason == "restore_failed") {
 			if srv.ObservedState != "failed" {
-				// server.failed was already emitted when the agent reported
-				// the failure — just converge observed state (once).
+				// The failure event was already emitted when the agent
+				// reported it — just converge observed state (once).
 				if err := s.SetObservedState(ctx, s.DB, srv.ID, "failed", now); err != nil {
 					return err
 				}

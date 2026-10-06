@@ -27,6 +27,8 @@ export function describeEvent(
       return `Stopped on ${node}`;
     case "server.failed":
       return `Failed on ${node}${d.message ? `: ${String(d.message)}` : ""}`;
+    case "server.restore_failed":
+      return `Couldn't restore the save on ${node}${d.message ? `: ${String(d.message)}` : ""}; retrying`;
     case "server.join_code":
       return `Join code is now ${String(d.join_code ?? "")}`;
     case "server.save_unavailable":

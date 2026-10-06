@@ -106,7 +106,7 @@ const colX = (ref, spawnX) => (args.ref ? ref.x : spawnX) + 2 + 2 * col
 function columnBase(x, z, anchorY) {
   for (let y = anchorY + 16; y > anchorY - 16; y--) {
     const b = bot.blockAt(new Vec3(x, y, z))
-    if (b && b.name !== 'air' && b.name !== 'cave_air' && b.boundingBox === 'block') return b.position
+    if (b && b.name !== 'air' && b.name !== 'cave_air' && !b.name.endsWith('_wool') && b.boundingBox === 'block') return b.position
   }
   return null
 }
@@ -190,7 +190,7 @@ async function main() {
       const expected = names.slice(16, 24)
       console.log(JSON.stringify({ nonce: null, blocks: expected }))
     } else {
-      console.log(JSON.stringify({ nonce }))
+      console.log(JSON.stringify({ nonce, blocks: names.slice(16, 24) }))
     }
   }
   clearTimeout(hardTimeout)

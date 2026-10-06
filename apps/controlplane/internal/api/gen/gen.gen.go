@@ -167,11 +167,12 @@ func (e ExecutionAction) Valid() bool {
 
 // Defines values for ExecutionEndReason.
 const (
-	ExecutionEndReasonFailed   ExecutionEndReason = "failed"
-	ExecutionEndReasonFenced   ExecutionEndReason = "fenced"
-	ExecutionEndReasonLost     ExecutionEndReason = "lost"
-	ExecutionEndReasonMigrated ExecutionEndReason = "migrated"
-	ExecutionEndReasonStopped  ExecutionEndReason = "stopped"
+	ExecutionEndReasonFailed        ExecutionEndReason = "failed"
+	ExecutionEndReasonFenced        ExecutionEndReason = "fenced"
+	ExecutionEndReasonLost          ExecutionEndReason = "lost"
+	ExecutionEndReasonMigrated      ExecutionEndReason = "migrated"
+	ExecutionEndReasonRestoreFailed ExecutionEndReason = "restore_failed"
+	ExecutionEndReasonStopped       ExecutionEndReason = "stopped"
 )
 
 // Valid indicates whether the value is a known member of the ExecutionEndReason enum.
@@ -184,6 +185,8 @@ func (e ExecutionEndReason) Valid() bool {
 	case ExecutionEndReasonLost:
 		return true
 	case ExecutionEndReasonMigrated:
+		return true
+	case ExecutionEndReasonRestoreFailed:
 		return true
 	case ExecutionEndReasonStopped:
 		return true
@@ -657,8 +660,11 @@ type AgentDirectivesNodeAdminState string
 
 // AgentHeartbeat defines model for AgentHeartbeat.
 type AgentHeartbeat struct {
-	AgentVersion         *string            `json:"agent_version,omitempty"`
-	Capabilities         *Capabilities      `json:"capabilities,omitempty"`
+	AgentVersion *string       `json:"agent_version,omitempty"`
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+
+	// DeletedSnapshots Snapshot IDs deleted by this node per directive since its last acknowledged heartbeat.
+	DeletedSnapshots     *[]string          `json:"deleted_snapshots,omitempty"`
 	Executions           *[]ExecutionReport `json:"executions,omitempty"`
 	Mesh                 *MeshReport        `json:"mesh,omitempty"`
 	SnapshotsStoredBytes *int64             `json:"snapshots_stored_bytes,omitempty"`

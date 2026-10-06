@@ -296,9 +296,32 @@ func (a *agent) heartbeatCaps(execReports []map[string]any, c map[string]any) (d
 	return d, r
 }
 
+func (a *agent) heartbeatWithDeletedSnapshots(snapshotIDs []string) (directives, apiResp) {
+	a.e.t.Helper()
+	body := map[string]any{
+		"capabilities":      caps(),
+		"executions":        []map[string]any{},
+		"deleted_snapshots": snapshotIDs,
+	}
+	raw, _ := json.Marshal(body)
+	r := a.signedDo("POST", "/v1/agent/heartbeat", raw, 0, nil)
+	var d directives
+	if r.Status == 200 {
+		_ = json.Unmarshal(r.Raw, &d)
+	}
+	return d, r
+}
+
 func (a *agent) execStatus(execID, serverID string, epoch int64, state string) apiResp {
 	body, _ := json.Marshal(map[string]any{
 		"server_id": serverID, "epoch": epoch, "state": state,
+	})
+	return a.signedDo("POST", "/v1/agent/executions/"+execID+"/status", body, 0, nil)
+}
+
+func (a *agent) execStatusWithMessage(execID, serverID string, epoch int64, state, message string) apiResp {
+	body, _ := json.Marshal(map[string]any{
+		"server_id": serverID, "epoch": epoch, "state": state, "message": message,
 	})
 	return a.signedDo("POST", "/v1/agent/executions/"+execID+"/status", body, 0, nil)
 }
@@ -842,6 +865,103 @@ func TestLatestSaveUnavailableAndAllowOlder(t *testing.T) {
 	e.mustOK(r)
 }
 
+func TestRetentionDeleteAck(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	settings := store.DefaultGroupSettings()
+	settings.SnapshotRetention = 1
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`UPDATE groups SET settings_json=? WHERE id=?`), string(settingsJSON), e.group); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := e.createServer("testgame", "retention", map[string]any{
+		"preferred_node_id":   a.nodeID,
+		"replication_factor":  1,
+		"min_commit_replicas": 1,
+	})
+	host, execID, epoch := e.startToRunning(srv, a)
+	snapshotIDs := []string{"snap_old_a", "snap_old_b", "snap_latest"}
+	for i, snapshotID := range snapshotIDs {
+		if r := host.createSnapshot(execID, srv, "dep_x", epoch, "scheduled", snapshotID, fmt.Sprintf("d%d", i)); r.Status != 201 {
+			t.Fatalf("create %s: %d %s", snapshotID, r.Status, r.Raw)
+		}
+	}
+	server, err := e.st.GetServer(context.Background(), srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.srv.ApplyRetention(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+
+	d, r := host.heartbeat(nil)
+	if r.Status != 200 {
+		t.Fatalf("heartbeat: %d %s", r.Status, r.Raw)
+	}
+	deleting := map[string]bool{}
+	for _, id := range d.DeleteSnapshots {
+		deleting[id] = true
+	}
+	for _, id := range snapshotIDs[:2] {
+		if !deleting[id] {
+			t.Fatalf("retention directive missing %s: %+v", id, d.DeleteSnapshots)
+		}
+	}
+
+	next, r := host.heartbeatWithDeletedSnapshots(d.DeleteSnapshots)
+	if r.Status != 200 {
+		t.Fatalf("delete acknowledgement heartbeat: %d %s", r.Status, r.Raw)
+	}
+	if len(next.DeleteSnapshots) != 0 {
+		t.Fatalf("delete list after acknowledgement: %+v", next.DeleteSnapshots)
+	}
+	for _, id := range snapshotIDs[:2] {
+		var count int
+		if err := e.st.DB.Get(&count, e.st.Rebind(
+			`SELECT COUNT(*) FROM snapshots WHERE id=?`), id); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("snapshot %s remains after final replica deletion", id)
+		}
+		if err := e.st.DB.Get(&count, e.st.Rebind(
+			`SELECT COUNT(*) FROM snapshot_replicas WHERE snapshot_id=?`), id); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("replicas remain for %s after acknowledgement", id)
+		}
+	}
+
+	afterReadyAck, r := host.heartbeatWithDeletedSnapshots([]string{"snap_latest"})
+	if r.Status != 200 {
+		t.Fatalf("ready-replica acknowledgement heartbeat: %d %s", r.Status, r.Raw)
+	}
+	if len(afterReadyAck.DeleteSnapshots) != 0 {
+		t.Fatalf("ready-replica ack produced delete directives: %+v", afterReadyAck.DeleteSnapshots)
+	}
+	var state string
+	if err := e.st.DB.Get(&state, e.st.Rebind(
+		`SELECT state FROM snapshot_replicas WHERE snapshot_id='snap_latest' AND node_id=?`), host.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if state != "ready" {
+		t.Fatalf("ready replica state after ignored acknowledgement=%q", state)
+	}
+	if err := e.st.DB.Get(&state, e.st.Rebind(
+		`SELECT state FROM snapshots WHERE id='snap_latest'`)); err != nil {
+		t.Fatal(err)
+	}
+	if state != "committed" {
+		t.Fatalf("snapshot state after ignored acknowledgement=%q", state)
+	}
+}
+
 // A newer save that lives only on an offline machine must block a normal
 // start even when an older save is reachable — otherwise /start silently
 // restores the older save. allow_older_snapshot and automatic recovery both
@@ -1325,6 +1445,14 @@ func TestCrashLoopGuard(t *testing.T) {
 	if e.observed(srv) != "failed" {
 		t.Fatalf("observed=%s", e.observed(srv))
 	}
+	var endReason string
+	if err := e.st.DB.Get(&endReason, e.st.Rebind(
+		`SELECT end_reason FROM server_executions WHERE id=?`), execID); err != nil {
+		t.Fatal(err)
+	}
+	if endReason != "failed" {
+		t.Fatalf("running failure end_reason=%q", endReason)
+	}
 	// several passes: never a new execution, and server.failed only once
 	for i := 0; i < 3; i++ {
 		e.reconcile()
@@ -1350,6 +1478,155 @@ func TestCrashLoopGuard(t *testing.T) {
 	}
 	if ex["epoch"].(int64) != epoch+1 {
 		t.Fatalf("epoch %d → %d", epoch, ex["epoch"])
+	}
+}
+
+func TestRestoreFailureRetries(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "restore-retry", map[string]any{
+		"preferred_node_id":   a.nodeID,
+		"replication_factor":  2,
+		"min_commit_replicas": 1,
+	})
+	host, execID, epoch := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+	const snapshotID = "snap_restore_retry"
+	if r := host.createSnapshot(execID, srv, "dep_x", epoch, "final", snapshotID, "restore"); r.Status != 201 {
+		t.Fatalf("create snapshot: %d %s", r.Status, r.Raw)
+	}
+	if r := other.replicaReady(snapshotID); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	other.heartbeat(nil)
+	e.reconcile()
+	first := e.activeExec(srv)
+	if first == nil || first["node"] != other.nodeID {
+		t.Fatalf("no recovery execution on online node: %+v", first)
+	}
+
+	reportRestoreFailure := func() string {
+		e.t.Helper()
+		active := e.activeExec(srv)
+		if active == nil || active["node"] != other.nodeID {
+			e.t.Fatalf("no recovery execution to fail: %+v", active)
+		}
+		recoveryID := active["id"].(string)
+		recoveryEpoch := active["epoch"].(int64)
+		d, r := other.heartbeat(nil)
+		if r.Status != 200 {
+			e.t.Fatalf("recovery heartbeat: %d %s", r.Status, r.Raw)
+		}
+		foundRestore := false
+		for _, directive := range d.Executions {
+			if directive.ExecutionID == recoveryID && directive.Restore != nil &&
+				directive.Restore.SnapshotID == snapshotID {
+				foundRestore = true
+			}
+		}
+		if !foundRestore {
+			e.t.Fatalf("recovery execution %s did not restore %s: %+v", recoveryID, snapshotID, d.Executions)
+		}
+		if r := other.execStatus(recoveryID, srv, recoveryEpoch, "restoring"); r.Status != 204 {
+			e.t.Fatalf("restoring report: %d %s", r.Status, r.Raw)
+		}
+		if r := other.execStatusWithMessage(recoveryID, srv, recoveryEpoch, "failed", "manifest fetch failed"); r.Status != 204 {
+			e.t.Fatalf("restore failed report: %d %s", r.Status, r.Raw)
+		}
+		return recoveryID
+	}
+
+	firstFailedID := reportRestoreFailure()
+	e.reconcile()
+	if got := e.observed(srv); got != "recovering" {
+		t.Fatalf("observed after first restore failure=%q", got)
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery retried before the backoff elapsed")
+	}
+	var endReason string
+	if err := e.st.DB.Get(&endReason, e.st.Rebind(
+		`SELECT end_reason FROM server_executions WHERE id=?`), firstFailedID); err != nil {
+		t.Fatal(err)
+	}
+	if endReason != "restore_failed" {
+		t.Fatalf("restore failure end_reason=%q", endReason)
+	}
+	var eventCount int
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.restore_failed'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("server.restore_failed event count=%d", eventCount)
+	}
+	var eventData string
+	if err := e.st.DB.Get(&eventData, e.st.Rebind(
+		`SELECT data_json FROM events WHERE server_id=? AND type='server.restore_failed' ORDER BY id DESC LIMIT 1`), srv); err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(eventData), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["execution_id"] != firstFailedID || data["message"] != "manifest fetch failed" {
+		t.Fatalf("restore failure event data=%+v", data)
+	}
+	if data["epoch"] != float64(first["epoch"].(int64)) {
+		t.Fatalf("restore failure event epoch=%v", data["epoch"])
+	}
+
+	e.clk.advance(9999)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery retried before 10 seconds")
+	}
+	e.clk.advance(1)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) == nil {
+		t.Fatal("recovery did not retry after 10 seconds")
+	}
+
+	reportRestoreFailure()
+	e.reconcile()
+	if e.observed(srv) != "recovering" || e.activeExec(srv) != nil {
+		t.Fatalf("state after second restore failure: observed=%s active=%+v", e.observed(srv), e.activeExec(srv))
+	}
+	e.clk.advance(10_000)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) == nil {
+		t.Fatal("third recovery execution was not created")
+	}
+
+	reportRestoreFailure()
+	e.reconcile()
+	if e.observed(srv) != "failed" {
+		t.Fatalf("observed after three restore failures=%q", e.observed(srv))
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery continued after three restore failures")
+	}
+	e.clk.advance(60_000)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) != nil || e.observed(srv) != "failed" {
+		t.Fatalf("server retried after restore failure limit: observed=%s active=%+v", e.observed(srv), e.activeExec(srv))
+	}
+	if err := e.st.DB.Get(&eventCount, e.st.Rebind(
+		`SELECT COUNT(*) FROM events WHERE server_id=? AND type='server.restore_failed'`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 3 {
+		t.Fatalf("server.restore_failed event count=%d, want 3", eventCount)
 	}
 }
 

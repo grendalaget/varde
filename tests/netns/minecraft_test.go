@@ -18,10 +18,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	mathrand "math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -146,7 +148,7 @@ func (e *gameEnv) botWrite(ns, addr string, col int, nonce, ref string) string {
 	return r
 }
 
-// botRead probes a column; ok=false on connect failure (server down).
+// botRead probes a column; ok=false on connect failure or an unloaded block.
 // nonce is nil-able.
 func (e *gameEnv) botRead(ns, addr string, col int, ref string) (nonce string, blocks []string, ok bool) {
 	args := e.botArgs("read", addr, col)
@@ -161,13 +163,34 @@ func (e *gameEnv) botRead(ns, addr string, col int, ref string) (nonce string, b
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err != nil {
 		return "", nil, false
 	}
-	if m["nonce"] == nil {
-		for _, b := range m["blocks"].([]any) {
-			blocks = append(blocks, b.(string))
+	if rawBlocks, ok := m["blocks"].([]any); ok {
+		for _, rawBlock := range rawBlocks {
+			if block, ok := rawBlock.(string); ok {
+				blocks = append(blocks, block)
+			}
 		}
-		return "", blocks, true
+	}
+	if m["nonce"] == nil {
+		unloaded := false
+		for _, block := range blocks {
+			if block == "unloaded" {
+				unloaded = true
+			}
+		}
+		return "", blocks, !unloaded
 	}
 	return m["nonce"].(string), nil, true
+}
+
+func (e *gameEnv) waitBotRead(ns, addr string, col int, ref string, d time.Duration) (string, []string, bool) {
+	var nonce string
+	var blocks []string
+	var ok bool
+	waitFor(e.t, d, fmt.Sprintf("loaded Minecraft read for col%d", col), func() bool {
+		nonce, blocks, ok = e.botRead(ns, addr, col, ref)
+		return ok
+	})
+	return nonce, blocks, ok
 }
 
 type minecraftBotHold struct {
@@ -345,11 +368,11 @@ func TestMinecraftFailover(t *testing.T) {
 	})
 	t.Logf("RTO (kill -> first successful read): %s", rto)
 
-	got0, blocks0, _ := e.botRead("player", svc, 0, ref)
+	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {
 		t.Fatalf("col0 after failover: got nonce=%q blocks=%v, want %q", got0, blocks0, n1)
 	}
-	got1, blocks1, _ := e.botRead("player", svc, 1, ref)
+	got1, blocks1, _ := e.waitBotRead("player", svc, 1, ref, 30*time.Second)
 	switch {
 	case got1 == n2:
 		t.Logf("col1 survived failover (unsaved write made it into the snapshot)")
@@ -403,7 +426,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		t.Fatalf("SIGTERM arne agent: %v", err)
 	}
 	// reap the process in the background so ProcessState populates
-	go func() { _ = arneProc.cmd.Wait() }()
+	go func() { _ = arneProc.wait() }()
 	waitFor(t, 3*time.Minute, "arne agent exited", func() bool {
 		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited()
 	})
@@ -461,7 +484,7 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		_, _, ok := e.botRead("player", svc, 0, ref)
 		return ok
 	})
-	got0, blocks0, _ := e.botRead("player", svc, 0, ref)
+	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {
 		t.Fatalf("2a: col0 after owner shutdown: got %q blocks=%v, want %q", got0, blocks0, n1)
 	}
@@ -524,11 +547,11 @@ func TestMinecraftOwnerShutdown(t *testing.T) {
 		_, _, ok := e.botRead("player", svc2, 0, ref2)
 		return ok
 	})
-	gotb0, blockb0, _ := e.botRead("player", svc2, 0, ref2)
+	gotb0, blockb0, _ := e.waitBotRead("player", svc2, 0, ref2, 30*time.Second)
 	if gotb0 != n1b {
 		t.Fatalf("2b: col0 after hard kill: got %q blocks=%v, want %q", gotb0, blockb0, n1b)
 	}
-	gotb1, blockb1, _ := e.botRead("player", svc2, 1, ref2)
+	gotb1, blockb1, _ := e.waitBotRead("player", svc2, 1, ref2, 30*time.Second)
 	if gotb1 != n2b && gotb1 != "" {
 		t.Fatalf("2b: col1 corrupt: got %q blocks=%v, want %q or empty", gotb1, blockb1, n2b)
 	}
@@ -784,7 +807,7 @@ func TestMinecraftCutOff(t *testing.T) {
 		_, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/executions", e.tok, nil)
 		t.Logf("execution JSON after cutoff: %s", body)
 	}
-	arneLogs := e.nodes["arne"].proc.buf.String()
+	arneLogs := e.nodes["arne"].proc.output()
 	if !strings.Contains(arneLogs, arneExecutionID) || !strings.Contains(arneLogs, "lease deadline expired") {
 		t.Errorf("arne agent log did not show fencing for %s", arneExecutionID)
 	}
@@ -800,7 +823,7 @@ func TestMinecraftCutOff(t *testing.T) {
 		}
 		return ok && got == nonce
 	})
-	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	got, blocks, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got != nonce {
 		t.Fatalf("col0 after cutoff recovery: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
 	}
@@ -857,7 +880,7 @@ func TestMinecraftRelayed(t *testing.T) {
 
 	nonce := randNonce(t)
 	ref := e.botWrite("player", svc, 0, nonce, "")
-	got, blocks, _ := e.botRead("player", svc, 0, ref)
+	got, blocks, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got != nonce {
 		t.Fatalf("col0 over relayed path: got nonce=%q blocks=%v, want %q", got, blocks, nonce)
 	}
@@ -911,7 +934,7 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	t.Logf("hold bot disconnected: %s", reason)
 
 	svc = e.waitMinecraft(serverID, "kari", 6*time.Minute)
-	got, blocks, ok := e.botRead("player", svc, 0, ref)
+	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
 		t.Fatalf("col0 after move: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
 	}
@@ -932,13 +955,13 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
 	svc = e.waitMinecraft(serverID, "", 6*time.Minute)
 
-	got, blocks, ok = e.botRead("player", svc, 0, ref)
+	got, blocks, ok = e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
 		t.Fatalf("col0 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
 	}
 	nextNonce := randNonce(t)
 	nextRef := e.botWrite("player", svc, 1, nextNonce, ref)
-	got, blocks, ok = e.botRead("player", svc, 1, nextRef)
+	got, blocks, ok = e.waitBotRead("player", svc, 1, nextRef, 30*time.Second)
 	if !ok || got != nextNonce {
 		t.Fatalf("col1 after clean stop/start: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nextNonce)
 	}
@@ -1156,7 +1179,7 @@ func TestMinecraftCorruptReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Kari chunk quarantine: %v", err)
 	}
-	kariLogs := e.nodes["kari"].proc.buf.String()
+	kariLogs := e.nodes["kari"].proc.output()
 	if len(quarantined) == 0 && !strings.Contains(kariLogs, "hash mismatch") {
 		t.Fatalf("no evidence of corrupt chunk rejection in quarantine or Kari agent logs")
 	}
@@ -1278,19 +1301,312 @@ func TestMinecraftCPRestart(t *testing.T) {
 	if len(pids) != 1 || pids[0] != serverPID {
 		t.Fatalf("server.jar PID changed across control-plane restart: before=%s after=%v", serverPID, pids)
 	}
-	if strings.Contains(e.nodes["arne"].proc.buf.String(), "fenced") {
+	if strings.Contains(e.nodes["arne"].proc.output(), "fenced") {
 		t.Fatal("Arne agent log contains a fenced line")
 	}
 
 	nonce1 := randNonce(t)
 	e.botWrite("player", svc, 1, nonce1, ref)
-	got0, blocks0, ok := e.botRead("player", svc, 0, ref)
+	got0, blocks0, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got0 != nonce0 {
 		t.Fatalf("col0 after control-plane restart: got %q blocks=%v, want %q", got0, blocks0, nonce0)
 	}
-	got1, blocks1, ok := e.botRead("player", svc, 1, ref)
+	got1, blocks1, ok := e.waitBotRead("player", svc, 1, ref, 30*time.Second)
 	if !ok || got1 != nonce1 {
 		t.Fatalf("col1 after control-plane restart: got %q blocks=%v, want %q", got1, blocks1, nonce1)
 	}
 	wd.check(t)
+}
+
+type minecraftSnapshotView struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Replicas []struct {
+		NodeID string `json:"node_id"`
+		State  string `json:"state"`
+	} `json:"replicas"`
+}
+
+func (e *gameEnv) snapshotViews(serverID string) ([]minecraftSnapshotView, bool) {
+	status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil)
+	if status != 200 {
+		return nil, false
+	}
+	var response struct {
+		Snapshots []minecraftSnapshotView `json:"snapshots"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, false
+	}
+	return response.Snapshots, true
+}
+
+func (e *gameEnv) snapshotIDs(serverID string) map[string]bool {
+	e.t.Helper()
+	snapshots, ok := e.snapshotViews(serverID)
+	if !ok {
+		e.t.Fatalf("get snapshots for server %s", serverID)
+	}
+	ids := make(map[string]bool, len(snapshots))
+	for _, snapshot := range snapshots {
+		ids[snapshot.ID] = true
+	}
+	return ids
+}
+
+func (e *gameEnv) waitCommittedSnapshotOffHost(serverID, hostID string, existing map[string]bool) string {
+	e.t.Helper()
+	var committedID string
+	waitFor(e.t, 120*time.Second, "new committed snapshot replicated off-host", func() bool {
+		snapshots, ok := e.snapshotViews(serverID)
+		if !ok {
+			return false
+		}
+		for _, snapshot := range snapshots {
+			if existing[snapshot.ID] || snapshot.State != "committed" {
+				continue
+			}
+			for _, replica := range snapshot.Replicas {
+				if replica.State == "ready" && replica.NodeID != hostID {
+					committedID = snapshot.ID
+					return true
+				}
+			}
+		}
+		return false
+	})
+	return committedID
+}
+
+type minecraftSoakMarker struct {
+	column int
+	nonce  string
+}
+
+func (e *gameEnv) dumpSoakFailureState(serverID string) {
+	e.dumpServerState()
+	for _, resource := range []struct {
+		name string
+		path string
+	}{
+		{name: "server", path: "/v1/servers/" + serverID},
+		{name: "executions", path: "/v1/servers/" + serverID + "/executions"},
+		{name: "snapshots", path: "/v1/servers/" + serverID + "/snapshots"},
+	} {
+		status, body := apiCall("GET", e.cpURL+resource.path, e.tok, nil)
+		e.t.Logf("soak failure %s JSON (status=%d): %s", resource.name, status, body)
+	}
+	for _, name := range mcNodeNames {
+		e.t.Logf("soak failure node %s connections: %v", name, e.nodeConnections(name))
+	}
+	status, body := apiCall("GET", e.cpURL+"/v1/groups/"+e.groupID+"/nodes", e.tok, nil)
+	e.t.Logf("soak failure node list JSON (status=%d): %s", status, body)
+}
+
+func TestMinecraftSoak(t *testing.T) {
+	durationText := os.Getenv("VARDE_SOAK_DURATION")
+	if durationText == "" {
+		t.Skip("set VARDE_SOAK_DURATION to run the soak")
+	}
+	duration, err := time.ParseDuration(durationText)
+	if err != nil || duration <= 0 {
+		t.Fatalf("invalid VARDE_SOAK_DURATION %q", durationText)
+	}
+	seed := time.Now().UnixNano()
+	if seedText := os.Getenv("VARDE_SOAK_SEED"); seedText != "" {
+		seed, err = strconv.ParseInt(seedText, 10, 64)
+		if err != nil {
+			t.Fatalf("invalid VARDE_SOAK_SEED %q: %v", seedText, err)
+		}
+	}
+	t.Logf("soak seed: %d", seed)
+	rng := mathrand.New(mathrand.NewSource(seed))
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-soak`")
+	}
+
+	e := newGameEnvOpts(t, mcNodeNames, cpOpts{LogLevel: "info"})
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("arne", true)
+	e.setHosting("kari", true)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-soak", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	faultNames := []string{"hard-kill", "cut-off", "restart-cp", "move", "clean-stop-start", "agent-sigterm"}
+	rtoByFault := make(map[string][]time.Duration, len(faultNames))
+	for _, name := range faultNames {
+		rtoByFault[name] = nil
+	}
+	var markers []minecraftSoakMarker
+	var ref string
+	deadline := time.Now().Add(duration)
+	for cycle := 0; time.Now().Before(deadline); cycle++ {
+		hostID := e.hostOf(serverID)
+		hostBefore := e.nodeName(hostID)
+		if hostBefore != "arne" && hostBefore != "kari" {
+			t.Fatalf("cycle %d: unexpected current host %q (%s)", cycle, hostBefore, hostID)
+		}
+		if addr := e.svcAddr(serverID); addr != "" {
+			svc = addr + ":25565"
+		}
+		nonce := randNonce(t)
+		column := cycle % 8
+		ref = e.botWrite("player", svc, column, nonce, ref)
+		hostID = e.hostOf(serverID)
+		if hostID == "" {
+			t.Fatalf("cycle %d: server stopped before snapshot", cycle)
+		}
+		existingSnapshots := e.snapshotIDs(serverID)
+		apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+		snapshotID := e.waitCommittedSnapshotOffHost(serverID, hostID, existingSnapshots)
+		markers = append(markers, minecraftSoakMarker{column: column, nonce: nonce})
+		t.Logf("cycle %d: committed marker nonce=%s snapshot=%s", cycle, nonce, snapshotID)
+
+		fault := faultNames[rng.Intn(len(faultNames))]
+		faultAt := time.Now()
+		t.Logf("cycle %d: fault=%s host_before=%s", cycle, fault, hostBefore)
+		switch fault {
+		case "hard-kill":
+			killNamespace(t, hostBefore)
+		case "cut-off":
+			e.cutOff(hostBefore)
+			delay := time.Duration(20+rng.Intn(21)) * time.Second
+			t.Logf("cycle %d: cut-off duration=%s", cycle, delay)
+			time.Sleep(delay)
+			e.restore(hostBefore)
+		case "restart-cp":
+			e.restartCP()
+		case "move":
+			target := "arne"
+			if hostBefore == "arne" {
+				target = "kari"
+			}
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/move", e.tok,
+				map[string]any{"target_node_id": e.nodes[target].nodeID}, 200)
+		case "clean-stop-start":
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/stop", e.tok, map[string]any{}, 200)
+			waitFor(t, 2*time.Minute, "soak server stopped", func() bool {
+				status, body := apiCall("GET", e.cpURL+"/v1/servers/"+serverID, e.tok, nil)
+				if status != 200 {
+					return false
+				}
+				var server map[string]any
+				if json.Unmarshal(body, &server) != nil {
+					return false
+				}
+				return server["observed_state"] == "stopped" && e.hostOf(serverID) == ""
+			})
+			apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+		case "agent-sigterm":
+			proc := e.nodes[hostBefore].proc
+			if err := proc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatalf("cycle %d: SIGTERM %s agent: %v", cycle, hostBefore, err)
+			}
+			go func() { _ = proc.wait() }()
+			waitFor(t, 3*time.Minute, hostBefore+" agent exited", func() bool {
+				return proc.cmd.ProcessState != nil && proc.cmd.ProcessState.Exited()
+			})
+			delay := time.Duration(10+rng.Intn(21)) * time.Second
+			t.Logf("cycle %d: agent restart delay=%s", cycle, delay)
+			time.Sleep(delay)
+			e.startAgent(hostBefore)
+		}
+
+		var firstGoodRead time.Time
+		recovered := waitUntil(4*time.Minute, func() bool {
+			host := e.hostOf(serverID)
+			if host != e.nodes["arne"].nodeID && host != e.nodes["kari"].nodeID {
+				return false
+			}
+			addr := e.svcAddr(serverID)
+			if addr == "" {
+				return false
+			}
+			markerStart := len(markers) - 3
+			if markerStart < 0 {
+				markerStart = 0
+			}
+			allReadable := true
+			for _, marker := range markers[markerStart:] {
+				type markerReadAttempt struct {
+					got    string
+					blocks []string
+					ok     bool
+				}
+				got, blocks, ok := e.botRead("player", addr+":25565", marker.column, ref)
+				if !ok {
+					allReadable = false
+					continue
+				}
+				attempts := []markerReadAttempt{{got: got, blocks: blocks, ok: ok}}
+				if got != marker.nonce {
+					for retry := 0; retry < 2 && got != marker.nonce; retry++ {
+						time.Sleep(5 * time.Second)
+						got, blocks, ok = e.botRead("player", addr+":25565", marker.column, ref)
+						attempts = append(attempts, markerReadAttempt{got: got, blocks: blocks, ok: ok})
+					}
+					if !ok {
+						allReadable = false
+						continue
+					}
+					if got != marker.nonce {
+						e.dumpSoakFailureState(serverID)
+						t.Fatalf("cycle %d after %s: col%d want=%q got=%q attempts=%+v",
+							cycle, fault, marker.column, marker.nonce, got, attempts)
+					}
+				}
+				if firstGoodRead.IsZero() {
+					firstGoodRead = time.Now()
+				}
+			}
+			return allReadable
+		})
+		if !recovered {
+			t.Logf("cycle %d recovery timed out after fault=%s host_before=%s fault_at=%s",
+				cycle, fault, hostBefore, faultAt.Format(time.RFC3339Nano))
+			e.dumpSoakFailureState(serverID)
+			t.Fatalf("timeout waiting for server running with newest committed markers readable")
+		}
+		rto := firstGoodRead.Sub(faultAt)
+		hostAfter := e.nodeName(e.hostOf(serverID))
+		t.Logf("cycle %d: fault=%s host=%s->%s RTO=%s", cycle, fault, hostBefore, hostAfter, rto)
+		rtoByFault[fault] = append(rtoByFault[fault], rto)
+
+		if fault == "hard-kill" {
+			e.startAgent(hostBefore)
+		}
+		e.waitOnline(60*time.Second, mcNodeNames...)
+		wd.check(t)
+	}
+	if len(markers) == 0 {
+		t.Fatal("soak duration elapsed without completing a cycle")
+	}
+
+	t.Log("soak summary:")
+	t.Log("fault\tcount\tmedian RTO\tmax RTO")
+	for _, fault := range faultNames {
+		rtoValues := append([]time.Duration(nil), rtoByFault[fault]...)
+		if len(rtoValues) == 0 {
+			t.Logf("%s\t0\t-\t-", fault)
+			continue
+		}
+		sort.Slice(rtoValues, func(i, j int) bool { return rtoValues[i] < rtoValues[j] })
+		median := rtoValues[len(rtoValues)/2]
+		if len(rtoValues)%2 == 0 {
+			median = (rtoValues[len(rtoValues)/2-1] + rtoValues[len(rtoValues)/2]) / 2
+		}
+		t.Logf("%s\t%d\t%s\t%s", fault, len(rtoValues), median, rtoValues[len(rtoValues)-1])
+	}
 }

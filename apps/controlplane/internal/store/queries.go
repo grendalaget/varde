@@ -737,8 +737,8 @@ func (s *Store) DeletingReplicasForNode(ctx context.Context, nodeID string) ([]R
 	return rs, err
 }
 
-func (s *Store) DeleteReplica(ctx context.Context, snapID, nodeID string) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(
+func (s *Store) DeleteReplica(ctx context.Context, q Querier, snapID, nodeID string) error {
+	_, err := q.ExecContext(ctx, s.Rebind(
 		`DELETE FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`), snapID, nodeID)
 	return err
 }

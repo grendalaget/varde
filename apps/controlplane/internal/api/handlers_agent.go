@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 
@@ -29,6 +32,21 @@ func activationErr(err error) *actErrData {
 		return &actErrData{Code: ae.Code, Message: ae.Message, Details: ae.Details}
 	}
 	return nil
+}
+
+func filterDialEndpoints(endpoints []string) []string {
+	filtered := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if addrPort, err := netip.ParseAddrPort(endpoint); err == nil {
+			if addrPort.Addr().IsUnspecified() {
+				continue
+			}
+		} else if addr, err := netip.ParseAddr(strings.Trim(endpoint, "[]")); err == nil && addr.IsUnspecified() {
+			continue
+		}
+		filtered = append(filtered, endpoint)
+	}
+	return filtered
 }
 
 // ---- heartbeat ----
@@ -70,6 +88,14 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 			map[string]any{"name": node.Name})
 	}
 
+	if b.DeletedSnapshots != nil {
+		for _, snapshotID := range *b.DeletedSnapshots {
+			if err := s.acknowledgeDeletedSnapshot(ctx, node.ID, snapshotID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	// process reported executions + implicit lease renewal
 	var execReports []gen.ExecutionReport
 	if b.Executions != nil {
@@ -88,6 +114,38 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	}
 	s.Recon.Wake()
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
+}
+
+func (s *Server) acknowledgeDeletedSnapshot(ctx context.Context, nodeID, snapshotID string) error {
+	return s.Store.Tx(ctx, func(tx *sqlx.Tx) error {
+		var state string
+		err := tx.GetContext(ctx, &state, s.Store.Rebind(
+			`SELECT state FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`),
+			snapshotID, nodeID)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if state != "deleting" {
+			return nil
+		}
+		if err := s.Store.DeleteReplica(ctx, tx, snapshotID, nodeID); err != nil {
+			return err
+		}
+		var replicas int
+		if err := tx.GetContext(ctx, &replicas, s.Store.Rebind(
+			`SELECT COUNT(*) FROM snapshot_replicas WHERE snapshot_id=?`), snapshotID); err != nil {
+			return err
+		}
+		if replicas == 0 {
+			_, err := tx.ExecContext(ctx, s.Store.Rebind(
+				`DELETE FROM snapshots WHERE id=?`), snapshotID)
+			return err
+		}
+		return nil
+	})
 }
 
 // processExecReport handles one ExecutionReport inside a heartbeat: validates
@@ -109,6 +167,7 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 		return fmt.Errorf("stale: lease expired")
 	}
 
+	previousState := exec.State
 	state := string(er.State)
 	exec.State = state
 	if er.Health != nil {
@@ -150,15 +209,25 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 			}
 			reason := "stopped"
 			typ := "server.stopped"
+			data := map[string]any{"execution_id": exec.ID, "epoch": exec.Epoch}
 			if state == "failed" {
 				reason = "failed"
 				typ = "server.failed"
+				if previousState == "restoring" {
+					reason = "restore_failed"
+					typ = "server.restore_failed"
+					message := ""
+					if exec.Message != nil {
+						message = *exec.Message
+					}
+					data["message"] = message
+				}
 			}
 			if err := s.Store.EndExecution(ctx, tx, exec.ID, reason, now); err != nil {
 				return err
 			}
 			return s.Store.EmitEvent(ctx, tx, node.GroupID, &exec.ServerID, &node.ID,
-				typ, map[string]any{"execution_id": exec.ID, "epoch": exec.Epoch})
+				typ, data)
 		default:
 			// preparing/restoring/starting/stopping: renew lease, keep state
 			exec.LeaseExpiresAt = leaseExp
@@ -281,7 +350,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 				RelayIds          []string `json:"relay_ids"`
 			}
 			if json.Unmarshal([]byte(st.MeshJSON), &mesh) == nil {
-				eps := append(mesh.LocalEndpoints, mesh.ObservedEndpoints...)
+				eps := filterDialEndpoints(append(mesh.LocalEndpoints, mesh.ObservedEndpoints...))
 				p.Endpoints = &eps
 				p.RelayIds = &mesh.RelayIds
 			}

@@ -133,8 +133,14 @@ type gameEnv struct {
 	cp      *proc
 	cpArgs  []string
 	cpLogs  []*proc
+	logDir  string
 
-	serverIDs []string
+	serverIDs      []string
+	runtimeSeed    string
+	runtimeSeeded  map[string]bool
+	agentProcesses []agentProcessLog
+	cpLogCount     int
+	agentLogCounts map[string]int
 }
 
 type cpOpts struct {
@@ -142,6 +148,7 @@ type cpOpts struct {
 	HeartbeatMs int
 	SuspectMs   int
 	OfflineMs   int
+	LogLevel    string
 }
 
 func (o cpOpts) withDefaults() cpOpts {
@@ -157,6 +164,9 @@ func (o cpOpts) withDefaults() cpOpts {
 	if o.OfflineMs == 0 {
 		o.OfflineMs = 6000
 	}
+	if o.LogLevel == "" {
+		o.LogLevel = "warn"
+	}
 	return o
 }
 
@@ -171,7 +181,27 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 	setupTopology(t, names)
 	cpPort := 18080
 	cpURL := fmt.Sprintf("http://%s:%d", wanIP, cpPort)
-	e := &gameEnv{t: t, tmp: tmp, cpURL: cpURL, nodes: map[string]*node{}}
+	e := &gameEnv{
+		t:              t,
+		tmp:            tmp,
+		cpURL:          cpURL,
+		nodes:          map[string]*node{},
+		logDir:         os.Getenv("VARDE_E2E_LOG_DIR"),
+		runtimeSeed:    os.Getenv("VARDE_E2E_RUNTIME_SEED"),
+		runtimeSeeded:  map[string]bool{},
+		agentLogCounts: map[string]int{},
+	}
+	if e.runtimeSeed != "" {
+		t.Cleanup(func() {
+			if t.Failed() {
+				return
+			}
+			e.logRuntimeDownloadLines()
+			if err := e.saveRuntimeCaches(); err != nil {
+				t.Errorf("save runtime caches to %s: %v", e.runtimeSeed, err)
+			}
+		})
+	}
 	e.cpArgs = []string{
 		"--listen", fmt.Sprintf("%s:%d", wanIP, cpPort),
 		"--db", "sqlite://" + filepath.Join(tmp, "cp.db"),
@@ -183,15 +213,20 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 		"--offline-after-ms", fmt.Sprint(options.OfflineMs),
 		"--embedded-relay", fmt.Sprintf(":%d", relayUDP),
 		"--embedded-relay-addr", fmt.Sprintf("%s:%d", wanIP, relayUDP),
-		"--log-level", "warn",
+		"--log-level", options.LogLevel,
 	}
 	e.startCP()
+	t.Cleanup(func() {
+		if e.cp != nil {
+			e.cp.kill()
+		}
+	})
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
 		}
 		for i, p := range e.cpLogs {
-			t.Logf("--- cp log %d ---\n%s", i+1, p.buf.String())
+			t.Logf("--- cp log %d ---\n%s", i+1, p.output())
 		}
 	})
 	e.waitCPUp(15 * time.Second)
@@ -205,12 +240,13 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 				continue
 			}
 			var keep []string
-			for _, l := range strings.Split(nd.proc.buf.String(), "\n") {
+			for _, l := range strings.Split(nd.proc.output(), "\n") {
 				if strings.HasPrefix(l, `{"time":`) {
 					continue
 				}
 				keep = append(keep, l)
 			}
+			keep = collapseRepeatedLogLines(keep)
 			if len(keep) > 400 {
 				keep = keep[len(keep)-400:]
 			}
@@ -230,8 +266,67 @@ func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 }
 
 func (e *gameEnv) startCP() {
-	e.cp = spawnLogged(e.t, bin("varde-control-plane"), e.cpArgs...)
+	e.cp = spawnLoggedNoCleanupWithLog(e.t, e.nextProcessLogPath("cp"),
+		bin("varde-control-plane"), e.cpArgs...)
 	e.cpLogs = append(e.cpLogs, e.cp)
+}
+
+func (e *gameEnv) nextProcessLogPath(name string) string {
+	if e.logDir == "" {
+		return ""
+	}
+	var index int
+	if name == "cp" {
+		e.cpLogCount++
+		index = e.cpLogCount
+	} else {
+		e.agentLogCounts[name]++
+		index = e.agentLogCounts[name]
+	}
+	return filepath.Join(e.logDir, e.t.Name(), fmt.Sprintf("%s-%d.log", name, index))
+}
+
+func collapseRepeatedLogLines(lines []string) []string {
+	withoutTimestamp := func(line string) string {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			return line
+		}
+		delete(fields, "timestamp")
+		delete(fields, "time")
+		normalized, err := json.Marshal(fields)
+		if err != nil {
+			return line
+		}
+		return string(normalized)
+	}
+
+	collapsed := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); {
+		key := withoutTimestamp(lines[i])
+		end := i + 1
+		for end < len(lines) && withoutTimestamp(lines[end]) == key {
+			end++
+		}
+		line := lines[i]
+		if count := end - i; count > 1 {
+			line += fmt.Sprintf(" (repeated %d×)", count)
+		}
+		collapsed = append(collapsed, line)
+		i = end
+	}
+	return collapsed
+}
+
+func TestCollapseRepeatedLogLines(t *testing.T) {
+	first := `{"timestamp":"2026-01-01T00:00:00Z","level":"INFO","fields":{"message":"deleted snapshot"}}`
+	second := `{"timestamp":"2026-01-01T00:00:01Z","level":"INFO","fields":{"message":"deleted snapshot"}}`
+	other := `{"timestamp":"2026-01-01T00:00:02Z","level":"INFO","fields":{"message":"server started"}}`
+
+	got := collapseRepeatedLogLines([]string{first, second, other})
+	if len(got) != 2 || got[0] != first+" (repeated 2×)" || got[1] != other {
+		t.Fatalf("collapseRepeatedLogLines() = %q", got)
+	}
 }
 
 func (e *gameEnv) waitCPUp(d time.Duration) {
@@ -251,7 +346,7 @@ func (e *gameEnv) restartCP() {
 		e.t.Fatalf("send SIGTERM to control plane: %v", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- old.cmd.Wait() }()
+	go func() { done <- old.wait() }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -337,10 +432,167 @@ func (e *gameEnv) nodeConnections(name string) map[string]string {
 func (e *gameEnv) startAgent(name string) {
 	t := e.t
 	nd := e.nodes[name]
-	nd.proc = spawnInEnv(t, name,
+	if !e.runtimeSeeded[name] {
+		if err := e.seedRuntimeCaches(nd.dataDir); err != nil {
+			t.Fatalf("seed runtime caches for %s: %v", name, err)
+		}
+		e.runtimeSeeded[name] = true
+	}
+	nd.proc = spawnInEnvWithLog(t, name,
 		[]string{"VARDE_MESH_LOG_LEVEL=debug"},
+		e.nextProcessLogPath(name),
 		rustBin("varde-agent"), "run",
 		"--data-dir", nd.dataDir, "--mesh-bin", bin("varde-mesh"))
+	e.agentProcesses = append(e.agentProcesses, agentProcessLog{node: name, proc: nd.proc})
+}
+
+type agentProcessLog struct {
+	node string
+	proc *proc
+}
+
+type runtimeCacheDir struct {
+	kind string
+	id   string
+	path string
+}
+
+func completeRuntimeDirs(root string) ([]runtimeCacheDir, error) {
+	kinds, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var caches []runtimeCacheDir
+	for _, kind := range kinds {
+		if !kind.IsDir() {
+			continue
+		}
+		ids, err := os.ReadDir(filepath.Join(root, kind.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if !id.IsDir() || strings.Contains(id.Name(), ".staging-") || strings.Contains(id.Name(), ".tmp-") {
+				continue
+			}
+			path := filepath.Join(root, kind.Name(), id.Name())
+			marker, err := os.Stat(filepath.Join(path, ".complete"))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if !marker.Mode().IsRegular() {
+				continue
+			}
+			caches = append(caches, runtimeCacheDir{kind: kind.Name(), id: id.Name(), path: path})
+		}
+	}
+	return caches, nil
+}
+
+func copyRuntimeDir(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := exec.Command("cp", "-a", src, dst).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cp -a %s %s: %w: %s", src, dst, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (e *gameEnv) logRuntimeDownloadLines() {
+	for _, agent := range e.agentProcesses {
+		if agent.proc == nil {
+			continue
+		}
+		for _, line := range strings.Split(agent.proc.output(), "\n") {
+			if strings.Contains(line, "runtime download") {
+				e.t.Logf("agent %s: %s", agent.node, line)
+			}
+		}
+	}
+}
+
+func (e *gameEnv) seedRuntimeCaches(dataDir string) error {
+	if e.runtimeSeed == "" {
+		return nil
+	}
+	info, err := os.Stat(e.runtimeSeed)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runtime seed is not a directory")
+	}
+	caches, err := completeRuntimeDirs(e.runtimeSeed)
+	if err != nil {
+		return err
+	}
+	for _, cache := range caches {
+		dst := filepath.Join(dataDir, "runtimes", cache.kind, cache.id)
+		if _, err := os.Stat(filepath.Join(dst, ".complete")); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+		if err := copyRuntimeDir(cache.path, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *gameEnv) saveRuntimeCaches() error {
+	if err := os.MkdirAll(e.runtimeSeed, 0o755); err != nil {
+		return err
+	}
+	for _, nd := range e.nodes {
+		caches, err := completeRuntimeDirs(filepath.Join(nd.dataDir, "runtimes"))
+		if err != nil {
+			return err
+		}
+		for _, cache := range caches {
+			dst := filepath.Join(e.runtimeSeed, cache.kind, cache.id)
+			if _, err := os.Stat(filepath.Join(dst, ".complete")); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			tmp := fmt.Sprintf("%s.tmp-%d", dst, os.Getpid())
+			if err := os.RemoveAll(tmp); err != nil {
+				return err
+			}
+			if err := copyRuntimeDir(cache.path, tmp); err != nil {
+				return err
+			}
+			uid, gid := os.Getenv("SUDO_UID"), os.Getenv("SUDO_GID")
+			if uid != "" && gid != "" {
+				out, err := exec.Command("chown", "-R", uid+":"+gid, tmp).CombinedOutput()
+				if err != nil {
+					return fmt.Errorf("chown runtime cache %s: %w: %s", tmp, err, strings.TrimSpace(string(out)))
+				}
+			}
+			if err := os.RemoveAll(dst); err != nil {
+				return err
+			}
+			if err := os.Rename(tmp, dst); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *gameEnv) setHosting(name string, enabled bool) {
@@ -389,6 +641,11 @@ func (e *gameEnv) waitOnline(d time.Duration, names ...string) {
 }
 
 func (e *gameEnv) dumpServerState() {
+	for _, name := range realGameNodeNames {
+		if nd := e.nodes[name]; nd != nil {
+			e.t.Logf("harness node %s: id=%s", name, nd.nodeID)
+		}
+	}
 	for _, id := range e.serverIDs {
 		st, b := apiCall("GET", e.cpURL+"/v1/servers/"+id+"/executions", e.tok, nil)
 		e.t.Logf("server %s executions (%d): %s", id, st, b)

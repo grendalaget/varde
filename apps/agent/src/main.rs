@@ -15,6 +15,7 @@ mod sysinfo;
 
 pub use agent::Agent;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -363,6 +364,7 @@ async fn run(
         mesh: mesh.clone(),
         execs: Mutex::new(std::collections::HashMap::new()),
         state: Mutex::new(exec_state),
+        pending_delete_acks: Mutex::new(BTreeSet::new()),
         chunk_tracker: Arc::new(chunks::ServeTracker::default()),
         started_at_ms: now_ms(),
         repl: Mutex::new(agent::ReplQueue::default()),
