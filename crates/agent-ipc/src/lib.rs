@@ -51,7 +51,16 @@ pub async fn connect(endpoint: &str) -> io::Result<LocalServiceClient<Channel>> 
             async move { platform_connect(&endpoint).await }
         }))
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e.to_string()))?;
+        .map_err(|e| {
+            // tonic's top-level message is just "transport error"
+            let mut msg = e.to_string();
+            let mut src = std::error::Error::source(&e);
+            while let Some(s) = src {
+                msg = format!("{msg}: {s}");
+                src = s.source();
+            }
+            io::Error::new(io::ErrorKind::ConnectionRefused, msg)
+        })?;
     Ok(LocalServiceClient::new(channel))
 }
 
