@@ -134,9 +134,9 @@ func (p *peerState) controlPingLoop(st *quic.Stream) {
 	var nonce uint64
 	for {
 		nonce++
-		sent := time.Now().UnixNano()
+		sent := time.Now()
 		err := meshproto.WriteFrame(st, &meshv1.ControlFrame{Frame: &meshv1.ControlFrame_Ping{
-			Ping: &meshv1.Ping{Nonce: nonce, SentUnixNanos: sent},
+			Ping: &meshv1.Ping{Nonce: nonce, SentUnixNanos: sent.UnixNano()},
 		}})
 		if err != nil {
 			_ = st.Close()
@@ -148,12 +148,12 @@ func (p *peerState) controlPingLoop(st *quic.Stream) {
 			return
 		}
 		if pong := cf.GetPong(); pong != nil && pong.GetNonce() == nonce {
-			rtt := (time.Now().UnixNano() - sent) / 1000
+			rtt := rttMicros(sent)
 			p.mu.Lock()
 			if p.rttUS == 0 {
 				p.rttUS = rtt
 			} else {
-				p.rttUS = p.rttUS*7/8 + rtt/8
+				p.rttUS = max(p.rttUS*7/8+rtt/8, 1)
 			}
 			p.mu.Unlock()
 			p.lastSeen.Store(time.Now().UnixMilli())
@@ -190,4 +190,11 @@ func (p *peerState) splice(a *quic.Stream, b net.Conn) {
 		done <- struct{}{}
 	}()
 	<-done
+}
+
+// rttMicros is the monotonic time since sent, at least 1us. Windows clocks
+// step in tens of microseconds or more, so a loopback round trip can read as
+// 0, and 0 means "not measured" to callers.
+func rttMicros(sent time.Time) int64 {
+	return max(time.Since(sent).Microseconds(), 1)
 }
