@@ -13,7 +13,7 @@ use executor_api::{Executor, ProcessHandle};
 use game_driver_api::*;
 use game_minecraft::MinecraftDriver;
 
-fn ctx_parts(root: &PathBuf) -> (PathBuf, PathBuf, runtimes::HttpRuntimes) {
+fn ctx_parts(root: &std::path::Path) -> (PathBuf, PathBuf, runtimes::HttpRuntimes) {
     (
         root.join("server"),
         root.join("deployment"),

@@ -2,7 +2,7 @@ go 1.26.0
 
 use (
 	./go
-	./apps/control-plane
+	./apps/controlplane
 	./apps/relay
 	./apps/mesh
 	./tests/e2e

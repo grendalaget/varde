@@ -1,6 +1,6 @@
 # Control plane
 
-Single Go binary `varde-control-plane serve`. Modules (packages under `apps/control-plane/internal/`):
+Single Go binary `varde-control-plane serve`. Modules (packages under `apps/controlplane/internal/`):
 `store` (SQL), `auth`, `api` (public, OpenAPI-generated server), `agentapi`, `scheduler` (pure, deterministic),
 `reconciler` (the only writer of lease/execution state transitions besides agent reports), `events` (durable log +
 SSE fan-out), `relaytoken`, `catalog` (game catalog data), `webui` (embedded SPA), optional embedded relay.

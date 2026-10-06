@@ -14,6 +14,11 @@ use snapshot_store::{Manifest, SnapshotId, Store};
 pub const SERVICE_NAME: &str = "agent.chunks";
 const BATCH_INFLIGHT: usize = 4;
 
+/// Largest request body the chunk server will allocate — far above the
+/// biggest real request (a batch of BATCH_INFLIGHT hashes ≈ a few hundred
+/// bytes).
+const MAX_REQUEST_BODY: usize = 1 << 20; // 1 MiB
+
 /// Tracks which chunks each snapshot served, so a graceful-stop hold can wait
 /// until a peer has fetched everything for a snapshot.
 #[derive(Default)]
@@ -155,6 +160,14 @@ async fn handle(
             if l.starts_with("connection:") && l.contains("close") {
                 close = true;
             }
+        }
+        if content_len > MAX_REQUEST_BODY {
+            tokio::io::AsyncWriteExt::write_all(
+                &mut wr,
+                b"HTTP/1.1 413 Payload Too Large\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            )
+            .await?;
+            return Ok(());
         }
         let mut body = vec![0u8; content_len];
         tokio::io::AsyncReadExt::read_exact(&mut rd, &mut body).await?;
@@ -441,4 +454,62 @@ fn parse_http(buf: &[u8]) -> Result<(u16, Vec<u8>)> {
         }
     }
     Ok((status, body))
+}
+
+#[cfg(test)]
+mod body_limit_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn send(addr: SocketAddr, req: &str) -> Vec<u8> {
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        buf
+    }
+
+    #[tokio::test]
+    async fn oversized_content_length_gets_413() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(tmp.path().join("store")).unwrap());
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let srv = serve(store, Arc::new(ServeTracker::default()), rx)
+            .await
+            .unwrap();
+        let resp = send(
+            srv.addr,
+            &format!(
+                "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                MAX_REQUEST_BODY + 1
+            ),
+        )
+        .await;
+        let head = String::from_utf8_lossy(&resp);
+        assert!(head.starts_with("HTTP/1.1 413"), "resp: {head}");
+        // no allocation happened for the promised body — connection closed
+        // without reading it
+    }
+
+    #[tokio::test]
+    async fn normal_batch_still_200() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(tmp.path().join("store")).unwrap());
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let srv = serve(store, Arc::new(ServeTracker::default()), rx)
+            .await
+            .unwrap();
+        let body = r#"{"snapshot_id":"snap_x","hashes":[]}"#;
+        let resp = send(
+            srv.addr,
+            &format!(
+                "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            ),
+        )
+        .await;
+        let head = String::from_utf8_lossy(&resp);
+        assert!(head.starts_with("HTTP/1.1 200"), "resp: {head}");
+    }
 }

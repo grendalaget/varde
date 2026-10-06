@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 func genEvent(e *store.Event) gen.Event {

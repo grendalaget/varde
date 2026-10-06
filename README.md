@@ -15,7 +15,7 @@ and a P2P QUIC mesh with relay fallback — no router configuration required.
 
 | Path                 | Language   | Purpose                                             |
 | -------------------- | ---------- | --------------------------------------------------- |
-| `apps/control-plane` | Go         | HTTP API, auth, membership, scheduler, rendezvous   |
+| `apps/controlplane` | Go         | HTTP API, auth, membership, scheduler, rendezvous   |
 | `apps/relay`         | Go         | Encrypted packet forwarding only (no game TLS)      |
 | `apps/mesh`          | Go         | Per-node QUIC mesh daemon, spawned by the agent     |
 | `apps/agent`         | Rust       | Local node agent: supervision, storage, executors   |

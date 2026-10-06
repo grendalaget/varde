@@ -17,7 +17,7 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/control-plane/internal/store"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 const (
