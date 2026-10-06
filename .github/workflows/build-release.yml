@@ -106,6 +106,13 @@ jobs:
               -o "../../dist/varde-$name$suffix" .)
           done
           cp LICENSE dist/
+      - name: Validate macOS mesh lifetime and agent launch contract
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          (cd apps/mesh && go test -race -count=1 -run '^TestParent' ./...)
+          cargo test --locked -p varde-agent mesh_child::tests
       - name: Windows installer prerequisites
         if: runner.os == 'Windows'
         shell: pwsh

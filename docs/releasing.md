@@ -71,6 +71,8 @@ installed fallback path. Linux binaries are built natively on Ubuntu 24.04
 The Go binaries disable CGO; control-plane embeds the **production** web UI.
 The Windows tray is never shipped on Linux/macOS. macOS installers, apps and
 disk images are intentionally deferred; only CLI-style tarballs are produced.
+The macOS agent passes its PID to mesh lifetime monitoring so abrupt agent exit
+releases the mesh's configured ports; Linux retains kernel parent-death signaling.
 
 ## Signatures and platform warnings
 
@@ -146,7 +148,8 @@ disable identity/issuer verification. Checksums alone do not establish origin.
 **release dry run** runs on same-repository PRs that change the release workflows,
 packaging or this document, and can be manually dispatched with a test version.
 It runs actionlint + helper checks, the complete native matrix, packaging,
-provenance, cosign signing **and verification**, and uploads the result as the
+provenance, cosign signing **and verification**, macOS abrupt-parent-death/port
+recovery tests and the agent launch-contract test, and uploads the result as the
 `release-assets` Actions artifact (seven-day retention). No provider secrets
 are required. Fork PRs run lint only because their tokens cannot
 write GitHub attestations; dispatch on a reviewed, trusted branch to test them.

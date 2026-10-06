@@ -67,6 +67,8 @@ fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
 fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     let mut cmd = Command::new(bin);
     cmd.arg("--ipc").arg(ipc).stdin(Stdio::null());
+    #[cfg(target_os = "macos")]
+    cmd.arg("--parent-pid").arg(std::process::id().to_string());
     if let Ok(lvl) = std::env::var("VARDE_MESH_LOG_LEVEL") {
         cmd.arg("--log-level").arg(lvl);
     }
@@ -82,4 +84,41 @@ fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     }
     cmd.spawn()
         .with_context(|| format!("spawn {}", bin.display()))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn passes_parent_pid_only_on_macos() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("mesh");
+        let output = dir.path().join("arguments");
+        std::fs::write(&bin, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$2\"\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut child = start(&bin, output.to_str().unwrap()).unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.success());
+        let mut expected = if cfg!(target_os = "macos") {
+            vec![
+                "--ipc".to_string(),
+                output.to_str().unwrap().to_string(),
+                "--parent-pid".to_string(),
+                std::process::id().to_string(),
+            ]
+        } else {
+            vec!["--ipc".to_string(), output.to_str().unwrap().to_string()]
+        };
+        if let Ok(level) = std::env::var("VARDE_MESH_LOG_LEVEL") {
+            expected.extend(["--log-level".to_string(), level]);
+        }
+        let actual = std::fs::read_to_string(output).unwrap();
+        assert_eq!(actual.lines().collect::<Vec<_>>(), expected);
+    }
 }
