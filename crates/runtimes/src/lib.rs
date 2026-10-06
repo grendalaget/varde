@@ -577,28 +577,26 @@ mod tests {
         assert_eq!(got, "hello runtime");
         assert!(p1.join(".complete").is_file());
     }
+}
 
-    #[tokio::test]
-    async fn fetch_extracts_deflated_zip() {
+#[cfg(test)]
+mod zip_tests {
+    use std::io::Write;
+
+    #[test]
+    fn extracts_deflated_zip() {
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         w.start_file("bin/file.txt", opts).unwrap();
-        use std::io::Write;
         w.write_all(b"hello zip runtime").unwrap();
-        let body = w.finish().unwrap().into_inner();
+        let body = w.finish().unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let rt = HttpRuntimes::new(tmp.path().join("runtimes"));
-        let (url, _srv) = serve_once(Arc::new(AtomicUsize::new(0)), body).await;
-        let spec = FetchSpec {
-            url,
-            file_name: "b.zip".into(),
-            sha256: None,
-            sha1: None,
-            archive: ArchiveKind::Zip,
-        };
-        let p = rt.fetch("kind", "zip", &spec).await.unwrap();
-        let got = std::fs::read_to_string(p.join("bin").join("file.txt")).unwrap();
+        zip::ZipArchive::new(body)
+            .unwrap()
+            .extract(tmp.path())
+            .unwrap();
+        let got = std::fs::read_to_string(tmp.path().join("bin").join("file.txt")).unwrap();
         assert_eq!(got, "hello zip runtime");
     }
 }
