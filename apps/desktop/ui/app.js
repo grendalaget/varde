@@ -71,6 +71,8 @@ function render(s) {
   }
   if (LINKED.includes(s.state)) {
     $("linked-text").textContent = describe(s);
+    // stopping while hosting would leave the game running unmanaged
+    $("svc-stop").hidden = s.hosting;
     return show("linked");
   }
   show("noagent");
@@ -136,6 +138,34 @@ $("cancel").addEventListener("click", async () => {
   show("form");
 });
 $("open-dash").addEventListener("click", () => current && invoke("open_url", { url: current.control_plane_url }));
+
+// Service control is a Windows action on the service manager; the tray
+// relaunches itself elevated, so a UAC prompt follows these clicks.
+async function service(cmd, btn, errId, busy) {
+  const b = $(btn);
+  const err = $(errId);
+  err.hidden = true;
+  b.disabled = true;
+  const label = b.textContent;
+  b.textContent = busy;
+  try {
+    await invoke(cmd);
+    // the elevated instance does the work; status arrives on its own
+    setTimeout(() => {
+      b.disabled = false;
+      b.textContent = label;
+    }, 4000);
+  } catch (e) {
+    b.disabled = false;
+    b.textContent = label;
+    err.textContent = String(e);
+    err.hidden = false;
+  }
+}
+$("svc-start").addEventListener("click", () =>
+  service("start_service", "svc-start", "noagent-error", "Starting…"));
+$("svc-stop").addEventListener("click", () =>
+  service("stop_service", "svc-stop", "linked-error", "Stopping…"));
 for (const b of document.querySelectorAll("button.close")) b.addEventListener("click", close);
 
 function applyDefaults(d) {

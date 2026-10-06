@@ -5402,12 +5402,14 @@ name = "varde-tray"
 version = "0.1.0"
 dependencies = [
  "agent-ipc",
+ "anyhow",
  "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tokio",
+ "windows-service",
  "windows-sys 0.61.2",
  "winreg",
 ]

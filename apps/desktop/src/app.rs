@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindo
 use tauri_plugin_opener::OpenerExt;
 
 use crate::autostart;
+use crate::svcctl;
 use crate::view::{self, Icon, TrayView, UiStatus};
 
 const TRAY_ID: &str = "varde";
@@ -35,6 +36,20 @@ struct State {
 pub fn run() {
     let launch = view::parse_launch(std::env::args().skip(1));
     if launch.autostart && autostart::opted_out() {
+        return;
+    }
+    // Elevated headless service control: UAC prompts first, so just do the
+    // SCM work and exit — no tray, no window.
+    if launch.service_start || launch.service_stop {
+        let r = if launch.service_start {
+            svcctl::start()
+        } else {
+            svcctl::stop()
+        };
+        if let Err(e) = r {
+            message_box(&format!("{e:#}"));
+            std::process::exit(1);
+        }
         return;
     }
     let relink = launch.relink;
@@ -69,6 +84,8 @@ pub fn run() {
             link_defaults,
             start_link,
             cancel_link,
+            start_service,
+            stop_service,
             open_url,
             close_window
         ])
@@ -81,6 +98,17 @@ pub fn run() {
                     .tooltip(&v.tooltip)
                     .menu(&build_menu(&h, &v)?)
                     .on_menu_event(on_menu)
+                    .on_tray_icon_event(|tray, e| {
+                        // left click on the icon opens the app
+                        if let tauri::tray::TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            ..
+                        } = e
+                        {
+                            open_link_window(tray.app_handle());
+                        }
+                    })
                     .build(app)?;
                 tauri::async_runtime::spawn(tick(h.clone()));
             }
@@ -179,6 +207,21 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         false,
         none,
     )?)?;
+    m.append(&MenuItem::with_id(app, "open", "Open Varde", true, none)?)?;
+    m.append(&MenuItem::with_id(
+        app,
+        "svcstart",
+        "Start Varde service…",
+        !v.service_running,
+        none,
+    )?)?;
+    m.append(&MenuItem::with_id(
+        app,
+        "svcstop",
+        "Stop Varde service…",
+        v.service_running && v.hosting.is_none(),
+        none,
+    )?)?;
     if let Some(h) = &v.hosting {
         m.append(&MenuItem::with_id(app, "hosting", h, false, none)?)?;
     }
@@ -229,6 +272,13 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
 fn on_menu(app: &AppHandle, e: MenuEvent) {
     let v = app.state::<State>().view.lock().unwrap().clone();
     match e.id().as_ref() {
+        "open" => open_link_window(app),
+        "svcstart" => {
+            let _ = elevate_self("--service-start");
+        }
+        "svcstop" => {
+            let _ = elevate_self("--service-stop");
+        }
         "dashboard" => {
             if let Some(url) = v.and_then(|v| v.dashboard_url) {
                 let _ = app.opener().open_url(url, None::<&str>);
@@ -339,19 +389,20 @@ fn message_box(text: &str) {
 
 /// Re-link needs an administrator: relaunch elevated (UAC) with `--relink`.
 fn elevate_relink() {
+    let _ = elevate_self("--relink");
+}
+
+/// Privileged actions relaunch this exe elevated (UAC) with a single flag:
+/// `--relink`, `--service-start`, `--service-stop`. Declining the prompt
+/// surfaces as an error the caller can show or ignore.
+fn elevate_self(arg: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let (verb, file, args) = (
-        wide("runas"),
-        wide(&exe.display().to_string()),
-        wide("--relink"),
-    );
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let (verb, file, args) = (wide("runas"), wide(&exe.display().to_string()), wide(arg));
     // SAFETY: NUL-terminated UTF-16 strings that outlive the call. Declining
-    // the UAC prompt just returns an error code.
-    unsafe {
+    // the UAC prompt just returns an error code (<= 32).
+    let rc = unsafe {
         ShellExecuteW(
             std::ptr::null_mut(),
             verb.as_ptr(),
@@ -361,6 +412,11 @@ fn elevate_relink() {
             SW_SHOWNORMAL,
         )
     };
+    if rc as usize > 32 {
+        Ok(())
+    } else {
+        Err("the administrator prompt was declined".to_string())
+    }
 }
 
 // ---- commands for the link window (typed; no generic passthrough) ----
@@ -435,6 +491,16 @@ async fn cancel_link() -> Result<(), String> {
         .await
         .map_err(|e| e.message().to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn start_service() -> Result<(), String> {
+    elevate_self("--service-start")
+}
+
+#[tauri::command]
+fn stop_service() -> Result<(), String> {
+    elevate_self("--service-stop")
 }
 
 #[tauri::command]
