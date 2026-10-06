@@ -235,6 +235,10 @@ impl Store {
         for e in &m.files {
             let src = staging.join(&e.path);
             let dst = dest.join(&e.path);
+            // older snapshots may still carry a file that is now excluded
+            if e.typ != "dir" && is_excluded(&e.path, include) {
+                continue;
+            }
             if e.typ == "dir" {
                 fs::create_dir_all(&dst)?;
                 apply_mode(&dst, e.mode);
@@ -253,9 +257,21 @@ impl Store {
         let _ = fs::remove_dir_all(&staging);
         // remove included paths that are not in the manifest
         let want: HashSet<&str> = m.files.iter().map(|e| e.path.as_str()).collect();
-        for f in walk(dest) {
+        let present = walk(dest);
+        for f in &present {
             if want.contains(f.rel.as_str()) {
                 continue;
+            }
+            // a dir holding excluded files stays; its other files are
+            // removed one by one as the walk reaches them
+            if f.kind == WalkKind::Dir {
+                let prefix = format!("{}/", f.rel);
+                if present
+                    .iter()
+                    .any(|d| d.rel.starts_with(&prefix) && is_excluded(&d.rel, include))
+                {
+                    continue;
+                }
             }
             // only remove paths at/under an included root, and only if some
             // pattern selects them or their subtree

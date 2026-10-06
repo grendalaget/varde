@@ -468,3 +468,43 @@ fn exclude_pattern_leaves_file_out_of_snapshot_and_restore() {
     assert_eq!(fs::read(dest.join("world/level.dat")).unwrap(), b"level");
     assert_eq!(fs::read(dest.join("world/session.lock")).unwrap(), b"other");
 }
+
+#[test]
+fn restore_keeps_excluded_files_from_old_snapshots_and_removed_dirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    tree(
+        &src,
+        &[
+            ("world/level.dat", b"level"),
+            ("world/session.lock", b"old-lock"),
+        ],
+    );
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    // taken before session.lock was excluded
+    let old = store
+        .snapshot(&src, &[PathPattern::new("world*/")], meta())
+        .unwrap();
+
+    let inc = vec![
+        PathPattern::new("world*/"),
+        PathPattern::new("!world*/session.lock"),
+    ];
+    let dest = tmp.path().join("dest");
+    tree(
+        &dest,
+        &[
+            ("world/session.lock", b"live"),
+            ("world_nether/session.lock", b"nether-live"),
+            ("world_nether/region.mca", b"gone"),
+        ],
+    );
+    store.restore(&old.id, &dest, &inc).unwrap();
+    assert_eq!(fs::read(dest.join("world/level.dat")).unwrap(), b"level");
+    assert_eq!(fs::read(dest.join("world/session.lock")).unwrap(), b"live");
+    assert_eq!(
+        fs::read(dest.join("world_nether/session.lock")).unwrap(),
+        b"nether-live"
+    );
+    assert!(!dest.join("world_nether/region.mca").exists());
+}
