@@ -1,16 +1,18 @@
 // varde-minecraft-bot: writes/reads an 8-hex-digit nonce encoded as a
-// column of 8 wool blocks in a creative-mode Minecraft server.
+// column of 8 wool blocks. Write mode uses /setblock and requires the
+// offline bot account to be an operator.
 //
 //   node bot.mjs write --host H --port 25565 --version 1.21.4 \
 //     --user varde_tester --col N --nonce HEX8 [--ref x,y,z]
 //   node bot.mjs read  --host H --port 25565 --version 1.21.4 \
 //     --user varde_tester --col N --ref x,y,z
+//   node bot.mjs hold  --host H --port 25565 --version 1.21.4 \
+//     --user varde_tester --seconds N
 //
-// One JSON line on stdout, exit 0 on success, non-zero on failure.
+// JSON events on stdout, exit 0 on success, non-zero on failure.
 
 import mineflayer from 'mineflayer'
 import { Vec3 } from 'vec3'
-import prismarineItem from 'prismarine-item'
 
 const WOOL = [
   'white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink',
@@ -31,11 +33,13 @@ function die(msg, code = 1) {
 
 const args = parseArgs(process.argv)
 const mode = args._
-if (mode !== 'write' && mode !== 'read') die('usage: bot.mjs write|read --host H --port P --version V --user U --col N [--nonce HEX8] [--ref x,y,z]')
+if (mode !== 'write' && mode !== 'read' && mode !== 'hold') die('usage: bot.mjs write|read|hold --host H --port P --version V --user U --col N [--nonce HEX8] [--ref x,y,z]')
 const host = args.host, port = Number(args.port ?? 25565)
 const col = Number(args.col ?? 0)
 let nonce = (args.nonce ?? '').toLowerCase()
 if (mode === 'write' && !/^[0-9a-f]{8}$/.test(nonce)) die('--nonce must be 8 hex digits')
+const holdSeconds = Number(args.seconds ?? 0)
+if (mode === 'hold' && (!Number.isInteger(holdSeconds) || holdSeconds < 1)) die('--seconds must be a positive integer')
 
 const bot = mineflayer.createBot({
   host, port,
@@ -48,11 +52,36 @@ const hardTimeout = setTimeout(() => {
   console.error('bot: hard timeout')
   try { bot.quit() } catch {}
   process.exit(1)
-}, 60_000)
+}, mode === 'hold' ? holdSeconds * 1000 + 90_000 : 60_000)
 
 let errored = false
-bot.once('error', (e) => { errored = true; console.error('bot error:', e.message ?? e); process.exitCode = 1 })
-bot.once('kicked', (r) => { console.error('kicked:', r); process.exitCode = 1 })
+let holdDisconnect
+let holdDisconnectedByServer = false
+let holdFinished = false
+bot.once('error', (e) => {
+  console.error('bot error:', e.message ?? e)
+  if (mode === 'hold' && (holdDisconnect || holdFinished || holdDisconnectedByServer)) {
+    holdDisconnect?.(`error: ${e.message ?? e}`)
+    return
+  }
+  errored = true
+  process.exitCode = 1
+})
+bot.once('kicked', (r) => {
+  if (mode === 'hold') {
+    holdDisconnectedByServer = true
+    holdDisconnect?.(typeof r === 'string' ? r : JSON.stringify(r ?? 'kicked'))
+    return
+  }
+  console.error('kicked:', r)
+  process.exitCode = 1
+})
+bot.once('end', (r) => {
+  if (mode === 'hold') {
+    holdDisconnectedByServer = true
+    holdDisconnect?.(typeof r === 'string' ? r : JSON.stringify(r ?? 'disconnected'))
+  }
+})
 
 function parseRef(s, bot) {
   if (s) {
@@ -93,83 +122,6 @@ function stage(name, p, ms = 20_000) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// goTo walks the bot toward (x, z) — jumping over 1-block bumps — until it
-// stands on the column.
-async function goTo(x, z) {
-  const cx = x + 0.5, cz = z + 0.5
-  for (let i = 0; i < 300; i++) {
-    const p = bot.entity.position
-    if (Math.hypot(p.x - cx, p.z - cz) < 0.35) break
-    await bot.lookAt(new Vec3(cx, p.y, cz))
-    bot.setControlState('forward', true)
-    if (i % 20 === 19) {
-      bot.setControlState('jump', true)
-      setTimeout(() => bot.setControlState('jump', false), 250)
-    }
-    await sleep(50)
-  }
-  bot.setControlState('forward', false)
-}
-
-// pillarOnce jumps and places the held block directly beneath the bot;
-// resolves after the placement lands.
-async function waitLanded() {
-  for (let i = 0; i < 40; i++) {
-    if (bot.entity.onGround) return
-    await sleep(50)
-  }
-  throw new Error('never landed on ground')
-}
-
-async function pillarOnce(x, z) {
-  // the server can refuse a block placed at the apex if its view of the
-  // player's bounding box still overlaps the target cell — retry the whole
-  // jump+place until the block lands
-  let lastErr
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await waitLanded()
-    // make sure we stand on the column before referencing the block below
-    await goTo(x, z)
-    // reference = the block under our feet BEFORE jumping (at jump apex the
-    // position below is already the new air gap)
-    const below = bot.blockAt(bot.entity.position.offset(0, -0.5, 0))
-    if (!below || below.name === 'air' || below.name === 'cave_air') {
-      lastErr = new Error('no block under feet while pillaring')
-      continue
-    }
-    const jumpY = Math.floor(bot.entity.position.y) + 1.0
-    bot.setControlState('jump', true)
-    for (let i = 0; i < 40; i++) {
-      if (bot.entity.position.y > jumpY) break
-      await sleep(50)
-    }
-    bot.setControlState('jump', false)
-    if (bot.entity.position.y <= jumpY) {
-      // wedged (e.g. spawned inside a block, or a leaf/ceiling overhead):
-      // dig the blocks at head/ceiling level, step back, retry fresh
-      lastErr = new Error(`jump did not rise (y=${bot.entity.position.y.toFixed(2)} want >${jumpY})`)
-      for (const dy of [1, 2]) {
-        const b = bot.blockAt(bot.entity.position.offset(0, dy, 0))
-        if (b && b.name !== 'air' && b.name !== 'cave_air' && b.diggable) {
-          await bot.dig(b).catch(() => {})
-        }
-      }
-      bot.setControlState('back', true)
-      await sleep(400)
-      bot.setControlState('back', false)
-      continue
-    }
-    try {
-      await bot.placeBlock(below, new Vec3(0, 1, 0))
-      return
-    } catch (e) {
-      lastErr = e
-      await sleep(100)
-    }
-  }
-  throw lastErr
-}
-
 async function main() {
   await new Promise((res, rej) => {
     bot.once('spawn', res)
@@ -185,19 +137,40 @@ async function main() {
   if (mode === 'write') {
     const base = columnBase(x, z, ref.y)
     if (!base) die(`bot: no ground under column at ${x},${z}`)
-    await stage('walk to column', goTo(x, z), 15_000).catch((e) => die('bot: ' + e.message))
-    const Item = prismarineItem(bot.version)
     const digits = nonce.split('').map((c) => parseInt(c, 16))
+    const expected = digits.map((digit) => `${WOOL[digit]}_wool`)
     for (let i = 0; i < 8; i++) {
-      const item = new Item(bot.registry.itemsByName[WOOL[digits[i]] + '_wool'].id, 1)
-      await stage('setInventorySlot', bot.creative.setInventorySlot(36, item)).catch((e) => die('bot: ' + e.message))
-      bot.setQuickBarSlot(0)
-      // pillar: place the wool under ourselves while jumping — the bot
-      // lands on it and the column grows one block per iteration. No
-      // flight needed (allow-flight is off by default).
-      await stage(`pillar ${i}`, pillarOnce(x, z)).catch((e) => die('bot: ' + e.message))
+      bot.chat(`/setblock ${x} ${base.y + 1 + i} ${z} minecraft:${expected[i]} replace`)
+      if (i < 7) await sleep(50)
+    }
+    const deadline = Date.now() + 5000
+    let actual
+    while (true) {
+      actual = expected.map((_, i) =>
+        bot.blockAt(new Vec3(x, base.y + 1 + i, z))?.name ?? 'unloaded')
+      if (actual.every((name, i) => name === expected[i])) break
+      if (Date.now() >= deadline) {
+        die(`bot: setblock verify failed: ${actual.join(', ')}`)
+      }
+      await sleep(100)
     }
     console.log(JSON.stringify({ ok: true, ref: `${ref.x},${ref.y},${ref.z}` }))
+  } else if (mode === 'hold') {
+    console.log(JSON.stringify({ connected: true }))
+    await new Promise((resolve) => {
+      let finished = false
+      let timer
+      holdDisconnect = (reason) => {
+        if (finished) return
+        finished = true
+        holdFinished = true
+        clearTimeout(timer)
+        holdDisconnect = undefined
+        console.log(JSON.stringify({ disconnected: true, reason: String(reason ?? 'disconnected') }))
+        resolve()
+      }
+      timer = setTimeout(() => holdDisconnect(`timeout after ${holdSeconds}s`), holdSeconds * 1000)
+    })
   } else {
     // find the contiguous 8-wool run near the anchor height (the column
     // base is the column-local ground, which can differ from the anchor)
@@ -221,7 +194,7 @@ async function main() {
     }
   }
   clearTimeout(hardTimeout)
-  bot.quit()
+  if (!(mode === 'hold' && holdDisconnectedByServer)) bot.quit()
   setTimeout(() => process.exit(errored ? 1 : 0), 300)
 }
 

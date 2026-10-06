@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -21,8 +22,15 @@ type gameWatchdog struct {
 	processMatch string
 	violations   []string
 	last         string
+	transitions  []hostTransition
 	stop         chan struct{}
 	done         chan struct{}
+}
+
+type hostTransition struct {
+	from string
+	to   string
+	at   time.Time
 }
 
 func processHosts(names []string, processMatch string) map[string]bool {
@@ -76,8 +84,10 @@ func startWatchdog(t *testing.T, names []string, processMatch string) *gameWatch
 					}
 				}
 				if cur != w.last {
+					at := time.Now()
 					t.Logf("[%s] watchdog: %s host %q -> %q",
-						time.Now().Format("15:04:05.000"), w.processMatch, w.last, cur)
+						at.Format("15:04:05.000"), w.processMatch, w.last, cur)
+					w.transitions = append(w.transitions, hostTransition{from: w.last, to: cur, at: at})
 					w.last = cur
 				}
 				w.mu.Unlock()
@@ -101,6 +111,17 @@ func (w *gameWatchdog) check(t *testing.T) {
 	}
 }
 
+func (w *gameWatchdog) transitionTime(from, to string) (time.Time, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, transition := range w.transitions {
+		if transition.from == from && transition.to == to {
+			return transition.at, true
+		}
+	}
+	return time.Time{}, false
+}
+
 type gameEnv struct {
 	t       *testing.T
 	tmp     string
@@ -110,39 +131,70 @@ type gameEnv struct {
 	token   string
 	nodes   map[string]*node
 	cp      *proc
+	cpArgs  []string
+	cpLogs  []*proc
 
 	serverIDs []string
 }
 
+type cpOpts struct {
+	LeaseTTLms  int
+	HeartbeatMs int
+	SuspectMs   int
+	OfflineMs   int
+}
+
+func (o cpOpts) withDefaults() cpOpts {
+	if o.LeaseTTLms == 0 {
+		o.LeaseTTLms = 4000
+	}
+	if o.HeartbeatMs == 0 {
+		o.HeartbeatMs = 500
+	}
+	if o.SuspectMs == 0 {
+		o.SuspectMs = 1500
+	}
+	if o.OfflineMs == 0 {
+		o.OfflineMs = 6000
+	}
+	return o
+}
+
 func newGameEnv(t *testing.T, names []string) *gameEnv {
+	return newGameEnvOpts(t, names, cpOpts{})
+}
+
+func newGameEnvOpts(t *testing.T, names []string, options cpOpts) *gameEnv {
 	t.Helper()
+	options = options.withDefaults()
 	tmp := t.TempDir()
 	setupTopology(t, names)
 	cpPort := 18080
 	cpURL := fmt.Sprintf("http://%s:%d", wanIP, cpPort)
-	cp := spawnLogged(t, bin("varde-control-plane"),
+	e := &gameEnv{t: t, tmp: tmp, cpURL: cpURL, nodes: map[string]*node{}}
+	e.cpArgs = []string{
 		"--listen", fmt.Sprintf("%s:%d", wanIP, cpPort),
-		"--db", "sqlite://"+filepath.Join(tmp, "cp.db"),
+		"--db", "sqlite://" + filepath.Join(tmp, "cp.db"),
 		"--public-url", cpURL,
 		"--signup", "open",
-		"--heartbeat-interval-ms", "500",
-		"--lease-ttl-ms", "4000",
-		"--suspect-after-ms", "1500",
-		"--offline-after-ms", "6000",
+		"--heartbeat-interval-ms", fmt.Sprint(options.HeartbeatMs),
+		"--lease-ttl-ms", fmt.Sprint(options.LeaseTTLms),
+		"--suspect-after-ms", fmt.Sprint(options.SuspectMs),
+		"--offline-after-ms", fmt.Sprint(options.OfflineMs),
 		"--embedded-relay", fmt.Sprintf(":%d", relayUDP),
 		"--embedded-relay-addr", fmt.Sprintf("%s:%d", wanIP, relayUDP),
 		"--log-level", "warn",
-	)
+	}
+	e.startCP()
 	t.Cleanup(func() {
-		if t.Failed() {
-			t.Logf("--- cp log ---\n%s", cp.buf.String())
+		if !t.Failed() {
+			return
+		}
+		for i, p := range e.cpLogs {
+			t.Logf("--- cp log %d ---\n%s", i+1, p.buf.String())
 		}
 	})
-	waitFor(t, 15*time.Second, "control plane up", func() bool {
-		st, _ := apiCall("GET", cpURL+"/healthz", "", nil)
-		return st == 200
-	})
-	e := &gameEnv{t: t, tmp: tmp, cpURL: cpURL, cp: cp, nodes: map[string]*node{}}
+	e.waitCPUp(15 * time.Second)
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -177,11 +229,47 @@ func newGameEnv(t *testing.T, names []string) *gameEnv {
 	return e
 }
 
+func (e *gameEnv) startCP() {
+	e.cp = spawnLogged(e.t, bin("varde-control-plane"), e.cpArgs...)
+	e.cpLogs = append(e.cpLogs, e.cp)
+}
+
+func (e *gameEnv) waitCPUp(d time.Duration) {
+	waitFor(e.t, d, "control plane up", func() bool {
+		st, _ := apiCall("GET", e.cpURL+"/healthz", "", nil)
+		return st == 200
+	})
+}
+
+func (e *gameEnv) restartCP() {
+	e.t.Helper()
+	old := e.cp
+	if old == nil || old.cmd.Process == nil {
+		e.t.Fatal("control plane process is not running")
+	}
+	if err := old.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		e.t.Fatalf("send SIGTERM to control plane: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- old.cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		e.t.Fatal("timed out waiting for control plane to exit")
+	}
+	e.startCP()
+	e.waitCPUp(15 * time.Second)
+}
+
 func (e *gameEnv) enroll(name string, anchor bool) *node {
+	return e.enrollWithMargin(name, anchor, 1000)
+}
+
+func (e *gameEnv) enrollWithMargin(name string, anchor bool, fenceMarginMs int) *node {
 	t := e.t
 	dir := filepath.Join(e.tmp, "node-"+name)
 	args := []string{"enroll", "--server", e.cpURL, "--token", e.token,
-		"--data-dir", dir, "--fence-margin-ms", "1000"}
+		"--data-dir", dir, "--fence-margin-ms", fmt.Sprint(fenceMarginMs)}
 	if anchor {
 		args = append(args, "--anchor")
 	}
@@ -204,6 +292,46 @@ func (e *gameEnv) enroll(name string, anchor bool) *node {
 	}
 	e.nodes[name] = nd
 	return nd
+}
+
+func (e *gameEnv) cutOff(ns string) {
+	t := e.t
+	iptables := toolPath()["iptables"]
+	nsExec(t, ns, iptables, "-I", "INPUT", "1", "!", "-i", "lo", "-j", "DROP")
+	nsExec(t, ns, iptables, "-I", "OUTPUT", "1", "!", "-o", "lo", "-j", "DROP")
+}
+
+func (e *gameEnv) restore(ns string) {
+	t := e.t
+	iptables := toolPath()["iptables"]
+	nsExec(t, ns, iptables, "-D", "INPUT", "!", "-i", "lo", "-j", "DROP")
+	nsExec(t, ns, iptables, "-D", "OUTPUT", "!", "-o", "lo", "-j", "DROP")
+}
+
+func (e *gameEnv) nodeConnections(name string) map[string]string {
+	e.t.Helper()
+	status, body := apiCall("GET", e.cpURL+"/v1/nodes/"+e.nodes[name].nodeID, e.tok, nil)
+	if status != 200 {
+		e.t.Fatalf("get node %s: %d %s", name, status, body)
+	}
+	var node map[string]any
+	if err := json.Unmarshal(body, &node); err != nil {
+		e.t.Fatalf("decode node %s: %v", name, err)
+	}
+	connections, _ := node["connections"].([]any)
+	out := make(map[string]string, len(connections))
+	for _, value := range connections {
+		connection, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		peer, _ := connection["name"].(string)
+		path, _ := connection["path"].(string)
+		if peer != "" && path != "" {
+			out[peer] = path
+		}
+	}
+	return out
 }
 
 func (e *gameEnv) startAgent(name string) {

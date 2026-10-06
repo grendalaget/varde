@@ -316,6 +316,18 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	// --- restore selection ---
 	restore, sources, err := r.chooseRestore(ctx, srv, recovery, allowOlder)
 	if err != nil {
+		if recovery {
+			if ae := ActivationError(err); ae != nil && ae.Code == "latest_save_unavailable" {
+				if srv.DesiredState == "running" {
+					_ = s.SetObservedState(ctx, s.DB, srv.ID, "recovering", now)
+				}
+				_ = s.EmitEvent(ctx, s.DB, srv.GroupID, &srv.ID, nil, "server.save_unavailable",
+					map[string]any{
+						"snapshot_id": ae.Details["snapshot_id"],
+						"nodes":       ae.Details["nodes"],
+					})
+			}
+		}
 		return err
 	}
 
@@ -474,6 +486,17 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 		}
 	}
 
+	if recovery && firstBlocker != nil {
+		return nil, nil, &activationError{
+			Code:    "latest_save_unavailable",
+			Message: "newest save is only on offline machines",
+			Details: map[string]any{
+				"snapshot_id": firstBlocker.ID,
+				"created_at":  firstBlocker.CreatedAt,
+				"nodes":       firstBlockerOnline,
+			},
+		}
+	}
 	if ae := blocked(); ae != nil {
 		return nil, nil, ae
 	}

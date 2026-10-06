@@ -949,6 +949,90 @@ func TestOlderReachableSaveDoesNotBypassLatestBlocker(t *testing.T) {
 	}
 }
 
+func TestRecoveryWaitsForOfflineOnlySave(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	srv := e.createServer("testgame", "s1", nil)
+	host, execID, epoch := e.startToRunning(srv, a, b)
+	other := a
+	if host == a {
+		other = b
+	}
+
+	const snapshotID = "snap_recovery"
+	if r := host.createSnapshot(execID, srv, "dep_x", epoch, "scheduled", snapshotID, "cc"); r.Status != 201 {
+		t.Fatalf("snapshot %d %s", r.Status, r.Raw)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`UPDATE snapshots SET state='committed', committed_at=? WHERE id=?`), e.clk.ms, snapshotID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(e.st.Rebind(
+		`DELETE FROM snapshot_replicas WHERE snapshot_id=? AND node_id!=?`), snapshotID, host.nodeID); err != nil {
+		t.Fatal(err)
+	}
+
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	other.heartbeat(nil)
+	e.reconcile()
+	if e.activeExec(srv) != nil {
+		t.Fatal("recovery created an execution while the only committed save was offline")
+	}
+	var observed string
+	if err := e.st.DB.Get(&observed, e.st.Rebind(
+		`SELECT observed_state FROM servers WHERE id=?`), srv); err != nil {
+		t.Fatal(err)
+	}
+	if observed != "recovering" {
+		t.Fatalf("observed state = %q, want recovering", observed)
+	}
+	var eventData string
+	if err := e.st.DB.Get(&eventData, e.st.Rebind(
+		`SELECT data_json FROM events WHERE server_id=? AND type='server.save_unavailable' ORDER BY id DESC LIMIT 1`), srv); err != nil {
+		t.Fatalf("save unavailable event: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(eventData), &data); err != nil {
+		t.Fatalf("decode save unavailable event: %v", err)
+	}
+	if data["snapshot_id"] != snapshotID {
+		t.Fatalf("save unavailable event snapshot_id = %v, want %s", data["snapshot_id"], snapshotID)
+	}
+	nodes, ok := data["nodes"].([]any)
+	if !ok || len(nodes) != 1 || nodes[0] != host.nodeID {
+		t.Fatalf("save unavailable event nodes = %v, want [%s]", data["nodes"], host.nodeID)
+	}
+
+	host.heartbeat(nil)
+	e.reconcile()
+	ex := e.activeExec(srv)
+	if ex == nil {
+		t.Fatal("recovery did not create an execution after the save host returned")
+	}
+	target := host
+	switch ex["node"] {
+	case host.nodeID:
+	case other.nodeID:
+		target = other
+	default:
+		t.Fatalf("recovery placed on unknown node %v", ex["node"])
+	}
+	d, _ := target.heartbeat(nil)
+	var found *struct {
+		SnapshotID    string   `json:"snapshot_id"`
+		SourceNodeIDs []string `json:"source_node_ids"`
+	}
+	for _, execution := range d.Executions {
+		if execution.ServerID == srv {
+			found = execution.Restore
+		}
+	}
+	if found == nil || found.SnapshotID != snapshotID {
+		t.Fatalf("recovery restore: %+v, want %s", found, snapshotID)
+	}
+}
+
 func TestCommitPolicyMinAndAnchor(t *testing.T) {
 	e := newEnv(t)
 	a := e.newAgent("nodeA")

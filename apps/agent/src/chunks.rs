@@ -4,12 +4,13 @@
 //! fetch a manifest + missing chunks from `source_node_ids`.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
-use snapshot_store::{Manifest, SnapshotId, Store};
+use snapshot_store::{ChunkId, Manifest, SnapshotId, Store};
 
 pub const SERVICE_NAME: &str = "agent.chunks";
 const BATCH_INFLIGHT: usize = 4;
@@ -312,30 +313,71 @@ pub async fn fetch_snapshot(
         }
     }
     let m = store.manifest(snapshot_id)?;
-    let mut missing = store.missing_chunks(&m)?;
-    let mut rr = 0usize;
-    while !missing.is_empty() {
-        let mut progress = false;
-        for chunk_batch in missing.chunks(BATCH_INFLIGHT) {
-            let src = &source_node_ids[rr % source_node_ids.len()];
-            rr += 1;
-            match batch_get(mesh, src, snapshot_id, chunk_batch).await {
+    fetch_missing(
+        store.missing_or_corrupt_chunks(&m)?,
+        source_node_ids,
+        snapshot_id,
+        |src, hashes| async move { batch_get(mesh, &src, snapshot_id, &hashes).await },
+        |id, z| Ok(store.put_chunk_compressed(id, z)?),
+    )
+    .await
+}
+
+async fn fetch_missing<G, Fut, P>(
+    missing: Vec<ChunkId>,
+    sources: &[String],
+    snapshot_id: &SnapshotId,
+    mut get: G,
+    mut put: P,
+) -> Result<()>
+where
+    G: FnMut(String, Vec<ChunkId>) -> Fut,
+    Fut: Future<Output = Result<Vec<(ChunkId, Vec<u8>)>>>,
+    P: FnMut(&ChunkId, &[u8]) -> Result<()>,
+{
+    if sources.is_empty() {
+        bail!("no source nodes for {snapshot_id}");
+    }
+    for (rr, batch) in missing.chunks(BATCH_INFLIGHT).enumerate() {
+        let mut remaining = batch.to_vec();
+        let start = rr % sources.len();
+        for offset in 0..sources.len() {
+            if remaining.is_empty() {
+                break;
+            }
+            let src = sources[(start + offset) % sources.len()].clone();
+            match get(src.clone(), remaining.clone()).await {
                 Ok(chunks) => {
+                    let mut received = HashSet::new();
                     for (id, z) in chunks {
-                        store.put_chunk_compressed(&id, &z)?;
-                        progress = true;
+                        match put(&id, &z) {
+                            Ok(()) => {
+                                received.insert(id);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    src = %src,
+                                    chunk = %id,
+                                    error = %e,
+                                    "chunk store failed"
+                                );
+                            }
+                        }
                     }
+                    remaining.retain(|id| !received.contains(id));
                 }
                 Err(e) => {
-                    tracing::warn!(src, error = %e, "chunk batch fetch failed");
+                    tracing::warn!(src = %src, error = %e, "chunk batch fetch failed");
                 }
             }
         }
-        let still = store.missing_chunks(&m)?;
-        if !progress && still == missing {
-            bail!("no progress fetching chunks for {snapshot_id}");
+        if !remaining.is_empty() {
+            bail!(
+                "could not fetch {} chunks for {snapshot_id} from any of {} sources",
+                remaining.len(),
+                sources.len()
+            );
         }
-        missing = still;
     }
     Ok(())
 }
@@ -511,5 +553,176 @@ mod body_limit_tests {
         .await;
         let head = String::from_utf8_lossy(&resp);
         assert!(head.starts_with("HTTP/1.1 200"), "resp: {head}");
+    }
+}
+
+#[cfg(test)]
+mod fetch_missing_tests {
+    use super::*;
+
+    fn chunks(hashes: Vec<ChunkId>) -> Vec<(ChunkId, Vec<u8>)> {
+        hashes.into_iter().map(|hash| (hash, vec![1])).collect()
+    }
+
+    fn snapshot_id() -> SnapshotId {
+        SnapshotId("snap_test".to_string())
+    }
+
+    #[tokio::test]
+    async fn retries_failed_source_and_stores_every_chunk() {
+        let missing = vec!["one".to_string(), "two".to_string()];
+        let sources = vec!["a".to_string(), "b".to_string()];
+        let mut calls = Vec::new();
+        let mut stored = Vec::new();
+
+        fetch_missing(
+            missing.clone(),
+            &sources,
+            &snapshot_id(),
+            |src, hashes| {
+                calls.push(src.clone());
+                async move {
+                    if src == "a" {
+                        Err(anyhow::anyhow!("offline"))
+                    } else {
+                        Ok(chunks(hashes))
+                    }
+                }
+            },
+            |id, _| {
+                stored.push(id.clone());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(stored, missing);
+    }
+
+    #[tokio::test]
+    async fn retries_only_hashes_omitted_by_first_source() {
+        let sources = vec!["a".to_string(), "b".to_string()];
+        let mut calls = Vec::new();
+        let mut stored = Vec::new();
+
+        fetch_missing(
+            vec!["one".to_string(), "two".to_string()],
+            &sources,
+            &snapshot_id(),
+            |src, hashes| {
+                calls.push((src.clone(), hashes.clone()));
+                async move {
+                    if src == "a" {
+                        Ok(chunks(hashes.into_iter().take(1).collect()))
+                    } else {
+                        Ok(chunks(hashes))
+                    }
+                }
+            },
+            |id, _| {
+                stored.push(id.clone());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls,
+            vec![
+                ("a".to_string(), vec!["one".to_string(), "two".to_string()]),
+                ("b".to_string(), vec!["two".to_string()])
+            ]
+        );
+        assert_eq!(stored, vec!["one".to_string(), "two".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn retries_chunk_when_store_rejects_corrupt_response() {
+        let sources = vec!["a".to_string(), "b".to_string()];
+        let mut calls = Vec::new();
+        let mut attempts = Vec::new();
+        let mut stored = Vec::new();
+
+        fetch_missing(
+            vec!["one".to_string()],
+            &sources,
+            &snapshot_id(),
+            |src, hashes| {
+                calls.push(src.clone());
+                async move {
+                    let bytes: &[u8] = if src == "a" { b"corrupt" } else { b"good" };
+                    Ok(hashes
+                        .into_iter()
+                        .map(|hash| (hash, bytes.to_vec()))
+                        .collect())
+                }
+            },
+            |id, bytes| {
+                attempts.push(bytes.to_vec());
+                if bytes == b"corrupt" {
+                    anyhow::bail!("hash mismatch");
+                }
+                stored.push(id.clone());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(calls, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(attempts, vec![b"corrupt".to_vec(), b"good".to_vec()]);
+        assert_eq!(stored, vec!["one".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn errors_when_every_source_fails() {
+        let sources = vec!["a".to_string(), "b".to_string()];
+        let mut calls = Vec::new();
+
+        let error = fetch_missing(
+            vec!["one".to_string()],
+            &sources,
+            &snapshot_id(),
+            |src, _| {
+                calls.push(src);
+                async { Err(anyhow::anyhow!("offline")) }
+            },
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("from any of 2 sources"));
+        assert_eq!(calls, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn rotates_first_source_for_consecutive_batches() {
+        let sources = vec!["a".to_string(), "b".to_string()];
+        let missing = (0..BATCH_INFLIGHT * 3)
+            .map(|index| format!("chunk-{index}"))
+            .collect();
+        let mut first_attempts = Vec::new();
+
+        fetch_missing(
+            missing,
+            &sources,
+            &snapshot_id(),
+            |src, hashes| {
+                first_attempts.push(src);
+                async move { Ok(chunks(hashes)) }
+            },
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            first_attempts,
+            vec!["a".to_string(), "b".to_string(), "a".to_string()]
+        );
     }
 }

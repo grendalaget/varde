@@ -193,7 +193,7 @@ impl Agent {
             anyhow::bail!("bad snapshot id {}", t.snapshot_id);
         };
         let missing = match self.store.manifest(&sid) {
-            Ok(m) => !self.store.missing_chunks(&m)?.is_empty(),
+            Ok(m) => !self.store.missing_or_corrupt_chunks(&m)?.is_empty(),
             Err(_) => true,
         };
         if missing {

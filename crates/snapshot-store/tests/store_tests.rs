@@ -178,6 +178,62 @@ fn tampered_chunk_quarantined() {
 }
 
 #[test]
+fn missing_or_corrupt_chunks_quarantines_and_refetches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let base = tmp.path().join("server");
+    tree(
+        &base,
+        &[
+            ("data/a.bin", b"hello world"),
+            ("data/b.bin", b"hello world"),
+        ],
+    );
+    let inc = vec![PathPattern::new("data/")];
+    let info = store.snapshot(&base, &inc, meta()).unwrap();
+    let m = store.manifest(&info.id).unwrap();
+    let cid = m
+        .files
+        .iter()
+        .find(|e| e.typ == "file")
+        .unwrap()
+        .chunks
+        .as_ref()
+        .unwrap()[0]
+        .clone();
+    let cp = tmp.path().join("store/chunks").join(&cid[..2]).join(&cid);
+    let good = store.read_chunk_compressed(&cid).unwrap();
+
+    assert!(store.missing_or_corrupt_chunks(&m).unwrap().is_empty());
+
+    let mut corrupt = good.clone();
+    let n = corrupt.len();
+    corrupt[n - 1] ^= 0xff;
+    fs::write(&cp, &corrupt).unwrap();
+    assert_eq!(
+        store.missing_or_corrupt_chunks(&m).unwrap(),
+        vec![cid.clone()]
+    );
+    assert!(!store.has_chunk(&cid));
+    assert!(tmp
+        .path()
+        .join("store/chunks/quarantine")
+        .join(&cid)
+        .exists());
+
+    store.put_chunk_compressed(&cid, &good).unwrap();
+    let dest = tmp.path().join("restored");
+    store.restore(&info.id, &dest, &inc).unwrap();
+    assert_eq!(
+        read_tree(&dest),
+        vec![
+            ("data/a.bin".into(), b"hello world".to_vec()),
+            ("data/b.bin".into(), b"hello world".to_vec()),
+        ]
+    );
+}
+
+#[test]
 fn tampered_manifest_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(tmp.path().join("store")).unwrap();

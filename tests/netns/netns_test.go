@@ -304,8 +304,8 @@ func upstreamDNS() string {
 	return "8.8.8.8"
 }
 
-// blockDirectUDP drops all forwarded UDP except traffic to the embedded
-// relay, in every NAT namespace. It also removes the inbound DNAT
+// blockDirectUDP drops forwarded UDP except traffic to the embedded relay
+// and DNS queries, in every NAT namespace. It also removes the inbound DNAT
 // port-forward: otherwise inbound punches still reach the node and the
 // half-open state (inbound delivered, outbound dropped) wedges the path
 // instead of falling back to relay.
@@ -324,6 +324,8 @@ func blockDirectUDP(t *testing.T, names []string) {
 			"-m", "conntrack", "--ctstate", "ESTABLISHED", "-j", "ACCEPT")
 		nsExec(t, nat, toolPath()["iptables"], "-I", "FORWARD", "2",
 			"-p", "udp", "-d", wanIP, "--dport", fmt.Sprint(relayUDP), "-j", "ACCEPT")
+		nsExec(t, nat, toolPath()["iptables"], "-I", "FORWARD", "3",
+			"-p", "udp", "-d", upstreamDNS(), "--dport", "53", "-j", "ACCEPT")
 		nsExec(t, nat, toolPath()["iptables"], "-A", "FORWARD", "-p", "udp", "-j", "DROP")
 		// flush conntrack: existing ESTABLISHED entries bypass both the
 		// NAT-rule and filter drops, so old direct flows would keep working
