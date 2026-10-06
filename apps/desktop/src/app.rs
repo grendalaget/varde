@@ -61,6 +61,20 @@ pub fn run() {
         return;
     }
     let relink = launch.relink;
+    if relink {
+        // UIPI blocks the shared-profile browser handshake: a medium-IL
+        // WebView2 browser already running as the tray can't reply to this
+        // high-IL client, and the window fails to build. Give the elevated
+        // instance its own user data folder.
+        // safe here: called before any threads or webviews exist
+        std::env::set_var(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            logs_dir()
+                .parent()
+                .unwrap_or(std::path::Path::new(r"C:\ProgramData\Varde"))
+                .join("EBWebView-admin"),
+        );
+    }
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -334,15 +348,19 @@ fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
     }
 }
 
-/// Whether this Windows build supports a composited window backdrop:
-/// acrylic needs 17763 (1809), Mica needs 22000 (11).
+// Glass is gated to Mica-capable Windows (11+): it's the one recipe that
+// reliably composites a transparent webview over a real backdrop. Verified
+// on Server 2022: the webview's alpha doesn't punch through on an opaque
+// host, and acrylic behind a transparent (layered) window doesn't blend
+// either — so older builds get a deliberate opaque window instead of a
+// broken see-through one.
 fn glass_supported() -> bool {
     winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
         .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
         .and_then(|k| k.get_value::<String, _>("CurrentBuildNumber"))
         .ok()
         .and_then(|b| b.parse::<u32>().ok())
-        .map(|b| b >= 17763)
+        .map(|b| b >= 22000)
         .unwrap_or(false)
 }
 
@@ -411,7 +429,9 @@ fn open_main_window(app: &AppHandle) {
             // theme from prefers-color-scheme
             .theme(None)
             .background_color(window_background())
-            // glass panels: transparent webview over a Mica/acrylic backdrop
+            // glass panels: transparent window + transparent webview over
+            // a Mica/acrylic backdrop (the layered host is required for the
+            // webview's alpha to composite)
             .transparent(glass)
             .initialization_script(format!(
                 "window.__VARDE_GLASS__ = {}; window.__VARDE_ACCENT__ = {accent:?};",
