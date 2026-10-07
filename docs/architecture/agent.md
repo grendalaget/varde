@@ -42,7 +42,7 @@ Two ways to link, both writing the same `config.toml` + `identity/node.key`:
   installer's `<data>/server.url` if one was written, else the hosted default (`agent_ipc::DEFAULT_CP_URL`),
   so the tray can start linking without asking.
 * **Headless**: `varde-agent enroll [--server URL] [--token vde_…]` (needs Administrator/root); `--server`
-  defaults to the hosted Varde. The idle service
+  defaults to the installer's `server.url` if one was written, else the hosted Varde. The idle service
   picks the config up within 2 s; a running agent notices a config for a different node within 5 s and
   restarts in-process as that node.
 

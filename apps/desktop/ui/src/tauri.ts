@@ -59,7 +59,8 @@ function linked(hosting: boolean): UiStatus {
 const canned: Record<string, UiStatus | null> = {
   not_linked: {
     state: "not_linked",
-    control_plane_url: "https://cp.varde.example",
+    // TEMP TEST PATCH: fresh install reports the hosted default
+    control_plane_url: "https://varde.games",
     group_name: "",
     node_name: "",
     user_code: "",
@@ -106,13 +107,17 @@ function mock(): TauriGlobal {
   };
   return {
     core: {
-      invoke: <T>(cmd: string): Promise<T> => {
+      invoke: <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+        // TEMP TEST PATCH: trace invoke args so submitted values are provable
+        console.log("[mock invoke]", cmd, JSON.stringify(args));
         switch (cmd) {
           case "get_status":
             return Promise.resolve(canned[state] as T);
           case "link_defaults":
             return Promise.resolve({
-              url: "https://cp.varde.example",
+              // TEMP TEST PATCH: simulate a fresh install — the service
+              // reports DEFAULT_CP_URL (https://varde.games)
+              url: "https://varde.games",
               auto: false,
               relink: false,
             } as T);

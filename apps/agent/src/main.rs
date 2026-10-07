@@ -38,9 +38,10 @@ struct Cli {
 enum Cmd {
     /// Enroll this node: device flow (default) or --token.
     Enroll {
-        /// Control-plane address; defaults to the hosted Varde.
-        #[arg(long, default_value = agent_ipc::DEFAULT_CP_URL)]
-        server: String,
+        /// Control-plane address; defaults to the installer's server.url,
+        /// then the hosted Varde.
+        #[arg(long)]
+        server: Option<String>,
         #[arg(long)]
         token: Option<String>,
         #[arg(long, env = "VARDE_DATA_DIR")]
@@ -196,10 +197,14 @@ async fn main() -> Result<()> {
             loopback_prefix,
             fence_margin_ms,
         } => {
+            let data_dir = data_dir.unwrap_or_else(default_data_dir);
+            let server = server
+                .or_else(|| link::preset_url(&data_dir))
+                .unwrap_or_else(|| agent_ipc::DEFAULT_CP_URL.into());
             enroll(
                 server,
                 token,
-                data_dir.unwrap_or_else(default_data_dir),
+                data_dir,
                 anchor,
                 loopback_prefix,
                 fence_margin_ms,

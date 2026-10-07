@@ -10,9 +10,10 @@
   Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
   each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
 - never asks for an address: the PC joins the hosted Varde (varde.games).
-  Self-hosting instead? `/CPURL=https://cp.example` writes
-  `%ProgramData%\Varde\server.url` (http/https only), which the unlinked
-  service reports to the tray — skipped when the PC is already linked
+  Self-hosting instead? `/CPURL=cp.example` (or a full https URL) writes
+  `%ProgramData%\Varde\server.url`, which the unlinked service reports to
+  the tray — skipped when the PC is already linked. A remote `http://`
+  address asks before it is kept
 - installs Microsoft Edge WebView2 if missing (for the link window; without
   it the tray links via message boxes)
 - creates `%ProgramData%\Varde`; `service install` makes it SYSTEM/Administrators-only

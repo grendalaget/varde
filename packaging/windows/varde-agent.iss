@@ -118,17 +118,42 @@ begin
     Delete(Result, Length(Result), 1);
 end;
 
+function IsLocalHttp(U: String): Boolean;
+var
+  H: String;
+  I: Integer;
+begin
+  H := Lowercase(Copy(U, Length('http://') + 1, MaxInt));
+  I := Pos('/', H);
+  if I > 0 then
+    H := Copy(H, 1, I - 1);
+  if (Length(H) > 0) and (H[1] = '[') then
+    Result := Pos('[::1]', H) = 1
+  else
+  begin
+    I := Pos(':', H);
+    if I > 0 then
+      H := Copy(H, 1, I - 1);
+    Result := (H = 'localhost') or (Pos('127.', H) = 1);
+  end;
+end;
+
 // self-hosters pass /CPURL: the service reports this address until the PC is
 // linked; the tray links with it. No param means the hosted default, so no
-// server.url is written.
+// server.url is written. A bare host (no scheme) is fine — the agent reads
+// it as https.
 procedure WriteServerUrl();
 var
   U: String;
 begin
-  U := Lowercase(CpUrl());
+  U := CpUrl();
   if IsLinked() or (U = '') then
     Exit;
-  if (Pos('https://', U) <> 1) and (Pos('http://', U) <> 1) then
+  if (Pos('http://', Lowercase(U)) = 1) and not IsLocalHttp(U) and
+     (MsgBox(U + ' isn''t encrypted (http://). Anyone on the network between this PC and Varde ' +
+       'could read or change what it sends.' + #13#10#13#10 +
+       'Use it only for a Varde on your own network. Continue?',
+       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES) then
     Exit;
   SaveStringToFile(ExpandConstant('{commonappdata}\Varde\server.url'), U + #13#10, False);
 end;
