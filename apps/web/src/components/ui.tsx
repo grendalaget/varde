@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader } from "./Logo";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -29,7 +29,7 @@ export function Button({
   return (
     <button
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all duration-150 ease-vd-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-take active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100",
         styles[variant],
         className,
       )}
@@ -110,7 +110,7 @@ export function Badge({
     <span
       title={title}
       className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
         t[tone],
         className,
       )}
@@ -132,7 +132,10 @@ export function Dot({ tone }: { tone: Tone }) {
   };
   return (
     <span
-      className={cx("inline-block h-2 w-2 shrink-0 rounded-full", t[tone])}
+      className={cx(
+        "inline-block h-2 w-2 shrink-0 rounded-full transition-colors duration-300",
+        t[tone],
+      )}
     />
   );
 }
@@ -176,7 +179,7 @@ export function Field({
 }
 
 export const inputClass =
-  "w-full rounded-md border border-skifer-700 bg-skifer-950 px-3 py-1.5 text-sm text-skifer-100 placeholder:text-skifer-500 focus:border-skifer-300 focus:outline-none focus:ring-1 focus:ring-skifer-300";
+  "w-full rounded-md border border-skifer-700 bg-skifer-950 px-3 py-1.5 text-sm text-skifer-100 transition-colors duration-150 ease-vd-out placeholder:text-skifer-500 focus:border-skifer-300 focus:outline-none focus:ring-1 focus:ring-skifer-300";
 
 export function Toggle({
   checked,
@@ -198,13 +201,13 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-vd-out disabled:opacity-50",
         checked ? "bg-take" : "bg-skifer-700",
       )}
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full shadow transition-transform",
+          "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-spring active:scale-90",
           checked ? "bg-natt" : "bg-take",
           checked ? "translate-x-4" : "translate-x-0.5",
         )}
@@ -216,7 +219,7 @@ export function Toggle({
 export function ErrorNote({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (
-    <div className="rounded-md border border-rose-800/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
+    <div className="vd-shake rounded-md border border-rose-800/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
       {children}
     </div>
   );
@@ -224,7 +227,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 
 export function WarnNote({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">
+    <div className="vd-in rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">
       {children}
     </div>
   );
@@ -232,7 +235,7 @@ export function WarnNote({ children }: { children: ReactNode }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="px-4 py-10 text-center text-sm text-skifer-400">
+    <div className="vd-fade px-4 py-10 text-center text-sm text-skifer-400">
       {children}
     </div>
   );
@@ -248,7 +251,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="vd-enter mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-skifer-50">
           {title}
@@ -267,17 +270,58 @@ export function CopyText({
   text: string;
   mono?: boolean;
 }) {
+  const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      title="Copy"
-      onClick={() => void navigator.clipboard?.writeText(text)}
+      title={copied ? "Copied" : "Copy"}
+      onClick={() => {
+        void navigator.clipboard?.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1400);
+      }}
       className={cx(
-        "rounded bg-skifer-950 px-2 py-0.5 text-left text-sm text-take ring-1 ring-skifer-700 hover:ring-skifer-400",
+        "group inline-flex items-center gap-1.5 rounded bg-skifer-950 px-2 py-0.5 text-left text-sm ring-1 transition-all duration-200 ease-vd-out active:scale-[0.96]",
+        copied
+          ? "text-emerald-300 ring-emerald-500/50"
+          : "text-take ring-skifer-700 hover:ring-skifer-400",
         mono && "font-mono",
       )}
     >
       {text}
+      <span className="relative -mr-0.5 h-3.5 w-3.5 shrink-0">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={cx(
+            "absolute inset-0 transition-all duration-200 ease-vd-out",
+            copied
+              ? "scale-50 opacity-0"
+              : "scale-100 opacity-40 group-hover:opacity-100",
+          )}
+        >
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={cx(
+            "absolute inset-0 text-emerald-400 transition-all duration-200 ease-vd-spring",
+            copied ? "scale-100 opacity-100" : "scale-50 opacity-0",
+          )}
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      </span>
     </button>
   );
 }

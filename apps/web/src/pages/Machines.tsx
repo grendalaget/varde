@@ -57,7 +57,7 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <div className="mb-4 rounded-md border border-skifer-800 bg-skifer-900/60 px-4 py-3 text-sm text-skifer-300">
+        <div className="vd-enter mb-4 rounded-md border border-skifer-800 bg-skifer-900/60 px-4 py-3 text-sm text-skifer-300">
           <span className="font-medium text-skifer-100">Tip:</span> add an{" "}
           <span className="text-violet-300">always-on backup</span> (a NAS, home
           server or small VPS). It always has the latest save, even when
@@ -69,7 +69,7 @@ export default function Machines() {
           <Empty>No machines yet. Add your PC to get started.</Empty>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="vd-stagger space-y-3">
           {nodes.map((n) => (
             <MachineRow key={n.id} n={n} hosting={hosting.get(n.id) ?? []} />
           ))}
@@ -122,9 +122,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
                   title={`Hosting ${hosting.join(", ")}`}
                 >
                   <Ember />
-                  <span className="truncate">
-                    Hosting {hosting.join(", ")}
-                  </span>
+                  <span className="truncate">Hosting {hosting.join(", ")}</span>
                 </Badge>
               )}
               {n.anchor && <Badge tone="violet">Always-on backup</Badge>}
@@ -176,7 +174,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
         </Button>
       </div>
       {open && (
-        <div className="space-y-4 border-t border-skifer-800 px-4 py-4 text-sm">
+        <div className="vd-reveal space-y-4 border-t border-skifer-800 px-4 py-4 text-sm">
           <div className="flex items-start gap-3">
             <Toggle
               checked={n.anchor}

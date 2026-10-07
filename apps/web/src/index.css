@@ -68,9 +68,169 @@
     fill: var(--vd-ember);
   }
 }
+
+/* Motion: fast expo-out for entrances, a light spring for pops. Entrances
+   use fill `backwards` (not `both`) so post-animation transforms (hover
+   lifts, presses) aren't frozen by a lingering final keyframe. */
+:root {
+  --vd-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --vd-ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes vd-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes vd-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@keyframes vd-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes vd-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+@keyframes vd-shake {
+  0% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  15% {
+    opacity: 1;
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  45% {
+    transform: translateX(3px);
+  }
+  65% {
+    transform: translateX(-2px);
+  }
+  85% {
+    transform: translateX(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes vd-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Page / section entrances. */
+.vd-enter {
+  animation: vd-rise 380ms var(--vd-ease) backwards;
+}
+.vd-in {
+  animation: vd-rise 240ms var(--vd-ease) backwards;
+}
+.vd-reveal {
+  animation: vd-drop 220ms var(--vd-ease) backwards;
+}
+.vd-fade {
+  animation: vd-fade 240ms var(--vd-ease) backwards;
+}
+.vd-pop {
+  animation: vd-pop 240ms var(--vd-ease-spring) backwards;
+}
+.vd-menu {
+  transform-origin: top right;
+  animation: vd-pop 180ms var(--vd-ease-spring) backwards;
+}
+.vd-shake {
+  animation: vd-shake 450ms var(--vd-ease) backwards;
+}
+.vd-pulse {
+  animation: vd-live 2.4s ease-in-out infinite;
+}
+
+/* Entrance delays for hand-placed ordering. */
+.vd-d-1 {
+  animation-delay: 60ms;
+}
+.vd-d-2 {
+  animation-delay: 120ms;
+}
+.vd-d-3 {
+  animation-delay: 180ms;
+}
+.vd-d-4 {
+  animation-delay: 240ms;
+}
+.vd-d-5 {
+  animation-delay: 300ms;
+}
+
+/* Staggered children: each direct child rises in ~45 ms after the last. */
+.vd-stagger > * {
+  animation: vd-rise 380ms var(--vd-ease) backwards;
+}
+.vd-stagger > :nth-child(2) {
+  animation-delay: 45ms;
+}
+.vd-stagger > :nth-child(3) {
+  animation-delay: 90ms;
+}
+.vd-stagger > :nth-child(4) {
+  animation-delay: 135ms;
+}
+.vd-stagger > :nth-child(5) {
+  animation-delay: 180ms;
+}
+.vd-stagger > :nth-child(6) {
+  animation-delay: 225ms;
+}
+.vd-stagger > :nth-child(7) {
+  animation-delay: 270ms;
+}
+.vd-stagger > :nth-child(8) {
+  animation-delay: 315ms;
+}
+.vd-stagger > :nth-child(9) {
+  animation-delay: 360ms;
+}
+.vd-stagger > :nth-child(10) {
+  animation-delay: 405ms;
+}
+.vd-stagger > :nth-child(n + 11) {
+  animation-delay: 450ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vd-h,
-  .vd-ignite {
+  .vd-ignite,
+  .vd-enter,
+  .vd-in,
+  .vd-reveal,
+  .vd-fade,
+  .vd-pop,
+  .vd-menu,
+  .vd-shake,
+  .vd-pulse,
+  .vd-stagger > * {
     animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
   }
 }

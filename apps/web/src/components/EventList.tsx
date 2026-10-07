@@ -17,7 +17,7 @@ export default function EventList({
   const nodeName = useNodeName();
   if (events.length === 0) return <Empty>Nothing has happened yet.</Empty>;
   return (
-    <ul className="divide-y divide-skifer-800">
+    <ul className="vd-stagger divide-y divide-skifer-800">
       {events.map((e) => (
         <li
           key={e.id}

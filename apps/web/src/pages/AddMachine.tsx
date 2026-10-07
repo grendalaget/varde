@@ -58,7 +58,7 @@ export default function AddMachine() {
   return (
     <>
       <PageHeader title="Add a machine" />
-      <div className="space-y-6">
+      <div className="vd-stagger space-y-6">
         <Card>
           <CardHeader
             title="A gaming PC or laptop"
@@ -111,18 +111,20 @@ export default function AddMachine() {
             </Button>
             <ErrorNote>{err}</ErrorNote>
             {token && (
-              <Field label="Run this on the machine (the token is shown only once)">
-                <CopyText
-                  text={`sudo varde-agent enroll --server ${window.location.origin} --token ${token}`}
-                />
-              </Field>
+              <div className="vd-pop">
+                <Field label="Run this on the machine (the token is shown only once)">
+                  <CopyText
+                    text={`sudo varde-agent enroll --server ${window.location.origin} --token ${token}`}
+                  />
+                </Field>
+              </div>
             )}
             {(tokens.data?.tokens.length ?? 0) > 0 && (
               <div>
                 <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-skifer-500">
                   Active tokens
                 </h3>
-                <ul className="divide-y divide-skifer-800 text-sm">
+                <ul className="vd-stagger divide-y divide-skifer-800 text-sm">
                   {tokens.data!.tokens.map((t) => (
                     <li
                       key={t.id}

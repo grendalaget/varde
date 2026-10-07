@@ -231,13 +231,13 @@ function Layout() {
               <option value="__new">+ New group…</option>
             </select>
           </label>
-          <nav className="flex flex-col gap-0.5">
+          <nav className="vd-stagger flex flex-col gap-0.5">
             {NAV.map((n) => (
               <Link
                 key={n.to}
                 to={n.to}
                 className={cx(
-                  "rounded-md px-2 py-1.5 text-sm",
+                  "rounded-md px-2 py-1.5 text-sm transition-all duration-200 ease-vd-out hover:translate-x-0.5",
                   n.active(p)
                     ? "bg-skifer-800 font-medium text-take"
                     : "text-skifer-400 hover:bg-skifer-900 hover:text-skifer-200",
@@ -249,14 +249,16 @@ function Layout() {
           </nav>
           <div className="mt-auto space-y-3 px-2 text-xs text-skifer-500">
             <div className="flex items-center gap-2" title="Live updates">
-              <Dot tone={connected ? "green" : "warn"} />
+              <span className={connected ? "vd-pulse" : undefined}>
+                <Dot tone={connected ? "green" : "warn"} />
+              </span>
               {connected ? "Live" : "Reconnecting…"}
             </div>
             <div className="truncate text-skifer-400">
               {me.user.display_name}
             </div>
             <button
-              className="text-skifer-500 hover:text-skifer-300"
+              className="text-skifer-500 transition-colors duration-150 hover:text-skifer-300"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
                 window.location.href = "/";
@@ -268,7 +270,9 @@ function Layout() {
         </>
       }
     >
-      {page}
+      <div key={p} className="vd-fade">
+        {page}
+      </div>
     </Shell>
   );
 }
@@ -298,7 +302,7 @@ function Shell({
           aria-label={open ? "Close menu" : "Open menu"}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="-mr-2 rounded-md p-2 text-skifer-300 hover:bg-skifer-900"
+          className="-mr-2 rounded-md p-2 text-skifer-300 transition-colors duration-150 hover:bg-skifer-900"
         >
           <svg
             width="22"
@@ -319,13 +323,13 @@ function Shell({
       </header>
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          className="vd-fade fixed inset-0 z-40 bg-black/60 md:hidden"
           onClick={() => setOpen(false)}
         />
       )}
       <aside
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-skifer-800 bg-skifer-950 px-3 py-4 transition-transform md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-skifer-800 bg-skifer-950 px-3 py-4 transition-transform duration-300 ease-vd-out md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

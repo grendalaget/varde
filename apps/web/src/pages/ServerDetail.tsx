@@ -120,7 +120,7 @@ export default function ServerDetail({ id }: { id: string }) {
             key={t}
             onClick={() => setTab(t)}
             className={
-              "-mb-px border-b-2 px-3 py-2 text-sm " +
+              "-mb-px border-b-2 px-3 py-2 text-sm transition-colors duration-200 ease-vd-out " +
               (tab === t
                 ? "border-take text-skifer-50"
                 : "border-transparent text-skifer-400 hover:text-skifer-200")
@@ -130,23 +130,27 @@ export default function ServerDetail({ id }: { id: string }) {
           </button>
         ))}
       </div>
-      {tab === "overview" && (
-        <Overview
-          s={s}
-          snapshots={snapshots}
-          crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
-        />
-      )}
-      {tab === "saves" && (
-        <Saves s={s} snapshots={snapshots} refresh={snaps.refresh} />
-      )}
-      {tab === "logs" && (
-        <Logs s={s} executions={execs.data?.executions ?? []} />
-      )}
-      {tab === "settings" && <ServerSettings s={s} onSaved={server.refresh} />}
-      {tab === "details" && (
-        <Details s={s} executions={execs.data?.executions ?? []} />
-      )}
+      <div key={tab} className="vd-in">
+        {tab === "overview" && (
+          <Overview
+            s={s}
+            snapshots={snapshots}
+            crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+          />
+        )}
+        {tab === "saves" && (
+          <Saves s={s} snapshots={snapshots} refresh={snaps.refresh} />
+        )}
+        {tab === "logs" && (
+          <Logs s={s} executions={execs.data?.executions ?? []} />
+        )}
+        {tab === "settings" && (
+          <ServerSettings s={s} onSaved={server.refresh} />
+        )}
+        {tab === "details" && (
+          <Details s={s} executions={execs.data?.executions ?? []} />
+        )}
+      </div>
     </>
   );
 }
@@ -235,7 +239,7 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         )}
       </div>
       {moving && (
-        <div className="absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-skifer-700 bg-skifer-900 p-2 text-sm shadow-lg">
+        <div className="vd-menu absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-skifer-700 bg-skifer-900 p-2 text-sm shadow-lg">
           <span className="text-skifer-400">Move to</span>
           {targets.map((n) => (
             <Button
@@ -291,8 +295,8 @@ function Overview({
     (x) => x.id === sum.latest_safe_save?.snapshot_id,
   );
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <div className="space-y-6 lg:col-span-2">
+    <div className="vd-stagger grid gap-6 lg:grid-cols-3">
+      <div className="vd-stagger space-y-6 lg:col-span-2">
         <Card>
           <CardHeader title="Connect" />
           <div className="space-y-3 p-4 text-sm">
@@ -314,12 +318,10 @@ function Overview({
                     {s.observed_state === "running" ? "Waiting for code…" : "—"}
                   </span>
                 )
+              ) : sum.address ? (
+                <CopyText text={sum.address} />
               ) : (
-                sum.address ? (
-                  <CopyText text={sum.address} />
-                ) : (
-                  <span className="text-skifer-500">—</span>
-                )
+                <span className="text-skifer-500">—</span>
               )}
             </div>
             {crossplay ? (
@@ -437,7 +439,7 @@ function Saves({
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-skifer-800">
+            <tbody className="vd-stagger divide-y divide-skifer-800">
               {snapshots.map((x) => {
                 const st = SNAP_STATE[x.state] ?? {
                   label: x.state,
@@ -554,7 +556,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
         actions={
           executions.length > 0 && (
             <select
-              className="max-w-48 rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm sm:max-w-none"
+              className="max-w-48 rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
               value={effective}
               onChange={(e) => setExecId(e.target.value)}
             >
@@ -617,7 +619,7 @@ function ServerSettings({
 
   return (
     <form
-      className="space-y-6"
+      className="vd-stagger space-y-6"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
@@ -741,7 +743,9 @@ function ServerSettings({
           <span />
         )}
         <div className="flex items-center gap-3">
-          {msg && <span className="text-sm text-emerald-400">{msg}</span>}
+          {msg && (
+            <span className="vd-fade text-sm text-emerald-400">{msg}</span>
+          )}
           <Button variant="primary" type="submit" busy={busy}>
             Save
           </Button>
@@ -754,7 +758,7 @@ function ServerSettings({
 function Details({ s, executions }: { s: Server; executions: Execution[] }) {
   const nodeName = useNodeName();
   return (
-    <div className="space-y-6">
+    <div className="vd-stagger space-y-6">
       <Card>
         <CardHeader title="Identity" subtitle="Engineering view" />
         <dl className="grid gap-x-6 gap-y-2 p-4 font-mono text-xs sm:grid-cols-2">

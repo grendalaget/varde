@@ -78,7 +78,7 @@ export default function Settings() {
     <>
       <PageHeader title="Settings" subtitle={group.name} />
       <form
-        className="space-y-6"
+        className="vd-stagger space-y-6"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -152,7 +152,9 @@ export default function Settings() {
         <ErrorNote>{err}</ErrorNote>
         {admin && (
           <div className="flex items-center justify-end gap-3">
-            {msg && <span className="text-sm text-emerald-400">{msg}</span>}
+            {msg && (
+              <span className="vd-fade text-sm text-emerald-400">{msg}</span>
+            )}
             <Button variant="primary" type="submit" busy={busy}>
               Save settings
             </Button>

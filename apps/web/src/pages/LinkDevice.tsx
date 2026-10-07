@@ -37,7 +37,7 @@ export default function LinkDevice({ code }: { code: string }) {
   return (
     <>
       <PageHeader title="Add this machine?" />
-      <Card className="max-w-lg">
+      <Card className="vd-enter max-w-lg">
         <CardHeader
           title={<span className="font-mono">{code || "No code"}</span>}
         />

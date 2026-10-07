@@ -79,17 +79,17 @@ export default function NewServer() {
   return (
     <>
       <PageHeader title="New server" />
-      <form onSubmit={submit} className="space-y-6">
+      <form onSubmit={submit} className="vd-stagger space-y-6">
         <Card>
           <CardHeader title="Game" />
-          <div className="grid gap-3 p-4 sm:grid-cols-3">
+          <div className="vd-stagger grid gap-3 p-4 sm:grid-cols-3">
             {visibleGames.map((g) => (
               <button
                 type="button"
                 key={g.id}
                 onClick={() => setGameId(g.id)}
                 className={
-                  "rounded-md border px-3 py-3 text-left text-sm " +
+                  "rounded-md border px-3 py-3 text-left text-sm transition-all duration-200 ease-vd-out hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-take active:scale-[0.98] " +
                   (g.id === gameId
                     ? "border-take bg-take/5"
                     : "border-skifer-800 hover:border-skifer-600")

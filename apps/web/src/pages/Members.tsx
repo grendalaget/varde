@@ -57,7 +57,7 @@ export default function Members() {
         }
       />
       {invite && (
-        <Card className="mb-4">
+        <Card className="vd-pop mb-4">
           <CardHeader
             title="Invite link"
             subtitle="Valid for 7 days, up to 10 people."
@@ -69,7 +69,7 @@ export default function Members() {
       )}
       <ErrorNote>{err}</ErrorNote>
       <Card>
-        <ul className="divide-y divide-skifer-800">
+        <ul className="vd-stagger divide-y divide-skifer-800">
           {(members.data?.members ?? []).map((m) => (
             <li
               key={m.user_id}
@@ -88,7 +88,7 @@ export default function Members() {
                 {admin && m.role !== "owner" && m.user_id !== me.user.id ? (
                   <>
                     <select
-                      className="rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm"
+                      className="rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm transition-colors duration-150"
                       value={m.role}
                       onChange={async (e) => {
                         const { error } = await api.PATCH(
