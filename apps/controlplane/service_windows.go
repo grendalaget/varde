@@ -38,7 +38,7 @@ func serviceInstall() error {
 	if err != nil {
 		return fmt.Errorf("open SCM: %w", err)
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	s, err := m.CreateService(serviceName, exe, mgr.Config{
 		ServiceType:  windows.SERVICE_WIN32_OWN_PROCESS,
 		StartType:    mgr.StartAutomatic,
@@ -49,7 +49,7 @@ func serviceInstall() error {
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	restart := func(d time.Duration) mgr.RecoveryAction {
 		return mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: d}
 	}
@@ -102,12 +102,12 @@ func serviceUninstall() error {
 	if err != nil {
 		return fmt.Errorf("open SCM: %w", err)
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	s, err := m.OpenService(serviceName)
 	if err != nil {
 		return fmt.Errorf("open service: %w", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	_, _ = s.Control(svc.Stop)
 	deadline := time.Now().Add(60 * time.Second)
 	for {
@@ -146,7 +146,7 @@ func serviceRun(args []string) error {
 		fmt.Fprintf(os.Stderr, "log file unavailable: %v\n", err)
 	}
 	if w != nil {
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 	}
 	return svc.Run(serviceName, &cpHandler{cfg: cfg, logOut: w})
 }
