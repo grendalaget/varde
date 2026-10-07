@@ -244,6 +244,14 @@ func (s *Store) ConsumeInvite(ctx context.Context, code string) error {
 	return nil
 }
 
+// RefundInvite returns one use — consumed but unneeded when a concurrent
+// accept had already committed the membership.
+func (s *Store) RefundInvite(ctx context.Context, code string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE invites SET uses=uses-1 WHERE code=? AND uses>0`), code)
+	return err
+}
+
 // ---- enrollment tokens / device links ----
 
 func (s *Store) CreateEnrollmentToken(ctx context.Context, t *EnrollmentToken) error {

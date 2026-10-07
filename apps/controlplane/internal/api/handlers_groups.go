@@ -263,6 +263,7 @@ func (s *Server) AcceptInvite(ctx context.Context, req gen.AcceptInviteRequestOb
 		// A concurrent accept may have committed the membership between our
 		// check and the insert — that's still a success for this caller.
 		if _, merr := s.Store.MemberRole(ctx, inv.GroupID, u.ID); merr == nil {
+			_ = s.Store.RefundInvite(ctx, inv.Code)
 			return gen.AcceptInvite200JSONResponse{GroupId: inv.GroupID}, nil
 		}
 		return nil, err

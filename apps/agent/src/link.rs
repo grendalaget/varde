@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::config::Config;
 
@@ -56,14 +56,23 @@ pub fn normalize_url(raw: &str) -> Result<String> {
     } else {
         format!("https://{}", s.trim_end_matches('/'))
     };
-    let rest = s
-        .strip_prefix("https://")
-        .or_else(|| s.strip_prefix("http://"))
-        .context("the address must start with https:// or http://")?;
+    let (scheme, rest) = if s
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+    {
+        ("https", &s[8..])
+    } else if s
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+    {
+        ("http", &s[7..])
+    } else {
+        bail!("the address must start with https:// or http://")
+    };
     if rest.is_empty() || rest.contains(char::is_whitespace) {
         bail!("not a valid address: {raw}");
     }
-    Ok(s)
+    Ok(format!("{scheme}://{rest}"))
 }
 
 fn host_of(url: &str) -> &str {
@@ -211,6 +220,10 @@ mod tests {
             "https://varde.games"
         );
         assert_eq!(normalize_url("varde.games").unwrap(), "https://varde.games");
+        assert_eq!(
+            normalize_url("HTTPS://Cp.Example/X").unwrap(),
+            "https://Cp.Example/X"
+        );
         assert_eq!(
             normalize_url("cp.example.com:8443").unwrap(),
             "https://cp.example.com:8443"
