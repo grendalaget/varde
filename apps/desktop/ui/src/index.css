@@ -7,7 +7,7 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
 }
 html,
 body,
@@ -16,5 +16,11 @@ body,
   height: 100%;
 }
 body {
-  background: #10161a;
+  /* pre-React flash only; Fluent tokens take over once mounted */
+  background: #f3f5f6;
+}
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #10161a;
+  }
 }

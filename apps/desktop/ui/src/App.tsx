@@ -42,7 +42,15 @@ const useStyles = makeStyles({
     gap: "10px",
     marginBottom: "28px",
   },
-  mark: { width: "28px", height: "28px" },
+  mark: {
+    width: "28px",
+    height: "28px",
+    // the asset is a single-color path; masking keeps it visible in both
+    // light and dark themes (it inherits the themed foreground color)
+    backgroundColor: tokens.colorNeutralForeground1,
+    maskImage: `url("${markUrl}")`,
+    maskSize: "contain",
+  },
   brand: {
     fontFamily: brandFont,
     fontSize: "20px",
@@ -317,7 +325,7 @@ export default function App() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <img src={markUrl} alt="" className={styles.mark} />
+        <div className={styles.mark} />
         <span className={styles.brand}>varde</span>
       </header>
       <main>
