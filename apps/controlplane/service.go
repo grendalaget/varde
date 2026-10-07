@@ -8,11 +8,6 @@ import (
 	"os"
 )
 
-const (
-	serviceName    = "VardeControlPlane"
-	serviceDisplay = "Varde Control Plane"
-)
-
 func serviceCmd(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: varde-control-plane service install|uninstall|run")

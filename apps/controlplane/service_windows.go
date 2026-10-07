@@ -23,7 +23,11 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const stopWaitHintMs = 30_000
+const (
+	serviceName    = "VardeControlPlane"
+	serviceDisplay = "Varde Control Plane"
+	stopWaitHintMs = 30_000
+)
 
 func serviceInstall() error {
 	exe, err := os.Executable()
