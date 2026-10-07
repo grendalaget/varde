@@ -1,13 +1,17 @@
 ; Varde — Inno Setup installer.
 ; Installs the agent service, mesh and tray into Program Files, starts the
 ; service and opens the tray's link window. The PC joins the hosted Varde
-; (varde.games) unless /CPURL names a self-hosted control plane.
+; (varde.games) unless /CPURL names a self-hosted control plane — or the
+; opt-in "controlplane" task installs one on this PC (service + sqlite in
+; %ProgramData%\VardeCP), which then becomes this PC's default CP.
 ;
 ;   iscc /DVersion=0.1.0 varde-agent.iss
 ; Expects alongside this script: varde.ico, wizard\*.bmp, dist\varde-agent.exe,
-; dist\varde-mesh.exe, dist\varde-tray.exe, dist\MicrosoftEdgeWebview2Setup.exe
+; dist\varde-mesh.exe, dist\varde-tray.exe, dist\varde-control-plane.exe,
+; dist\MicrosoftEdgeWebview2Setup.exe
 ;
 ; Silent: VardeSetup.exe /VERYSILENT /CPURL=https://cp.example [/TASKS=autostart]
+; Silent self-host: /VERYSILENT /TASKS="autostart controlplane"
 
 #ifndef Version
   #define Version "0.0.0-dev"
@@ -40,6 +44,7 @@ CloseApplications=force
 
 [Tasks]
 Name: "autostart"; Description: "Start Varde at login (tray icon)"
+Name: "controlplane"; Description: "Also install the Varde control plane (run the group's server on this PC)"
 
 [Files]
 Source: "varde.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -48,6 +53,8 @@ Source: "dist\varde-agent.exe"; DestDir: "{app}"; Flags: ignoreversion; \
   AfterInstall: WriteServerUrl
 Source: "dist\varde-mesh.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\varde-tray.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\varde-control-plane.exe"; DestDir: "{app}"; Flags: ignoreversion; \
+  Tasks: controlplane
 Source: "dist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; \
   Flags: deleteafterinstall; Check: NeedsWebView2
 
@@ -56,6 +63,9 @@ Name: "{commonappdata}\Varde\identity"; Permissions: system-full admins-full
 Name: "{commonappdata}\Varde"; Permissions: system-full admins-full
 ; service logs; readable so "Open logs folder" works for any user
 Name: "{commonappdata}\Varde\logs"; Permissions: system-full admins-full users-readexec
+; control plane data (sqlite db + service logs), only when the task is picked
+Name: "{commonappdata}\VardeCP"; Permissions: system-full admins-full; \
+  Tasks: controlplane
 
 [Registry]
 ; all users; each user can turn it off from the tray (HKCU opt-out)
@@ -72,6 +82,12 @@ Name: "{autoprograms}\Varde"; Filename: "{app}\varde-tray.exe"; \
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; \
   Flags: waituntilterminated; Check: NeedsWebView2; \
   StatusMsg: "Installing Microsoft Edge WebView2 (for the link window)"
+Filename: "{app}\varde-control-plane.exe"; Parameters: "service install"; \
+  Tasks: controlplane; Flags: runhidden waituntilterminated; \
+  StatusMsg: "Registering the Varde control plane"
+Filename: "sc.exe"; Parameters: "start VardeControlPlane"; \
+  Tasks: controlplane; Flags: runhidden waituntilterminated; \
+  StatusMsg: "Starting the Varde control plane"
 Filename: "{app}\varde-agent.exe"; Parameters: "service install"; \
   Flags: runhidden waituntilterminated; \
   StatusMsg: "Registering the Varde service"
@@ -138,15 +154,24 @@ begin
   end;
 end;
 
-// self-hosters pass /CPURL: the service reports this address until the PC is
-// linked; the tray links with it. No param means the hosted default, so no
-// server.url is written. A bare host (no scheme) is fine — the agent reads
-// it as https.
+// self-hosters pass /CPURL, or pick the controlplane task — that installs a
+// local CP, which becomes this PC's default server (overridable later via the
+// tray's "Use a different server"). The service reports this address until the
+// PC is linked; the tray links with it. Neither present means the hosted
+// default, so no server.url is written. A bare host (no scheme) is fine — the
+// agent reads it as https.
+function EffectiveCpUrl(): String;
+begin
+  Result := CpUrl();
+  if (Result = '') and WizardIsTaskSelected('controlplane') then
+    Result := 'http://localhost:8080';
+end;
+
 procedure WriteServerUrl();
 var
   U: String;
 begin
-  U := CpUrl();
+  U := EffectiveCpUrl();
   if IsLinked() or (U = '') then
     Exit;
   if (Pos('http://', Lowercase(U)) = 1) and not IsLocalHttp(U) and
@@ -179,10 +204,13 @@ var
   Code: Integer;
 begin
   Result := '';
-  // upgrade: stop the tray and remove the old service (waits for Stopped)
+  // upgrade: stop the tray and remove the old services (waits for Stopped)
   Exec('taskkill.exe', '/F /IM varde-tray.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
   if FileExists(ExpandConstant('{app}\varde-agent.exe')) then
     Exec(ExpandConstant('{app}\varde-agent.exe'), 'service uninstall', '', SW_HIDE,
+      ewWaitUntilTerminated, Code);
+  if FileExists(ExpandConstant('{app}\varde-control-plane.exe')) then
+    Exec(ExpandConstant('{app}\varde-control-plane.exe'), 'service uninstall', '', SW_HIDE,
       ewWaitUntilTerminated, Code);
 end;
 
@@ -191,12 +219,26 @@ begin
   // upgrade with "Start Varde at login" unticked: drop the earlier Run value
   if (CurStep = ssPostInstall) and not WizardIsTaskSelected('autostart') then
     RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Varde');
+  // upgrade with the control plane unticked: its service was already removed
+  // in PrepareToInstall; drop the stale binary too
+  if (CurStep = ssPostInstall) and not WizardIsTaskSelected('controlplane') then
+    DeleteFile(ExpandConstant('{app}\varde-control-plane.exe'));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Data: String;
+  Code: Integer;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    // the agent's own UninstallRun entry handles VardeAgent; the control
+    // plane service only exists when the component was installed
+    if FileExists(ExpandConstant('{app}\varde-control-plane.exe')) then
+      Exec(ExpandConstant('{app}\varde-control-plane.exe'), 'service uninstall', '', SW_HIDE,
+        ewWaitUntilTerminated, Code);
+    Exit;
+  end;
   if CurUninstallStep <> usPostUninstall then
     Exit;
   Data := ExpandConstant('{commonappdata}\Varde');
@@ -205,6 +247,13 @@ begin
      (MsgBox('Also delete Varde''s data on this PC?' + #13#10#13#10 +
        'This removes local saves and this PC''s identity in ' + Data + '. ' +
        'Copies on other machines are not affected.',
+       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
+    DelTree(Data, True, True, True);
+  Data := ExpandConstant('{commonappdata}\VardeCP');
+  if (not UninstallSilent()) and DirExists(Data) and
+     (MsgBox('Also delete the control plane''s data?' + #13#10#13#10 +
+       'This removes the group''s accounts, servers and save index in ' + Data + '. ' +
+       'Save copies on the group''s machines are not affected.',
        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
     DelTree(Data, True, True, True);
 end;

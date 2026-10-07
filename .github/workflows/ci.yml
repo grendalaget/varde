@@ -168,13 +168,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir apps/desktop/ui build
-      - name: build agent + mesh + tray (MSVC)
+      - name: build agent + mesh + tray + control plane (MSVC)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
           cargo build --release -p varde-agent -p varde-tray
           cd apps/mesh
           go build -o ../../packaging/windows/dist/varde-mesh.exe .
+          cd ../..
+          # the opt-in installer component ships varde-control-plane.exe
+          pnpm --dir apps/web build
+          Remove-Item -Recurse -Force apps/controlplane/internal/webui/dist -ErrorAction SilentlyContinue
+          Copy-Item -Recurse apps/web/dist apps/controlplane/internal/webui/dist
+          cd apps/controlplane
+          go build -o ../../packaging/windows/dist/varde-control-plane.exe .
           cd ../..
           Copy-Item target/release/varde-agent.exe packaging/windows/dist/
           Copy-Item target/release/varde-tray.exe packaging/windows/dist/

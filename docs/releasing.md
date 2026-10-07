@@ -60,7 +60,7 @@ contains `LICENSE` and the named binaries at its root. The agent tarball include
 | Platform | Assets |
 | --- | --- |
 | Linux amd64, arm64 | `varde-agent-<ver>-linux-<arch>.tar.gz` (agent + mesh), `varde-control-plane-<ver>-linux-<arch>.tar.gz`, `varde-relay-<ver>-linux-<arch>.tar.gz`; each component also has matching `.deb` and `.rpm` files |
-| Windows amd64 | `VardeSetup-<ver>.exe`; `varde-<ver>-windows-amd64.zip` (agent, mesh, tray, control-plane, relay, LICENSE) |
+| Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting); `varde-<ver>-windows-amd64.zip` (agent, mesh, tray, control-plane, relay, LICENSE) |
 | macOS arm64, amd64 | `varde-agent-<ver>-darwin-<arch>.tar.gz` (agent + mesh), `varde-control-plane-<ver>-darwin-<arch>.tar.gz`, `varde-relay-<ver>-darwin-<arch>.tar.gz` |
 | All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS** |
 
