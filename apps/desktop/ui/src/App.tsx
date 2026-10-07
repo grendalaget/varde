@@ -6,6 +6,7 @@ import {
   Button,
   Field,
   Input,
+  Link,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
@@ -26,6 +27,8 @@ import markUrl from "./assets/mark.svg";
 
 const LINKED = ["connecting", "online", "offline"];
 const brandFont = "'Schibsted Grotesk', 'Segoe UI', sans-serif";
+
+const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
 
 const useStyles = makeStyles({
   page: {
@@ -97,6 +100,12 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "14px",
   },
+  serverRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
 });
 
 type View = "wait" | "form" | "code" | "done" | "linked" | "noagent";
@@ -119,6 +128,7 @@ export default function App() {
   const [forceForm, setForceForm] = useState(false);
   const [url, setUrl] = useState("");
   const [urlEdited, setUrlEdited] = useState(false);
+  const [serverOpen, setServerOpen] = useState(false);
   // read by stable callbacks; state mirror above is for render
   const urlEditedRef = useRef(false);
   const [code, setCode] = useState("");
@@ -332,10 +342,12 @@ export default function App() {
         {view === "form" && (
           <section>
             <Title2 className={styles.title} as="h1">
-              {defaults?.relink ? "Re-link this PC" : "Link this PC"}
+              {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
             </Title2>
             <Text className={styles.lead} as="p">
-              Enter your Varde address. You'll approve this PC in your browser.
+              Varde opens your dashboard so you can approve this PC — sign up
+              there, then create a group or join your friends with an invite
+              link.
             </Text>
             {defaults?.relink && (
               <MessageBar intent="warning" className={styles.bar}>
@@ -351,20 +363,34 @@ export default function App() {
                 void doLink(effectiveUrl.trim());
               }}
             >
-              <Field label="Varde address" required>
-                <Input
-                  type="url"
-                  required
-                  spellCheck={false}
-                  autoComplete="url"
-                  value={url}
-                  onChange={(_, d) => {
-                    urlEditedRef.current = true;
-                    setUrl(d.value);
-                    setUrlEdited(true);
-                  }}
-                />
-              </Field>
+              {serverOpen ? (
+                <Field
+                  label="Varde server"
+                  hint="Only if your group runs its own Varde — for example a friend's."
+                >
+                  <Input
+                    type="url"
+                    required
+                    spellCheck={false}
+                    autoComplete="url"
+                    value={url}
+                    onChange={(_, d) => {
+                      urlEditedRef.current = true;
+                      setUrl(d.value);
+                      setUrlEdited(true);
+                    }}
+                  />
+                </Field>
+              ) : (
+                <div className={styles.serverRow}>
+                  <Text as="span">
+                    Server: {hostOf(effectiveUrl) || "varde.games"}
+                  </Text>
+                  <Link as="button" onClick={() => setServerOpen(true)}>
+                    Use a different server
+                  </Link>
+                </div>
+              )}
               {formError && (
                 <MessageBar intent="error" className={styles.bar}>
                   <MessageBarBody>{formError}</MessageBarBody>
@@ -372,7 +398,7 @@ export default function App() {
               )}
               <div>
                 <Button appearance="primary" type="submit" disabled={linkBusy}>
-                  Link
+                  Continue
                 </Button>
               </div>
             </form>

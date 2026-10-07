@@ -9,10 +9,11 @@
 - shows the brand art in the wizard: `wizard/wizard-*.bmp` (mark + wordmark on
   Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
   each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
-- asks for the Varde address (prefilled `https://varde.games`; checked with
-  `GET /v1/version`, warning only; plain `http://` other than loopback
-  needs an extra confirmation) and writes it to `%ProgramData%\Varde\server.url`,
-  which the unlinked service reports to the tray. Skipped when the PC is already linked
+- never asks for an address: the PC joins the hosted Varde (varde.games).
+  Self-hosting instead? `/CPURL=cp.example` (or a full https URL) writes
+  `%ProgramData%\Varde\server.url`, which the unlinked service reports to
+  the tray — skipped when the PC is already linked. A remote `http://`
+  address asks before it is kept
 - installs Microsoft Edge WebView2 if missing (for the link window; without
   it the tray links via message boxes)
 - creates `%ProgramData%\Varde`; `service install` makes it SYSTEM/Administrators-only
@@ -25,8 +26,8 @@
   `varde-tray.exe --autostart`; each user can turn it off in the tray.
   Unticking it on an upgrade removes the earlier value
 - at the end, launches the tray as the installing user with
-  `--link`: the tray asks the service to link with that address, shows
-  the code and opens the dashboard to approve it
+  `--link`: the tray asks the service to link, shows the code and opens
+  the dashboard to approve it
 
 Upgrades stop the tray and remove the old service (waiting for it to stop)
 before replacing files. Uninstall stops the tray, waits for the service to
@@ -35,8 +36,9 @@ stop (final save), removes the `Run` value and Program Files, and keeps
 Yes to "Also delete Varde's data on this PC?" (default No; silent uninstall
 always keeps it).
 
-Silent install: `VardeSetup.exe /VERYSILENT /CPURL=https://cp.example`
-(then link with `varde-agent enroll --token …`, or from the tray).
+Silent install: `VardeSetup.exe /VERYSILENT` (add `/CPURL=…` only for a
+self-hosted control plane; then link with `varde-agent enroll --token …`,
+or from the tray).
 
 ```sh
 iscc /DVersion=0.1.0 packaging/windows/varde-agent.iss

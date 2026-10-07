@@ -251,10 +251,21 @@ func (s *Server) AcceptInvite(ctx context.Context, req gen.AcceptInviteRequestOb
 	if err != nil {
 		return nil, errResp(gen.NotFound, "invite not found", nil)
 	}
+	// Re-accepting an invite (double-click, shared link re-opened) is a no-op —
+	// don't consume a use or fail on the membership primary key.
+	if _, err := s.Store.MemberRole(ctx, inv.GroupID, u.ID); err == nil {
+		return gen.AcceptInvite200JSONResponse{GroupId: inv.GroupID}, nil
+	}
 	if err := s.Store.ConsumeInvite(ctx, inv.Code); err != nil {
 		return nil, errResp(gen.Validation, "invite expired or exhausted", nil)
 	}
 	if err := s.Store.AddMember(ctx, inv.GroupID, u.ID, inv.Role, s.Store.NowMs()); err != nil {
+		// A concurrent accept may have committed the membership between our
+		// check and the insert — that's still a success for this caller.
+		if _, merr := s.Store.MemberRole(ctx, inv.GroupID, u.ID); merr == nil {
+			_ = s.Store.RefundInvite(ctx, inv.Code)
+			return gen.AcceptInvite200JSONResponse{GroupId: inv.GroupID}, nil
+		}
 		return nil, err
 	}
 	_ = s.Store.Audit(ctx, s.Store.DB, &inv.GroupID, "user", u.ID, "invite.accept", inv.Code, nil)

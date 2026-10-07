@@ -1,7 +1,7 @@
 # Agent
 
 `varde-agent` (Rust, tokio). One OS service: Windows Service (`windows-service` crate, accepts STOP + PRESHUTDOWN)
-or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcommands: `run`, `enroll --server URL
+or systemd unit (`Type=notify` optional). Runs without a logged-in user. Subcommands: `run`, `enroll [--server URL]
 [--token vde_…]` (device-code flow if no token: prints the link), `status`, `service install|uninstall`
 (Windows), `version`.
 
@@ -39,8 +39,10 @@ Two ways to link, both writing the same `config.toml` + `identity/node.key`:
   control plane's `verification_url`, except when that points at loopback while the user's address doesn't
   (control plane without `--public-url`): then it is `<user's address>/link?code=…`. The control plane itself
   falls back to the request's scheme + Host when `--public-url` is unset. Before linking, status reports the
-  address the installer wrote to `<data>/server.url`, so the tray can start linking without asking again.
-* **Headless**: `varde-agent enroll --server URL [--token vde_…]` (needs Administrator/root); the idle service
+  installer's `<data>/server.url` if one was written, else the hosted default (`agent_ipc::DEFAULT_CP_URL`),
+  so the tray can start linking without asking.
+* **Headless**: `varde-agent enroll [--server URL] [--token vde_…]` (needs Administrator/root); `--server`
+  defaults to the installer's `server.url` if one was written, else the hosted Varde. The idle service
   picks the config up within 2 s; a running agent notices a config for a different node within 5 s and
   restarts in-process as that node.
 

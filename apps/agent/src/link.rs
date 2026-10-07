@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::config::Config;
 
@@ -38,7 +38,8 @@ fn os_hostname() -> Option<String> {
     None
 }
 
-/// Validates a user-entered control-plane address: http(s), no path noise.
+/// Validates a user-entered control-plane address: http(s), or a bare
+/// host[:port] which is read as https. No path noise.
 /// Address the installer chose (`<data>/server.url`), reported while not
 /// linked so the tray can start the device flow without asking again.
 pub fn preset_url(data_dir: &std::path::Path) -> Option<String> {
@@ -47,15 +48,31 @@ pub fn preset_url(data_dir: &std::path::Path) -> Option<String> {
 }
 
 pub fn normalize_url(raw: &str) -> Result<String> {
-    let s = raw.trim().trim_end_matches('/');
-    let rest = s
-        .strip_prefix("https://")
-        .or_else(|| s.strip_prefix("http://"))
-        .context("the address must start with https:// or http://")?;
+    let s = raw.trim();
+    // A bare host or host:port is assumed to be https — nobody should have to
+    // type a scheme to point Varde at their own server.
+    let s = if s.contains("://") {
+        s.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", s.trim_end_matches('/'))
+    };
+    let (scheme, rest) = if s
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+    {
+        ("https", &s[8..])
+    } else if s
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+    {
+        ("http", &s[7..])
+    } else {
+        bail!("the address must start with https:// or http://")
+    };
     if rest.is_empty() || rest.contains(char::is_whitespace) {
         bail!("not a valid address: {raw}");
     }
-    Ok(s.to_string())
+    Ok(format!("{scheme}://{rest}"))
 }
 
 fn host_of(url: &str) -> &str {
@@ -202,7 +219,16 @@ mod tests {
             normalize_url(" https://varde.games/ ").unwrap(),
             "https://varde.games"
         );
-        assert!(normalize_url("varde.games").is_err());
+        assert_eq!(normalize_url("varde.games").unwrap(), "https://varde.games");
+        assert_eq!(
+            normalize_url("HTTPS://Cp.Example/X").unwrap(),
+            "https://Cp.Example/X"
+        );
+        assert_eq!(
+            normalize_url("cp.example.com:8443").unwrap(),
+            "https://cp.example.com:8443"
+        );
+        assert!(normalize_url("varde games").is_err());
         assert!(normalize_url("https://").is_err());
         assert!(normalize_url("ftp://x").is_err());
     }

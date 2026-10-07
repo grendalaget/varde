@@ -22,6 +22,10 @@ pub use pb::local_service_client::LocalServiceClient;
 /// The agent service's pipe. One agent service per Windows machine.
 pub const PIPE_NAME: &str = r"\\.\pipe\varde-agent";
 
+/// The hosted Varde every install points at unless the user picks another
+/// server (`server.url`, `--link`, installer /CPURL, `enroll --server`).
+pub const DEFAULT_CP_URL: &str = "https://varde.games";
+
 /// IPC endpoint for an agent whose data dir is `data_dir`.
 pub fn endpoint(data_dir: &Path) -> String {
     #[cfg(windows)]
