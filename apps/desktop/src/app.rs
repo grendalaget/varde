@@ -365,9 +365,10 @@ fn glass_supported() -> bool {
 }
 
 /// Mica on Windows 11; acrylic (blurred glass) as the fallback elsewhere.
-fn apply_glass(w: &WebviewWindow, dark: bool) {
+/// Returns whether a backdrop actually composited.
+fn apply_glass(w: &WebviewWindow, dark: bool) -> bool {
     if window_vibrancy::apply_mica(w, Some(dark)).is_ok() {
-        return;
+        return true;
     }
     // themed tint over the blur so the panel still matches the theme
     let tint = if dark {
@@ -375,7 +376,7 @@ fn apply_glass(w: &WebviewWindow, dark: bool) {
     } else {
         (0xf3, 0xf5, 0xf6, 0xcc)
     };
-    let _ = window_vibrancy::apply_acrylic(w, Some(tint));
+    window_vibrancy::apply_acrylic(w, Some(tint)).is_ok()
 }
 
 /// The user's OS accent color (HKCU DWM\AccentColor, stored ABGR) as an
@@ -441,8 +442,12 @@ fn open_main_window(app: &AppHandle) {
             .map(|w| {
                 if glass {
                     let dark = matches!(w.theme(), Ok(tauri::Theme::Dark));
-                    apply_glass(&w, dark);
-                    let _ = w.set_background_color(None);
+                    // only let the webview go transparent when a backdrop
+                    // really composited — with nothing behind it the window
+                    // reads as broken; the builder's themed background stays
+                    if apply_glass(&w, dark) {
+                        let _ = w.set_background_color(None);
+                    }
                 }
                 // keep the pre-render background + glass in sync when the
                 // OS theme flips while the window is open
@@ -450,14 +455,13 @@ fn open_main_window(app: &AppHandle) {
                 w.on_window_event(move |event| {
                     if let tauri::WindowEvent::ThemeChanged(theme) = event {
                         if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
-                            let _ = w.set_background_color(if glass {
+                            let composited =
+                                glass && apply_glass(&w, !matches!(*theme, tauri::Theme::Light));
+                            let _ = w.set_background_color(if composited {
                                 None
                             } else {
                                 Some(theme_background(*theme))
                             });
-                            if glass {
-                                apply_glass(&w, !matches!(*theme, tauri::Theme::Light));
-                            }
                         }
                     }
                 });

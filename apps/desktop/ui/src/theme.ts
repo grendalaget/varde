@@ -139,11 +139,12 @@ export function vardeTheme(
   glass = false,
 ): Theme {
   const base = prefersDark ? vardeDark : vardeLight;
-  const accentRamp = accent ? brandFromAccent(accent) : null;
+  const accentRgb = accent ? parseColor(accent) : null;
+  const accentRamp = accentRgb ? brandFromAccent(accent as string) : null;
   if (!accentRamp && !glass) return base;
 
   let theme = { ...base };
-  if (accentRamp) {
+  if (accentRamp && accentRgb) {
     // OS accent owns the brand/compound tokens (buttons, links,
     // checkboxes) like WinUI's SystemAccentColor; neutrals stay Varde
     const themed = prefersDark
@@ -152,6 +153,16 @@ export function vardeTheme(
     for (const key of BRAND_TOKEN_KEYS) {
       theme = { ...theme, [key]: themed[key] };
     }
+    // Fluent always paints colorNeutralForegroundOnBrand white — on a
+    // pale accent that erases primary-button labels, so pick black or
+    // white by the accent's perceived luminance instead.
+    const lum =
+      (0.2126 * accentRgb[0] + 0.7152 * accentRgb[1] + 0.0722 * accentRgb[2]) /
+      255;
+    theme = {
+      ...theme,
+      colorNeutralForegroundOnBrand: lum > 0.5 ? "#1a1a1a" : "#ffffff",
+    };
   }
   if (glass) {
     // the window sits over a Mica/acrylic backdrop; let it show through
