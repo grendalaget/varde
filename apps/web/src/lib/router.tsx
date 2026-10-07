@@ -66,6 +66,7 @@ export function Link({
     <a
       href={to}
       onClick={(e) => {
+        if (e.defaultPrevented) return;
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
         navigate(to);

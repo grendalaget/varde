@@ -114,7 +114,12 @@ function ServerCard({
         <Row label={crossplay ? "Join code" : "Address"}>
           {crossplay ? (
             sum.join_code ? (
-              <span onClick={(e) => e.stopPropagation()}>
+              <span
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
                 <CopyText text={sum.join_code} />
               </span>
             ) : (
@@ -123,7 +128,12 @@ function ServerCard({
               </span>
             )
           ) : sum.address ? (
-            <span onClick={(e) => e.stopPropagation()}>
+            <span
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
               <CopyText text={sum.address} />
             </span>
           ) : (
