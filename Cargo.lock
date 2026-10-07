@@ -5409,6 +5409,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tokio",
+ "window-vibrancy",
  "windows-service",
  "windows-sys 0.61.2",
  "winreg",

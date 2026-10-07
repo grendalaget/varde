@@ -61,6 +61,20 @@ pub fn run() {
         return;
     }
     let relink = launch.relink;
+    if relink {
+        // UIPI blocks the shared-profile browser handshake: a medium-IL
+        // WebView2 browser already running as the tray can't reply to this
+        // high-IL client, and the window fails to build. Give the elevated
+        // instance its own user data folder.
+        // safe here: called before any threads or webviews exist
+        std::env::set_var(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            logs_dir()
+                .parent()
+                .unwrap_or(std::path::Path::new(r"C:\ProgramData\Varde"))
+                .join("EBWebView-admin"),
+        );
+    }
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -311,6 +325,78 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
     }
 }
 
+/// Window background while the page loads: light or dark per the OS "apps"
+/// personalization setting, so the app doesn't flash the wrong theme color.
+/// Defaults to dark (Natt) when the preference can't be read.
+fn window_background() -> tauri::window::Color {
+    let light = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
+        .map(|v| v != 0)
+        .unwrap_or(false);
+    theme_background(if light {
+        tauri::Theme::Light
+    } else {
+        tauri::Theme::Dark
+    })
+}
+
+fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Light => tauri::window::Color(0xf3, 0xf5, 0xf6, 0xff),
+        _ => tauri::window::Color(0x10, 0x16, 0x1a, 0xff),
+    }
+}
+
+// Glass is gated to Mica-capable Windows (11+): it's the one recipe that
+// reliably composites a transparent webview over a real backdrop. Verified
+// on Server 2022: the webview's alpha doesn't punch through on an opaque
+// host, and acrylic behind a transparent (layered) window doesn't blend
+// either — so older builds get a deliberate opaque window instead of a
+// broken see-through one.
+fn glass_supported() -> bool {
+    winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+        .and_then(|k| k.get_value::<String, _>("CurrentBuildNumber"))
+        .ok()
+        .and_then(|b| b.parse::<u32>().ok())
+        .map(|b| b >= 22000)
+        .unwrap_or(false)
+}
+
+/// Mica on Windows 11; acrylic (blurred glass) as the fallback elsewhere.
+/// Returns whether a backdrop actually composited.
+fn apply_glass(w: &WebviewWindow, dark: bool) -> bool {
+    if window_vibrancy::apply_mica(w, Some(dark)).is_ok() {
+        return true;
+    }
+    // themed tint over the blur so the panel still matches the theme
+    let tint = if dark {
+        (0x10, 0x16, 0x1a, 0xcc)
+    } else {
+        (0xf3, 0xf5, 0xf6, 0xcc)
+    };
+    window_vibrancy::apply_acrylic(w, Some(tint)).is_ok()
+}
+
+/// The user's OS accent color (HKCU DWM\AccentColor, stored ABGR) as an
+/// sRGB hex string, so the page can accent-tone its brand controls the way
+/// WinUI does with SystemAccentColor. WebView2 doesn't expose it via the
+/// AccentColor CSS color, so it comes over the init script.
+fn os_accent() -> Option<String> {
+    let v: u32 = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\DWM")
+        .ok()?
+        .get_value("AccentColor")
+        .ok()?;
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        v & 0xff,
+        (v >> 8) & 0xff,
+        (v >> 16) & 0xff
+    ))
+}
+
 /// Where the service writes its logs (see packaging/windows).
 fn logs_dir() -> std::path::PathBuf {
     std::env::var_os("ProgramData")
@@ -331,6 +417,8 @@ fn open_main_window(app: &AppHandle) {
     } else {
         "Varde"
     };
+    let glass = glass_supported();
+    let accent = os_accent().unwrap_or_default();
     let built = tauri::webview_version().is_ok()
         && WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title(title)
@@ -338,9 +426,46 @@ fn open_main_window(app: &AppHandle) {
             .resizable(false)
             .maximizable(false)
             .center()
-            .theme(Some(tauri::Theme::Dark))
-            .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
+            // follow the OS light/dark theme; the page picks its Fluent
+            // theme from prefers-color-scheme
+            .theme(None)
+            .background_color(window_background())
+            // glass panels: transparent window + transparent webview over
+            // a Mica/acrylic backdrop (the layered host is required for the
+            // webview's alpha to composite)
+            .transparent(glass)
+            .initialization_script(format!(
+                "window.__VARDE_GLASS__ = {}; window.__VARDE_ACCENT__ = {accent:?};",
+                glass
+            ))
             .build()
+            .map(|w| {
+                if glass {
+                    let dark = matches!(w.theme(), Ok(tauri::Theme::Dark));
+                    // only let the webview go transparent when a backdrop
+                    // really composited — with nothing behind it the window
+                    // reads as broken; the builder's themed background stays
+                    if apply_glass(&w, dark) {
+                        let _ = w.set_background_color(None);
+                    }
+                }
+                // keep the pre-render background + glass in sync when the
+                // OS theme flips while the window is open
+                let app = w.app_handle().clone();
+                w.on_window_event(move |event| {
+                    if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                        if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
+                            let composited =
+                                glass && apply_glass(&w, !matches!(*theme, tauri::Theme::Light));
+                            let _ = w.set_background_color(if composited {
+                                None
+                            } else {
+                                Some(theme_background(*theme))
+                            });
+                        }
+                    }
+                });
+            })
             .is_ok();
     if !built {
         // no WebView2: link with message boxes instead
