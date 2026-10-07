@@ -38,7 +38,8 @@ struct Cli {
 enum Cmd {
     /// Enroll this node: device flow (default) or --token.
     Enroll {
-        #[arg(long)]
+        /// Control-plane address; defaults to the hosted Varde.
+        #[arg(long, default_value = agent_ipc::DEFAULT_CP_URL)]
         server: String,
         #[arg(long)]
         token: Option<String>,

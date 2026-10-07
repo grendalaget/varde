@@ -129,7 +129,8 @@ impl Hub {
             pb::State::NotLinked
         };
         if s.control_plane_url.is_empty() {
-            s.control_plane_url = link::preset_url(&self.data_dir).unwrap_or_default();
+            s.control_plane_url = link::preset_url(&self.data_dir)
+                .unwrap_or_else(|| agent_ipc::DEFAULT_CP_URL.into());
         }
         s.state = state as i32;
         s
@@ -659,7 +660,8 @@ mod tests {
     fn installer_address_shown_before_linking() {
         let tmp = tempfile::tempdir().unwrap();
         let hub = Hub::new(tmp.path().to_path_buf());
-        assert_eq!(hub.status().control_plane_url, "");
+        // nothing chosen: the hosted Varde is the effective address
+        assert_eq!(hub.status().control_plane_url, agent_ipc::DEFAULT_CP_URL);
         std::fs::write(
             tmp.path().join("server.url"),
             "\u{feff}https://cp.example/\r\n",

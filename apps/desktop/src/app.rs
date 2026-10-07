@@ -22,7 +22,6 @@ const MAIN_WINDOW: &str = "main";
 /// The dashboard running inside the app: an external webview on the
 /// control-plane address, not a browser tab.
 const DASHBOARD_WINDOW: &str = "dashboard";
-const DEFAULT_CP: &str = "https://varde.games";
 
 static ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 static ICON_HOSTING: &[u8] = include_bytes!("../icons/tray-hosting.png");
@@ -480,7 +479,7 @@ fn get_status(state: tauri::State<'_, State>) -> Option<UiStatus> {
 
 #[derive(Serialize, Clone)]
 struct LinkDefaults {
-    /// The service's address (installer choice before linking), else varde.games.
+    /// The service's address, else the hosted Varde (agent_ipc::DEFAULT_CP_URL).
     url: String,
     /// Start linking as soon as the service reports not_linked.
     auto: bool,
@@ -500,7 +499,7 @@ fn defaults(app: &AppHandle) -> LinkDefaults {
         auto: st
             .auto_link
             .swap(false, std::sync::atomic::Ordering::SeqCst),
-        url: known.unwrap_or_else(|| DEFAULT_CP.into()),
+        url: known.unwrap_or_else(|| agent_ipc::DEFAULT_CP_URL.into()),
         relink: st.relink,
     }
 }

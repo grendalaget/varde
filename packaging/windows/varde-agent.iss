@@ -1,6 +1,7 @@
 ; Varde — Inno Setup installer.
-; Installs the agent service, mesh and tray into Program Files, asks for the
-; Varde address, starts the service and opens the tray's link window.
+; Installs the agent service, mesh and tray into Program Files, starts the
+; service and opens the tray's link window. The PC joins the hosted Varde
+; (varde.games) unless /CPURL names a self-hosted control plane.
 ;
 ;   iscc /DVersion=0.1.0 varde-agent.iss
 ; Expects alongside this script: varde.ico, wizard\*.bmp, dist\varde-agent.exe,
@@ -92,9 +93,6 @@ Filename: "{app}\varde-agent.exe"; Parameters: "service uninstall"; \
 const
   WebView2Key = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
 
-var
-  UrlPage: TInputQueryWizardPage;
-
 function IsLinked(): Boolean;
 begin
   Result := FileExists(ExpandConstant('{commonappdata}\Varde\config.toml'));
@@ -115,16 +113,24 @@ end;
 
 function CpUrl(): String;
 begin
-  Result := Trim(UrlPage.Values[0]);
+  Result := Trim(ExpandConstant('{param:CPURL|}'));
   while (Length(Result) > 0) and (Result[Length(Result)] = '/') do
     Delete(Result, Length(Result), 1);
 end;
 
-// the service reports this address until the PC is linked; the tray links with it
+// self-hosters pass /CPURL: the service reports this address until the PC is
+// linked; the tray links with it. No param means the hosted default, so no
+// server.url is written.
 procedure WriteServerUrl();
+var
+  U: String;
 begin
-  if not IsLinked() then
-    SaveStringToFile(ExpandConstant('{commonappdata}\Varde\server.url'), CpUrl() + #13#10, False);
+  U := Lowercase(CpUrl());
+  if IsLinked() or (U = '') then
+    Exit;
+  if (Pos('https://', U) <> 1) and (Pos('http://', U) <> 1) then
+    Exit;
+  SaveStringToFile(ExpandConstant('{commonappdata}\Varde\server.url'), U + #13#10, False);
 end;
 
 function TrayArgs(Param: String): String;
@@ -135,80 +141,12 @@ begin
     Result := '--link';
 end;
 
-function IsLocalHttp(U: String): Boolean;
-var
-  H: String;
-  I: Integer;
-begin
-  H := Lowercase(Copy(U, Length('http://') + 1, MaxInt));
-  I := Pos('/', H);
-  if I > 0 then
-    H := Copy(H, 1, I - 1);
-  if (Length(H) > 0) and (H[1] = '[') then
-    Result := Pos('[::1]', H) = 1
-  else
-  begin
-    I := Pos(':', H);
-    if I > 0 then
-      H := Copy(H, 1, I - 1);
-    Result := (H = 'localhost') or (Pos('127.', H) = 1);
-  end;
-end;
-
 function TrayRunLabel(Param: String): String;
 begin
   if IsLinked() then
     Result := 'Start the Varde tray'
   else
     Result := 'Link this PC now';
-end;
-
-procedure InitializeWizard();
-begin
-  UrlPage := CreateInputQueryPage(wpSelectTasks,
-    'Varde address', 'Which Varde should this PC join?',
-    'Enter the address of your Varde dashboard. After installing, Varde shows a short code ' +
-    'and opens this address so you can approve the PC.');
-  UrlPage.Add('Varde address:', False);
-  UrlPage.Values[0] := ExpandConstant('{param:CPURL|https://varde.games}');
-end;
-
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := (PageID = UrlPage.ID) and IsLinked();
-end;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  U: String;
-begin
-  Result := True;
-  if CurPageID <> UrlPage.ID then
-    Exit;
-  U := CpUrl();
-  if (Pos('https://', Lowercase(U)) <> 1) and (Pos('http://', Lowercase(U)) <> 1) then
-  begin
-    MsgBox('Enter an address starting with https:// (or http:// for a local Varde).',
-      mbError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-  if (Pos('http://', Lowercase(U)) = 1) and not IsLocalHttp(U) and
-     (MsgBox(U + ' isn''t encrypted (http://). Anyone on the network between this PC and Varde ' +
-       'could read or change what it sends.' + #13#10#13#10 +
-       'Use it only for a Varde on your own network. Continue?',
-       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES) then
-  begin
-    Result := False;
-    Exit;
-  end;
-  try
-    DownloadTemporaryFile(U + '/v1/version', 'varde-version.json', '', nil);
-  except
-    Result := MsgBox('Couldn''t reach ' + U + ' right now.' + #13#10#13#10 +
-      'Continue anyway? You can link this PC later from the tray.',
-      mbConfirmation, MB_YESNO) = IDYES;
-  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
