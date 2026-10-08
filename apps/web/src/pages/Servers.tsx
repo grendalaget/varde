@@ -48,7 +48,7 @@ export default function Servers() {
         }
       />
       {!loading && servers.length === 0 && (
-        <Card>
+        <Card className="vd-enter">
           <Empty>
             No servers yet.{" "}
             <Link
@@ -61,7 +61,7 @@ export default function Servers() {
           </Empty>
         </Card>
       )}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="vd-stagger grid gap-4 md:grid-cols-2">
         {servers.map((s) => (
           <ServerCard
             key={s.id}
@@ -88,7 +88,7 @@ function ServerCard({
   return (
     <Link
       to={`/servers/${s.id}`}
-      className="block rounded-lg border border-skifer-800 bg-skifer-900/60 p-4 transition-colors hover:border-skifer-600"
+      className="block rounded-lg border border-skifer-800 bg-skifer-900/60 p-4 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-skifer-600 hover:shadow-lg hover:shadow-black/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-take"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -114,7 +114,12 @@ function ServerCard({
         <Row label={crossplay ? "Join code" : "Address"}>
           {crossplay ? (
             sum.join_code ? (
-              <span onClick={(e) => e.preventDefault()}>
+              <span
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
                 <CopyText text={sum.join_code} />
               </span>
             ) : (
@@ -122,14 +127,17 @@ function ServerCard({
                 {s.observed_state === "running" ? "Waiting for code…" : "—"}
               </span>
             )
+          ) : sum.address ? (
+            <span
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <CopyText text={sum.address} />
+            </span>
           ) : (
-            sum.address ? (
-              <span onClick={(e) => e.preventDefault()}>
-                <CopyText text={sum.address} />
-              </span>
-            ) : (
-              <span className="text-skifer-500">—</span>
-            )
+            <span className="text-skifer-500">—</span>
           )}
         </Row>
         {crossplay && (

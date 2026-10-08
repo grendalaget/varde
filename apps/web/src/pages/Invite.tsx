@@ -18,7 +18,7 @@ export default function InvitePage({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6">
+    <div className="vd-enter space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6">
       {inv.error ? (
         <ErrorNote>This invite link is invalid or has expired.</ErrorNote>
       ) : !inv.data ? (

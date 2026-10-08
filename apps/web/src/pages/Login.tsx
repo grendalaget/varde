@@ -37,7 +37,7 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-skifer-950 p-6 text-skifer-100">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+        <div className="vd-enter mb-8 flex flex-col items-center gap-3 text-center">
           <h1 className="vd-hover mb-2">
             <Logo className="h-16" />
           </h1>
@@ -48,17 +48,19 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
         </div>
         <form
           onSubmit={submit}
-          className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
+          className="vd-enter vd-d-1 space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
         >
           {mode === "signup" && (
-            <Field label="Your name">
-              <input
-                className={inputClass}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Shown to your friends"
-              />
-            </Field>
+            <div className="vd-reveal">
+              <Field label="Your name">
+                <input
+                  className={inputClass}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Shown to your friends"
+                />
+              </Field>
+            </div>
           )}
           <Field label="Email">
             <input

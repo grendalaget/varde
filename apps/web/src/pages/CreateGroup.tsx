@@ -19,7 +19,7 @@ export default function CreateGroup({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="space-y-4">
+    <div className="vd-stagger space-y-4">
       <form
         className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
         onSubmit={async (e) => {

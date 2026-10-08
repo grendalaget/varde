@@ -33,6 +33,10 @@ export default {
           "sans-serif",
         ],
       },
+      transitionTimingFunction: {
+        "vd-out": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "vd-spring": "cubic-bezier(0.34, 1.4, 0.64, 1)",
+      },
     },
   },
   plugins: [],
