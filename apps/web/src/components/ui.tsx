@@ -1,4 +1,10 @@
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from "react";
 import { Loader } from "./Logo";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -271,14 +277,25 @@ export function CopyText({
   mono?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    setCopied(false);
+    return () => clearTimeout(timer.current);
+  }, [text]);
   return (
     <button
       type="button"
       title={copied ? "Copied" : "Copy"}
       onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1400);
+        if (!navigator.clipboard) return;
+        void navigator.clipboard.writeText(text).then(
+          () => {
+            setCopied(true);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1400);
+          },
+          () => {},
+        );
       }}
       className={cx(
         "group inline-flex items-center gap-1.5 rounded bg-skifer-950 px-2 py-0.5 text-left text-sm ring-1 transition-all duration-200 ease-vd-out active:scale-[0.96]",
