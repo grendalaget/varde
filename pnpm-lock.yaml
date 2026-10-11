@@ -174,6 +174,9 @@ importers:
       '@fluentui/react-icons':
         specifier: ^2.0.343
         version: 2.0.343(react@19.3.0)
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
       react:
         specifier: ^19.1.0
         version: 19.3.0
@@ -220,9 +223,9 @@ importers:
 
   apps/web:
     dependencies:
-      '@fontsource/schibsted-grotesk':
-        specifier: 5.2.8
-        version: 5.2.8
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
       openapi-fetch:
         specifier: ^0.15.0
         version: 0.15.2
@@ -1193,8 +1196,8 @@ packages:
   '@fluentui/tokens@1.0.0-alpha.24':
     resolution: {integrity: sha512-YrjGQfnxBR+9o8wXyTflON3Ohsv7OrZWYLVRU+7RaiFO1gcu36iDm3WjudlVmYuWRLDO0Gmxotm6RQNhbZuEQQ==}
 
-  '@fontsource/schibsted-grotesk@5.2.8':
-    resolution: {integrity: sha512-CyyDW5aS89oKGFAVndOsJTQ5pqzKuPnSKWjrdJdMT5TD/eA2JyWapUBhvy6X/lqqrB/GNk74PIff7coPifeVyg==}
+  '@fontsource-variable/inter@5.3.0':
+    resolution: {integrity: sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==}
 
   '@griffel/core@1.21.4':
     resolution: {integrity: sha512-Pt6tjaBCOYYC76L7U5yl3r+UqOGXEbeskvYuqUsUzaVQR2ueoMErA2+bRjvVPFr8NvvhPVU+QNBqd9Deg5st2A==}
@@ -4004,7 +4007,7 @@ snapshots:
     dependencies:
       '@swc/helpers': 0.5.23
 
-  '@fontsource/schibsted-grotesk@5.2.8': {}
+  '@fontsource-variable/inter@5.3.0': {}
 
   '@griffel/core@1.21.4':
     dependencies:

@@ -4,30 +4,39 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand v1 (brand/README.md). Glød is reserved for the current host.
-        natt: "#10161A",
+        // Varde design system (HeroUI Pro "mouve", cc850839): warm-tinted
+        // neutrals. Glød is reserved for the current host.
+        natt: "#110C0A",
         skifer: {
-          DEFAULT: "#1F2B34",
-          50: "#EEF0F2",
-          100: "#DCE2E6",
-          200: "#C2C8CD",
-          300: "#A7AFB4",
-          400: "#899198",
-          500: "#7A8389",
-          600: "#545F66",
-          700: "#364149",
-          800: "#1F2B34",
-          900: "#182027",
-          950: "#10161A",
+          DEFAULT: "#231E1C",
+          50: "#FCFCFC",
+          100: "#EBE5E3",
+          200: "#C9C1BE",
+          300: "#958D8B",
+          400: "#8B8380",
+          500: "#857D7A",
+          600: "#44403E",
+          700: "#38312F",
+          800: "#231E1C",
+          900: "#1A1513",
+          950: "#110C0A",
         },
-        take: "#DCE2E6",
-        papir: "#F3F0E9",
+        take: "#FCFCFC",
+        papir: "#F4EFED",
         glod: "#FF5B1F",
-        warn: "#E3C04B",
+        warn: "#F7B750",
       },
       fontFamily: {
+        sans: [
+          '"Inter Variable"',
+          '"Inter"',
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
         display: [
-          '"Schibsted Grotesk"',
+          '"Inter Variable"',
+          '"Inter"',
           "ui-sans-serif",
           "system-ui",
           "sans-serif",

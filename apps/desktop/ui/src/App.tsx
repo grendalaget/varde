@@ -26,7 +26,8 @@ import { invoke, listen, type LinkDefaults, type UiStatus } from "./tauri";
 import markUrl from "./assets/mark.svg";
 
 const LINKED = ["connecting", "online", "offline"];
-const brandFont = "'Schibsted Grotesk', 'Segoe UI', sans-serif";
+const brandFont =
+  "'Inter Variable', 'Inter', 'Segoe UI', system-ui, sans-serif";
 
 const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
 
