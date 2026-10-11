@@ -21,6 +21,8 @@ func apiErrFromMsg(err error) error {
 		return errResp(gen.Conflict, strings.TrimPrefix(msg, "conflict: "), nil)
 	case errors.Is(err, auth.ErrBadCredentials):
 		return errResp(gen.Unauthorized, "invalid email or password", nil)
+	case errors.Is(err, auth.ErrBadFederationToken):
+		return errResp(gen.Unauthorized, "invalid or expired sign-in token", nil)
 	}
 	return err
 }
@@ -65,6 +67,27 @@ func (s *Server) Login(ctx context.Context, req gen.LoginRequestObject) (gen.Log
 		return nil, apiErrFromMsg(err)
 	}
 	return gen.Login200JSONResponse{
+		User:  genUser(u),
+		Token: token,
+	}, nil
+}
+
+// ExternalLogin exchanges a varde.games federation token for a CP session.
+// Only wired up in federated mode; self-hosted CPs report it as absent.
+func (s *Server) ExternalLogin(ctx context.Context, req gen.ExternalLoginRequestObject) (gen.ExternalLoginResponseObject, error) {
+	if s.Federation == nil {
+		return nil, errResp(gen.NotFound, "federation is not enabled on this control plane", nil)
+	}
+	b := req.Body
+	if b == nil || strings.TrimSpace(b.Token) == "" {
+		return nil, errResp(gen.Validation, "missing token", nil)
+	}
+	u, token, err := s.Federation.LoginExternal(ctx, b.Token)
+	if err != nil {
+		return nil, apiErrFromMsg(err)
+	}
+	_ = s.Store.Audit(ctx, s.Store.DB, nil, "user", u.ID, "user.external_login", u.ID, map[string]any{"email": u.Email})
+	return gen.ExternalLogin200JSONResponse{
 		User:  genUser(u),
 		Token: token,
 	}, nil

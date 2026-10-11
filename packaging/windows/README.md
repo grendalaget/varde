@@ -9,7 +9,7 @@
 - shows the brand art in the wizard: `wizard/wizard-*.bmp` (mark + wordmark on
   Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
   each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
-- never asks for an address: the PC joins the hosted Varde (varde.games).
+- never asks for an address: the PC joins the hosted Varde (cp.varde.games).
   Self-hosting instead? `/CPURL=cp.example` (or a full https URL) writes
   `%ProgramData%\Varde\server.url`, which the unlinked service reports to
   the tray — skipped when the PC is already linked. A remote `http://`

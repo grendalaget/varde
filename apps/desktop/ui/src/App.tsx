@@ -4,12 +4,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
+  Dropdown,
   Field,
   Input,
   Link,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
+  Option,
   Text,
   Title2,
   makeStyles,
@@ -22,7 +24,13 @@ import {
   Open20Regular,
   Power20Regular,
 } from "@fluentui/react-icons";
-import { invoke, listen, type LinkDefaults, type UiStatus } from "./tauri";
+import {
+  invoke,
+  listen,
+  type FedState,
+  type LinkDefaults,
+  type UiStatus,
+} from "./tauri";
 import markUrl from "./assets/mark.svg";
 
 const LINKED = ["connecting", "online", "offline"];
@@ -30,6 +38,9 @@ const brandFont =
   "'Inter Variable', 'Inter', 'Segoe UI', system-ui, sans-serif";
 
 const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
+
+// the hosted control plane: only it can verify varde.games sign-in tokens
+const HOSTED_CP_HOST = "cp.varde.games";
 
 const useStyles = makeStyles({
   page: {
@@ -109,7 +120,7 @@ const useStyles = makeStyles({
   },
 });
 
-type View = "wait" | "form" | "code" | "done" | "linked" | "noagent";
+type View = "wait" | "form" | "fed" | "code" | "done" | "linked" | "noagent";
 
 function describe(s: UiStatus) {
   if (s.group_name && s.node_name)
@@ -141,6 +152,9 @@ export default function App() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // "Log in with Varde" progress; null until the button is clicked
+  const [fed, setFed] = useState<FedState | null>(null);
+  const [fedGroup, setFedGroup] = useState("");
   const closeTimer = useRef<number | undefined>(undefined);
 
   // stable (reads the ref): a re-subscribing effect could otherwise race
@@ -156,6 +170,7 @@ export default function App() {
   useEffect(() => {
     let offStatus: (() => void) | undefined;
     let offDefaults: (() => void) | undefined;
+    let offFed: (() => void) | undefined;
     (async () => {
       const d = await invoke<LinkDefaults>("link_defaults").catch(() => null);
       if (d) applyDefaults(d);
@@ -166,11 +181,26 @@ export default function App() {
       offDefaults = await listen<LinkDefaults>("link-defaults", (e) =>
         applyDefaults(e.payload),
       );
+      offFed = await listen<FedState>("federated-auth", (e) => {
+        const p = e.payload;
+        setFed(p);
+        if (p.stage === "pick_group") setFedGroup(p.groups[0]?.id ?? "");
+      });
+      // a deep link may have progressed the sign-in before this window
+      // subscribed — hydrate the current stage
+      const f = await invoke<FedState | null>("federated_state").catch(
+        () => null,
+      );
+      if (f) {
+        setFed(f);
+        if (f.stage === "pick_group") setFedGroup(f.groups[0]?.id ?? "");
+      }
       setStatus(await invoke<UiStatus | null>("get_status").catch(() => null));
     })();
     return () => {
       offStatus?.();
       offDefaults?.();
+      offFed?.();
     };
   }, [applyDefaults]);
 
@@ -197,6 +227,10 @@ export default function App() {
     if (!s) return;
     setSeen(true);
     setForceForm(false);
+    // a federated sign-in is done once ITS link flow reaches the service —
+    // during a re-link the old link still reports a LINKED state until the
+    // new one is approved, so wait for our own link to have started
+    if (started && LINKED.includes(s.state)) setFed(null);
     if (s.state === "linking" && s.user_code) {
       setStarted(true);
       // a new code: drop a refusal shown for the previous one
@@ -212,12 +246,14 @@ export default function App() {
   const view: View = useMemo(() => {
     const s = status;
     if (!s) return seen || graceDone ? "noagent" : "wait";
+    // the federated flow renders its own progress instead of the code view
+    if (fed) return "fed";
     if (s.state === "linking" && s.user_code) return "code";
     if (started && LINKED.includes(s.state)) return "done";
     if (forceForm || formState) return "form";
     if (LINKED.includes(s.state)) return "linked";
     return "noagent";
-  }, [status, seen, graceDone, started, forceForm, formState]);
+  }, [status, seen, graceDone, started, forceForm, formState, fed]);
 
   // auto-close the "Linked" view on the transition INTO online — status
   // still says "online" while a re-link is being set up (and after Cancel),
@@ -247,6 +283,12 @@ export default function App() {
 
   const effectiveUrl =
     urlEdited || url ? url : status?.control_plane_url || defaults?.url || "";
+  // varde.games sign-in only exists on the hosted control plane — and not
+  // in the elevated re-link window: a browser callback lands in a normal
+  // instance that the agent refuses to re-link, so re-link uses the code
+  // flow (browser-side approval) only
+  const hosted =
+    hostOf(effectiveUrl) === HOSTED_CP_HOST && !defaults?.relink;
 
   const doLink = useCallback(async (u: string) => {
     setFormError("");
@@ -318,6 +360,37 @@ export default function App() {
     setForceForm(true);
   }, []);
 
+  const beginVardeLogin = useCallback(async () => {
+    setFormError("");
+    try {
+      await invoke("begin_varde_login");
+    } catch (e) {
+      setFed({ stage: "error", message: String(e) });
+    }
+  }, []);
+
+  const cancelFed = useCallback(() => {
+    // clears the stored token/group pick and any mid-flight link
+    void invoke("cancel_varde_login").catch(() => {});
+    setFed(null);
+  }, []);
+
+  const finishVardeLogin = useCallback(async () => {
+    try {
+      await invoke("finish_varde_login", { groupId: fedGroup });
+    } catch (e) {
+      setFed({ stage: "error", message: String(e) });
+    }
+  }, [fedGroup]);
+
+  const confirmVardeLogin = useCallback(async () => {
+    try {
+      await invoke("confirm_varde_login");
+    } catch (e) {
+      setFed({ stage: "error", message: String(e) });
+    }
+  }, []);
+
   const expiry = (() => {
     if (!status || status.state !== "linking" || !status.expires_at_unix_ms)
       return "";
@@ -385,7 +458,7 @@ export default function App() {
               ) : (
                 <div className={styles.serverRow}>
                   <Text as="span">
-                    Server: {hostOf(effectiveUrl) || "varde.games"}
+                    Server: {hostOf(effectiveUrl) || HOSTED_CP_HOST}
                   </Text>
                   <Link as="button" onClick={() => setServerOpen(true)}>
                     Use a different server
@@ -397,12 +470,130 @@ export default function App() {
                   <MessageBarBody>{formError}</MessageBarBody>
                 </MessageBar>
               )}
-              <div>
-                <Button appearance="primary" type="submit" disabled={linkBusy}>
-                  Continue
-                </Button>
-              </div>
+              {hosted ? (
+                <div className={styles.row}>
+                  <Button
+                    appearance="primary"
+                    disabled={linkBusy}
+                    onClick={() => void beginVardeLogin()}
+                  >
+                    Log in with Varde
+                  </Button>
+                  <Button type="submit" disabled={linkBusy}>
+                    Use a code instead
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <Button
+                    appearance="primary"
+                    type="submit"
+                    disabled={linkBusy}
+                  >
+                    Continue
+                  </Button>
+                </div>
+              )}
             </form>
+          </section>
+        )}
+
+        {view === "fed" && fed && (
+          <section>
+            <Title2 className={styles.title} as="h1">
+              Log in with Varde
+            </Title2>
+            {fed.stage === "confirm" && (
+              <>
+                <Text className={styles.lead} as="p">
+                  varde.games wants to link this PC to{" "}
+                  {fed.email ? <strong>{fed.email}</strong> : "your account"}.
+                </Text>
+                <Text className={styles.muted} as="p">
+                  Only continue if you just clicked Log in with Varde.
+                </Text>
+              </>
+            )}
+            {fed.stage === "waiting_browser" && (
+              <>
+                <Text className={styles.lead} as="p">
+                  Finish signing in at varde.games — you'll come back here
+                  automatically.
+                </Text>
+                <Text className={styles.muted} as="p">
+                  Waiting for your browser…
+                </Text>
+              </>
+            )}
+            {fed.stage === "exchanging" && (
+              <Text className={styles.lead} as="p">
+                Signing you in…
+              </Text>
+            )}
+            {fed.stage === "approving" && (
+              <Text className={styles.lead} as="p">
+                Linking this PC…
+              </Text>
+            )}
+            {fed.stage === "pick_group" && (
+              <>
+                <Text className={styles.lead} as="p">
+                  Pick the group this PC joins.
+                </Text>
+                <Field label="Group">
+                  <Dropdown
+                    value={
+                      fed.groups.find((g) => g.id === fedGroup)?.name ?? ""
+                    }
+                    selectedOptions={fedGroup ? [fedGroup] : []}
+                    onOptionSelect={(_, d) =>
+                      setFedGroup(String(d.optionValue ?? ""))
+                    }
+                  >
+                    {fed.groups.map((g) => (
+                      <Option key={g.id} value={g.id}>
+                        {g.name}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
+              </>
+            )}
+            {fed.stage === "error" && (
+              <MessageBar intent="error" className={styles.bar}>
+                <MessageBarBody>{fed.message}</MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={styles.row}>
+              {fed.stage === "confirm" && (
+                <Button
+                  appearance="primary"
+                  onClick={() => void confirmVardeLogin()}
+                >
+                  Link this PC
+                </Button>
+              )}
+              {fed.stage === "pick_group" && (
+                <Button
+                  appearance="primary"
+                  disabled={!fedGroup}
+                  onClick={() => void finishVardeLogin()}
+                >
+                  Link this PC
+                </Button>
+              )}
+              {fed.stage === "error" && (
+                <Button
+                  appearance="primary"
+                  onClick={() => void beginVardeLogin()}
+                >
+                  Try again
+                </Button>
+              )}
+              <Button icon={<Dismiss20Regular />} onClick={() => cancelFed()}>
+                Cancel
+              </Button>
+            </div>
           </section>
         )}
 

@@ -37,12 +37,13 @@ func (s *Server) sessionCookie(token string, maxAge int) *http.Cookie {
 	return c
 }
 
-// cookieAuthPaths get a Set-Cookie on success: login and signup stash the
-// token they just issued, logout expires the cookie.
+// cookieAuthPaths get a Set-Cookie on success: login, signup and the
+// federated exchange stash the token they just issued; logout expires it.
 var cookieAuthPaths = map[string]bool{
-	"/v1/auth/login":  true,
-	"/v1/auth/signup": true,
-	"/v1/auth/logout": true,
+	"/v1/auth/login":    true,
+	"/v1/auth/signup":   true,
+	"/v1/auth/logout":   true,
+	"/v1/auth/external": true,
 }
 
 // sessionCookies injects Set-Cookie on the auth endpoints. The strict

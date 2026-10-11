@@ -96,38 +96,40 @@ func Open(url string, clk Clock) (*Store, error) {
 // files were written — old databases keep their tables, so the column must
 // be added idempotently at startup.
 func ensureColumns(db *sqlx.DB, dialect string) error {
-	if dialect == "postgres" {
-		stmts := []string{
-			`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id)`,
-			`ALTER TABLE server_executions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'serving'`,
-			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'serial'`,
-			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS to_execution_id TEXT`,
-			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS drain_until BIGINT`,
+	type col struct{ table, name, ddl string }
+	cols := []col{
+		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
+		{"users", "website_user_id", "TEXT"},
+		{"server_executions", "role", "TEXT NOT NULL DEFAULT 'serving'"},
+		{"migrations", "mode", "TEXT NOT NULL DEFAULT 'serial'"},
+		{"migrations", "to_execution_id", "TEXT"},
+		{"migrations", "drain_until", "BIGINT"},
+	}
+	for _, c := range cols {
+		if dialect == "postgres" {
+			if _, err := db.Exec(fmt.Sprintf(
+				`ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s`, c.table, c.name, c.ddl)); err != nil {
+				return err
+			}
+			continue
 		}
-		for _, q := range stmts {
-			if _, err := db.Exec(q); err != nil {
+		var n int
+		if err := db.Get(&n,
+			`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.name); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(fmt.Sprintf(
+				`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.name, c.ddl)); err != nil {
 				return err
 			}
 		}
-	} else {
-		cols := []struct{ table, col, def string }{
-			{"nodes", "owner_user_id", "owner_user_id TEXT REFERENCES users(id)"},
-			{"server_executions", "role", "role TEXT NOT NULL DEFAULT 'serving'"},
-			{"migrations", "mode", "mode TEXT NOT NULL DEFAULT 'serial'"},
-			{"migrations", "to_execution_id", "to_execution_id TEXT"},
-			{"migrations", "drain_until", "drain_until BIGINT"},
-		}
-		for _, c := range cols {
-			var n int
-			if err := db.Get(&n, `SELECT count(*) FROM pragma_table_info('`+c.table+`') WHERE name='`+c.col+`'`); err != nil {
-				return err
-			}
-			if n == 0 {
-				if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.def); err != nil {
-					return err
-				}
-			}
-		}
+	}
+	// UNIQUE on the federated id; sqlite can't add UNIQUE columns via ALTER,
+	// so both dialects get it through the index (NULLs don't collide).
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id)`); err != nil {
+		return err
 	}
 	// one_active predates execution roles: rebuild it to exclude non-serving
 	// executions (idempotent — safe on fresh databases too).

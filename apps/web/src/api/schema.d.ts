@@ -105,6 +105,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a varde.games federation token for a CP session. Only available when the control plane runs with VARDE_AUTH_MODE=federated; self-hosted (local) control planes answer 404. */
+        post: operations["externalLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -735,6 +752,10 @@ export interface components {
             /** Format: email */
             email: string;
             password: string;
+        };
+        ExternalLoginRequest: {
+            /** @description HS256 JWT minted by varde.games (iss=https://varde.games, aud=cp.varde.games, lifetime <= 5 minutes). */
+            token: string;
         };
         AuthResponse: {
             user: components["schemas"]["User"];
@@ -1402,6 +1423,34 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    externalLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Session created (also sets the varde_session cookie). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     logout: {

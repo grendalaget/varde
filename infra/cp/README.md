@@ -53,7 +53,10 @@ fly certs add cp.varde.games             # then point the DNS record at the app
 
 All non-secret config lives in `fly.toml [env]`: `VARDE_LISTEN` (app port,
 fronted by the LiteFS proxy on 8080), `VARDE_DB` (sqlite inside the FUSE
-mount), `VARDE_PUBLIC_URL`, `VARDE_SIGNUP`, `VARDE_PRIMARY_FILE`. Use
+mount), `VARDE_PUBLIC_URL`, `VARDE_SIGNUP`, `VARDE_PRIMARY_FILE`,
+`VARDE_AUTH_MODE` (`federated` — the hosted CP trusts varde.games sign-in
+tokens on `/v1/auth/external`). `VARDE_FEDERATION_SECRET` is a `fly secrets
+set` value — the same secret as `FEDERATION_SECRET` on the varde.games site. Use
 `fly secrets set` for anything sensitive in the future
 (`VARDE_EMBEDDED_RELAY*` optional — needs a dedicated IPv4 + UDP service
 block, not wired here).

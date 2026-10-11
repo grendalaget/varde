@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/grendalaget/varde/apps/controlplane/internal/api"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
@@ -2270,5 +2272,81 @@ func TestWarmMigrationTimesOut(t *testing.T) {
 		if ex.ExecutionID == execA && (ex.Freeze || ex.Action == "stop") {
 			t.Fatalf("stalled warm move should unfreeze source: %+v", ex)
 		}
+	}
+}
+
+// ---- federation (/v1/auth/external) ----
+
+func mintFedToken(t *testing.T, secret, iss, aud, sub, email string, exp time.Time) string {
+	t.Helper()
+	claims := jwt.MapClaims{
+		"iss":   iss,
+		"aud":   aud,
+		"sub":   sub,
+		"email": email,
+		"name":  "Fed User",
+		"iat":   time.Now().Unix(),
+		"exp":   exp.Unix(),
+	}
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestExternalLogin(t *testing.T) {
+	e := newEnv(t)
+	// local mode: the endpoint is absent
+	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": "x"}, ""); r.Status != 404 {
+		t.Fatalf("local mode external login: want 404, got %d %s", r.Status, r.Raw)
+	}
+
+	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Federation = fed
+	exp := time.Now().Add(5 * time.Minute)
+
+	tok := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_1", "fed@example.com", exp)
+	r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
+	b := e.mustOK(r)
+	session := b["token"].(string)
+	if session == "" {
+		t.Fatal("no session token")
+	}
+	me := e.mustOK(e.do("GET", "/v1/me", nil, session))
+	if me["user"].(map[string]any)["email"] != "fed@example.com" {
+		t.Fatalf("me: %s", me)
+	}
+	// upsert: a second login reuses the same CP user
+	first := me["user"].(map[string]any)["id"]
+	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
+	b = e.mustOK(r)
+	me2 := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
+	if me2["user"].(map[string]any)["id"] != first {
+		t.Fatal("repeat login created a second user")
+	}
+
+	// wrong secret / issuer / audience / expired all rejected
+	for _, bad := range []string{
+		mintFedToken(t, "other-secret", "https://varde.games", "cp.varde.games", "wuser_2", "a@b.c", exp),
+		mintFedToken(t, "test-fed-secret", "https://evil.example", "cp.varde.games", "wuser_2", "a@b.c", exp),
+		mintFedToken(t, "test-fed-secret", "https://varde.games", "other-cp", "wuser_2", "a@b.c", exp),
+		mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games", "wuser_2", "a@b.c", time.Now().Add(-time.Minute)),
+		mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games", "wuser_2", "a@b.c", time.Now().Add(time.Hour)),
+	} {
+		if r := e.do("POST", "/v1/auth/external", map[string]any{"token": bad}, ""); r.Status != 401 {
+			t.Fatalf("bad token accepted: %d %s", r.Status, r.Raw)
+		}
+	}
+
+	// email colliding with a local account conflicts rather than merging
+	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_9", "op@example.com", exp)
+	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
+		t.Fatalf("email collision: want 409, got %d %s", r.Status, r.Raw)
 	}
 }

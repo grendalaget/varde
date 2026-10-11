@@ -103,6 +103,8 @@ type serveCfg struct {
 	dbURL          string
 	publicURL      string
 	signup         string
+	authMode       string
+	fedSecret      string
 	embeddedRelay  string
 	embeddedAddr   string
 	relays         relayFlags
@@ -124,6 +126,8 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
 	fs.StringVar(&cfg.signup, "signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
+	fs.StringVar(&cfg.authMode, "auth-mode", envOr("VARDE_AUTH_MODE", "local"), "auth mode: local|federated (federated trusts varde.games tokens on /v1/auth/external)")
+	fs.StringVar(&cfg.fedSecret, "federation-secret", envOr("VARDE_FEDERATION_SECRET", ""), "shared secret for varde.games federation tokens (required with --auth-mode=federated)")
 	fs.StringVar(&cfg.embeddedRelay, "embedded-relay", envOr("VARDE_EMBEDDED_RELAY", ""), "run an in-process relay on this UDP addr (e.g. :3478)")
 	fs.StringVar(&cfg.embeddedAddr, "embedded-relay-addr", envOr("VARDE_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
 	fs.Int64Var(&cfg.heartbeatMs, "heartbeat-interval-ms", envInt("VARDE_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
@@ -235,13 +239,28 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		log.Info("embedded relay listening", "addr", addr)
 	}
 
+	local := &auth.Local{Store: st, Policy: auth.SignupPolicy(cfg.signup)}
+	var fed *auth.Federation
+	switch cfg.authMode {
+	case "local":
+	case "federated":
+		f, err := auth.NewFederation(local, cfg.fedSecret)
+		if err != nil {
+			return fmt.Errorf("federation: %w", err)
+		}
+		fed = f
+	default:
+		return fmt.Errorf("unknown auth mode %q (want local|federated)", cfg.authMode)
+	}
+
 	srv := &api.Server{
-		Store:    st,
-		Auth:     &auth.Local{Store: st, Policy: auth.SignupPolicy(cfg.signup)},
-		Cfg:      api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
-		Recon:    recon,
-		RelayKey: relayKey,
-		Log:      log,
+		Store:      st,
+		Auth:       local,
+		Federation: fed,
+		Cfg:        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
+		Recon:      recon,
+		RelayKey:   relayKey,
+		Log:        log,
 	}
 
 	handler := api.NewHandler(srv, webui.Handler())

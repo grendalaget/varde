@@ -23,6 +23,15 @@ export interface LinkDefaults {
   relink: boolean;
 }
 
+// "federated-auth" payloads from the tray ("Log in with Varde" progress).
+export type FedState =
+  | { stage: "confirm"; email: string; name: string }
+  | { stage: "waiting_browser" }
+  | { stage: "exchanging" }
+  | { stage: "pick_group"; groups: { id: string; name: string }[] }
+  | { stage: "approving" }
+  | { stage: "error"; message: string };
+
 type Handler<T> = (e: { payload: T }) => void;
 type Unlisten = () => void;
 
@@ -44,7 +53,7 @@ declare global {
 function linked(hosting: boolean): UiStatus {
   return {
     state: "online",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "Grendalaget",
     node_name: "desktop-42",
     user_code: "",
@@ -59,7 +68,7 @@ function linked(hosting: boolean): UiStatus {
 const canned: Record<string, UiStatus | null> = {
   not_linked: {
     state: "not_linked",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "",
     node_name: "",
     user_code: "",
@@ -71,11 +80,11 @@ const canned: Record<string, UiStatus | null> = {
   },
   linking: {
     state: "linking",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "",
     node_name: "",
     user_code: "WXYZ-1234",
-    link_url: "https://cp.varde.example/link?code=WXYZ-1234",
+    link_url: "https://cp.varde.games/link?code=WXYZ-1234",
     expires_at_unix_ms: Date.now() + 298_000,
     link_error: "",
     hosting: false,
@@ -88,7 +97,7 @@ const canned: Record<string, UiStatus | null> = {
     ...linked(false),
     state: "linking",
     user_code: "WXYZ-1234",
-    link_url: "https://cp.varde.example/link?code=WXYZ-1234",
+    link_url: "https://cp.varde.games/link?code=WXYZ-1234",
     expires_at_unix_ms: Date.now() + 298_000,
     relink: true,
   },
@@ -102,20 +111,87 @@ function mock(): TauriGlobal {
   // listeners for that event
   const listeners = new Map<string, Set<Handler<unknown>>>();
   const emit = <T>(event: string, payload: T) => {
+    // TEMP-TEST: trace event emissions for verification
+    (window as unknown as { __mocklog?: string[] }).__mocklog = [
+      ...((window as unknown as { __mocklog?: string[] }).__mocklog ?? []),
+      `emit ${event} ${JSON.stringify(payload)}`,
+    ];
     listeners.get(event)?.forEach((h) => h({ payload }));
   };
   return {
     core: {
-      invoke: <T>(cmd: string): Promise<T> => {
+      invoke: <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+        // TEMP-TEST: trace invokes for verification
+        (window as unknown as { __mocklog?: string[] }).__mocklog = [
+          ...((window as unknown as { __mocklog?: string[] }).__mocklog ?? []),
+          `invoke ${cmd} ${JSON.stringify(args)}`,
+        ];
         switch (cmd) {
           case "get_status":
             return Promise.resolve(canned[state] as T);
           case "link_defaults":
             return Promise.resolve({
-              url: "https://cp.varde.example",
+              url: "https://cp.varde.games",
               auto: false,
               relink: false,
             } as T);
+          case "begin_varde_login": {
+            emit("federated-auth", { stage: "waiting_browser" });
+            // the browser "returned" a varde:// callback — confirm next
+            setTimeout(
+              () =>
+                emit("federated-auth", {
+                  stage: "confirm",
+                  email: "arne@example.com",
+                  name: "Arne",
+                }),
+              500,
+            );
+            return Promise.resolve(undefined as T);
+          }
+          case "confirm_varde_login": {
+            emit("federated-auth", { stage: "exchanging" });
+            const fedp = new URLSearchParams(window.location.search).get(
+              "fed",
+            );
+            const multi = fedp === "multi";
+            // TEMP-TEST: simulate a federated-auth failure with ?fed=error
+            const err = fedp === "error";
+            setTimeout(
+              () =>
+                err
+                  ? emit("federated-auth", {
+                      stage: "error",
+                      message: "Couldn't reach varde.games (simulated)",
+                    })
+                  : multi
+                    ? emit("federated-auth", {
+                        stage: "pick_group",
+                        groups: [
+                          { id: "grp_1", name: "Grendalaget" },
+                          { id: "grp_2", name: "Weekend crew" },
+                        ],
+                      })
+                    : emit("federated-auth", { stage: "approving" }),
+              400,
+            );
+            if (!multi && !err) {
+              setTimeout(() => emit("status", canned.linking), 900);
+              setTimeout(() => emit("status", linked(false)), 3500);
+            }
+            return Promise.resolve(undefined as T);
+          }
+          case "cancel_varde_login":
+            emit("status", canned.not_linked);
+            return Promise.resolve(undefined as T);
+          case "federated_state":
+            return Promise.resolve(null as T);
+          case "finish_varde_login": {
+            emit("federated-auth", { stage: "approving" });
+            setTimeout(() => emit("status", canned.linking), 400);
+            setTimeout(() => emit("status", linked(false)), 2500);
+            return Promise.resolve(undefined as T);
+          }
           case "start_link":
             emit("status", canned.linking);
             // pretend the owner approved a few seconds later

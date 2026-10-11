@@ -107,6 +107,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
         "401": { $ref: "#/components/responses/Error" }
+  /v1/auth/external:
+    post:
+      operationId: externalLogin
+      tags: [auth]
+      summary: >
+        Exchange a varde.games federation token for a CP session. Only
+        available when the control plane runs with VARDE_AUTH_MODE=federated;
+        self-hosted (local) control planes answer 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "200":
+          description: Session created (also sets the varde_session cookie).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/auth/logout:
     post:
       operationId: logout
@@ -1143,6 +1166,15 @@ components:
       properties:
         email: { type: string, format: email }
         password: { type: string }
+    ExternalLoginRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: >
+            HS256 JWT minted by varde.games (iss=https://varde.games,
+            aud=cp.varde.games, lifetime <= 5 minutes).
     AuthResponse:
       type: object
       required: [user, token]
