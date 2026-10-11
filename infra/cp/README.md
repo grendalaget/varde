@@ -62,7 +62,7 @@ block, not wired here).
 
 ```bash
 fly ssh console                        # into any machine
-cat /litefs/.primary                   # lease holder's machine ID (replicas only)
+cat /litefs/.primary                   # primary's machine ID; absent on the primary itself
 litefs export -name varde.db /tmp/varde.db   # consistent db snapshot (safe live)
 litefs import -name varde.db /tmp/varde.db   # restore: creates or replaces
 litefs version
