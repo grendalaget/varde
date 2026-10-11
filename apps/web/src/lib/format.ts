@@ -11,12 +11,12 @@ export function timeAgo(ms?: number | null): string {
 }
 
 export function dateTime(ms?: number | null): string {
-  if (!ms) return "—";
+  if (!ms) return "-";
   return new Date(ms).toLocaleString();
 }
 
 export function bytes(n?: number | null): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   const u = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   let v = n;

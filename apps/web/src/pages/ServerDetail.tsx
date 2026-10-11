@@ -315,13 +315,13 @@ function Overview({
                   <CopyText text={sum.join_code} />
                 ) : (
                   <span className="text-muted">
-                    {s.observed_state === "running" ? "Waiting for code…" : "—"}
+                    {s.observed_state === "running" ? "Waiting for code…" : "-"}
                   </span>
                 )
               ) : sum.address ? (
                 <CopyText text={sum.address} />
               ) : (
-                <span className="text-muted">—</span>
+                <span className="text-muted">-</span>
               )}
             </div>
             {crossplay ? (
@@ -804,7 +804,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
                     {e.health ? ` (${e.health})` : ""}
                   </td>
                   <td className="px-4 py-1.5">
-                    {e.ended_at ? "—" : dateTime(e.lease_expires_at)}
+                    {e.ended_at ? "-" : dateTime(e.lease_expires_at)}
                   </td>
                   <td className="px-4 py-1.5">{e.end_reason ?? ""}</td>
                   <td className="px-4 py-1.5 text-muted">{e.id}</td>
@@ -822,7 +822,7 @@ function KV({ k, v }: { k: string; v?: string | null }) {
   return (
     <div className="flex gap-3">
       <dt className="w-28 shrink-0 text-muted sm:w-36">{k}</dt>
-      <dd className="min-w-0 break-all text-foreground">{v ?? "—"}</dd>
+      <dd className="min-w-0 break-all text-foreground">{v ?? "-"}</dd>
     </div>
   );
 }

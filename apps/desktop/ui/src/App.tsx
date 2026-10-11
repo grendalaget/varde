@@ -346,7 +346,7 @@ export default function App() {
               {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
             </Title2>
             <Text className={styles.lead} as="p">
-              Varde opens your dashboard so you can approve this PC — sign up
+              Varde opens your dashboard so you can approve this PC. Sign up
               there, then create a group or join your friends with an invite
               link.
             </Text>
@@ -367,7 +367,7 @@ export default function App() {
               {serverOpen ? (
                 <Field
                   label="Varde server"
-                  hint="Only if your group runs its own Varde — for example a friend's."
+                  hint="Only if your group runs its own Varde, for example a friend's."
                 >
                   <Input
                     type="url"

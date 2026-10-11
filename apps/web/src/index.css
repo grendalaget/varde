@@ -455,3 +455,10 @@ body {
     animation: none;
   }
 }
+
+/* The app's cairn keeps a resting ember: lit = the host is up.
+   The site only lights stones on hover/reduced-motion; here the mark is
+   semantic state, so vd-h1 stays Glød unless explicitly unlit (idle). */
+.vd-h1:not(.vd-unlit) {
+  fill: var(--vd-ember);
+}

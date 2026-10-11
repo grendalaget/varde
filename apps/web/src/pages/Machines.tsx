@@ -191,12 +191,12 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
             </div>
           </div>
           <div className="grid gap-2 text-xs text-muted sm:grid-cols-2">
-            <div>Agent version: {n.agent_version ?? "—"}</div>
+            <div>Agent version: {n.agent_version ?? "-"}</div>
             <div>
               Uptime:{" "}
-              {caps?.uptime_s ? `${Math.round(caps.uptime_s / 3600)} h` : "—"}
+              {caps?.uptime_s ? `${Math.round(caps.uptime_s / 3600)} h` : "-"}
             </div>
-            <div>Runtimes: {caps?.runtimes?.join(", ") || "—"}</div>
+            <div>Runtimes: {caps?.runtimes?.join(", ") || "-"}</div>
             <div>On battery: {caps?.on_battery ? "yes" : "no"}</div>
             <div className="sm:col-span-2 truncate font-mono">ID {n.id}</div>
           </div>

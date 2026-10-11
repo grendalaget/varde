@@ -124,7 +124,7 @@ function ServerCard({
               </span>
             ) : (
               <span className="text-muted">
-                {s.observed_state === "running" ? "Waiting for code…" : "—"}
+                {s.observed_state === "running" ? "Waiting for code…" : "-"}
               </span>
             )
           ) : sum.address ? (
@@ -137,7 +137,7 @@ function ServerCard({
               <CopyText text={sum.address} />
             </span>
           ) : (
-            <span className="text-muted">—</span>
+            <span className="text-muted">-</span>
           )}
         </Row>
         {crossplay && (

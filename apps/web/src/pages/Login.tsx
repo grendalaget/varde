@@ -42,7 +42,7 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
             <Logo className="h-16" />
           </h1>
           <p className="text-sm text-muted">
-            Game servers your group owns together — they keep running and keep
+            Game servers your group owns together. They keep running and keep
             your saves safe, whoever's PC is on.
           </p>
         </div>
