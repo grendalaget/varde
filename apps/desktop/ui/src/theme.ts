@@ -5,27 +5,39 @@ import {
   type Theme,
 } from "@fluentui/react-components";
 
-// Fluent 2 on the Varde palette: Natt background, Skifer surfaces, Tåke
+// Fluent 2 on the Varde design system (HeroUI Pro "mouve" theme,
+// cc850839): warm-tinted neutrals (#110C0A family, oklch hue ~38), snow
 // text + primary actions (light-on-dark, like the old UI). Warnings are
 // Fluent's warning intent (yellow). No Glød orange anywhere: orange marks
 // "this PC is hosting" and that signal lives on the tray icon.
 const brand: BrandVariants = {
-  10: "#0a0e11",
-  20: "#10161a",
-  30: "#16202a",
-  40: "#1f2b34",
-  50: "#2e3c47",
-  60: "#45535f",
-  70: "#5f6e7a",
-  80: "#82909b",
-  90: "#a6b1ba",
-  100: "#c0c8ce",
-  110: "#d0d6da",
-  120: "#dce2e6", // Tåke
-  130: "#e4e9ec",
-  140: "#eceff1",
-  150: "#f3f5f6",
-  160: "#f9fafb",
+  10: "#0a0706",
+  20: "#110c0a",
+  30: "#1a1513",
+  40: "#231e1c",
+  50: "#2b2523",
+  60: "#38312f",
+  70: "#44403e",
+  80: "#5e5a58",
+  90: "#7c7573",
+  100: "#958d8b",
+  110: "#c9c1be",
+  120: "#ebe5e3",
+  130: "#f4efed",
+  140: "#f9f6f4",
+  150: "#fcfcfc",
+  160: "#ffffff",
+};
+
+// Design-system typeface is Inter; the variable build ships with the app.
+const FONT_FAMILY =
+  '"Inter Variable", "Inter", "Segoe UI", system-ui, sans-serif';
+// DS shape language is rounder than Fluent defaults (16px basis).
+const RADII = {
+  borderRadiusSmall: "4px",
+  borderRadiusMedium: "8px",
+  borderRadiusLarge: "12px",
+  borderRadiusXLarge: "16px",
 };
 
 const dark = createDarkTheme(brand);
@@ -33,42 +45,46 @@ const light = createLightTheme(brand);
 
 export const vardeDark: Theme = {
   ...dark,
-  colorNeutralBackground1: "#10161a", // Natt
-  colorNeutralBackground2: "#1f2b34", // Skifer
-  colorNeutralForeground1: "#dce2e6", // Tåke
-  colorNeutralForeground2: "#aebac2",
-  colorNeutralForeground3: "#93a1ab",
-  colorNeutralStroke1: "#2e3c47",
-  colorNeutralStroke2: "#40505c",
-  // Light-on-dark primary, matching the previous Tåke-filled button.
-  colorBrandBackground: "#dce2e6",
-  colorBrandBackgroundHover: "#e9edf0",
-  colorBrandBackgroundPressed: "#c6cdd2",
-  colorNeutralForegroundOnBrand: "#10161a",
-  colorBrandForeground1: "#dce2e6",
-  colorBrandForegroundLink: "#dce2e6",
+  ...RADII,
+  fontFamilyBase: FONT_FAMILY,
+  colorNeutralBackground1: "#110c0a", // mouve background
+  colorNeutralBackground2: "#1a1513", // mouve surface
+  colorNeutralForeground1: "#fcfcfc", // mouve foreground (snow)
+  colorNeutralForeground2: "#c9c1be",
+  colorNeutralForeground3: "#958d8b", // mouve muted
+  colorNeutralStroke1: "#322c2a", // mouve border
+  colorNeutralStroke2: "#44403e", // mouve border-secondary
+  // Light-on-dark primary, matching the previous snow-filled button.
+  colorBrandBackground: "#fcfcfc",
+  colorBrandBackgroundHover: "#ffffff",
+  colorBrandBackgroundPressed: "#c9c1be",
+  colorNeutralForegroundOnBrand: "#110c0a",
+  colorBrandForeground1: "#fcfcfc",
+  colorBrandForegroundLink: "#fcfcfc",
   colorBrandForegroundLinkHover: "#ffffff",
 };
 
-// The same ramp, inverted: a pale Tåke wash for the page, white surfaces,
-// Natt text, and a Skifer-filled primary button (mirror of the dark UI's
-// Tåke-filled button).
+// The same ramp, inverted: a pale papir wash for the page, snow surfaces,
+// eclipse text, and a dark-warm primary button (mirror of the dark UI's
+// snow-filled button).
 export const vardeLight: Theme = {
   ...light,
-  colorNeutralBackground1: "#f3f5f6",
-  colorNeutralBackground2: "#ffffff",
-  colorNeutralForeground1: "#10161a", // Natt
-  colorNeutralForeground2: "#2e3c47",
-  colorNeutralForeground3: "#5f6e7a",
-  colorNeutralStroke1: "#c0c8ce",
-  colorNeutralStroke2: "#a6b1ba",
-  colorBrandBackground: "#1f2b34", // Skifer
-  colorBrandBackgroundHover: "#2e3c47",
-  colorBrandBackgroundPressed: "#10161a",
-  colorNeutralForegroundOnBrand: "#dce2e6",
-  colorBrandForeground1: "#1f2b34",
-  colorBrandForegroundLink: "#1f2b34",
-  colorBrandForegroundLinkHover: "#10161a",
+  ...RADII,
+  fontFamilyBase: FONT_FAMILY,
+  colorNeutralBackground1: "#f4efed", // mouve-light background
+  colorNeutralBackground2: "#fcfcfc", // snow
+  colorNeutralForeground1: "#26201e", // mouve-light foreground (eclipse)
+  colorNeutralForeground2: "#44403e",
+  colorNeutralForeground3: "#5e5a58",
+  colorNeutralStroke1: "#c9c1be",
+  colorNeutralStroke2: "#958d8b",
+  colorBrandBackground: "#26201e", // eclipse
+  colorBrandBackgroundHover: "#38312f",
+  colorBrandBackgroundPressed: "#110c0a",
+  colorNeutralForegroundOnBrand: "#fcfcfc",
+  colorBrandForeground1: "#26201e",
+  colorBrandForegroundLink: "#26201e",
+  colorBrandForegroundLinkHover: "#110c0a",
 };
 
 // Fluent's ramps are 16 shades around a key color at index 80. Build one

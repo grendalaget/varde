@@ -1,9 +1,8 @@
 @font-face {
-  font-family: "Schibsted Grotesk";
-  font-weight: 600;
+  font-family: "Inter Variable";
+  font-weight: 100 900;
   font-display: swap;
-  src: url("./assets/fonts/schibsted-grotesk-latin-600-normal.woff2")
-    format("woff2");
+  src: url("./assets/fonts/inter-latin-wght-normal.woff2") format("woff2");
 }
 
 :root {
@@ -17,10 +16,10 @@ body,
 }
 body {
   /* pre-React flash only; Fluent tokens take over once mounted */
-  background: #f3f5f6;
+  background: #f4efed;
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background: #10161a;
+    background: #110c0a;
   }
 }
