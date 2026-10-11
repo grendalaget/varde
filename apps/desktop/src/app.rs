@@ -45,6 +45,10 @@ struct State {
     /// cancels the agent's pending link when it's OURS (a code-flow link
     /// in progress must survive a dismissed confirm card).
     fed_started_link: std::sync::atomic::AtomicBool,
+    /// Bumped for every callback (and on begin/cancel): only the newest
+    /// exchange may write its result — a cancelled or superseded callback
+    /// can't overwrite a newer sign-in's confirm.
+    fed_seq: std::sync::atomic::AtomicU64,
     /// Last emitted federated-auth stage — a window that opened after the
     /// event (deep link launched the app) hydrates from this.
     fed_last: Mutex<Option<FedEvent>>,
@@ -772,15 +776,21 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
     app.state::<State>()
         .fed_active
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    let seq = app
+        .state::<State>()
+        .fed_seq
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     let h = app.clone();
     tauri::async_runtime::spawn(async move {
         emit_fed(&h, FedEvent::Exchanging);
         match fed_exchange(token).await {
-            // cancelled while the exchange was in flight — stay silent
-            _ if !h
-                .state::<State>()
-                .fed_active
-                .load(std::sync::atomic::Ordering::SeqCst) => {}
+            // cancelled or superseded while the exchange was in flight —
+            // stay silent rather than overwrite the newer flow
+            _ if seq
+                != h.state::<State>()
+                    .fed_seq
+                    .load(std::sync::atomic::Ordering::SeqCst) => {}
             Ok((session, cp_url, user)) => {
                 *h.state::<State>().fed.lock().unwrap() = Some(FedPending {
                     session,
@@ -880,6 +890,10 @@ async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
     app.state::<State>()
         .fed_active
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    // a click starts a new flow — invalidate any exchange still in flight
+    app.state::<State>()
+        .fed_seq
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
@@ -916,6 +930,10 @@ async fn cancel_varde_login(app: AppHandle) -> Result<(), String> {
         .store(false, std::sync::atomic::Ordering::SeqCst);
     *app.state::<State>().fed.lock().unwrap() = None;
     *app.state::<State>().fed_last.lock().unwrap() = None;
+    // invalidate any exchange still in flight so it can't reappear
+    app.state::<State>()
+        .fed_seq
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if app
         .state::<State>()
         .fed_started_link
