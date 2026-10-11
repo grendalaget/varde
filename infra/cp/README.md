@@ -62,8 +62,21 @@ block, not wired here).
 
 ```bash
 fly ssh console                        # into any machine
-litefs export -name varde.db -o /tmp/varde.db   # consistent db snapshot
-litefs db -name varde.db               # txid + replication position
+cat /litefs/.primary                   # primary's machine ID; absent on the primary itself
+litefs export -name varde.db /tmp/varde.db   # consistent db snapshot (safe live)
+litefs version
+curl -s http://localhost:20202/metrics # per-db txid + replication lag
+```
+
+Restoring is different — `litefs import` **replaces the live db**, so it
+must run on the PRIMARY machine (the one where `/litefs/.primary` is
+absent; on a replica the local node rejects it), or point `-url` at the
+primary's internal address:
+
+```bash
+litefs import -name varde.db /tmp/varde.db
+# from any other machine instead:
+litefs import -url http://<primary-id>.vm.varde-cp.internal:20202 -name varde.db /tmp/varde.db
 ```
 
 Volumes are per-machine and durable — a destroyed machine's volume keeps its
