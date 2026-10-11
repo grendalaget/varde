@@ -137,7 +137,7 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			time.Now().UnixMilli() < r.GetDrainUntilUnixMs()
 		if drainOK && len(rt.flows) > 0 {
 			rt.drainDeadline = time.UnixMilli(r.GetDrainUntilUnixMs())
-			go rt.reapDrainedFlows()
+			go rt.reapDrainedFlows(rt.drainDeadline)
 		} else {
 			for _, f := range rt.flows {
 				f.close()
@@ -155,16 +155,19 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 	return nil
 }
 
-// reapDrainedFlows closes leftover old-epoch flows once the drain window ends.
-func (rt *routeState) reapDrainedFlows() {
-	t := time.NewTimer(time.Until(rt.drainDeadline) + time.Second)
+// reapDrainedFlows closes leftover old-epoch flows once the drain window
+// ends. deadline is the window it was armed for; a later flip may have
+// refreshed or cleared rt.drainDeadline, so bail unless it still matches.
+func (rt *routeState) reapDrainedFlows(deadline time.Time) {
+	t := time.NewTimer(time.Until(deadline) + time.Second)
 	defer t.Stop()
 	<-t.C
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	if time.Now().Before(rt.drainDeadline) {
+	if !rt.drainDeadline.Equal(deadline) {
 		return
 	}
+	rt.drainDeadline = time.Time{}
 	for _, f := range rt.flows {
 		f.close()
 	}
