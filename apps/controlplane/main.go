@@ -188,6 +188,23 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	timings.OfflineAfterMs = cfg.offlineAfterMs
 
 	recon := reconciler.New(st, timings, log)
+	// Multi-instance safety: only one replica runs the periodic pass; the rest
+	// serve HTTP only. Three modes:
+	//   VARDE_PRIMARY_FILE set — LiteFS-style file naming the node holding the
+	//     write lease (VARDE_NODE_NAME identifies us; defaults to hostname)
+	//   postgres             — session-level advisory lock via Elector.Run
+	//   sqlite               — no-op leader (single-writer by definition)
+	if primaryFile := envOr("VARDE_PRIMARY_FILE", ""); primaryFile != "" {
+		self := envOr("VARDE_NODE_NAME", "")
+		if self == "" {
+			self, _ = os.Hostname()
+		}
+		recon.Leader = store.NewPrimaryFileElector(primaryFile, self)
+	} else {
+		elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
+		recon.Leader = elector
+		go elector.Run(ctx)
+	}
 
 	if cfg.embeddedRelay != "" {
 		rconn, err := net.ListenUDP("udp", mustResolveUDPAddr(cfg.embeddedRelay))
@@ -295,8 +312,18 @@ func loadOrCreateRelayKey(ctx context.Context, st *store.Store) (ed25519.Private
 	if err != nil {
 		return nil, err
 	}
-	if err := st.KVSet(ctx, relayKeyKV, string(pemBytes)); err != nil {
+	// Insert-if-absent: two replicas starting against an empty store would
+	// otherwise each write their own key and keep signing with it.
+	created, err := st.KVSetNX(ctx, relayKeyKV, string(pemBytes))
+	if err != nil {
 		return nil, err
+	}
+	if !created {
+		pemStr, err := st.KVGet(ctx, relayKeyKV)
+		if err != nil {
+			return nil, err
+		}
+		return identity.ParsePrivateKeyPEM([]byte(pemStr))
 	}
 	return priv, nil
 }

@@ -867,3 +867,18 @@ func (s *Store) KVSet(ctx context.Context, key, value string) error {
 		key, value)
 	return err
 }
+
+// KVSetNX inserts key/value only when key is absent, reporting whether the
+// insert happened. Multi-instance callers racing to seed a shared value use
+// this to decide who won — the losers must re-read the stored value instead
+// of keeping their own candidate.
+func (s *Store) KVSetNX(ctx context.Context, key, value string) (bool, error) {
+	res, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO kv (key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING`),
+		key, value)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}

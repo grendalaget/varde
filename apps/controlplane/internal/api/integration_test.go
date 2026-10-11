@@ -258,7 +258,7 @@ type directives struct {
 		Action                 string `json:"action"`
 		StopReason             string `json:"stop_reason"`
 		LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms"`
-		Restore     *struct {
+		Restore                *struct {
 			SnapshotID    string   `json:"snapshot_id"`
 			SourceNodeIDs []string `json:"source_node_ids"`
 		} `json:"restore"`

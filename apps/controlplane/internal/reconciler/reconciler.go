@@ -50,6 +50,11 @@ type Reconciler struct {
 	Timings Timings
 	Log     *slog.Logger
 
+	// Leader, when set, gates the periodic Run loop: non-leader instances skip
+	// their passes. User-triggered calls (Wake, ActivateNormal) are unaffected —
+	// they must work on any replica. Nil means single-instance (always runs).
+	Leader interface{ IsLeader() bool }
+
 	wake chan struct{}
 
 	lvMu sync.Mutex
@@ -82,6 +87,9 @@ func (r *Reconciler) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 		case <-r.wake:
+		}
+		if r.Leader != nil && !r.Leader.IsLeader() {
+			continue
 		}
 		if err := r.Pass(ctx); err != nil {
 			r.Log.Error("reconcile pass failed", "error", err)
