@@ -934,14 +934,31 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	}
 	waitFor(t, "post-flip flow", 3*time.Second, func() bool { return flowCount() == 1 })
 
+	// consecutive warm flip (c@2 → b@3) with a drain for c@2: flows older
+	// than the previous host are closed immediately, not at the deadline.
+	// Fake a stale b@1 flow still living in the map (older than prev c@2):
 	rt := a.n.routes[testSvcID]
 	rt.mu.Lock()
-	rt.drainDeadline = time.Now().Add(-time.Second) // already-expired drain for b@1
-	rt.drainHost, rt.drainEpoch = "node_b", 1
-	go rt.reapDrainedFlows(rt.drainDeadline)
+	stale := &udpFlow{src: &net.UDPAddr{IP: net.ParseIP("127.0.0.9"), Port: 9},
+		hostNodeID: "node_b", epoch: 1, rt: rt, done: make(chan struct{})}
+	rt.flows["27002|stale"] = stale
 	rt.mu.Unlock()
-	time.Sleep(300 * time.Millisecond)
+	flip2 := routeFor(testSvcID, testIP, testTCP, "node_b", 3, testUDP)
+	flip2.DrainHostNodeId = "node_c"
+	flip2.DrainEpoch = 2
+	flip2.DrainUntilUnixMs = time.Now().Add(30 * time.Second).UnixMilli()
+	if rr, err := a.cli.SetRoutes(context.Background(), &meshv1.SetRoutesRequest{
+		Routes: []*meshv1.ServiceRoute{flip2},
+	}); err != nil || len(rr.GetErrors()) > 0 {
+		t.Fatalf("routes4: %v", rr.GetErrors())
+	}
+	if _, ok := rt.flows["27002|stale"]; ok {
+		t.Fatal("stale pre-prevHost flow survived consecutive flip")
+	}
+	if !stale.closed.Load() {
+		t.Fatal("stale flow not closed")
+	}
 	if got := flowCount(); got != 1 {
-		t.Fatalf("reap closed the new host's flow: %d", got)
+		t.Fatalf("prevHost flow lost on consecutive flip: %d", got)
 	}
 }

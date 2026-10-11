@@ -139,6 +139,15 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			r.GetDrainEpoch() == prevEpoch &&
 			time.Now().UnixMilli() < r.GetDrainUntilUnixMs()
 		if drainOK && len(rt.flows) > 0 {
+			// The drain window only covers the immediately previous host:
+			// on consecutive flips, flows older than (prevHost,prevEpoch)
+			// would otherwise never be reaped.
+			for key, f := range rt.flows {
+				if f.hostNodeID != prevHost || f.epoch != prevEpoch {
+					f.close()
+					delete(rt.flows, key)
+				}
+			}
 			rt.drainDeadline = time.UnixMilli(r.GetDrainUntilUnixMs())
 			rt.drainHost = prevHost
 			rt.drainEpoch = prevEpoch
