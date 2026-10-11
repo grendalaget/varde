@@ -515,6 +515,9 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 	if err != nil {
 		return nil, errResp(gen.Conflict, "server has no active execution", nil)
 	}
+	if target.ID == active.NodeID {
+		return nil, errResp(gen.Validation, "server is already on that node", nil)
+	}
 	now := s.Store.NowMs()
 	mode := "serial"
 	if driverSupportsHandoff(srv.GameID) {

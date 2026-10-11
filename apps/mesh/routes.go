@@ -31,10 +31,13 @@ type routeState struct {
 	flows   map[string]*udpFlow // "port|srcaddr" → flow
 	flowSeq atomic.Uint64
 	closed  bool
-	// drainDeadline: while set, UDP flows opened under the previous host/
-	// epoch keep draining (TCP splices always drain naturally). A warm
-	// migration's route flip sets it so the old host can hand clients off.
+	// drainDeadline/drainHost/drainEpoch: while set, UDP flows opened under
+	// the previous host/epoch keep draining (TCP splices always drain
+	// naturally). A warm migration's route flip sets it so the old host can
+	// hand clients off.
 	drainDeadline time.Time
+	drainHost     string
+	drainEpoch    uint64
 }
 
 // SetRoutes applies a full replacement of the route table.
@@ -137,6 +140,8 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			time.Now().UnixMilli() < r.GetDrainUntilUnixMs()
 		if drainOK && len(rt.flows) > 0 {
 			rt.drainDeadline = time.UnixMilli(r.GetDrainUntilUnixMs())
+			rt.drainHost = prevHost
+			rt.drainEpoch = prevEpoch
 			go rt.reapDrainedFlows(rt.drainDeadline)
 		} else {
 			for _, f := range rt.flows {
@@ -146,16 +151,12 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 		}
 	} else if len(rt.flows) > 0 && !rt.drainDeadline.IsZero() && r.GetDrainHostNodeId() == "" {
 		// Same host re-asserted without drain fields: the drain is over.
-		rt.drainDeadline = time.Time{}
-		for _, f := range rt.flows {
-			f.close()
-		}
-		rt.flows = map[string]*udpFlow{}
+		rt.endDrainLocked()
 	}
 	return nil
 }
 
-// reapDrainedFlows closes leftover old-epoch flows once the drain window
+// reapDrainedFlows closes leftover drained flows once the drain window
 // ends. deadline is the window it was armed for; a later flip may have
 // refreshed or cleared rt.drainDeadline, so bail unless it still matches.
 func (rt *routeState) reapDrainedFlows(deadline time.Time) {
@@ -167,11 +168,22 @@ func (rt *routeState) reapDrainedFlows(deadline time.Time) {
 	if !rt.drainDeadline.Equal(deadline) {
 		return
 	}
+	rt.endDrainLocked()
+}
+
+// endDrainLocked closes only the flows opened under the drained host/epoch —
+// flows created after the flip belong to the new host and must survive.
+// Caller holds rt.mu.
+func (rt *routeState) endDrainLocked() {
+	host, epoch := rt.drainHost, rt.drainEpoch
 	rt.drainDeadline = time.Time{}
-	for _, f := range rt.flows {
-		f.close()
+	rt.drainHost, rt.drainEpoch = "", 0
+	for key, f := range rt.flows {
+		if f.hostNodeID == host && f.epoch == epoch {
+			f.close()
+			delete(rt.flows, key)
+		}
 	}
-	rt.flows = map[string]*udpFlow{}
 }
 
 func (rt *routeState) closeAll() {
@@ -304,16 +316,18 @@ func spliceTCP(a, b net.Conn) {
 // ---- UDP flows ----
 
 type udpFlow struct {
-	id       uint64
-	src      *net.UDPAddr
-	stream   *quic.Stream // stays open for the flow's lifetime
-	lastUsed atomic.Int64 // unixnano
-	closed   atomic.Bool
-	done     chan struct{}
-	peer     *peerState // nil for local
-	port     uint32
-	rt       *routeState
-	local    *net.UDPConn // when host==local
+	id         uint64
+	src        *net.UDPAddr
+	hostNodeID string       // host this flow was opened under (drain scoping)
+	epoch      uint64       // epoch this flow was opened under
+	stream     *quic.Stream // stays open for the flow's lifetime
+	lastUsed   atomic.Int64 // unixnano
+	closed     atomic.Bool
+	done       chan struct{}
+	peer       *peerState // nil for local
+	port       uint32
+	rt         *routeState
+	local      *net.UDPConn // when host==local
 }
 
 func (f *udpFlow) close() {
@@ -399,6 +413,7 @@ func (rt *routeState) openFlow(key string, c *net.UDPConn, src *net.UDPAddr, por
 	}
 	f := &udpFlow{
 		id: rt.flowSeq.Add(1), src: src, port: port, rt: rt,
+		hostNodeID: host, epoch: epoch,
 		done: make(chan struct{}),
 	}
 	f.touch()

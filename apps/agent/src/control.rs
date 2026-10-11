@@ -200,6 +200,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                ctl.set_stop_reason(e.stop_reason.clone());
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }

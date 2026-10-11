@@ -1405,6 +1405,14 @@ func TestWarmMigrationEndToEnd(t *testing.T) {
 	}
 	target := otherAgent.nodeID
 
+	// moving to the current host is rejected (a warm 'incoming' exec would
+	// restore over the live server dir)
+	r := e.do("POST", "/v1/servers/"+srv+"/move",
+		map[string]any{"target_node_id": hostAgent.nodeID}, e.token)
+	if r.Status == 200 {
+		t.Fatal("same-node move accepted")
+	}
+
 	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/move",
 		map[string]any{"target_node_id": target}, e.token))
 

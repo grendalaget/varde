@@ -759,6 +759,10 @@ func (r *Reconciler) failMigration(ctx context.Context, m *store.Migration) {
 			reason := "migration"
 			e.StopReason = &reason
 			_ = s.UpdateExecutionState(ctx, s.DB, e)
+			// End it CP-side too: if the target is dead it will never report
+			// 'stopped', and reconcileServer only fences the serving lease —
+			// without this the incoming exec would stay open-ended forever.
+			_ = s.EndExecution(ctx, s.DB, e.ID, "aborted", now)
 		}
 	}
 	m.State = "failed"
@@ -776,7 +780,7 @@ func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev
 		return
 	}
 	reason := "handoff"
-	_ = s.Tx(ctx, func(tx *sqlx.Tx) error {
+	if err := s.Tx(ctx, func(tx *sqlx.Tx) error {
 		prev.Role = "draining"
 		prev.Action = "stop"
 		prev.StopReason = &reason
@@ -789,7 +793,10 @@ func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev
 		}
 		return s.EmitEvent(ctx, tx, srv.GroupID, &srv.ID, &m.ToNodeID, "server.assigned",
 			map[string]any{"execution_id": next.ID, "epoch": next.Epoch, "migration": m.ID})
-	})
+	}); err != nil {
+		// role flip didn't commit — stay in 'activating' and retry next pass
+		return
+	}
 	drain := now + routeDrainMs
 	m.State = "done"
 	m.FinishedAt = &now

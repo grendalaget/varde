@@ -81,10 +81,15 @@ pub struct ExecCtl {
     /// state actually applied via driver.freeze()/unfreeze().
     want_frozen: AtomicBool,
     frozen: AtomicBool,
+    /// stop_reason from the latest directive (refreshable: dir is a snapshot
+    /// of the directive that spawned this ctl, but a later heartbeat can
+    /// change action/stop_reason — e.g. a warm flip's 'handoff' stop).
+    stop_reason: Mutex<Option<String>>,
 }
 
 impl ExecCtl {
     pub fn new(dir: ExecutionDirective) -> Arc<ExecCtl> {
+        let stop_reason = dir.stop_reason.clone();
         let (tx, _rx) = watch::channel(None);
         Arc::new(ExecCtl {
             dir,
@@ -104,7 +109,15 @@ impl ExecCtl {
             latest_save_ms: AtomicI64::new(0),
             want_frozen: AtomicBool::new(false),
             frozen: AtomicBool::new(false),
+            stop_reason: Mutex::new(stop_reason),
         })
+    }
+
+    pub fn set_stop_reason(&self, r: Option<String>) {
+        *self.stop_reason.lock().unwrap() = r;
+    }
+    pub fn stop_reason(&self) -> Option<String> {
+        self.stop_reason.lock().unwrap().clone()
     }
 
     pub fn set_want_frozen(&self, v: bool) {
@@ -515,7 +528,7 @@ async fn issue_handoff(
     ctx: &DriverContext<'_>,
     proc: &Arc<dyn ProcessHandle>,
 ) {
-    if ctl.dir.stop_reason.as_deref() != Some("handoff") {
+    if ctl.stop_reason().as_deref() != Some("handoff") {
         return;
     }
     let Some(svc) = &ctl.dir.service else {

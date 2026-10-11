@@ -849,8 +849,14 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	})
 
 	echoB := startUDPEcho(t)
+	echoC := startUDPEcho(t)
 	if _, err := b.cli.SetHostedServices(context.Background(), &meshv1.SetHostedServicesRequest{
 		Services: []*meshv1.HostedService{hostedFor(testSvcID, 1, testTCP, 0, testUDP, uint32(echoB))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cc.cli.SetHostedServices(context.Background(), &meshv1.SetHostedServicesRequest{
+		Services: []*meshv1.HostedService{hostedFor(testSvcID, 2, testTCP, 0, testUDP, uint32(echoC))},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -905,13 +911,37 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 		t.Fatal("old-epoch flow dead inside drain window")
 	}
 
-	// same flip WITHOUT drain fields: the old flow closes
+	// same route re-asserted WITHOUT drain fields ends the drain early
 	if rr, err := a.cli.SetRoutes(context.Background(), &meshv1.SetRoutesRequest{
 		Routes: []*meshv1.ServiceRoute{routeFor(testSvcID, testIP, testTCP, "node_c", 2, testUDP)},
 	}); err != nil || len(rr.GetErrors()) > 0 {
 		t.Fatalf("routes3: %v", rr.GetErrors())
 	}
 	if flowCount() != 0 {
-		t.Fatalf("flows survived flip without drain: %d", flowCount())
+		t.Fatalf("flows survived drain end: %d", flowCount())
+	}
+
+	// a NEW flow opened after the flip is tagged host c@2: reaping the old
+	// host's drain window must not close it
+	udp2, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP(testIP), Port: testUDP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = udp2.Close() }()
+	_ = udp2.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, err := udp2.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "post-flip flow", 3*time.Second, func() bool { return flowCount() == 1 })
+
+	rt := a.n.routes[testSvcID]
+	rt.mu.Lock()
+	rt.drainDeadline = time.Now().Add(-time.Second) // already-expired drain for b@1
+	rt.drainHost, rt.drainEpoch = "node_b", 1
+	go rt.reapDrainedFlows(rt.drainDeadline)
+	rt.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	if got := flowCount(); got != 1 {
+		t.Fatalf("reap closed the new host's flow: %d", got)
 	}
 }
