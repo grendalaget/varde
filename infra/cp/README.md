@@ -62,8 +62,11 @@ block, not wired here).
 
 ```bash
 fly ssh console                        # into any machine
-litefs export -name varde.db -o /tmp/varde.db   # consistent db snapshot
-litefs db -name varde.db               # txid + replication position
+cat /litefs/.primary                   # lease holder's machine ID (replicas only)
+litefs export -name varde.db /tmp/varde.db   # consistent db snapshot (safe live)
+litefs import -name varde.db /tmp/varde.db   # restore: creates or replaces
+litefs version
+curl -s http://localhost:20202/metrics # per-db txid + replication lag
 ```
 
 Volumes are per-machine and durable — a destroyed machine's volume keeps its
