@@ -97,18 +97,46 @@ func Open(url string, clk Clock) (*Store, error) {
 // be added idempotently at startup.
 func ensureColumns(db *sqlx.DB, dialect string) error {
 	if dialect == "postgres" {
-		_, err := db.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id)`)
+		stmts := []string{
+			`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id)`,
+			`ALTER TABLE server_executions ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'serving'`,
+			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'serial'`,
+			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS to_execution_id TEXT`,
+			`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS drain_until BIGINT`,
+		}
+		for _, q := range stmts {
+			if _, err := db.Exec(q); err != nil {
+				return err
+			}
+		}
+	} else {
+		cols := []struct{ table, col, def string }{
+			{"nodes", "owner_user_id", "owner_user_id TEXT REFERENCES users(id)"},
+			{"server_executions", "role", "role TEXT NOT NULL DEFAULT 'serving'"},
+			{"migrations", "mode", "mode TEXT NOT NULL DEFAULT 'serial'"},
+			{"migrations", "to_execution_id", "to_execution_id TEXT"},
+			{"migrations", "drain_until", "drain_until BIGINT"},
+		}
+		for _, c := range cols {
+			var n int
+			if err := db.Get(&n, `SELECT count(*) FROM pragma_table_info('`+c.table+`') WHERE name='`+c.col+`'`); err != nil {
+				return err
+			}
+			if n == 0 {
+				if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.def); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// one_active predates execution roles: rebuild it to exclude non-serving
+	// executions (idempotent — safe on fresh databases too).
+	if _, err := db.Exec(`DROP INDEX IF EXISTS one_active`); err != nil {
 		return err
 	}
-	var n int
-	if err := db.Get(&n, `SELECT count(*) FROM pragma_table_info('nodes') WHERE name='owner_user_id'`); err != nil {
-		return err
-	}
-	if n == 0 {
-		_, err := db.Exec(`ALTER TABLE nodes ADD COLUMN owner_user_id TEXT REFERENCES users(id)`)
-		return err
-	}
-	return nil
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_active
+		ON server_executions(server_id) WHERE ended_at IS NULL AND role='serving'`)
+	return err
 }
 
 func (s *Store) NowMs() int64 { return s.Clock.Now().UnixMilli() }

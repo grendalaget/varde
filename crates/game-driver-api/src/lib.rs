@@ -182,6 +182,27 @@ pub trait GameDriver: Send + Sync {
         ctx: &DriverContext<'_>,
         p: &dyn ProcessHandle,
     ) -> Result<()>;
+    /// Freeze the live world so a migration snapshot is drift-free
+    /// (e.g. `tick freeze`). Returns true when the driver supports it.
+    async fn freeze(&self, _ctx: &DriverContext<'_>, _p: &dyn ProcessHandle) -> Result<bool> {
+        Ok(false)
+    }
+    /// Undo `freeze` after a migration aborts.
+    async fn unfreeze(&self, _ctx: &DriverContext<'_>, _p: &dyn ProcessHandle) -> Result<()> {
+        Ok(())
+    }
+    /// Ask connected clients to move to `addr:port`, which serves the same
+    /// world (e.g. `/transfer`). Returns true when the handoff was issued.
+    /// Drivers that can't transfer return false and clients rejoin manually.
+    async fn handoff(
+        &self,
+        _ctx: &DriverContext<'_>,
+        _p: &dyn ProcessHandle,
+        _addr: &str,
+        _port: u16,
+    ) -> Result<bool> {
+        Ok(false)
+    }
     async fn graceful_stop(&self, ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()>;
 }
 

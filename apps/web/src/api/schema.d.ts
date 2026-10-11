@@ -1106,6 +1106,12 @@ export interface components {
             host_node_id?: string;
             /** Format: int64 */
             epoch?: number;
+            /** @description During a warm migration flip, the previous host whose old-epoch streams stay alive until drain_until_unix_ms. */
+            drain_host_node_id?: string;
+            /** Format: int64 */
+            drain_epoch?: number;
+            /** Format: int64 */
+            drain_until_unix_ms?: number | null;
         };
         DirectiveRelay: {
             relay_id: string;
@@ -1134,7 +1140,7 @@ export interface components {
             /** @enum {string} */
             action: "run" | "stop";
             /** @enum {string|null} */
-            stop_reason?: "user" | "migration" | "drain" | null;
+            stop_reason?: "user" | "migration" | "drain" | "handoff" | null;
             deployment?: {
                 id: string;
                 game_id: string;
@@ -1152,6 +1158,8 @@ export interface components {
                 source_node_ids: string[];
             } | null;
             snapshot_interval_s?: number;
+            /** @description true while an open warm migration pins this execution's world state (e.g. `tick freeze`) ahead of the handoff snapshot. */
+            freeze?: boolean;
             snapshot_requests?: components["schemas"]["SnapshotRequest"][];
             /**
              * Format: int64

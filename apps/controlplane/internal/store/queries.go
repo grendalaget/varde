@@ -518,13 +518,17 @@ func (s *Store) BumpEpochAndCreateExecution(ctx context.Context, e *Execution) e
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("epoch bump failed (concurrent activation)")
 		}
+		role := e.Role
+		if role == "" {
+			role = "serving"
+		}
 		_, err = tx.ExecContext(ctx, s.Rebind(
 			`INSERT INTO server_executions (id,server_id,node_id,epoch,state,action,stop_reason,
-			  lease_expires_at,restore_snapshot_id,placement_json,health,message,created_at,started_at,ended_at,end_reason)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+			  lease_expires_at,restore_snapshot_id,placement_json,health,message,created_at,started_at,ended_at,end_reason,role)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 			e.ID, e.ServerID, e.NodeID, e.Epoch, e.State, e.Action, e.StopReason,
 			e.LeaseExpiresAt, e.RestoreSnapshotID, e.PlacementJSON, e.Health, e.Message,
-			e.CreatedAt, e.StartedAt, e.EndedAt, e.EndReason)
+			e.CreatedAt, e.StartedAt, e.EndedAt, e.EndReason, role)
 		return err
 	})
 }
@@ -583,7 +587,7 @@ func (s *Store) ExecutionJoinCode(ctx context.Context, executionID string) (*str
 func (s *Store) ActiveExecution(ctx context.Context, serverID string) (*Execution, error) {
 	var e Execution
 	err := s.q().GetContext(ctx, &e, s.Rebind(
-		`SELECT * FROM server_executions WHERE server_id=? AND ended_at IS NULL`), serverID)
+		`SELECT * FROM server_executions WHERE server_id=? AND ended_at IS NULL AND role='serving'`), serverID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -607,9 +611,10 @@ func (s *Store) ExecutionsForServer(ctx context.Context, serverID string) ([]Exe
 func (s *Store) UpdateExecutionState(ctx context.Context, q Querier, e *Execution) error {
 	_, err := q.ExecContext(ctx, s.Rebind(
 		`UPDATE server_executions SET state=?, action=?, stop_reason=?, lease_expires_at=?,
-		 health=?, message=?, started_at=?, ended_at=?, end_reason=? WHERE id=?`),
+		 health=?, message=?, started_at=?, ended_at=?, end_reason=?,
+		 role=COALESCE(NULLIF(?,''),role) WHERE id=?`),
 		e.State, e.Action, e.StopReason, e.LeaseExpiresAt, e.Health, e.Message,
-		e.StartedAt, e.EndedAt, e.EndReason, e.ID)
+		e.StartedAt, e.EndedAt, e.EndReason, e.Role, e.ID)
 	return err
 }
 
@@ -631,9 +636,9 @@ func (s *Store) RenewLease(ctx context.Context, id string, expiresAt int64) erro
 
 func (s *Store) CreateMigration(ctx context.Context, m *Migration) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO migrations (id,server_id,from_execution_id,to_node_id,state,created_at)
-		 VALUES (?,?,?,?,?,?)`),
-		m.ID, m.ServerID, m.FromExecutionID, m.ToNodeID, m.State, m.CreatedAt)
+		`INSERT INTO migrations (id,server_id,from_execution_id,to_node_id,state,mode,created_at)
+		 VALUES (?,?,?,?,?,?,?)`),
+		m.ID, m.ServerID, m.FromExecutionID, m.ToNodeID, m.State, m.Mode, m.CreatedAt)
 	return err
 }
 
@@ -644,10 +649,24 @@ func (s *Store) OpenMigrations(ctx context.Context) ([]Migration, error) {
 	return ms, err
 }
 
+// DrainingMigration returns the open warm migration for a server whose drain
+// window is still live, used to attach drain fields to routes.
+func (s *Store) DrainingMigration(ctx context.Context, serverID string, now int64) (*Migration, error) {
+	var m Migration
+	err := s.q().GetContext(ctx, &m, s.Rebind(
+		`SELECT * FROM migrations WHERE server_id=? AND drain_until IS NOT NULL AND drain_until>?`),
+		serverID, now)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &m, err
+}
+
 func (s *Store) UpdateMigration(ctx context.Context, m *Migration) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`UPDATE migrations SET state=?, final_snapshot_id=?, finished_at=? WHERE id=?`),
-		m.State, m.FinalSnapshotID, m.FinishedAt, m.ID)
+		`UPDATE migrations SET state=?, final_snapshot_id=?, finished_at=?,
+		 to_execution_id=COALESCE(?,to_execution_id), drain_until=COALESCE(?,drain_until) WHERE id=?`),
+		m.State, m.FinalSnapshotID, m.FinishedAt, m.ToExecutionID, m.DrainUntil, m.ID)
 	return err
 }
 

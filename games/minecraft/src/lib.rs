@@ -259,6 +259,10 @@ impl GameDriver for MinecraftDriver {
                     .unwrap_or_else(|| "10".into()),
             ),
             ("level-seed", s("seed").unwrap_or_default()),
+            // Varde owns the stable service address on every node, so warm
+            // migration transfers always land on a Varde-managed listener.
+            // Accepting transfers is loopback-only anyway (server-ip above).
+            ("accepts-transfers", "true".into()),
         ];
         let path = ctx.server_dir.join("server.properties");
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
@@ -322,6 +326,34 @@ impl GameDriver for MinecraftDriver {
         p: &dyn ProcessHandle,
     ) -> Result<()> {
         p.write_stdin("save-on").await
+    }
+
+    async fn freeze(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<bool> {
+        // Java 1.20.3+; older versions reject the command in-console, which
+        // degrades the migration to save/restore semantics without harm.
+        p.write_stdin("tick freeze").await?;
+        Ok(true)
+    }
+
+    async fn unfreeze(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
+        p.write_stdin("tick unfreeze").await
+    }
+
+    async fn handoff(
+        &self,
+        _ctx: &DriverContext<'_>,
+        p: &dyn ProcessHandle,
+        addr: &str,
+        port: u16,
+    ) -> Result<bool> {
+        // Java 1.20.5+/Bedrock 1.20.30+: clients auto-reconnect to the stable
+        // service address and land on the already-running replacement.
+        p.write_stdin("say Server is moving to another machine — hang tight")
+            .await?;
+        p.write_stdin(&format!("transfer {addr} {port} @a")).await?;
+        // give the transfer packets a moment to leave over drained streams
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        Ok(true)
     }
 
     async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
@@ -455,6 +487,8 @@ mod tests {
         let props = std::fs::read_to_string(server_dir.join("server.properties")).unwrap();
         assert!(props.contains("server-port=31234"), "{props}");
         assert!(props.contains("server-ip=127.0.0.1"), "{props}");
+        // warm migrations rely on the vanilla /transfer redirect
+        assert!(props.contains("accepts-transfers=true"), "{props}");
         assert_eq!(ctx.local_port(PORT), 31234);
         assert_eq!(ctx.local_port(12345), 12345, "unmapped port unchanged");
     }

@@ -156,10 +156,17 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 	if err != nil {
 		return fmt.Errorf("unknown execution")
 	}
-	active, err := s.Store.ActiveExecution(ctx, er.ServerId)
-	if err != nil || active.ID != exec.ID || exec.NodeID != node.ID ||
-		exec.Epoch != er.Epoch || er.Epoch != active.Epoch {
+	if exec.NodeID != node.ID || exec.Epoch != er.Epoch ||
+		exec.ServerID != er.ServerId || exec.EndedAt != nil {
 		return fmt.Errorf("stale_epoch") // logged; not returned to agent as error
+	}
+	// Serving execs must be THE active execution; incoming/draining
+	// migration execs report normally — their epoch already proves them.
+	if exec.Role == "" || exec.Role == "serving" {
+		active, err := s.Store.ActiveExecution(ctx, er.ServerId)
+		if err != nil || active.ID != exec.ID || er.Epoch != active.Epoch {
+			return fmt.Errorf("stale_epoch")
+		}
 	}
 	// An expired lease is terminal: never resurrect it. The reconciler reaps
 	// it as 'lost' on the next pass; until then reports change nothing.
@@ -262,6 +269,16 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 	if err != nil {
 		return d, err
 	}
+	// warm migrations freeze their source execution until the handoff lands
+	// (or abort unfreezes it)
+	frozenExecs := map[string]bool{}
+	if ms, err := s.Store.OpenMigrations(ctx); err == nil {
+		for _, m := range ms {
+			if m.Mode == "warm" {
+				frozenExecs[m.FromExecutionID] = true
+			}
+		}
+	}
 	out := []gen.ExecutionDirective{}
 	for i := range execs {
 		e := &execs[i]
@@ -280,6 +297,9 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		}
 		if at, err := s.Store.LatestCommittedSnapshotAt(ctx, srv.ID); err == nil {
 			ed.LatestSafeSaveAtUnixMs = at
+		}
+		if frozenExecs[e.ID] {
+			ed.Freeze = ptr(true)
 		}
 		if e.StopReason != nil {
 			ed.StopReason = ptr(gen.ExecutionDirectiveStopReason(*e.StopReason))
@@ -391,6 +411,14 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			rt.HostNodeId = ptr(e.NodeID)
 			rt.Epoch = ptr(e.Epoch)
 		}
+		// warm flip in progress: drain old-epoch streams to the previous host
+		if m, err := s.Store.DrainingMigration(ctx, srv.ID, now); err == nil {
+			if prev, err := s.Store.GetExecution(ctx, m.FromExecutionID); err == nil {
+				rt.DrainHostNodeId = &prev.NodeID
+				rt.DrainEpoch = &prev.Epoch
+				rt.DrainUntilUnixMs = m.DrainUntil
+			}
+		}
 		routes = append(routes, rt)
 	}
 	d.Routes = &routes
@@ -484,11 +512,19 @@ func (s *Server) AgentExecutionStatus(ctx context.Context, req gen.AgentExecutio
 	if err != nil {
 		return nil, errResp(gen.NotFound, "execution not found", nil)
 	}
-	active, aerr := s.Store.ActiveExecution(ctx, b.ServerId)
-	if aerr != nil || active.ID != exec.ID || exec.NodeID != node.ID || exec.Epoch != b.Epoch {
+	if exec.NodeID != node.ID || exec.Epoch != b.Epoch ||
+		exec.ServerID != b.ServerId || exec.EndedAt != nil {
 		return nil, errResp(gen.StaleEpoch, "stale execution", map[string]any{
 			"server_id": b.ServerId, "epoch": b.Epoch,
 		})
+	}
+	if exec.Role == "" || exec.Role == "serving" {
+		active, aerr := s.Store.ActiveExecution(ctx, b.ServerId)
+		if aerr != nil || active.ID != exec.ID {
+			return nil, errResp(gen.StaleEpoch, "stale execution", map[string]any{
+				"server_id": b.ServerId, "epoch": b.Epoch,
+			})
+		}
 	}
 	now := s.Store.NowMs()
 	if err := s.processExecReport(ctx, node, &gen.ExecutionReport{

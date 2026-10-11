@@ -48,6 +48,13 @@ func genGame(g *catalog.Game) gen.Game {
 	}
 }
 
+// driverSupportsHandoff reports whether the game's driver can hand connected
+// clients off to a replacement server (Minecraft `/transfer`, Java 1.20.5+).
+// Such servers take the warm, start-first move; others keep the serial move.
+func driverSupportsHandoff(gameID string) bool {
+	return gameID == "minecraft"
+}
+
 func crossplayEnabled(gameID string, cfg map[string]any) bool {
 	game := catalog.Get(gameID)
 	if game == nil || cfg["crossplay"] != true {
@@ -509,19 +516,33 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 		return nil, errResp(gen.Conflict, "server has no active execution", nil)
 	}
 	now := s.Store.NowMs()
+	mode := "serial"
+	if driverSupportsHandoff(srv.GameID) {
+		mode = "warm"
+	}
 	m := &store.Migration{
 		ID: ids.Must("mig_"), ServerID: srv.ID, FromExecutionID: active.ID,
-		ToNodeID: target.ID, State: "stopping", CreatedAt: now,
+		ToNodeID: target.ID, State: "stopping", Mode: mode, CreatedAt: now,
 	}
 	if err := s.Store.CreateMigration(ctx, m); err != nil {
 		return nil, err
 	}
-	// mark the active exec stop reason=migration
-	active.Action = "stop"
-	reason := "migration"
-	active.StopReason = &reason
-	if err := s.Store.UpdateExecutionState(ctx, s.Store.DB, active); err != nil {
-		return nil, err
+	if mode == "warm" {
+		// warm handoff: the source keeps serving — freeze + live snapshot,
+		// pre-stage the target, then flip routes and transfer clients.
+		if err := s.Store.CreateSnapshotRequest(ctx, &store.SnapshotRequest{
+			ID: ids.Must("snr_"), ServerID: srv.ID, Reason: "migration", CreatedAt: now,
+		}); err != nil {
+			return nil, err
+		}
+	} else {
+		// mark the active exec stop reason=migration
+		active.Action = "stop"
+		reason := "migration"
+		active.StopReason = &reason
+		if err := s.Store.UpdateExecutionState(ctx, s.Store.DB, active); err != nil {
+			return nil, err
+		}
 	}
 	_ = s.Store.SetObservedState(ctx, s.Store.DB, srv.ID, "migrating", now)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.move", srv.ID, map[string]any{"to": target.ID})

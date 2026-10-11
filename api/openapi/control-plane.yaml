@@ -1602,6 +1602,13 @@ components:
           items: { $ref: "#/components/schemas/GamePort" }
         host_node_id: { type: string, description: "empty = server stopped" }
         epoch: { type: integer, format: int64 }
+        drain_host_node_id:
+          type: string
+          description: >-
+            During a warm migration flip, the previous host whose old-epoch
+            streams stay alive until drain_until_unix_ms.
+        drain_epoch: { type: integer, format: int64 }
+        drain_until_unix_ms: { type: integer, format: int64, nullable: true }
     DirectiveRelay:
       type: object
       required: [relay_id, addr, token]
@@ -1643,7 +1650,7 @@ components:
         stop_reason:
           type: string
           nullable: true
-          enum: [user, migration, drain]
+          enum: [user, migration, drain, handoff]
         deployment:
           type: object
           nullable: true
@@ -1665,6 +1672,11 @@ components:
               type: array
               items: { type: string }
         snapshot_interval_s: { type: integer }
+        freeze:
+          type: boolean
+          description: >-
+            true while an open warm migration pins this execution's world
+            state (e.g. `tick freeze`) ahead of the handoff snapshot.
         snapshot_requests:
           type: array
           items: { $ref: "#/components/schemas/SnapshotRequest" }

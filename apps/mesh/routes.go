@@ -31,6 +31,10 @@ type routeState struct {
 	flows   map[string]*udpFlow // "port|srcaddr" → flow
 	flowSeq atomic.Uint64
 	closed  bool
+	// drainDeadline: while set, UDP flows opened under the previous host/
+	// epoch keep draining (TCP splices always drain naturally). A warm
+	// migration's route flip sets it so the old host can hand clients off.
+	drainDeadline time.Time
 }
 
 // SetRoutes applies a full replacement of the route table.
@@ -74,7 +78,8 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 	}
 	rt.ip = r.GetLoopbackIp()
 	rt.ports = r.GetPorts()
-	hostChanged := rt.host != r.GetHostNodeId() || rt.epoch != r.GetEpoch()
+	prevHost, prevEpoch := rt.host, rt.epoch
+	hostChanged := prevHost != r.GetHostNodeId() || prevEpoch != r.GetEpoch()
 	rt.host = r.GetHostNodeId()
 	rt.epoch = r.GetEpoch()
 
@@ -125,13 +130,45 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 		go rt.udpReadLoop(c, port)
 	}
 	if hostChanged {
-		// existing streams end; new ones go to the new host
+		// existing streams end; new ones go to the new host — unless a warm
+		// migration granted a drain window for the previous host/epoch.
+		drainOK := r.GetDrainHostNodeId() == prevHost &&
+			r.GetDrainEpoch() == prevEpoch &&
+			time.Now().UnixMilli() < r.GetDrainUntilUnixMs()
+		if drainOK && len(rt.flows) > 0 {
+			rt.drainDeadline = time.UnixMilli(r.GetDrainUntilUnixMs())
+			go rt.reapDrainedFlows()
+		} else {
+			for _, f := range rt.flows {
+				f.close()
+			}
+			rt.flows = map[string]*udpFlow{}
+		}
+	} else if len(rt.flows) > 0 && !rt.drainDeadline.IsZero() && r.GetDrainHostNodeId() == "" {
+		// Same host re-asserted without drain fields: the drain is over.
+		rt.drainDeadline = time.Time{}
 		for _, f := range rt.flows {
 			f.close()
 		}
 		rt.flows = map[string]*udpFlow{}
 	}
 	return nil
+}
+
+// reapDrainedFlows closes leftover old-epoch flows once the drain window ends.
+func (rt *routeState) reapDrainedFlows() {
+	t := time.NewTimer(time.Until(rt.drainDeadline) + time.Second)
+	defer t.Stop()
+	<-t.C
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if time.Now().Before(rt.drainDeadline) {
+		return
+	}
+	for _, f := range rt.flows {
+		f.close()
+	}
+	rt.flows = map[string]*udpFlow{}
 }
 
 func (rt *routeState) closeAll() {

@@ -192,6 +192,14 @@ pub struct DirectiveRoute {
     pub host_node_id: String,
     #[serde(default)]
     pub epoch: i64,
+    /// Warm migration drain window: previous host/epoch whose streams stay
+    /// alive until drain_until_unix_ms.
+    #[serde(default)]
+    pub drain_host_node_id: Option<String>,
+    #[serde(default)]
+    pub drain_epoch: Option<i64>,
+    #[serde(default)]
+    pub drain_until_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +259,9 @@ pub struct ExecutionDirective {
     pub restore: Option<RestoreDirective>,
     #[serde(default)]
     pub snapshot_interval_s: Option<i64>,
+    /// Pin the world state while an open warm migration stages the target.
+    #[serde(default)]
+    pub freeze: Option<bool>,
     #[serde(default, deserialize_with = "null_vec")]
     pub snapshot_requests: Vec<SnapshotRequest>,
     /// Latest committed snapshot of the server (display only).

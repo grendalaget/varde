@@ -216,6 +216,7 @@ func (e ExecutionDirectiveAction) Valid() bool {
 // Defines values for ExecutionDirectiveStopReason.
 const (
 	ExecutionDirectiveStopReasonDrain     ExecutionDirectiveStopReason = "drain"
+	ExecutionDirectiveStopReasonHandoff   ExecutionDirectiveStopReason = "handoff"
 	ExecutionDirectiveStopReasonMigration ExecutionDirectiveStopReason = "migration"
 	ExecutionDirectiveStopReasonUser      ExecutionDirectiveStopReason = "user"
 )
@@ -224,6 +225,8 @@ const (
 func (e ExecutionDirectiveStopReason) Valid() bool {
 	switch e {
 	case ExecutionDirectiveStopReasonDrain:
+		return true
+	case ExecutionDirectiveStopReasonHandoff:
 		return true
 	case ExecutionDirectiveStopReasonMigration:
 		return true
@@ -776,7 +779,12 @@ type DirectiveRelay struct {
 
 // DirectiveRoute defines model for DirectiveRoute.
 type DirectiveRoute struct {
-	Epoch *int64 `json:"epoch,omitempty"`
+	DrainEpoch *int64 `json:"drain_epoch,omitempty"`
+
+	// DrainHostNodeId During a warm migration flip, the previous host whose old-epoch streams stay alive until drain_until_unix_ms.
+	DrainHostNodeId  *string `json:"drain_host_node_id,omitempty"`
+	DrainUntilUnixMs *int64  `json:"drain_until_unix_ms,omitempty"`
+	Epoch            *int64  `json:"epoch,omitempty"`
 
 	// HostNodeId empty = server stopped
 	HostNodeId *string    `json:"host_node_id,omitempty"`
@@ -882,6 +890,9 @@ type ExecutionDirective struct {
 	} `json:"deployment,omitempty"`
 	Epoch       int64  `json:"epoch"`
 	ExecutionId string `json:"execution_id"`
+
+	// Freeze true while an open warm migration pins this execution's world state (e.g. `tick freeze`) ahead of the handoff snapshot.
+	Freeze *bool `json:"freeze,omitempty"`
 
 	// LatestSafeSaveAtUnixMs created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
 	LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms,omitempty"`

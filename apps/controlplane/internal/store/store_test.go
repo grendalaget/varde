@@ -104,6 +104,28 @@ func TestUniquePartialIndex(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "epoch bump failed") {
 			t.Fatalf("%s: expected stale-epoch failure, got %v", name, err)
 		}
+		// an 'incoming' warm-migration execution coexists with the serving one
+		if err := s.BumpEpochAndCreateExecution(ctx, &Execution{
+			ID: "exec_inc" + name, ServerID: srv.ID, NodeID: n.ID, Epoch: 2,
+			Action: "run", State: "preparing", LeaseExpiresAt: 100, CreatedAt: 1,
+			Role: "incoming",
+		}); err != nil {
+			t.Fatalf("%s: incoming exec rejected: %v", name, err)
+		}
+		// active execution is still the serving one
+		if a, err := s.ActiveExecution(ctx, srv.ID); err != nil || a.ID != "exec_1"+name {
+			t.Fatalf("%s: active=%+v err=%v", name, a, err)
+		}
+		// promoting the incoming exec to serving violates one_active
+		inc, err := s.GetExecution(ctx, "exec_inc"+name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		inc.Role = "serving"
+		err = s.UpdateExecutionState(ctx, s.DB, inc)
+		if err == nil || !IsUniqueViolation(err) {
+			t.Fatalf("%s: expected unique violation promoting incoming, got %v", name, err)
+		}
 	}
 }
 

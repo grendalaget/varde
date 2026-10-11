@@ -77,6 +77,10 @@ pub struct ExecCtl {
     pub port_bindings: Mutex<Vec<PortBinding>>,
     /// created_at of the latest snapshot the CP accepted in this execution
     latest_save_ms: AtomicI64,
+    /// desired freeze state from directives (open warm migration), and the
+    /// state actually applied via driver.freeze()/unfreeze().
+    want_frozen: AtomicBool,
+    frozen: AtomicBool,
 }
 
 impl ExecCtl {
@@ -98,7 +102,16 @@ impl ExecCtl {
             finished: AtomicBool::new(false),
             port_bindings: Mutex::new(Vec::new()),
             latest_save_ms: AtomicI64::new(0),
+            want_frozen: AtomicBool::new(false),
+            frozen: AtomicBool::new(false),
         })
+    }
+
+    pub fn set_want_frozen(&self, v: bool) {
+        self.want_frozen.store(v, Ordering::SeqCst);
+    }
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::SeqCst)
     }
 
     pub fn latest_save_ms(&self) -> i64 {
@@ -434,6 +447,23 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 ctl.mark_finished();
                 return Ok(());
             }
+            // reconcile freeze state ahead of snapshot barriers: a migration
+            // snapshot under `tick freeze` is drift-free.
+            let want = ctl.want_frozen.load(Ordering::SeqCst);
+            if want != ctl.is_frozen() {
+                if want {
+                    match driver.freeze(&ctx, &*proc).await {
+                        Ok(true) => ctl.frozen.store(true, Ordering::SeqCst),
+                        Ok(false) => ctl.frozen.store(false, Ordering::SeqCst),
+                        Err(e) => {
+                            tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "freeze failed")
+                        }
+                    }
+                } else {
+                    let _ = driver.unfreeze(&ctx, &*proc).await;
+                    ctl.frozen.store(false, Ordering::SeqCst);
+                }
+            }
             // periodic + requested snapshots
             let due_req = ctl.next_snapshot_req();
             let due_time = last_snap.elapsed() >= snap_interval;
@@ -464,6 +494,9 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     ctl.set_phase(Phase::Stopping);
     report(&agent, &ctl).await;
     let proc = ctl.proc().unwrap();
+    // Warm migration flip: routes already point at the replacement; hand
+    // connected clients off to the stable service address before stopping.
+    issue_handoff(&ctl, driver, &ctx, &proc).await;
     graceful_stop_and_snapshot(&agent, &ctl, driver, &ctx, &proc).await;
 
     ctl.set_phase(Phase::Stopped);
@@ -471,6 +504,42 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     report(&agent, &ctl).await;
     agent.sync_hosted_services().await;
     Ok(())
+}
+
+/// Issue the driver's client handoff when this execution is stopping for a
+/// warm migration flip: routes already point at the replacement, so clients
+/// are sent the stable service address and land on it.
+async fn issue_handoff(
+    ctl: &ExecCtl,
+    driver: &dyn GameDriver,
+    ctx: &DriverContext<'_>,
+    proc: &Arc<dyn ProcessHandle>,
+) {
+    if ctl.dir.stop_reason.as_deref() != Some("handoff") {
+        return;
+    }
+    let Some(svc) = &ctl.dir.service else {
+        return;
+    };
+    let port = svc
+        .ports
+        .iter()
+        .find(|p| p.protocol.eq_ignore_ascii_case("tcp"))
+        .map(|p| p.port)
+        .or_else(|| svc.ports.first().map(|p| p.port));
+    let Some(port) = port else { return };
+    match driver
+        .handoff(ctx, &**proc, &svc.loopback_ip, port as u16)
+        .await
+    {
+        Ok(true) => tracing::info!(exec = %ctl.dir.execution_id, "client handoff issued"),
+        Ok(false) => {
+            tracing::info!(exec = %ctl.dir.execution_id, "driver has no handoff; clients rejoin manually")
+        }
+        Err(e) => {
+            tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "handoff failed")
+        }
+    }
 }
 
 /// Graceful stop with the driver's snapshot barrier honoured: a `Live`
@@ -1018,6 +1087,7 @@ mod ensure_live_tests {
             snapshot_interval_s: None,
             snapshot_requests: vec![],
             latest_safe_save_at_unix_ms: None,
+            freeze: None,
         })
     }
 
@@ -1057,6 +1127,21 @@ mod requires_stop_tests {
         after_stop: bool,
         prepare_calls: AtomicUsize,
         live_barrier: bool,
+        handoff_target: std::sync::Mutex<Option<(String, u16)>>,
+        freeze_calls: AtomicUsize,
+    }
+
+    impl StopDriver {
+        fn new(live_barrier: bool) -> Self {
+            Self {
+                stopped: AtomicUsize::new(0),
+                after_stop: false,
+                prepare_calls: AtomicUsize::new(0),
+                live_barrier,
+                handoff_target: std::sync::Mutex::new(None),
+                freeze_calls: AtomicUsize::new(0),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -1086,6 +1171,31 @@ mod requires_stop_tests {
         }
         fn process_spec(&self, _c: &DriverContext<'_>) -> game_driver_api::Result<ProcessSpec> {
             unreachable!()
+        }
+        async fn freeze(
+            &self,
+            _c: &DriverContext<'_>,
+            _p: &dyn ProcessHandle,
+        ) -> game_driver_api::Result<bool> {
+            self.freeze_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
+        }
+        async fn unfreeze(
+            &self,
+            _c: &DriverContext<'_>,
+            _p: &dyn ProcessHandle,
+        ) -> game_driver_api::Result<()> {
+            Ok(())
+        }
+        async fn handoff(
+            &self,
+            _c: &DriverContext<'_>,
+            _p: &dyn ProcessHandle,
+            addr: &str,
+            port: u16,
+        ) -> game_driver_api::Result<bool> {
+            *self.handoff_target.lock().unwrap() = Some((addr.to_string(), port));
+            Ok(true)
         }
         async fn probe(
             &self,
@@ -1252,6 +1362,7 @@ mod requires_stop_tests {
             snapshot_interval_s: None,
             snapshot_requests: vec![],
             latest_safe_save_at_unix_ms: None,
+            freeze: None,
         })
     }
 
@@ -1259,12 +1370,7 @@ mod requires_stop_tests {
     async fn join_code_watcher_updates_execution_state() {
         let tmp = tempfile::tempdir().unwrap();
         let mut agent = test_agent(stub_cp().await, tmp.path());
-        agent.drivers.register(Box::new(StopDriver {
-            stopped: AtomicUsize::new(0),
-            after_stop: false,
-            prepare_calls: AtomicUsize::new(0),
-            live_barrier: true,
-        }));
+        agent.drivers.register(Box::new(StopDriver::new(true)));
         let agent = Arc::new(agent);
         let ctl = test_ctl();
         agent
@@ -1336,12 +1442,7 @@ mod requires_stop_tests {
             ports: &bindings,
             memory_mb: 0,
         };
-        let driver = StopDriver {
-            stopped: AtomicUsize::new(0),
-            after_stop: false,
-            prepare_calls: AtomicUsize::new(0),
-            live_barrier: false,
-        };
+        let driver = StopDriver::new(false);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
         assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
         assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
@@ -1388,11 +1489,10 @@ mod requires_stop_tests {
             ports: &bindings,
             memory_mb: 0,
         };
-        let driver = StopDriver {
-            stopped: AtomicUsize::new(0),
-            after_stop: true,
-            prepare_calls: AtomicUsize::new(0),
-            live_barrier: true,
+        let driver = {
+            let mut d = StopDriver::new(true);
+            d.after_stop = true;
+            d
         };
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
         assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
@@ -1464,15 +1564,78 @@ mod requires_stop_tests {
                 ports: &bindings,
                 memory_mb: 0,
             };
-            let driver = StopDriver {
-                stopped: AtomicUsize::new(0),
-                after_stop: true,
-                prepare_calls: AtomicUsize::new(0),
-                live_barrier: true,
+            let driver = {
+                let mut d = StopDriver::new(true);
+                d.after_stop = true;
+                d
             };
             graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
             assert!(agent.store.list_snapshots().unwrap().is_empty());
             assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handoff_issued_only_for_warm_migration_stop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = test_agent(stub_cp().await, tmp.path());
+        let (tx, _rx) = broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+            tx,
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
+        });
+        let server_dir = tmp.path().join("servers").join("srv_t");
+        let deployment_dir = tmp.path().join("deployments").join("dep_t");
+        std::fs::create_dir_all(&server_dir).unwrap();
+        std::fs::create_dir_all(&deployment_dir).unwrap();
+        let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+        let config = serde_json::json!({});
+        let bindings: Vec<PortBinding> = vec![];
+        let ctx = DriverContext {
+            server_id: "srv_t",
+            server_dir: &server_dir,
+            deployment_dir: &deployment_dir,
+            runtimes: &*agent.runtimes,
+            deployment: &deployment,
+            config: &config,
+            ports: &bindings,
+            memory_mb: 0,
+        };
+        let mk_ctl = |stop_reason: Option<String>| {
+            let d = test_ctl();
+            let mut dir = ExecutionDirective { ..d.dir.clone() };
+            dir.stop_reason = stop_reason;
+            dir.service = Some(cp_api::Service {
+                service_id: "svc_t".into(),
+                loopback_ip: "127.77.0.42".into(),
+                ports: vec![
+                    cp_api::GamePort {
+                        port: 27002,
+                        protocol: "udp".into(),
+                    },
+                    cp_api::GamePort {
+                        port: 27001,
+                        protocol: "tcp".into(),
+                    },
+                ],
+            });
+            ExecCtl::new(dir)
+        };
+        let driver = StopDriver::new(false);
+
+        // ordinary stop: no handoff
+        issue_handoff(&mk_ctl(None), &driver, &ctx, &proc).await;
+        assert!(driver.handoff_target.lock().unwrap().is_none());
+
+        // warm-migration stop: handoff targets the service's TCP port
+        issue_handoff(&mk_ctl(Some("handoff".into())), &driver, &ctx, &proc).await;
+        assert_eq!(
+            *driver.handoff_target.lock().unwrap(),
+            Some(("127.77.0.42".to_string(), 27001))
+        );
     }
 }
