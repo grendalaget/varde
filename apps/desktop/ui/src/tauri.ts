@@ -23,6 +23,14 @@ export interface LinkDefaults {
   relink: boolean;
 }
 
+// "federated-auth" payloads from the tray ("Log in with Varde" progress).
+export type FedState =
+  | { stage: "waiting_browser" }
+  | { stage: "exchanging" }
+  | { stage: "pick_group"; groups: { id: string; name: string }[] }
+  | { stage: "approving" }
+  | { stage: "error"; message: string };
+
 type Handler<T> = (e: { payload: T }) => void;
 type Unlisten = () => void;
 
@@ -44,7 +52,7 @@ declare global {
 function linked(hosting: boolean): UiStatus {
   return {
     state: "online",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "Grendalaget",
     node_name: "desktop-42",
     user_code: "",
@@ -59,7 +67,7 @@ function linked(hosting: boolean): UiStatus {
 const canned: Record<string, UiStatus | null> = {
   not_linked: {
     state: "not_linked",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "",
     node_name: "",
     user_code: "",
@@ -71,11 +79,11 @@ const canned: Record<string, UiStatus | null> = {
   },
   linking: {
     state: "linking",
-    control_plane_url: "https://cp.varde.example",
+    control_plane_url: "https://cp.varde.games",
     group_name: "",
     node_name: "",
     user_code: "WXYZ-1234",
-    link_url: "https://cp.varde.example/link?code=WXYZ-1234",
+    link_url: "https://cp.varde.games/link?code=WXYZ-1234",
     expires_at_unix_ms: Date.now() + 298_000,
     link_error: "",
     hosting: false,
@@ -88,7 +96,7 @@ const canned: Record<string, UiStatus | null> = {
     ...linked(false),
     state: "linking",
     user_code: "WXYZ-1234",
-    link_url: "https://cp.varde.example/link?code=WXYZ-1234",
+    link_url: "https://cp.varde.games/link?code=WXYZ-1234",
     expires_at_unix_ms: Date.now() + 298_000,
     relink: true,
   },
@@ -112,10 +120,44 @@ function mock(): TauriGlobal {
             return Promise.resolve(canned[state] as T);
           case "link_defaults":
             return Promise.resolve({
-              url: "https://cp.varde.example",
+              url: "https://cp.varde.games",
               auto: false,
               relink: false,
             } as T);
+          case "begin_varde_login": {
+            emit("federated-auth", { stage: "waiting_browser" });
+            const multi =
+              new URLSearchParams(window.location.search).get("fed") ===
+              "multi";
+            setTimeout(
+              () => emit("federated-auth", { stage: "exchanging" }),
+              400,
+            );
+            setTimeout(
+              () =>
+                multi
+                  ? emit("federated-auth", {
+                      stage: "pick_group",
+                      groups: [
+                        { id: "grp_1", name: "Grendalaget" },
+                        { id: "grp_2", name: "Weekend crew" },
+                      ],
+                    })
+                  : emit("federated-auth", { stage: "approving" }),
+              900,
+            );
+            if (!multi) {
+              setTimeout(() => emit("status", canned.linking), 1400);
+              setTimeout(() => emit("status", linked(false)), 4000);
+            }
+            return Promise.resolve(undefined as T);
+          }
+          case "finish_varde_login": {
+            emit("federated-auth", { stage: "approving" });
+            setTimeout(() => emit("status", canned.linking), 400);
+            setTimeout(() => emit("status", linked(false)), 2500);
+            return Promise.resolve(undefined as T);
+          }
           case "start_link":
             emit("status", canned.linking);
             // pretend the owner approved a few seconds later

@@ -29,9 +29,9 @@ func (s *Store) q() *sqlx.DB { return s.DB }
 
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO users (id,email,display_name,password_hash,is_operator,created_at)
-		 VALUES (?,?,?,?,?,?)`),
-		u.ID, u.Email, u.DisplayName, u.PasswordHash, u.IsOperator, u.CreatedAt)
+		`INSERT INTO users (id,email,display_name,password_hash,is_operator,website_user_id,created_at)
+		 VALUES (?,?,?,?,?,?,?)`),
+		u.ID, u.Email, u.DisplayName, u.PasswordHash, u.IsOperator, u.WebsiteUserID, u.CreatedAt)
 	return err
 }
 
@@ -51,6 +51,23 @@ func (s *Store) UserByID(ctx context.Context, id string) (*User, error) {
 		return nil, ErrNotFound
 	}
 	return &u, err
+}
+
+func (s *Store) UserByWebsiteID(ctx context.Context, websiteUserID string) (*User, error) {
+	var u User
+	err := s.q().GetContext(ctx, &u, s.Rebind(`SELECT * FROM users WHERE website_user_id=?`), websiteUserID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &u, err
+}
+
+// UpdateUserIdentity refreshes a federated user's mirrored profile fields
+// (email/display name drift on varde.games side).
+func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE users SET email=?, display_name=? WHERE id=?`), email, displayName, id)
+	return err
 }
 
 func (s *Store) UserCount(ctx context.Context) (int64, error) {

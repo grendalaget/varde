@@ -42,5 +42,6 @@ COPY --from=cp /out/varde-control-plane /varde-control-plane
 EXPOSE 8080
 # Flags are all env-driven: VARDE_LISTEN, VARDE_DB, VARDE_PUBLIC_URL,
 # VARDE_SIGNUP, VARDE_PRIMARY_FILE, VARDE_EMBEDDED_RELAY(_ADDR),
-# VARDE_LOG_LEVEL (see apps/controlplane/main.go).
+# VARDE_LOG_LEVEL, VARDE_AUTH_MODE, VARDE_FEDERATION_SECRET
+# (see apps/controlplane/main.go).
 ENTRYPOINT ["litefs", "mount"]

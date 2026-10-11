@@ -38,10 +38,23 @@ struct State {
     /// Origin the dashboard window may navigate within; a re-link to a
     /// different control plane re-arms it before `navigate`.
     dashboard_url: Mutex<Option<tauri::Url>>,
+    /// Federated sign-in paused at "pick a group": the CP session waits here
+    /// for `finish_varde_login`.
+    fed: Mutex<Option<FedPending>>,
+}
+
+/// A CP session minted by `/v1/auth/external`, held while the user picks
+/// which of their groups this PC joins.
+struct FedPending {
+    session: String,
+    cp_url: String,
 }
 
 pub fn run() {
     let launch = view::parse_launch(std::env::args().skip(1));
+    // Point varde:// at this exe; the installer writes the same keys machine-
+    // wide, this keeps portable/dev launches reachable too.
+    register_protocol();
     if launch.autostart && autostart::opted_out() {
         return;
     }
@@ -78,6 +91,9 @@ pub fn run() {
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let l = view::parse_launch(argv.into_iter().skip(1));
+            if let Some(u) = l.deep_link {
+                handle_deep_link(app, &u);
+            }
             if l.open_link {
                 app.state::<State>()
                     .auto_link
@@ -109,7 +125,9 @@ pub fn run() {
             stop_service,
             open_dashboard,
             open_url,
-            close_window
+            close_window,
+            begin_varde_login,
+            finish_varde_login
         ])
         .setup(move |app| {
             let h = app.handle().clone();
@@ -137,6 +155,9 @@ pub fn run() {
             tauri::async_runtime::spawn(watch(h.clone()));
             if relink || launch.open_link {
                 open_main_window(&h);
+            }
+            if let Some(u) = &launch.deep_link {
+                handle_deep_link(&h, u);
             }
             Ok(())
         })
@@ -636,6 +657,15 @@ fn link_defaults(app: AppHandle) -> LinkDefaults {
 
 #[tauri::command]
 async fn start_link(app: AppHandle, url: String) -> Result<UiStatus, String> {
+    let s = start_link_ipc(&app, url).await?;
+    if let Some(l) = &s.link {
+        let _ = app.opener().open_url(&l.link_url, None::<&str>);
+    }
+    let ui = UiStatus::from(&s);
+    Ok(ui)
+}
+
+async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, String> {
     let relink = app.state::<State>().relink;
     let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
         .await
@@ -650,12 +680,197 @@ async fn start_link(app: AppHandle, url: String) -> Result<UiStatus, String> {
         .into_inner()
         .status
         .unwrap_or_default();
-    if let Some(l) = &s.link {
-        let _ = app.opener().open_url(&l.link_url, None::<&str>);
+    publish(app, Some(s.clone()));
+    Ok(s)
+}
+
+// ---- "Log in with Varde": varde.games federation ----
+
+/// The site's desktop sign-in page; it bounces back through varde://.
+const SITE_DESKTOP_URL: &str = "https://varde.games/auth/desktop";
+
+/// Progress of a federated sign-in, emitted to the window as
+/// "federated-auth". The form renders these instead of the code field.
+#[derive(Serialize, Clone)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+enum FedEvent {
+    WaitingBrowser,
+    Exchanging,
+    PickGroup { groups: Vec<FedGroup> },
+    Approving,
+    Error { message: String },
+}
+
+#[derive(Serialize, Clone)]
+struct FedGroup {
+    id: String,
+    name: String,
+}
+
+fn emit_fed(app: &AppHandle, ev: FedEvent) {
+    let _ = app.emit_to(MAIN_WINDOW, "federated-auth", ev);
+}
+
+/// Register varde:// for the current user so the browser can return the
+/// sign-in token. HKCU needs no admin; missing-write failures just leave
+/// deep links unhandled.
+fn register_protocol() {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok((k, _)) = hkcu.create_subkey(r"Software\Classes\varde") {
+        let _ = k.set_value("", &"URL:Varde Protocol");
+        let _ = k.set_value("URL Protocol", &"");
     }
-    let ui = UiStatus::from(&s);
-    publish(&app, Some(s));
-    Ok(ui)
+    if let Ok((k, _)) = hkcu.create_subkey(r"Software\Classes\varde\shell\open\command") {
+        let _ = k.set_value("", &format!("\"{}\" \"%1\"", exe.display()));
+    }
+}
+
+/// Extract the federation token from varde://auth/callback?token=….
+fn deep_link_token(url: &str) -> Option<String> {
+    let u = tauri::Url::parse(url).ok()?;
+    if u.scheme() != "varde" || u.host_str() != Some("auth") || u.path() != "/callback" {
+        return None;
+    }
+    u.query_pairs()
+        .find(|(k, _)| k == "token")
+        .map(|(_, v)| v.into_owned())
+}
+
+fn handle_deep_link(app: &AppHandle, url: &str) {
+    let Some(token) = deep_link_token(url) else {
+        return;
+    };
+    open_main_window(app);
+    let h = app.clone();
+    tauri::async_runtime::spawn(async move {
+        emit_fed(&h, FedEvent::Exchanging);
+        if let Err(message) = federated_login(&h, token).await {
+            emit_fed(&h, FedEvent::Error { message });
+        }
+    });
+}
+
+/// Exchange the site's JWT at the hosted CP, then link this PC the same way
+/// the code flow does — except approval is an API call, not a browser page.
+async fn federated_login(app: &AppHandle, fed_token: String) -> Result<(), String> {
+    // The token's audience is the hosted CP; a self-hosted CP can't verify
+    // it, so always exchange against DEFAULT_CP_URL.
+    let cp = agent_ipc::DEFAULT_CP_URL.to_string();
+    let client = cp_api::CpClient::new(&cp).map_err(|e| e.to_string())?;
+    let resp: cp_api::AuthResponse = client
+        .json(
+            "POST",
+            "/v1/auth/external",
+            Some(&cp_api::ExternalLoginRequest { token: fed_token }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let authed = client.with_bearer(resp.token.clone());
+    let groups: cp_api::GroupList = authed
+        .json("GET", "/v1/groups", None::<&serde_json::Value>)
+        .await
+        .map_err(|e| e.to_string())?;
+    let group_id = match groups.groups.as_slice() {
+        [] => {
+            let g: cp_api::Group = authed
+                .json(
+                    "POST",
+                    "/v1/groups",
+                    Some(&cp_api::CreateGroupRequest {
+                        name: format!("{}'s group", resp.user.display_name),
+                    }),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            g.id
+        }
+        [one] => one.id.clone(),
+        many => {
+            *app.state::<State>().fed.lock().unwrap() = Some(FedPending {
+                session: resp.token.clone(),
+                cp_url: cp.clone(),
+            });
+            emit_fed(
+                app,
+                FedEvent::PickGroup {
+                    groups: many
+                        .iter()
+                        .map(|g| FedGroup {
+                            id: g.id.clone(),
+                            name: g.name.clone(),
+                        })
+                        .collect(),
+                },
+            );
+            return Ok(());
+        }
+    };
+    approve_link(app, authed, cp, group_id).await
+}
+
+#[tauri::command]
+async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
+    emit_fed(&app, FedEvent::WaitingBrowser);
+    app.opener()
+        .open_url(SITE_DESKTOP_URL, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), String> {
+    let pending = app
+        .state::<State>()
+        .fed
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("No sign-in is waiting for a group choice.")?;
+    let client = cp_api::CpClient::new(&pending.cp_url)
+        .map_err(|e| e.to_string())?
+        .with_bearer(pending.session);
+    approve_link(&app, client, pending.cp_url, group_id).await
+}
+
+/// Ask the agent to start linking (no browser tab this time), then approve
+/// the pending device link with the website session.
+async fn approve_link(
+    app: &AppHandle,
+    authed: cp_api::CpClient,
+    cp_url: String,
+    group_id: String,
+) -> Result<(), String> {
+    emit_fed(app, FedEvent::Approving);
+    let s = start_link_ipc(app, cp_url).await?;
+    let link = s.link.ok_or("The Varde service didn't produce a link code.")?;
+    let dl: cp_api::DeviceLink = authed
+        .json(
+            "GET",
+            &format!("/v1/device-links/{}", link.user_code),
+            None::<&serde_json::Value>,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let _: serde_json::Value = authed
+        .json(
+            "POST",
+            "/v1/device-links/approve",
+            Some(&cp_api::ApproveDeviceLinkRequest {
+                user_code: link.user_code,
+                group_id,
+                name: if dl.hostname.is_empty() {
+                    "this PC".into()
+                } else {
+                    dl.hostname
+                },
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

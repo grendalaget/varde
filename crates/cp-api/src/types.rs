@@ -383,6 +383,11 @@ pub struct AuthResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalLoginRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGroupRequest {
     pub name: String,
 }
@@ -399,6 +404,37 @@ pub struct Group {
     pub role: Option<String>,
     #[serde(default)]
     pub created_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupList {
+    #[serde(default, deserialize_with = "null_vec")]
+    pub groups: Vec<Group>,
+}
+
+// ---------- device links ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceLink {
+    pub user_code: String,
+    pub hostname: String,
+    pub os: String,
+    pub arch: String,
+    #[serde(default)]
+    pub agent_version: Option<String>,
+    pub state: String,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApproveDeviceLinkRequest {
+    pub user_code: String,
+    pub group_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

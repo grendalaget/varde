@@ -4,13 +4,17 @@ CREATE TABLE IF NOT EXISTS kv (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id            TEXT PRIMARY KEY,
-    email         TEXT NOT NULL UNIQUE,
-    display_name  TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    is_operator   INTEGER NOT NULL DEFAULT 0,
-    created_at    BIGINT NOT NULL
+    id              TEXT PRIMARY KEY,
+    email           TEXT NOT NULL UNIQUE,
+    display_name    TEXT NOT NULL,
+    password_hash   TEXT NOT NULL,
+    is_operator     INTEGER NOT NULL DEFAULT 0,
+    website_user_id TEXT,
+    created_at      BIGINT NOT NULL
 );
+
+-- varde.games id for federated logins; unique when set (NULLs don't collide)
+CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,

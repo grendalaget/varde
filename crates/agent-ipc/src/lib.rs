@@ -24,7 +24,7 @@ pub const PIPE_NAME: &str = r"\\.\pipe\varde-agent";
 
 /// The hosted Varde every install points at unless the user picks another
 /// server (`server.url`, `--link`, installer /CPURL, `enroll --server`).
-pub const DEFAULT_CP_URL: &str = "https://varde.games";
+pub const DEFAULT_CP_URL: &str = "https://cp.varde.games";
 
 /// IPC endpoint for an agent whose data dir is `data_dir`.
 pub fn endpoint(data_dir: &Path) -> String {
