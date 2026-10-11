@@ -118,5 +118,17 @@ func TestKVRoundTrip(t *testing.T) {
 		if err != nil || v != "v1" {
 			t.Fatalf("%s: %v %q", name, err, v)
 		}
+		ok, err := s.KVSetNX(ctx, "k2", "first")
+		if err != nil || !ok {
+			t.Fatalf("%s: first KVSetNX: %v %v", name, err, ok)
+		}
+		ok, err = s.KVSetNX(ctx, "k2", "second")
+		if err != nil || ok {
+			t.Fatalf("%s: second KVSetNX: %v %v", name, err, ok)
+		}
+		v, err = s.KVGet(ctx, "k2")
+		if err != nil || v != "first" {
+			t.Fatalf("%s: KVSetNX kept %q", name, v)
+		}
 	}
 }

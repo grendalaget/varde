@@ -78,6 +78,10 @@ func (e *Elector) Run(ctx context.Context) {
 		if e.leader.CompareAndSwap(true, false) {
 			e.log.Info("leader election: released leadership")
 		}
+		// conn.Close returns the conn to the pool where its session (and lock)
+		// would stay alive; release the lock explicitly first. Best-effort:
+		// a dead conn has already dropped the lock server-side.
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock_all()")
 		_ = conn.Close()
 	}
 	e.leader.Store(false)

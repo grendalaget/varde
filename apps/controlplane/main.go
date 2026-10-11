@@ -300,8 +300,18 @@ func loadOrCreateRelayKey(ctx context.Context, st *store.Store) (ed25519.Private
 	if err != nil {
 		return nil, err
 	}
-	if err := st.KVSet(ctx, relayKeyKV, string(pemBytes)); err != nil {
+	// Insert-if-absent: two replicas starting against an empty store would
+	// otherwise each write their own key and keep signing with it.
+	created, err := st.KVSetNX(ctx, relayKeyKV, string(pemBytes))
+	if err != nil {
 		return nil, err
+	}
+	if !created {
+		pemStr, err := st.KVGet(ctx, relayKeyKV)
+		if err != nil {
+			return nil, err
+		}
+		return identity.ParsePrivateKeyPEM([]byte(pemStr))
 	}
 	return priv, nil
 }
