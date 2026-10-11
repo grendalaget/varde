@@ -31,7 +31,9 @@ proxy:
 lease:
   type: "consul" # `fly consul attach` provisions FLY_CONSUL_URL
   advertise-url: "http://${FLY_MACHINE_ID}.vm.${FLY_APP_NAME}.internal:20202"
-  hostname: "${FLY_MACHINE_ID}.vm.${FLY_APP_NAME}.internal"
+  # Bare machine ID — LiteFS emits it verbatim as `fly-replay: instance=<hostname>`
+  # for replica writes, and fly-replay's instance field takes a Machine ID.
+  hostname: "${FLY_MACHINE_ID}"
   # Only machines in the primary region may hold the write lease — a single
   # writer close to most users, with remote machines as read replicas.
   candidate: ${FLY_REGION == PRIMARY_REGION}
