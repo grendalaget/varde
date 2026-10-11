@@ -845,7 +845,9 @@ async fn approve_link(
 ) -> Result<(), String> {
     emit_fed(app, FedEvent::Approving);
     let s = start_link_ipc(app, cp_url).await?;
-    let link = s.link.ok_or("The Varde service didn't produce a link code.")?;
+    let link = s
+        .link
+        .ok_or("The Varde service didn't produce a link code.")?;
     let dl: cp_api::DeviceLink = authed
         .json(
             "GET",

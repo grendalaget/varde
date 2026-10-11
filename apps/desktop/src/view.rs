@@ -344,7 +344,10 @@ mod tests {
         assert!(p(&["--service-start"]).service_start);
         assert!(p(&["--service-stop"]).service_stop);
         let l = p(&["varde://auth/callback?token=t.jwt"]);
-        assert_eq!(l.deep_link.as_deref(), Some("varde://auth/callback?token=t.jwt"));
+        assert_eq!(
+            l.deep_link.as_deref(),
+            Some("varde://auth/callback?token=t.jwt")
+        );
     }
 
     #[test]
