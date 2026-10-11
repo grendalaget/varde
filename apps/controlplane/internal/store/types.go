@@ -15,7 +15,9 @@ type User struct {
 	DisplayName  string `db:"display_name"`
 	PasswordHash string `db:"password_hash"`
 	IsOperator   int64  `db:"is_operator"`
-	CreatedAt    int64  `db:"created_at"`
+	// varde.games user id when the account came in through federation.
+	WebsiteUserID *string `db:"website_user_id"`
+	CreatedAt     int64   `db:"created_at"`
 }
 
 type Session struct {

@@ -41,12 +41,14 @@ type RelayConf struct {
 
 // Server implements gen.StrictServerInterface.
 type Server struct {
-	Store    *store.Store
-	Auth     auth.Provider
-	Cfg      Config
-	Recon    *reconciler.Reconciler
-	RelayKey ed25519.PrivateKey // CP signing key for relay tokens
-	Log      *slog.Logger
+	Store *store.Store
+	Auth  auth.Provider
+	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
+	Federation *auth.Federation
+	Cfg        Config
+	Recon      *reconciler.Reconciler
+	RelayKey   ed25519.PrivateKey // CP signing key for relay tokens
+	Log        *slog.Logger
 }
 
 type ctxKey int

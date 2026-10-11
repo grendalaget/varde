@@ -185,6 +185,8 @@ impl From<&pb::Status> for UiStatus {
 /// with the address the service reports), `--relink` (elevated re-link
 /// window), `--autostart`, `--service-start` / `--service-stop` (elevated
 /// headless service control; start also restarts a running-but-dead one).
+/// A `varde://` URL arrives from the protocol handler when the browser
+/// returns a federated sign-in token.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
@@ -192,6 +194,8 @@ pub struct Launch {
     pub autostart: bool,
     pub service_start: bool,
     pub service_stop: bool,
+    /// varde:// deep link (federated sign-in callback).
+    pub deep_link: Option<String>,
 }
 
 pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
@@ -208,6 +212,7 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
             "--autostart" => l.autostart = true,
             "--service-start" => l.service_start = true,
             "--service-stop" => l.service_stop = true,
+            _ if a.starts_with("varde://") => l.deep_link = Some(a),
             _ => {}
         }
     }
@@ -338,6 +343,11 @@ mod tests {
         assert!(p(&["--relink"]).relink);
         assert!(p(&["--service-start"]).service_start);
         assert!(p(&["--service-stop"]).service_stop);
+        let l = p(&["varde://auth/callback?token=t.jwt"]);
+        assert_eq!(
+            l.deep_link.as_deref(),
+            Some("varde://auth/callback?token=t.jwt")
+        );
     }
 
     #[test]

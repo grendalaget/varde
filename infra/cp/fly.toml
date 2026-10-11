@@ -11,6 +11,9 @@ primary_region = "arn" # Stockholm — closest to the core users (Norway)
   VARDE_DB = "sqlite:///litefs/varde.db"
   VARDE_PUBLIC_URL = "https://cp.varde.games"
   VARDE_SIGNUP = "invite"
+  # Hosted mode: trust varde.games federation tokens on /v1/auth/external.
+  # The shared secret goes in fly secrets, not here: VARDE_FEDERATION_SECRET.
+  VARDE_AUTH_MODE = "federated"
   VARDE_LOG_LEVEL = "info"
   # Reconciler gate: only the LiteFS lease holder may run periodic writes
   # (PrimaryFileElector — see apps/controlplane/internal/store/elector.go).

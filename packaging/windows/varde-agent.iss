@@ -1,7 +1,7 @@
 ; Varde — Inno Setup installer.
 ; Installs the agent service, mesh and tray into Program Files, starts the
 ; service and opens the tray's link window. The PC joins the hosted Varde
-; (varde.games) unless /CPURL names a self-hosted control plane — or the
+; (cp.varde.games) unless /CPURL names a self-hosted control plane — or the
 ; opt-in "controlplane" task installs one on this PC (service + sqlite in
 ; %ProgramData%\VardeCP), which then becomes this PC's default CP.
 ;
@@ -73,6 +73,13 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   ValueType: string; ValueName: "Varde"; \
   ValueData: """{app}\varde-tray.exe"" --autostart"; \
   Tasks: autostart; Flags: uninsdeletevalue
+; varde:// returns the varde.games sign-in token to the tray (browser → app)
+Root: HKLM; Subkey: "Software\Classes\varde"; \
+  ValueType: string; ValueData: "URL:Varde Protocol"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\varde"; \
+  ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\varde\shell\open\command"; \
+  ValueType: string; ValueData: """{app}\varde-tray.exe"" ""%1"""; Flags: uninsdeletekey
 
 [Icons]
 Name: "{autoprograms}\Varde"; Filename: "{app}\varde-tray.exe"; \
