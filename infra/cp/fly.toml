@@ -1,0 +1,45 @@
+# fly.toml — hosted control plane (cp.varde.games), LiteFS sqlite edition.
+# Deploy from the repo root: `fly deploy --config infra/cp/fly.toml`.
+app = "varde-cp"
+primary_region = "arn" # Stockholm — closest to the core users (Norway)
+
+[build]
+  dockerfile = "infra/cp/Dockerfile" # context is the repo root
+
+[env]
+  VARDE_LISTEN = ":8081"          # app port; litefs proxy (8080) fronts it
+  VARDE_DB = "sqlite:///litefs/varde.db"
+  VARDE_PUBLIC_URL = "https://cp.varde.games"
+  VARDE_SIGNUP = "invite"
+  VARDE_LOG_LEVEL = "info"
+  # Reconciler gate: only the LiteFS lease holder may run periodic writes
+  # (PrimaryFileElector — see apps/controlplane/internal/store/elector.go).
+  VARDE_PRIMARY_FILE = "/litefs/.primary"
+
+# Port 8080 is the LiteFS HTTP proxy, not the app: reads are served locally
+# with txid consistency, write requests are forwarded to the primary machine.
+# No autostop/autostart — fly's own LiteFS docs warn that suspending machines
+# can elect a stale primary and lose writes, so machines stay always-on and
+# capacity is managed with `fly scale count` / `fly m clone`.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 1000
+  [[http_service.checks]]
+    name = "healthz"
+    method = "GET"
+    path = "/healthz"             # litefs passthrough — machine-local check
+    interval = 30000
+    timeout = 5000
+    grace_period = "20s"          # litefs mount + primary connect on boot
+
+[mounts]
+  source = "litefs"               # fly volumes create litefs (one per machine)
+  destination = "/var/lib/litefs" # litefs data dir — the durable db store
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"                # litefs FUSE daemon + proxy + CP binary
