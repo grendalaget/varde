@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "@heroui/styles";
-@import "@heroui-pro/react/themes/mouve";
-@import "@heroui-pro/react/css" layer(components);
+@import "./mouve.css";
+/* pro component layer omitted: the app uses no pro components */
 
 /*
  * Varde design system (HeroUI Pro design system cc850839, theme "mouve").
