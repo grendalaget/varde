@@ -917,7 +917,7 @@ async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), Stri
         .take()
         .ok_or("No sign-in is waiting for a group choice.")?;
     if !pending.groups.contains(&group_id) {
-        return Err("That group isn't one of yours.");
+        return Err("That group isn't one of yours.".to_string());
     }
     let client = cp_api::CpClient::new(&pending.cp_url)
         .map_err(|e| e.to_string())?
