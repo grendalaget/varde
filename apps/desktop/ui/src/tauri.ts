@@ -25,6 +25,7 @@ export interface LinkDefaults {
 
 // "federated-auth" payloads from the tray ("Log in with Varde" progress).
 export type FedState =
+  | { stage: "confirm"; email: string; name: string }
   | { stage: "waiting_browser" }
   | { stage: "exchanging" }
   | { stage: "pick_group"; groups: { id: string; name: string }[] }
@@ -110,11 +111,21 @@ function mock(): TauriGlobal {
   // listeners for that event
   const listeners = new Map<string, Set<Handler<unknown>>>();
   const emit = <T>(event: string, payload: T) => {
+    // TEMP-TEST: trace event emissions for verification
+    (window as unknown as { __mocklog?: string[] }).__mocklog = [
+      ...((window as unknown as { __mocklog?: string[] }).__mocklog ?? []),
+      `emit ${event} ${JSON.stringify(payload)}`,
+    ];
     listeners.get(event)?.forEach((h) => h({ payload }));
   };
   return {
     core: {
-      invoke: <T>(cmd: string): Promise<T> => {
+      invoke: <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+        // TEMP-TEST: trace invokes for verification
+        (window as unknown as { __mocklog?: string[] }).__mocklog = [
+          ...((window as unknown as { __mocklog?: string[] }).__mocklog ?? []),
+          `invoke ${cmd} ${JSON.stringify(args)}`,
+        ];
         switch (cmd) {
           case "get_status":
             return Promise.resolve(canned[state] as T);
@@ -126,32 +137,55 @@ function mock(): TauriGlobal {
             } as T);
           case "begin_varde_login": {
             emit("federated-auth", { stage: "waiting_browser" });
-            const multi =
-              new URLSearchParams(window.location.search).get("fed") ===
-              "multi";
-            setTimeout(
-              () => emit("federated-auth", { stage: "exchanging" }),
-              400,
-            );
+            // the browser "returned" a varde:// callback — confirm next
             setTimeout(
               () =>
-                multi
-                  ? emit("federated-auth", {
-                      stage: "pick_group",
-                      groups: [
-                        { id: "grp_1", name: "Grendalaget" },
-                        { id: "grp_2", name: "Weekend crew" },
-                      ],
-                    })
-                  : emit("federated-auth", { stage: "approving" }),
-              900,
+                emit("federated-auth", {
+                  stage: "confirm",
+                  email: "arne@example.com",
+                  name: "Arne",
+                }),
+              500,
             );
-            if (!multi) {
-              setTimeout(() => emit("status", canned.linking), 1400);
-              setTimeout(() => emit("status", linked(false)), 4000);
+            return Promise.resolve(undefined as T);
+          }
+          case "confirm_varde_login": {
+            emit("federated-auth", { stage: "exchanging" });
+            const fedp = new URLSearchParams(window.location.search).get(
+              "fed",
+            );
+            const multi = fedp === "multi";
+            // TEMP-TEST: simulate a federated-auth failure with ?fed=error
+            const err = fedp === "error";
+            setTimeout(
+              () =>
+                err
+                  ? emit("federated-auth", {
+                      stage: "error",
+                      message: "Couldn't reach varde.games (simulated)",
+                    })
+                  : multi
+                    ? emit("federated-auth", {
+                        stage: "pick_group",
+                        groups: [
+                          { id: "grp_1", name: "Grendalaget" },
+                          { id: "grp_2", name: "Weekend crew" },
+                        ],
+                      })
+                    : emit("federated-auth", { stage: "approving" }),
+              400,
+            );
+            if (!multi && !err) {
+              setTimeout(() => emit("status", canned.linking), 900);
+              setTimeout(() => emit("status", linked(false)), 3500);
             }
             return Promise.resolve(undefined as T);
           }
+          case "cancel_varde_login":
+            emit("status", canned.not_linked);
+            return Promise.resolve(undefined as T);
+          case "federated_state":
+            return Promise.resolve(null as T);
           case "finish_varde_login": {
             emit("federated-auth", { stage: "approving" });
             setTimeout(() => emit("status", canned.linking), 400);

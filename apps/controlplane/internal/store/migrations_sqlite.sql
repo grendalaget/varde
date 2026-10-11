@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      BIGINT NOT NULL
 );
 
--- varde.games id for federated logins; unique when set (NULLs don't collide)
-CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id);
+-- varde.games id for federated logins; ensureColumns adds it to old databases
+-- and creates the unique index there (ALTER TABLE can't add a UNIQUE column).
 
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,

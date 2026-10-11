@@ -186,6 +186,15 @@ export default function App() {
         setFed(p);
         if (p.stage === "pick_group") setFedGroup(p.groups[0]?.id ?? "");
       });
+      // a deep link may have progressed the sign-in before this window
+      // subscribed — hydrate the current stage
+      const f = await invoke<FedState | null>("federated_state").catch(
+        () => null,
+      );
+      if (f) {
+        setFed(f);
+        if (f.stage === "pick_group") setFedGroup(f.groups[0]?.id ?? "");
+      }
       setStatus(await invoke<UiStatus | null>("get_status").catch(() => null));
     })();
     return () => {
@@ -218,8 +227,10 @@ export default function App() {
     if (!s) return;
     setSeen(true);
     setForceForm(false);
-    // a federated sign-in is done once the service is linked
-    if (LINKED.includes(s.state)) setFed(null);
+    // a federated sign-in is done once ITS link flow reaches the service —
+    // during a re-link the old link still reports a LINKED state until the
+    // new one is approved, so wait for our own link to have started
+    if (started && LINKED.includes(s.state)) setFed(null);
     if (s.state === "linking" && s.user_code) {
       setStarted(true);
       // a new code: drop a refusal shown for the previous one
@@ -272,8 +283,12 @@ export default function App() {
 
   const effectiveUrl =
     urlEdited || url ? url : status?.control_plane_url || defaults?.url || "";
-  // varde.games sign-in only exists on the hosted control plane
-  const hosted = hostOf(effectiveUrl) === HOSTED_CP_HOST;
+  // varde.games sign-in only exists on the hosted control plane — and not
+  // in the elevated re-link window: a browser callback lands in a normal
+  // instance that the agent refuses to re-link, so re-link uses the code
+  // flow (browser-side approval) only
+  const hosted =
+    hostOf(effectiveUrl) === HOSTED_CP_HOST && !defaults?.relink;
 
   const doLink = useCallback(async (u: string) => {
     setFormError("");
@@ -355,8 +370,8 @@ export default function App() {
   }, []);
 
   const cancelFed = useCallback(() => {
-    // a link may already be pending with the service; let it go
-    void invoke("cancel_link").catch(() => {});
+    // clears the stored token/group pick and any mid-flight link
+    void invoke("cancel_varde_login").catch(() => {});
     setFed(null);
   }, []);
 
@@ -367,6 +382,14 @@ export default function App() {
       setFed({ stage: "error", message: String(e) });
     }
   }, [fedGroup]);
+
+  const confirmVardeLogin = useCallback(async () => {
+    try {
+      await invoke("confirm_varde_login");
+    } catch (e) {
+      setFed({ stage: "error", message: String(e) });
+    }
+  }, []);
 
   const expiry = (() => {
     if (!status || status.state !== "linking" || !status.expires_at_unix_ms)
@@ -480,6 +503,17 @@ export default function App() {
             <Title2 className={styles.title} as="h1">
               Log in with Varde
             </Title2>
+            {fed.stage === "confirm" && (
+              <>
+                <Text className={styles.lead} as="p">
+                  varde.games wants to link this PC to{" "}
+                  {fed.email ? <strong>{fed.email}</strong> : "your account"}.
+                </Text>
+                <Text className={styles.muted} as="p">
+                  Only continue if you just clicked Log in with Varde.
+                </Text>
+              </>
+            )}
             {fed.stage === "waiting_browser" && (
               <>
                 <Text className={styles.lead} as="p">
@@ -531,6 +565,14 @@ export default function App() {
               </MessageBar>
             )}
             <div className={styles.row}>
+              {fed.stage === "confirm" && (
+                <Button
+                  appearance="primary"
+                  onClick={() => void confirmVardeLogin()}
+                >
+                  Link this PC
+                </Button>
+              )}
               {fed.stage === "pick_group" && (
                 <Button
                   appearance="primary"

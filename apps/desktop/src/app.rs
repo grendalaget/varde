@@ -41,6 +41,15 @@ struct State {
     /// Federated sign-in paused at "pick a group": the CP session waits here
     /// for `finish_varde_login`.
     fed: Mutex<Option<FedPending>>,
+    /// Federation token from a varde:// callback, held until the user
+    /// confirms they meant to start sign-in.
+    fed_token: Mutex<Option<String>>,
+    /// Last emitted federated-auth stage — a window that opened after the
+    /// event (deep link launched the app) hydrates from this.
+    fed_last: Mutex<Option<FedEvent>>,
+    /// Cleared by cancel_varde_login mid-flight: approve_link checks it
+    /// before starting a new link so a cancelled sign-in can't still link.
+    fed_active: std::sync::atomic::AtomicBool,
 }
 
 /// A CP session minted by `/v1/auth/external`, held while the user picks
@@ -48,13 +57,19 @@ struct State {
 struct FedPending {
     session: String,
     cp_url: String,
+    /// Valid choices — finish_varde_login refuses anything else.
+    groups: Vec<String>,
 }
 
 pub fn run() {
     let launch = view::parse_launch(std::env::args().skip(1));
     // Point varde:// at this exe; the installer writes the same keys machine-
-    // wide, this keeps portable/dev launches reachable too.
-    register_protocol();
+    // wide, this keeps portable/dev launches reachable too. Skipped in the
+    // elevated re-link window: a callback there would land in a non-elevated
+    // instance that the agent refuses to re-link anyway.
+    if !launch.relink {
+        register_protocol();
+    }
     if launch.autostart && autostart::opted_out() {
         return;
     }
@@ -127,6 +142,9 @@ pub fn run() {
             open_url,
             close_window,
             begin_varde_login,
+            confirm_varde_login,
+            cancel_varde_login,
+            federated_state,
             finish_varde_login
         ])
         .setup(move |app| {
@@ -694,6 +712,7 @@ const SITE_DESKTOP_URL: &str = "https://varde.games/auth/desktop";
 #[derive(Serialize, Clone)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 enum FedEvent {
+    Confirm { email: String, name: String },
     WaitingBrowser,
     Exchanging,
     PickGroup { groups: Vec<FedGroup> },
@@ -708,6 +727,7 @@ struct FedGroup {
 }
 
 fn emit_fed(app: &AppHandle, ev: FedEvent) {
+    *app.state::<State>().fed_last.lock().unwrap() = Some(ev.clone());
     let _ = app.emit_to(MAIN_WINDOW, "federated-auth", ev);
 }
 
@@ -745,13 +765,35 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
         return;
     };
     open_main_window(app);
-    let h = app.clone();
-    tauri::async_runtime::spawn(async move {
-        emit_fed(&h, FedEvent::Exchanging);
-        if let Err(message) = federated_login(&h, token).await {
-            emit_fed(&h, FedEvent::Error { message });
-        }
-    });
+    // A varde:// link can be unsolicited (any page can open it), so the
+    // callback never links silently: the window asks the user to confirm
+    // first. Claims shown here are display-only; the CP verifies the
+    // signature at /v1/auth/external.
+    let (email, name) = token_identity(&token);
+    *app.state::<State>().fed_token.lock().unwrap() = Some(token);
+    emit_fed(app, FedEvent::Confirm { email, name });
+}
+
+/// Read `email`/`name` from an (unverified) JWT payload for the confirm
+/// prompt — best-effort, empty strings when unreadable.
+fn token_identity(jwt: &str) -> (String, String) {
+    use base64::Engine;
+    let claims = (|| -> Option<serde_json::Value> {
+        let payload = jwt.split('.').nth(1)?;
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .ok()?;
+        serde_json::from_slice(&raw).ok()
+    })();
+    let get = |k: &str| {
+        claims
+            .as_ref()
+            .and_then(|c| c.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    (get("email"), get("name"))
 }
 
 /// Exchange the site's JWT at the hosted CP, then link this PC the same way
@@ -793,6 +835,7 @@ async fn federated_login(app: &AppHandle, fed_token: String) -> Result<(), Strin
             *app.state::<State>().fed.lock().unwrap() = Some(FedPending {
                 session: resp.token.clone(),
                 cp_url: cp.clone(),
+                groups: many.iter().map(|g| g.id.clone()).collect(),
             });
             emit_fed(
                 app,
@@ -814,10 +857,54 @@ async fn federated_login(app: &AppHandle, fed_token: String) -> Result<(), Strin
 
 #[tauri::command]
 async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
+    app.state::<State>()
+        .fed_active
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// The confirm card approved: exchange the stored callback token.
+#[tauri::command]
+async fn confirm_varde_login(app: AppHandle) -> Result<(), String> {
+    let token = app
+        .state::<State>()
+        .fed_token
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("No sign-in is waiting for confirmation.")?;
+    app.state::<State>()
+        .fed_active
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    emit_fed(&app, FedEvent::Exchanging);
+    tauri::async_runtime::spawn(async move {
+        if let Err(message) = federated_login(&app, token).await {
+            emit_fed(&app, FedEvent::Error { message });
+        }
+    });
+    Ok(())
+}
+
+/// Cancel whatever stage a federated sign-in is in (pre-confirm, group pick,
+/// or mid-flight before approval).
+#[tauri::command]
+async fn cancel_varde_login(app: AppHandle) -> Result<(), String> {
+    app.state::<State>()
+        .fed_active
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    *app.state::<State>().fed_token.lock().unwrap() = None;
+    *app.state::<State>().fed.lock().unwrap() = None;
+    *app.state::<State>().fed_last.lock().unwrap() = None;
+    cancel_link().await
+}
+
+/// The last emitted stage, for a window that subscribed after the event.
+#[tauri::command]
+fn federated_state(app: AppHandle) -> Option<FedEvent> {
+    app.state::<State>().fed_last.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -829,6 +916,9 @@ async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), Stri
         .unwrap()
         .take()
         .ok_or("No sign-in is waiting for a group choice.")?;
+    if !pending.groups.contains(&group_id) {
+        return Err("That group isn't one of yours.");
+    }
     let client = cp_api::CpClient::new(&pending.cp_url)
         .map_err(|e| e.to_string())?
         .with_bearer(pending.session);
@@ -843,6 +933,15 @@ async fn approve_link(
     cp_url: String,
     group_id: String,
 ) -> Result<(), String> {
+    // a cancel landing mid-flight (between exchange and here) must not
+    // still start a link
+    if !app
+        .state::<State>()
+        .fed_active
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        return Ok(());
+    }
     emit_fed(app, FedEvent::Approving);
     let s = start_link_ipc(app, cp_url).await?;
     let link = s
