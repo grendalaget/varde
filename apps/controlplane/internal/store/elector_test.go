@@ -10,10 +10,11 @@ import (
 )
 
 func TestPrimaryFileElector(t *testing.T) {
+	// LiteFS materializes .primary only on replicas; the primary has none.
 	p := filepath.Join(t.TempDir(), ".primary")
 	e := NewPrimaryFileElector(p, "node-a")
-	if e.IsLeader() {
-		t.Fatal("missing primary file should not lead")
+	if !e.IsLeader() {
+		t.Fatal("absent primary file should lead (we are the primary)")
 	}
 	if err := os.WriteFile(p, []byte("node-b\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -31,7 +32,28 @@ func TestPrimaryFileElector(t *testing.T) {
 		t.Fatal(err)
 	}
 	if e.IsLeader() {
-		t.Fatal("leadership should flip when the lease moves")
+		t.Fatal("leadership should stop when the lease moves away")
+	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("empty primary file is ambiguous and should not lead")
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("unreadable primary file is ambiguous and should not lead")
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if !e.IsLeader() {
+		t.Fatal("leadership should return when the file disappears")
 	}
 }
 
