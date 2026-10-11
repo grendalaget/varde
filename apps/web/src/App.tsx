@@ -195,7 +195,7 @@ function Layout() {
   else if (p === "/members") page = <Members />;
   else if (p === "/activity") page = <Activity />;
   else if (p === "/settings") page = <Settings />;
-  else page = <p className="text-skifer-400">Page not found.</p>;
+  else page = <p className="text-muted">Page not found.</p>;
 
   return (
     <Shell
@@ -209,11 +209,11 @@ function Layout() {
             <Logo className="h-8" />
           </Link>
           <label className="mb-4 px-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-skifer-500">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted">
               Group
             </span>
             <select
-              className="mt-1 w-full rounded-md border border-skifer-800 bg-skifer-900 px-2 py-1.5 text-sm"
+              className="mt-1 w-full rounded-field border border-field-border bg-field px-2 py-1.5 text-sm text-field-foreground shadow-field"
               value={group.group_id}
               onChange={(e) => {
                 if (e.target.value === "__new") navigate("/settings?new=1");
@@ -239,26 +239,24 @@ function Layout() {
                 className={cx(
                   "rounded-md px-2 py-1.5 text-sm transition-all duration-200 ease-vd-out hover:translate-x-0.5",
                   n.active(p)
-                    ? "bg-skifer-800 font-medium text-take"
-                    : "text-skifer-400 hover:bg-skifer-900 hover:text-skifer-200",
+                    ? "bg-default font-medium text-foreground"
+                    : "text-muted hover:bg-surface-secondary hover:text-foreground",
                 )}
               >
                 {n.label}
               </Link>
             ))}
           </nav>
-          <div className="mt-auto space-y-3 px-2 text-xs text-skifer-500">
+          <div className="mt-auto space-y-3 px-2 text-xs text-muted">
             <div className="flex items-center gap-2" title="Live updates">
               <span className={connected ? "vd-pulse" : undefined}>
                 <Dot tone={connected ? "green" : "warn"} />
               </span>
               {connected ? "Live" : "Reconnecting…"}
             </div>
-            <div className="truncate text-skifer-400">
-              {me.user.display_name}
-            </div>
+            <div className="truncate text-muted">{me.user.display_name}</div>
             <button
-              className="text-skifer-500 transition-colors duration-150 hover:text-skifer-300"
+              className="text-muted transition-colors duration-150 hover:text-foreground"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
                 window.location.href = "/";
@@ -292,8 +290,8 @@ function Shell({
     setOpen(false);
   }
   return (
-    <div className="min-h-screen bg-skifer-950 text-skifer-100 md:flex">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-skifer-800 bg-skifer-950/95 px-4 py-3 backdrop-blur md:hidden">
+    <div className="min-h-screen bg-background text-foreground md:flex">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-separator bg-background/90 px-4 py-3 backdrop-blur md:hidden">
         <Link to="/" className="vd-hover flex" aria-label="Varde home">
           <Logo className="h-7" />
         </Link>
@@ -302,7 +300,7 @@ function Shell({
           aria-label={open ? "Close menu" : "Open menu"}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="-mr-2 rounded-md p-2 text-skifer-300 transition-colors duration-150 hover:bg-skifer-900"
+          className="-mr-2 rounded-md p-2 text-foreground transition-colors duration-150 hover:bg-surface-secondary"
         >
           <svg
             width="22"
@@ -329,7 +327,7 @@ function Shell({
       )}
       <aside
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-skifer-800 bg-skifer-950 px-3 py-4 transition-transform duration-300 ease-vd-out md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-separator bg-surface px-3 py-4 transition-transform duration-300 ease-vd-out md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -344,7 +342,7 @@ function Shell({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-skifer-950 p-6 text-skifer-100">
+    <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
       <div className="w-full max-w-sm">{children}</div>
     </main>
   );

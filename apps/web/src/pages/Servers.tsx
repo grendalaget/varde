@@ -53,7 +53,7 @@ export default function Servers() {
             No servers yet.{" "}
             <Link
               to="/servers/new"
-              className="text-take underline decoration-skifer-500 underline-offset-2 hover:decoration-take"
+              className="text-foreground underline decoration-muted underline-offset-2 hover:decoration-foreground"
             >
               Create your first one
             </Link>
@@ -88,14 +88,14 @@ function ServerCard({
   return (
     <Link
       to={`/servers/${s.id}`}
-      className="block rounded-lg border border-skifer-800 bg-skifer-900/60 p-4 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-skifer-600 hover:shadow-lg hover:shadow-black/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-take"
+      className="block rounded-2xl border border-separator bg-surface p-4 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-lg hover:shadow-black/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ServerMark state={s.observed_state} />
           <div className="min-w-0">
-            <h3 className="truncate font-semibold text-skifer-50">{s.name}</h3>
-            <p className="text-xs text-skifer-400">{gameName}</p>
+            <h3 className="truncate font-semibold text-foreground">{s.name}</h3>
+            <p className="text-xs text-muted">{gameName}</p>
           </div>
         </div>
         <ServerStateBadge state={s.observed_state} />
@@ -108,7 +108,7 @@ function ServerCard({
               name={sum.hosting_on.name}
             />
           ) : (
-            <span className="text-skifer-500">Not running</span>
+            <span className="text-muted">Not running</span>
           )}
         </Row>
         <Row label={crossplay ? "Join code" : "Address"}>
@@ -123,7 +123,7 @@ function ServerCard({
                 <CopyText text={sum.join_code} />
               </span>
             ) : (
-              <span className="text-skifer-500">
+              <span className="text-muted">
                 {s.observed_state === "running" ? "Waiting for code…" : "—"}
               </span>
             )
@@ -137,11 +137,11 @@ function ServerCard({
               <CopyText text={sum.address} />
             </span>
           ) : (
-            <span className="text-skifer-500">—</span>
+            <span className="text-muted">—</span>
           )}
         </Row>
         {crossplay && (
-          <p className="text-xs text-skifer-400">
+          <p className="text-xs text-muted">
             Crossplay server: players join from Valheim&apos;s Join game → Join
             by code. The code can change when the server restarts or moves to
             another machine, so check here for the current one.
@@ -149,11 +149,11 @@ function ServerCard({
         )}
         <Row label="Latest safe save">
           {sum.latest_safe_save ? (
-            <span className="text-skifer-100">
+            <span className="text-foreground">
               {timeAgo(sum.latest_safe_save.created_at)}
             </span>
           ) : (
-            <span className="text-skifer-500">None yet</span>
+            <span className="text-muted">None yet</span>
           )}
         </Row>
       </dl>
@@ -178,7 +178,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <dt className="text-skifer-400">{label}</dt>
+      <dt className="text-muted">{label}</dt>
       <dd className="min-w-0 truncate text-right">{children}</dd>
     </div>
   );

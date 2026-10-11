@@ -138,10 +138,10 @@ export default function Settings() {
                 label="Require always-on backup"
               />
               <div>
-                <div className="text-sm text-skifer-200">
+                <div className="text-sm text-foreground">
                   Require the always-on backup
                 </div>
-                <div className="text-xs text-skifer-400">
+                <div className="text-xs text-muted">
                   A save only counts as safe once an always-on backup has it
                   (applies when the group has one).
                 </div>

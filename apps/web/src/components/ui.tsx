@@ -1,3 +1,4 @@
+import { Button as HButton } from "@heroui/react";
 import {
   useEffect,
   useRef,
@@ -5,7 +6,6 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from "react";
-import { Loader } from "./Logo";
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
@@ -19,32 +19,37 @@ export function Button({
   className,
   children,
   disabled,
-  ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  onClick,
+  type,
+  title,
+}: {
   variant?: Variant;
   busy?: boolean;
+  className?: string;
+  children?: ReactNode;
+  disabled?: boolean;
+  onClick?: ButtonHTMLAttributes<HTMLButtonElement>["onClick"];
+  type?: "button" | "submit" | "reset";
+  title?: string;
 }) {
-  const styles: Record<Variant, string> = {
-    primary: "bg-take text-natt hover:bg-white",
-    secondary:
-      "bg-skifer-800 text-skifer-100 hover:bg-skifer-700 border border-skifer-700",
-    danger:
-      "bg-rose-600/10 text-rose-300 hover:bg-rose-600/20 border border-rose-700/50",
-    ghost: "text-skifer-300 hover:bg-skifer-800",
-  };
+  const variants = {
+    primary: "primary",
+    secondary: "secondary",
+    danger: "danger-soft",
+    ghost: "ghost",
+  } as const;
   return (
-    <button
-      className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all duration-150 ease-vd-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-take active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100",
-        styles[variant],
-        className,
-      )}
-      disabled={disabled || busy}
-      {...rest}
+    <HButton
+      className={className}
+      variant={variants[variant]}
+      isDisabled={disabled || busy}
+      isPending={busy}
+      onPress={(e) => onClick?.(e as never)}
+      type={type}
+      {...(title ? ({ title } as Record<string, unknown>) : {})}
     >
-      {busy && <Loader small label="Working…" />}
       {children}
-    </button>
+    </HButton>
   );
 }
 
@@ -58,7 +63,7 @@ export function Card({
   return (
     <div
       className={cx(
-        "rounded-lg border border-skifer-800 bg-skifer-900/60",
+        "rounded-2xl border border-separator bg-surface shadow-surface",
         className,
       )}
     >
@@ -77,12 +82,10 @@ export function CardHeader({
   subtitle?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-skifer-800 px-4 py-3">
+    <div className="flex items-start justify-between gap-4 border-b border-separator px-4 py-3">
       <div>
-        <h2 className="text-sm font-semibold text-skifer-100">{title}</h2>
-        {subtitle && (
-          <p className="mt-0.5 text-xs text-skifer-400">{subtitle}</p>
-        )}
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
     </div>
@@ -109,8 +112,8 @@ export function Badge({
     red: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
     blue: "bg-sky-500/10 text-sky-300 ring-sky-500/30",
     violet: "bg-violet-500/10 text-violet-300 ring-violet-500/30",
-    neutral: "bg-skifer-500/10 text-skifer-300 ring-skifer-500/30",
-    host: "bg-glod/10 text-take ring-glod/40",
+    neutral: "bg-default/60 text-muted ring-border",
+    host: "bg-glod/10 text-foreground ring-glod/40",
   };
   return (
     <span
@@ -133,7 +136,7 @@ export function Dot({ tone }: { tone: Tone }) {
     red: "bg-rose-400",
     blue: "bg-sky-400",
     violet: "bg-violet-400",
-    neutral: "bg-skifer-500",
+    neutral: "bg-muted",
     host: "bg-glod",
   };
   return (
@@ -177,15 +180,15 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="text-sm font-medium text-skifer-200">{label}</span>
+      <span className="text-sm font-medium text-foreground">{label}</span>
       <div className="mt-1">{children}</div>
-      {help && <p className="mt-1 text-xs text-skifer-400">{help}</p>}
+      {help && <p className="mt-1 text-xs text-muted">{help}</p>}
     </label>
   );
 }
 
 export const inputClass =
-  "w-full rounded-md border border-skifer-700 bg-skifer-950 px-3 py-1.5 text-sm text-skifer-100 transition-colors duration-150 ease-vd-out placeholder:text-skifer-500 focus:border-skifer-300 focus:outline-none focus:ring-1 focus:ring-skifer-300";
+  "w-full rounded-field border border-field-border bg-field px-3 py-1.5 text-sm text-field-foreground shadow-field outline-none transition-colors duration-150 ease-vd-out placeholder:text-field-placeholder hover:bg-field-hover focus:border-field-border-focus focus:bg-field-focus";
 
 export function Toggle({
   checked,
@@ -208,13 +211,13 @@ export function Toggle({
       onClick={() => onChange(!checked)}
       className={cx(
         "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-vd-out disabled:opacity-50",
-        checked ? "bg-take" : "bg-skifer-700",
+        checked ? "bg-accent" : "bg-field-border",
       )}
     >
       <span
         className={cx(
           "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-spring active:scale-90",
-          checked ? "bg-natt" : "bg-take",
+          checked ? "bg-accent-foreground" : "bg-foreground",
           checked ? "translate-x-4" : "translate-x-0.5",
         )}
       />
@@ -225,7 +228,7 @@ export function Toggle({
 export function ErrorNote({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (
-    <div className="vd-shake rounded-md border border-rose-800/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
+    <div className="vd-shake rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger-soft-foreground">
       {children}
     </div>
   );
@@ -233,7 +236,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 
 export function WarnNote({ children }: { children: ReactNode }) {
   return (
-    <div className="vd-in rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">
+    <div className="vd-in rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground">
       {children}
     </div>
   );
@@ -241,7 +244,7 @@ export function WarnNote({ children }: { children: ReactNode }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="vd-fade px-4 py-10 text-center text-sm text-skifer-400">
+    <div className="vd-fade px-4 py-10 text-center text-sm text-muted">
       {children}
     </div>
   );
@@ -259,10 +262,10 @@ export function PageHeader({
   return (
     <div className="vd-enter mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-skifer-50">
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
           {title}
         </h1>
-        {subtitle && <p className="mt-1 text-sm text-skifer-400">{subtitle}</p>}
+        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
@@ -298,10 +301,10 @@ export function CopyText({
         );
       }}
       className={cx(
-        "group inline-flex items-center gap-1.5 rounded bg-skifer-950 px-2 py-0.5 text-left text-sm ring-1 transition-all duration-200 ease-vd-out active:scale-[0.96]",
+        "group inline-flex items-center gap-1.5 rounded bg-field px-2 py-0.5 text-left text-sm ring-1 transition-all duration-200 ease-vd-out active:scale-[0.96]",
         copied
           ? "text-emerald-300 ring-emerald-500/50"
-          : "text-take ring-skifer-700 hover:ring-skifer-400",
+          : "text-foreground ring-field-border hover:ring-field-border-focus",
         mono && "font-mono",
       )}
     >

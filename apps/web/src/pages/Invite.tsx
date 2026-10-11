@@ -18,7 +18,7 @@ export default function InvitePage({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="vd-enter space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6">
+    <div className="vd-enter space-y-4 rounded-2xl border border-separator bg-surface p-6">
       {inv.error ? (
         <ErrorNote>This invite link is invalid or has expired.</ErrorNote>
       ) : !inv.data ? (
@@ -26,7 +26,7 @@ export default function InvitePage({
       ) : (
         <>
           <h1 className="text-lg font-semibold">Join {inv.data.group_name}?</h1>
-          <p className="text-sm text-skifer-400">
+          <p className="text-sm text-muted">
             You'll be able to play the group's servers and add your own
             machines.
           </p>

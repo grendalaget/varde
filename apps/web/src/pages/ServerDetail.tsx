@@ -92,7 +92,7 @@ export default function ServerDetail({ id }: { id: string }) {
   return (
     <>
       <div className="mb-2 text-sm">
-        <Link to="/" className="text-skifer-400 hover:text-skifer-200">
+        <Link to="/" className="text-muted hover:text-foreground">
           ← Servers
         </Link>
       </div>
@@ -114,7 +114,7 @@ export default function ServerDetail({ id }: { id: string }) {
           />
         }
       />
-      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-skifer-800 [scrollbar-width:none]">
+      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-separator [scrollbar-width:none]">
         {tabs.map(([t, label]) => (
           <button
             key={t}
@@ -122,8 +122,8 @@ export default function ServerDetail({ id }: { id: string }) {
             className={
               "-mb-px border-b-2 px-3 py-2 text-sm transition-colors duration-200 ease-vd-out " +
               (tab === t
-                ? "border-take text-skifer-50"
-                : "border-transparent text-skifer-400 hover:text-skifer-200")
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted hover:text-foreground")
             }
           >
             {label}
@@ -239,8 +239,8 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         )}
       </div>
       {moving && (
-        <div className="vd-menu absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-skifer-700 bg-skifer-900 p-2 text-sm shadow-lg">
-          <span className="text-skifer-400">Move to</span>
+        <div className="vd-menu absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-border bg-surface p-2 text-sm shadow-lg">
+          <span className="text-muted">Move to</span>
           {targets.map((n) => (
             <Button
               key={n.id}
@@ -307,45 +307,45 @@ function Overview({
               </WarnNote>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-skifer-400">
+              <span className="text-muted">
                 {crossplay ? "Join code" : "Address"}
               </span>
               {crossplay ? (
                 sum.join_code ? (
                   <CopyText text={sum.join_code} />
                 ) : (
-                  <span className="text-skifer-500">
+                  <span className="text-muted">
                     {s.observed_state === "running" ? "Waiting for code…" : "—"}
                   </span>
                 )
               ) : sum.address ? (
                 <CopyText text={sum.address} />
               ) : (
-                <span className="text-skifer-500">—</span>
+                <span className="text-muted">—</span>
               )}
             </div>
             {crossplay ? (
-              <p className="text-xs text-skifer-400">
+              <p className="text-xs text-muted">
                 Crossplay server: players join from Valheim&apos;s Join game →
                 Join by code. The code can change when the server restarts or
                 moves to another machine, so check here for the current one.
               </p>
             ) : (
-              <p className="text-xs text-skifer-400">
+              <p className="text-xs text-muted">
                 This address works from any machine in the group with Varde
                 running, and it stays the same when the server moves to another
                 machine.
               </p>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-skifer-400">Hosting on</span>
+              <span className="text-muted">Hosting on</span>
               {sum.hosting_on ? (
                 <HostMarker
                   nodeId={sum.hosting_on.node_id}
                   name={sum.hosting_on.name}
                 />
               ) : (
-                <span className="text-skifer-500">Not running</span>
+                <span className="text-muted">Not running</span>
               )}
             </div>
           </div>
@@ -360,20 +360,20 @@ function Overview({
         <div className="space-y-3 p-4 text-sm">
           {sum.latest_safe_save ? (
             <>
-              <div className="text-skifer-100">
+              <div className="text-foreground">
                 {timeAgo(sum.latest_safe_save.created_at)}
-                <span className="block text-xs text-skifer-500">
+                <span className="block text-xs text-muted">
                   {dateTime(sum.latest_safe_save.created_at)}
                 </span>
               </div>
               {latestSafe?.size_bytes != null && (
-                <div className="text-xs text-skifer-400">
+                <div className="text-xs text-muted">
                   {bytes(latestSafe.size_bytes)} of game data
                 </div>
               )}
             </>
           ) : (
-            <p className="text-skifer-400">
+            <p className="text-muted">
               No safe save yet. One is taken automatically while the server
               runs.
             </p>
@@ -426,7 +426,7 @@ function Saves({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wider text-skifer-500">
+            <thead className="text-left text-xs uppercase tracking-wider text-muted">
               <tr>
                 <th className="px-4 py-2 font-medium">Taken</th>
                 <th className="hidden px-4 py-2 font-medium sm:table-cell">
@@ -439,7 +439,7 @@ function Saves({
                 <th className="px-4 py-2 font-medium" />
               </tr>
             </thead>
-            <tbody className="vd-stagger divide-y divide-skifer-800">
+            <tbody className="vd-stagger divide-y divide-separator">
               {snapshots.map((x) => {
                 const st = SNAP_STATE[x.state] ?? {
                   label: x.state,
@@ -449,18 +449,18 @@ function Saves({
                   <tr key={x.id}>
                     <td className="px-4 py-2">
                       <div
-                        className="text-skifer-100"
+                        className="text-foreground"
                         title={dateTime(x.created_at)}
                       >
                         {timeAgo(x.created_at)}
                       </div>
-                      <div className="text-xs text-skifer-500">
+                      <div className="text-xs text-muted">
                         {REASON[x.reason] ?? x.reason} · on{" "}
                         {nodeName(x.node_id)}
                       </div>
                       <div className="mt-1 flex items-center gap-2 sm:hidden">
                         <Badge tone={st.tone}>{st.label}</Badge>
-                        <span className="text-xs text-skifer-500">
+                        <span className="text-xs text-muted">
                           {bytes(x.size_bytes)}
                         </span>
                       </div>
@@ -483,7 +483,7 @@ function Saves({
                             </Badge>
                           ))}
                         {x.replicas.some((r) => r.state === "assigned") && (
-                          <span className="text-xs text-skifer-500">
+                          <span className="text-xs text-muted">
                             +
                             {
                               x.replicas.filter((r) => r.state === "assigned")
@@ -494,7 +494,7 @@ function Saves({
                         )}
                       </div>
                     </td>
-                    <td className="hidden px-4 py-2 text-skifer-400 sm:table-cell">
+                    <td className="hidden px-4 py-2 text-muted sm:table-cell">
                       {bytes(x.size_bytes)}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -556,7 +556,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
         actions={
           executions.length > 0 && (
             <select
-              className="max-w-48 rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
+              className="max-w-48 rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
               value={effective}
               onChange={(e) => setExecId(e.target.value)}
             >
@@ -573,7 +573,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
       />
       <pre
         ref={box}
-        className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-skifer-300"
+        className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-foreground"
       >
         {(logs.data?.lines ?? []).length === 0
           ? "No log lines."
@@ -784,7 +784,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
         />
         <div className="overflow-x-auto">
           <table className="w-full font-mono text-xs">
-            <thead className="text-left uppercase tracking-wider text-skifer-500">
+            <thead className="text-left uppercase tracking-wider text-muted">
               <tr>
                 <th className="px-4 py-2">epoch</th>
                 <th className="px-4 py-2">node</th>
@@ -794,7 +794,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
                 <th className="px-4 py-2">id</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-skifer-800">
+            <tbody className="divide-y divide-separator">
               {executions.map((e) => (
                 <tr key={e.id}>
                   <td className="px-4 py-1.5">{e.epoch}</td>
@@ -807,7 +807,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
                     {e.ended_at ? "—" : dateTime(e.lease_expires_at)}
                   </td>
                   <td className="px-4 py-1.5">{e.end_reason ?? ""}</td>
-                  <td className="px-4 py-1.5 text-skifer-500">{e.id}</td>
+                  <td className="px-4 py-1.5 text-muted">{e.id}</td>
                 </tr>
               ))}
             </tbody>
@@ -821,8 +821,8 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
 function KV({ k, v }: { k: string; v?: string | null }) {
   return (
     <div className="flex gap-3">
-      <dt className="w-28 shrink-0 text-skifer-500 sm:w-36">{k}</dt>
-      <dd className="min-w-0 break-all text-skifer-200">{v ?? "—"}</dd>
+      <dt className="w-28 shrink-0 text-muted sm:w-36">{k}</dt>
+      <dd className="min-w-0 break-all text-foreground">{v ?? "—"}</dd>
     </div>
   );
 }
