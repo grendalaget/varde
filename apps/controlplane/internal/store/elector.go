@@ -97,24 +97,33 @@ func (e *Elector) pingLeaderConn(ctx context.Context, conn *sql.Conn) bool {
 	return true
 }
 
-// PrimaryFileElector reports leadership by comparing a "primary file" —
-// e.g. LiteFS's <mount>/.primary, which names the node holding the write
-// lease — against this node's name. The file is re-read on each call, so
-// leadership flips as soon as the lease moves; no goroutine needed.
+// PrimaryFileElector reports leadership from a "primary file" — e.g.
+// LiteFS's <mount>/.primary, which LiteFS materializes on replica nodes
+// with the hostname of the node holding the write lease. The file does not
+// exist on the primary itself, and is re-read on each call so leadership
+// follows the lease with no extra machinery.
 type PrimaryFileElector struct {
 	path string
 	self string
 }
 
 // NewPrimaryFileElector builds an elector bound to path (the file that
-// names the current primary) for the node named self.
+// names the current primary, when it is someone else) for the node named
+// self.
 func NewPrimaryFileElector(path, self string) *PrimaryFileElector {
 	return &PrimaryFileElector{path: path, self: self}
 }
 
-// IsLeader reports whether self is the recorded primary. An unreadable or
-// empty file reports false — a node that cannot prove primacy must not write.
+// IsLeader reports whether self may write: the file is absent (we are the
+// primary, or the lease holder is not yet recorded) or names us. It reports
+// false only while the file names another node. The gate prevents error
+// loops, not split-brain — writes off the lease holder still fail at the
+// storage layer.
 func (e *PrimaryFileElector) IsLeader() bool {
 	b, err := os.ReadFile(e.path)
-	return err == nil && strings.TrimSpace(string(b)) == e.self
+	if err != nil {
+		return true // no file = no recorded other-primary
+	}
+	name := strings.TrimSpace(string(b))
+	return name == "" || name == e.self
 }
