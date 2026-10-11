@@ -5403,7 +5403,6 @@ version = "0.1.0"
 dependencies = [
  "agent-ipc",
  "anyhow",
- "base64 0.22.1",
  "cp-api",
  "serde",
  "serde_json",
