@@ -188,6 +188,10 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	timings.OfflineAfterMs = cfg.offlineAfterMs
 
 	recon := reconciler.New(st, timings, log)
+	// Multi-instance safety (Postgres): only the advisory-lock holder runs the
+	// periodic pass; the rest serve HTTP only. On sqlite this is a no-op leader.
+	elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
+	recon.Leader = elector
 
 	if cfg.embeddedRelay != "" {
 		rconn, err := net.ListenUDP("udp", mustResolveUDPAddr(cfg.embeddedRelay))
@@ -235,6 +239,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	go elector.Run(ctx)
 	go recon.Run(ctx)
 
 	errCh := make(chan error, 1)

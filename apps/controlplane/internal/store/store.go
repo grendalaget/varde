@@ -71,7 +71,12 @@ func Open(url string, clk Clock) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: connect: %w", err)
 	}
-	db.SetMaxOpenConns(1) // sqlite safety; pgx benefits little for this workload
+	if drv == "pgx" {
+		// Small pool; one conn may be parked by an Elector advisory lock.
+		db.SetMaxOpenConns(10)
+	} else {
+		db.SetMaxOpenConns(1) // sqlite safety
+	}
 	s.DB = db
 	s.Dialect = map[string]string{"sqlite": "sqlite", "pgx": "postgres"}[drv]
 	mig, err := migrations.ReadFile("migrations_" + s.Dialect + ".sql")
