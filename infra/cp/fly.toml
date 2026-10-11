@@ -4,7 +4,7 @@ app = "varde-cp"
 primary_region = "arn" # Stockholm — closest to the core users (Norway)
 
 [build]
-  dockerfile = "infra/cp/Dockerfile" # context is the repo root
+  dockerfile = "Dockerfile" # resolved relative to this fly.toml's dir; context is the repo root
 
 [env]
   VARDE_LISTEN = ":8081"          # app port; litefs proxy (8080) fronts it
