@@ -188,10 +188,23 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	timings.OfflineAfterMs = cfg.offlineAfterMs
 
 	recon := reconciler.New(st, timings, log)
-	// Multi-instance safety (Postgres): only the advisory-lock holder runs the
-	// periodic pass; the rest serve HTTP only. On sqlite this is a no-op leader.
-	elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
-	recon.Leader = elector
+	// Multi-instance safety: only one replica runs the periodic pass; the rest
+	// serve HTTP only. Three modes:
+	//   VARDE_PRIMARY_FILE set — LiteFS-style file naming the node holding the
+	//     write lease (VARDE_NODE_NAME identifies us; defaults to hostname)
+	//   postgres             — session-level advisory lock via Elector.Run
+	//   sqlite               — no-op leader (single-writer by definition)
+	if primaryFile := envOr("VARDE_PRIMARY_FILE", ""); primaryFile != "" {
+		self := envOr("VARDE_NODE_NAME", "")
+		if self == "" {
+			self, _ = os.Hostname()
+		}
+		recon.Leader = store.NewPrimaryFileElector(primaryFile, self)
+	} else {
+		elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
+		recon.Leader = elector
+		go elector.Run(ctx)
+	}
 
 	if cfg.embeddedRelay != "" {
 		rconn, err := net.ListenUDP("udp", mustResolveUDPAddr(cfg.embeddedRelay))
@@ -239,7 +252,6 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go elector.Run(ctx)
 	go recon.Run(ctx)
 
 	errCh := make(chan error, 1)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -93,4 +95,26 @@ func (e *Elector) pingLeaderConn(ctx context.Context, conn *sql.Conn) bool {
 		return false
 	}
 	return true
+}
+
+// PrimaryFileElector reports leadership by comparing a "primary file" —
+// e.g. LiteFS's <mount>/.primary, which names the node holding the write
+// lease — against this node's name. The file is re-read on each call, so
+// leadership flips as soon as the lease moves; no goroutine needed.
+type PrimaryFileElector struct {
+	path string
+	self string
+}
+
+// NewPrimaryFileElector builds an elector bound to path (the file that
+// names the current primary) for the node named self.
+func NewPrimaryFileElector(path, self string) *PrimaryFileElector {
+	return &PrimaryFileElector{path: path, self: self}
+}
+
+// IsLeader reports whether self is the recorded primary. An unreadable or
+// empty file reports false — a node that cannot prove primacy must not write.
+func (e *PrimaryFileElector) IsLeader() bool {
+	b, err := os.ReadFile(e.path)
+	return err == nil && strings.TrimSpace(string(b)) == e.self
 }

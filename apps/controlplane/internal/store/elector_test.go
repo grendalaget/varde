@@ -3,9 +3,37 @@ package store
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestPrimaryFileElector(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".primary")
+	e := NewPrimaryFileElector(p, "node-a")
+	if e.IsLeader() {
+		t.Fatal("missing primary file should not lead")
+	}
+	if err := os.WriteFile(p, []byte("node-b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("another node's name should not lead")
+	}
+	if err := os.WriteFile(p, []byte("node-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !e.IsLeader() {
+		t.Fatal("own name in primary file should lead")
+	}
+	if err := os.WriteFile(p, []byte("node-b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("leadership should flip when the lease moves")
+	}
+}
 
 func TestElectorSqliteAlwaysLeader(t *testing.T) {
 	s, err := Open("sqlite://"+t.TempDir()+"/t.db", nil)

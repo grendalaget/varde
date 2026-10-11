@@ -53,7 +53,7 @@ type Reconciler struct {
 	// Leader, when set, gates the periodic Run loop: non-leader instances skip
 	// their passes. User-triggered calls (Wake, ActivateNormal) are unaffected —
 	// they must work on any replica. Nil means single-instance (always runs).
-	Leader *store.Elector
+	Leader interface{ IsLeader() bool }
 
 	wake chan struct{}
 
