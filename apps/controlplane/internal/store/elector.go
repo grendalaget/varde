@@ -114,16 +114,17 @@ func NewPrimaryFileElector(path, self string) *PrimaryFileElector {
 	return &PrimaryFileElector{path: path, self: self}
 }
 
-// IsLeader reports whether self may write: the file is absent (we are the
-// primary, or the lease holder is not yet recorded) or names us. It reports
-// false only while the file names another node. The gate prevents error
-// loops, not split-brain — writes off the lease holder still fail at the
-// storage layer.
+// IsLeader reports whether self may write: LiteFS materializes .primary
+// only on replicas, so its absence means no other primary is recorded.
+// An existing file leads only when it names self — an empty file or a
+// read failure is ambiguous, and a node that cannot prove primacy must
+// not write. The gate prevents error loops, not split-brain — writes off
+// the lease holder still fail at the storage layer.
 func (e *PrimaryFileElector) IsLeader() bool {
 	b, err := os.ReadFile(e.path)
 	if err != nil {
-		return true // no file = no recorded other-primary
+		return os.IsNotExist(err)
 	}
 	name := strings.TrimSpace(string(b))
-	return name == "" || name == e.self
+	return name != "" && name == e.self
 }

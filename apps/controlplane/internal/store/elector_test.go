@@ -34,6 +34,21 @@ func TestPrimaryFileElector(t *testing.T) {
 	if e.IsLeader() {
 		t.Fatal("leadership should stop when the lease moves away")
 	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("empty primary file is ambiguous and should not lead")
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if e.IsLeader() {
+		t.Fatal("unreadable primary file is ambiguous and should not lead")
+	}
 	if err := os.Remove(p); err != nil {
 		t.Fatal(err)
 	}
