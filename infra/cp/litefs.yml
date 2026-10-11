@@ -1,0 +1,42 @@
+# LiteFS configuration for the hosted control plane — replicated sqlite.
+# Every machine keeps a full local copy of the db; only the primary accepts
+# writes. See https://docs.fly.io/litefs/
+
+fuse:
+  dir: "/litefs" # FUSE mount — the app's db path points here (VARDE_DB)
+
+data:
+  dir: "/var/lib/litefs" # internal store — lives on the persistent volume
+  retention: "10m"
+
+# Start the CP only after LiteFS is mounted and connected to the primary.
+# The entry script exports VARDE_NODE_NAME = lease.hostname below, so the
+# CP's reconciler gate (VARDE_PRIMARY_FILE) knows whether this node holds
+# the write lease. LiteFS execs this path directly — no shell expansion.
+exec: "/usr/local/bin/varde-cp-entry"
+
+http:
+  addr: ":20202" # node-to-node LiteFS API — internal only, never exposed
+
+# Public entrypoint. The proxy serves reads locally with txid consistency
+# and forwards write requests to the current primary — so the fly proxy can
+# route a request to any machine and writes still land on the writer.
+proxy:
+  addr: ":8080"
+  target: "localhost:8081"
+  db: "varde.db" # db filename inside the FUSE dir, used for txid tracking
+  primary-redirect-timeout: "5s" # hold writes during primary failover
+  passthrough: ["/healthz"] # machine-local health, no consistency wait
+
+lease:
+  type: "consul" # `fly consul attach` provisions FLY_CONSUL_URL
+  advertise-url: "http://${FLY_MACHINE_ID}.vm.${FLY_APP_NAME}.internal:20202"
+  hostname: "${FLY_MACHINE_ID}.vm.${FLY_APP_NAME}.internal"
+  # Only machines in the primary region may hold the write lease — a single
+  # writer close to most users, with remote machines as read replicas.
+  candidate: ${FLY_REGION == PRIMARY_REGION}
+  consul:
+    url: "$FLY_CONSUL_URL"
+    key: "varde-cp/primary"
+    ttl: "10s"
+    lock-delay: "1s"

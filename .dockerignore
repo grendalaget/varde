@@ -1,0 +1,11 @@
+# Docker build context (fly deploy of infra/cp) — keep the tarball small.
+# Anything the image builds itself is excluded so local artifacts can't leak in.
+.git
+**/node_modules
+**/dist
+target
+**/*.tsbuildinfo
+apps/desktop/gen
+**/.env
+**/.env.*
+*.local
