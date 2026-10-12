@@ -65,7 +65,7 @@ package contains `LICENSE`; the agent package always includes `varde-mesh`
 | Linux amd64, arm64 | `varde-<component>-<ver>-linux-<arch>.deb` and `.rpm` for each of agent, control-plane and relay; `varde-<component>-<ver>-linux-<arch>.snap` (strict confinement) for sideloading |
 | Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting) |
 | macOS arm64, amd64 | `varde-<component>-<ver>-darwin-<arch>.dmg` for each of agent (contains agent + mesh), control-plane and relay |
-| All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS** |
+| All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS**; `latest.json` + `latest.json.sig` update feed (below) |
 
 Linux packages retain the existing systemd units, configuration, icons and
 install/remove scripts. Packaged mesh lives in `/usr/lib/varde`, the agent's
@@ -82,12 +82,51 @@ bundles per component — Gatekeeper still applies as described below.
 The macOS agent passes its PID to mesh lifetime monitoring so abrupt agent exit
 releases the mesh's configured ports; Linux retains kernel parent-death signaling.
 
+## Update feed
+
+The aggregation job also emits `latest.json`, the
+[Tauri updater static manifest](https://v2.tauri.app/plugin/updater/):
+`version`, `pub_date` and a `platforms` map whose entries carry the minisign
+signature and download URL of each payload. The Windows installer uses the
+plugin's native `windows-x86_64` key; every other package uses a custom
+target key the updater ignores but the agent resolves for its own install
+flavor — `linux-<x86_64|aarch64>-<component>-<deb|rpm|snap>` and
+`darwin-<aarch64|x86_64>-<component>`. Entries without a signature are
+omitted entirely: one incomplete entry fails the updater's whole-file
+validation. `latest.json` itself is signed into `latest.json.sig`.
+
+Clients poll the release asset, never the GitHub API:
+`releases/latest/download/latest.json` for the stable channel and
+`releases/download/nightly/latest.json` for nightly.
+
+Update signing uses a Tauri signer (minisign) keypair, stored as the
+**repository** secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — repository secrets, not
+environment-scoped: the aggregation job does not run under
+`environment: release`, which would change its cosign OIDC subject and break
+certificate verification. Generate the keypair once per installation (never
+commit the private key):
+
+```sh
+pnpm dlx @tauri-apps/cli@^2 signer generate -w ~/.tauri/varde.key
+# private key + password  -> the two repository secrets above
+# public key              -> baked into update clients (agent, tray)
+```
+
+Losing the private key means shipping a new public key to every installed
+client before updates verify again; losing the password makes the key
+unusable. Without the secret the workflow still emits `latest.json`, but
+with no signed platforms — clients treat those builds as unverifiable.
+
 ## Signatures and platform warnings
 
 Every payload and SHA256SUMS receives a keyless Sigstore signature via GitHub
 OIDC (`id-token: write`) and GitHub build provenance (`attestations: write`).
 Only the final release upload job receives `contents: write`. These
 signatures establish origin but do not replace platform-native code signing.
+Every payload additionally carries a minisign `.sig` (and `latest.json.sig`)
+for the update feed — the signature inside `latest.json`, not the `.sig`
+asset, is what update clients consume.
 
 Windows executables and `VardeSetup-<ver>.exe` are Authenticode-signed in the
 Windows build job via [Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/)

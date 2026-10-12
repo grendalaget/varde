@@ -232,6 +232,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: bundles-*
@@ -246,6 +247,34 @@ jobs:
       - uses: sigstore/cosign-installer@v3
         with:
           cosign-release: v2.5.2
+      - name: Sign update assets and emit latest.json
+        env:
+          # Repository secret (not environment-scoped): this job does not run
+          # under `environment: release`, which would also change the cosign
+          # OIDC subject and break CERT_IDENTITY verification.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          key=''
+          if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            key=$(mktemp)
+            trap 'rm -f "$key"' EXIT
+            printf %s "$TAURI_SIGNING_PRIVATE_KEY" > "$key"
+            for asset in release-assets/*; do
+              npx --yes @tauri-apps/cli@^2 signer sign -f "$key" \
+                -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$asset"
+            done
+          else
+            echo 'TAURI_SIGNING_PRIVATE_KEY not set: emitting an unsigned manifest; update clients will not apply these builds.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 packaging/release/update_manifest.py release-assets
+          if [[ -n "$key" ]]; then
+            npx --yes @tauri-apps/cli@^2 signer sign -f "$key" \
+              -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" release-assets/latest.json
+          fi
       - name: Sign and verify every asset, including SHA256SUMS
         env:
           CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-release.yml@${{ github.ref }}

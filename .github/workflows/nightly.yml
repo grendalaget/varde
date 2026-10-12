@@ -42,6 +42,9 @@ jobs:
           AZURE_TSA_ACCOUNT: ${{ vars.AZURE_TSA_ACCOUNT }}
           AZURE_TSA_CERT_PROFILE: ${{ vars.AZURE_TSA_CERT_PROFILE }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          # Presence (not the value) feeds the signing marker below so adding
+          # the update key on an unchanged main still republishes nightly.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           sha=$(git rev-parse HEAD)
           echo "ref=$sha" >> "$GITHUB_OUTPUT"
@@ -62,6 +65,11 @@ jobs:
             fp=$(printf '%s\n' "$AZURE_TSA_ENDPOINT" "$AZURE_TSA_ACCOUNT" \
                    "$AZURE_TSA_CERT_PROFILE" | sha256sum | cut -c1-8)
             signing=$signing-$fp
+          fi
+          # Minisign update-feed key: signed assets (latest.json.sig) differ
+          # once it exists, so it belongs to the marker too.
+          if [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            signing=$signing-upd
           fi
           echo "signing=$signing" >> "$GITHUB_OUTPUT"
           if [[ "$DRY_RUN" != true ]]; then
