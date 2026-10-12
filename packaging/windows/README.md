@@ -31,10 +31,11 @@ Inno install first (Inno→NSIS migration shim in `hooks.nsh`), keeping
 - task "Start Varde at login" (on by default): HKLM `Run` value
   `varde-tray.exe --autostart`; each user can turn it off in the tray.
   Unticking it on an upgrade removes the earlier value
-- task "Control plane" (component, on by default like Inno's): installs
-  `varde-control-plane.exe`, registers and starts `VardeControlPlane`,
-  creates `%ProgramData%\VardeCP`, and makes `http://localhost:8080` this
-  PC's default server
+- task "Control plane" (component, opt-in — off by default; Inno
+  defaulted it on too, which routed fresh installs to self-hosting):
+  installs `varde-control-plane.exe`, registers and starts
+  `VardeControlPlane`, creates `%ProgramData%\VardeCP`, and makes
+  `http://localhost:8080` this PC's default server
 - at the end, launches the tray as the installing user with
   `--link`: the tray asks the service to link, shows the code and opens
   the dashboard to approve it
@@ -47,8 +48,9 @@ Yes to "Also delete Varde's data on this PC?" (default No; silent uninstall
 always keeps it).
 
 Silent install: `VardeSetup.exe /S` (add `/CPURL=…` only for a self-hosted
-control plane, `/TASKS="autostart"` to skip the control-plane component;
-then link with `varde-agent enroll --token …`, or from the tray). The
+control plane, `/TASKS="autostart controlplane"` to also install the
+control-plane component; then link with `varde-agent enroll --token …`,
+or from the tray). The
 silent path is what `tauri-plugin-updater` runs on update — a silent
 install is a full drain-and-swap upgrade.
 
