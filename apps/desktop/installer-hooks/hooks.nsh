@@ -97,7 +97,7 @@ Function VardeParseCpUrlFrom
         StrCpy $CpUrl $CpUrl $1
       ${EndIf}
     ${Else}
-      ; unquoted: value ends at the first space or EOL
+      ; unquoted: value ends at the first whitespace char or EOL
       StrLen $1 $CpUrl
       StrCpy $2 0
       ${Do}
@@ -106,6 +106,9 @@ Function VardeParseCpUrlFrom
         ${EndIf}
         StrCpy $0 $CpUrl 1 $2
         ${If} $0 == " "
+        ${OrIf} $0 == "$\t"
+        ${OrIf} $0 == "$\r"
+        ${OrIf} $0 == "$\n"
           StrCpy $CpUrl $CpUrl $2
           ${ExitDo}
         ${EndIf}
