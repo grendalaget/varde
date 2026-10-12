@@ -41,7 +41,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes
@@ -82,7 +81,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes
@@ -125,7 +123,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes
