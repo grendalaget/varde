@@ -41,6 +41,7 @@ const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
 
 // the hosted control plane: only it can verify varde.games sign-in tokens
 const HOSTED_CP_HOST = "cp.varde.games";
+const HOSTED_CP_URL = "https://cp.varde.games";
 
 const useStyles = makeStyles({
   page: {
@@ -287,8 +288,16 @@ export default function App() {
   // in the elevated re-link window: a browser callback lands in a normal
   // instance that the agent refuses to re-link, so re-link uses the code
   // flow (browser-side approval) only
-  const hosted =
-    hostOf(effectiveUrl) === HOSTED_CP_HOST && !defaults?.relink;
+  const fedEligible = !defaults?.relink;
+  const hosted = hostOf(effectiveUrl) === HOSTED_CP_HOST && fedEligible;
+  const backToHosted = () => {
+    // counts as a user edit: otherwise the status handler would restore a
+    // remembered self-hosted address and hide sign-in again
+    urlEditedRef.current = true;
+    setUrlEdited(true);
+    setUrl(HOSTED_CP_URL);
+    setServerOpen(false);
+  };
 
   const doLink = useCallback(async (u: string) => {
     setFormError("");
@@ -419,9 +428,9 @@ export default function App() {
               {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
             </Title2>
             <Text className={styles.lead} as="p">
-              Varde opens your dashboard so you can approve this PC. Sign up
-              there, then create a group or join your friends with an invite
-              link.
+              {defaults?.relink
+                ? "Varde opens your dashboard so you can approve this PC. Sign up there, then create a group or join your friends with an invite link."
+                : "Sign in with your varde.games account to link this PC to a group. Running your own server? Use the self-hosted option instead."}
             </Text>
             {defaults?.relink && (
               <MessageBar intent="warning" className={styles.bar}>
@@ -439,8 +448,14 @@ export default function App() {
             >
               {serverOpen ? (
                 <Field
-                  label="Varde server"
-                  hint="Only if your group runs its own Varde, for example a friend's."
+                  label={
+                    fedEligible ? "Self-hosted Varde server" : "Varde server"
+                  }
+                  hint={
+                    fedEligible
+                      ? "The URL of your group's control plane."
+                      : "Only if your group runs its own Varde, for example a friend's."
+                  }
                 >
                   <Input
                     type="url"
@@ -455,7 +470,7 @@ export default function App() {
                     }}
                   />
                 </Field>
-              ) : (
+              ) : !hosted ? (
                 <div className={styles.serverRow}>
                   <Text as="span">
                     Server: {hostOf(effectiveUrl) || HOSTED_CP_HOST}
@@ -464,25 +479,49 @@ export default function App() {
                     Use a different server
                   </Link>
                 </div>
-              )}
+              ) : null}
               {formError && (
                 <MessageBar intent="error" className={styles.bar}>
                   <MessageBarBody>{formError}</MessageBarBody>
                 </MessageBar>
               )}
-              {hosted ? (
+              {serverOpen ? (
                 <div className={styles.row}>
+                  <Button
+                    appearance="primary"
+                    type="submit"
+                    disabled={linkBusy}
+                  >
+                    Continue
+                  </Button>
+                  {fedEligible && (
+                    <Button onClick={backToHosted}>
+                      Use varde.games instead
+                    </Button>
+                  )}
+                </div>
+              ) : hosted ? (
+                <>
                   <Button
                     appearance="primary"
                     disabled={linkBusy}
                     onClick={() => void beginVardeLogin()}
                   >
-                    Log in with Varde
+                    Continue with your Varde account
                   </Button>
-                  <Button type="submit" disabled={linkBusy}>
-                    Use a code instead
-                  </Button>
-                </div>
+                  <div className={styles.row}>
+                    <Button onClick={() => setServerOpen(true)}>
+                      Use a self-hosted instance
+                    </Button>
+                    <Button
+                      type="submit"
+                      appearance="subtle"
+                      disabled={linkBusy}
+                    >
+                      Use a code instead
+                    </Button>
+                  </div>
+                </>
               ) : (
                 <div>
                   <Button
