@@ -419,9 +419,9 @@ export default function App() {
               {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
             </Title2>
             <Text className={styles.lead} as="p">
-              Varde opens your dashboard so you can approve this PC. Sign up
-              there, then create a group or join your friends with an invite
-              link.
+              {defaults?.relink
+                ? "Varde opens your dashboard so you can approve this PC. Sign up there, then create a group or join your friends with an invite link."
+                : "Sign in with your varde.games account to link this PC to a group. Running your own server? Use the self-hosted option instead."}
             </Text>
             {defaults?.relink && (
               <MessageBar intent="warning" className={styles.bar}>
@@ -437,7 +437,7 @@ export default function App() {
                 void doLink(effectiveUrl.trim());
               }}
             >
-              {serverOpen ? (
+              {!hosted && serverOpen ? (
                 <Field
                   label="Varde server"
                   hint="Only if your group runs its own Varde, for example a friend's."
@@ -455,7 +455,25 @@ export default function App() {
                     }}
                   />
                 </Field>
-              ) : (
+              ) : serverOpen ? (
+                <Field
+                  label="Self-hosted Varde server"
+                  hint="The URL of your group's control plane."
+                >
+                  <Input
+                    type="url"
+                    required
+                    spellCheck={false}
+                    autoComplete="url"
+                    value={url}
+                    onChange={(_, d) => {
+                      urlEditedRef.current = true;
+                      setUrl(d.value);
+                      setUrlEdited(true);
+                    }}
+                  />
+                </Field>
+              ) : !hosted ? (
                 <div className={styles.serverRow}>
                   <Text as="span">
                     Server: {hostOf(effectiveUrl) || HOSTED_CP_HOST}
@@ -464,25 +482,45 @@ export default function App() {
                     Use a different server
                   </Link>
                 </div>
-              )}
+              ) : null}
               {formError && (
                 <MessageBar intent="error" className={styles.bar}>
                   <MessageBarBody>{formError}</MessageBarBody>
                 </MessageBar>
               )}
               {hosted ? (
-                <div className={styles.row}>
-                  <Button
-                    appearance="primary"
-                    disabled={linkBusy}
-                    onClick={() => void beginVardeLogin()}
-                  >
-                    Log in with Varde
-                  </Button>
-                  <Button type="submit" disabled={linkBusy}>
-                    Use a code instead
-                  </Button>
-                </div>
+                serverOpen ? (
+                  <div className={styles.row}>
+                    <Button
+                      appearance="primary"
+                      type="submit"
+                      disabled={linkBusy}
+                    >
+                      Continue
+                    </Button>
+                    <Button onClick={() => setServerOpen(false)}>
+                      Use varde.games instead
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Button
+                      appearance="primary"
+                      disabled={linkBusy}
+                      onClick={() => void beginVardeLogin()}
+                    >
+                      Continue with your Varde account
+                    </Button>
+                    <div className={styles.row}>
+                      <Button onClick={() => setServerOpen(true)}>
+                        Use a self-hosted instance
+                      </Button>
+                      <Button type="submit" appearance="subtle" disabled={linkBusy}>
+                        Use a code instead
+                      </Button>
+                    </div>
+                  </>
+                )
               ) : (
                 <div>
                   <Button
