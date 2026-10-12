@@ -212,7 +212,7 @@ jobs:
       - name: Package Unix assets
         if: runner.os != 'Windows'
         run: bash packaging/release/package-unix.sh
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/*
       - uses: actions/upload-artifact@v4
@@ -240,7 +240,7 @@ jobs:
       - name: SHA256SUMS
         working-directory: release-assets
         run: sha256sum -- * > SHA256SUMS
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/SHA256SUMS
       - uses: sigstore/cosign-installer@v3
