@@ -36,7 +36,7 @@ ${StrLoc}
 ; reference the section constants. Bodies stay empty: the work happens in
 ; NSIS_HOOK_POSTINSTALL (inside the Varde section), keyed off these flags.
 ; (Section order is the components-page order — same as the Inno task list.)
-Section "Start Varde at login (tray icon)" sec_autostart
+Section "Start Varde at login" sec_autostart
 SectionEnd
 
 Section "Control plane" sec_controlplane
@@ -541,7 +541,7 @@ Function .onInit
 FunctionEnd
 
 
-Section EarlyChecks
+Section "-EarlyChecks"
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -560,7 +560,7 @@ Section EarlyChecks
 
 SectionEnd
 
-Section WebView2
+Section "-WebView2"
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
