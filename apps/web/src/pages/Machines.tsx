@@ -129,6 +129,14 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
               {n.admin_state !== "active" && (
                 <Badge tone="warn">{n.admin_state}</Badge>
               )}
+              {n.update_available && (
+                <Badge
+                  tone="warn"
+                  title={`Agent ${n.agent_version ?? "?"} → ${n.update_available} is available`}
+                >
+                  Update {n.update_available}
+                </Badge>
+              )}
             </div>
             <div className="text-xs text-muted">
               {live === "online"

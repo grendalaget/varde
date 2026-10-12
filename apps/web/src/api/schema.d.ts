@@ -862,6 +862,8 @@ export interface components {
             os: string;
             arch: string;
             agent_version?: string;
+            /** @description Newer version offered by the node's update feed; empty/absent = up to date or unchecked. */
+            update_available?: string;
             hosting_enabled: boolean;
             anchor: boolean;
             priority?: number;
@@ -1101,6 +1103,8 @@ export interface components {
         };
         AgentHeartbeat: {
             agent_version?: string;
+            /** @description Newer version the node's update feed offers; empty string once checked with nothing newer, absent before the first check. */
+            update_available?: string;
             capabilities?: components["schemas"]["Capabilities"];
             mesh?: components["schemas"]["MeshReport"];
             executions?: components["schemas"]["ExecutionReport"][];

@@ -33,6 +33,21 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         executions: Some(agent.exec_reports()),
         snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
         deleted_snapshots: Some(deleted_snapshots.clone()),
+        // Send "" once checked so the CP clears a stale badge after upgrade;
+        // None (field omitted) before the first check so old nodes stay nil.
+        update_available: {
+            let st = agent.update.lock().unwrap();
+            if st.checked_at_ms == 0 {
+                None
+            } else {
+                Some(
+                    st.available
+                        .as_ref()
+                        .map(|a| a.version.clone())
+                        .unwrap_or_default(),
+                )
+            }
+        },
     };
     // not sent: building the report (disk walks) isn't part of the round trip
     let posted = Instant::now();

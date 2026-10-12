@@ -1336,6 +1336,7 @@ mod requires_stop_tests {
                 shutdown_replication_timeout_s: 1,
                 force_relay: false,
                 mesh_listen_port: 0,
+                update: Default::default(),
             },
             data_dir: tmp.to_path_buf(),
             key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
@@ -1356,6 +1357,7 @@ mod requires_stop_tests {
             last_heartbeat_ok: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
             cp_view: Mutex::new(Default::default()),
+            update: Mutex::new(crate::update::UpdateState::default()),
         }
     }
 

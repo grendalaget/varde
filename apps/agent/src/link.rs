@@ -164,6 +164,7 @@ pub fn enrolled_config(cp_url: &str, r: &cp_api::EnrollResult, prev: Option<Conf
         shutdown_replication_timeout_s: 60,
         force_relay: false,
         mesh_listen_port: 0,
+        update: Default::default(),
     });
     c.control_plane_url = cp_url.to_string();
     c.node_id = r.node_id.clone();

@@ -38,6 +38,24 @@ pub struct Config {
     /// netns test so each NAT's port map is known ahead of time.
     #[serde(default)]
     pub mesh_listen_port: u32,
+    /// Self-update behavior ([update] table).
+    #[serde(default)]
+    pub update: UpdateCfg,
+}
+
+/// [update] table in config.toml. All keys optional: defaults follow the
+/// stable feed on GitHub releases.
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UpdateCfg {
+    /// stable | nightly | off
+    pub channel: Option<String>,
+    /// Manifest URL override (mirrors, testing).
+    pub feed_url: Option<String>,
+    /// base64 minisign public key; default is the release key baked in.
+    pub pubkey: Option<String>,
+    /// seconds between checks (default 6h, clamped 5m..7d).
+    pub interval_s: Option<i64>,
 }
 
 fn default_fence_margin_ms() -> i64 {

@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     os              TEXT NOT NULL DEFAULT '',
     arch            TEXT NOT NULL DEFAULT '',
     agent_version   TEXT NOT NULL DEFAULT '',
+    update_available TEXT NOT NULL DEFAULT '',
     hosting_enabled INTEGER NOT NULL DEFAULT 1,
     anchor          INTEGER NOT NULL DEFAULT 0,
     priority        BIGINT NOT NULL DEFAULT 0,
