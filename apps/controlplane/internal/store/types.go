@@ -195,14 +195,25 @@ type Execution struct {
 	StartedAt         *int64  `db:"started_at"`
 	EndedAt           *int64  `db:"ended_at"`
 	EndReason         *string `db:"end_reason"`
+	// Role separates the one authoritative execution ('serving') from
+	// migration-only executions: 'incoming' pre-stages on the target while
+	// 'draining' is a former serving exec finishing its handoff.
+	Role string `db:"role"`
 }
 
 type Migration struct {
-	ID              string  `db:"id"`
-	ServerID        string  `db:"server_id"`
-	FromExecutionID string  `db:"from_execution_id"`
-	ToNodeID        string  `db:"to_node_id"`
-	State           string  `db:"state"`
+	ID              string `db:"id"`
+	ServerID        string `db:"server_id"`
+	FromExecutionID string `db:"from_execution_id"`
+	ToNodeID        string `db:"to_node_id"`
+	State           string `db:"state"`
+	// Mode: 'serial' = classic stop-then-start move; 'warm' = start-first
+	// handoff for drivers that can transfer clients (e.g. Minecraft).
+	Mode          string  `db:"mode"`
+	ToExecutionID *string `db:"to_execution_id"`
+	// DrainUntil bounds the mesh grace window that keeps old-epoch streams
+	// alive after the route flip (warm mode only).
+	DrainUntil      *int64  `db:"drain_until"`
 	FinalSnapshotID *string `db:"final_snapshot_id"`
 	CreatedAt       int64   `db:"created_at"`
 	FinishedAt      *int64  `db:"finished_at"`

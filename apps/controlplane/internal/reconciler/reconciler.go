@@ -620,15 +620,22 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 	}
 	for i := range ms {
 		m := &ms[i]
+		warm := m.Mode == "warm"
+		if warm && now-m.CreatedAt > warmMigrationTimeoutMs {
+			r.failMigration(ctx, m)
+			continue
+		}
 		switch m.State {
 		case "stopping":
 			exec, err := s.GetExecution(ctx, m.FromExecutionID)
 			if err != nil {
 				continue
 			}
+			// serial mode waits for the source exec to end; warm mode takes a
+			// live 'migration' snapshot while the source keeps serving.
 			if exec.EndedAt != nil {
 				m.State = "await_replication"
-			} else {
+			} else if !warm {
 				continue
 			}
 			// find the final/migration snapshot produced by that exec
@@ -639,19 +646,23 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 			var finalSnap *store.Snapshot
 			for i := range snaps {
 				if snaps[i].ExecutionID == m.FromExecutionID &&
-					(snaps[i].Reason == "final" || snaps[i].Reason == "migration") {
+					(snaps[i].Reason == "final" || snaps[i].Reason == "migration") &&
+					snaps[i].CreatedAt >= m.CreatedAt {
 					if finalSnap == nil || snaps[i].CreatedAt > finalSnap.CreatedAt {
 						finalSnap = &snaps[i]
 					}
 				}
 			}
 			if finalSnap == nil {
-				m.State = "failed"
-				m.FinishedAt = &now
-				_ = s.UpdateMigration(ctx, m)
+				if !warm {
+					m.State = "failed"
+					m.FinishedAt = &now
+					_ = s.UpdateMigration(ctx, m)
+				}
 				continue
 			}
 			m.FinalSnapshotID = &finalSnap.ID
+			m.State = "await_replication"
 			// ensure a replica is assigned on the target node
 			if err := s.UpsertReplica(ctx, s.DB, &store.Replica{
 				SnapshotID: finalSnap.ID, NodeID: m.ToNodeID, State: "assigned", AssignedAt: now,
@@ -691,21 +702,121 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 				_ = s.UpdateMigration(ctx, m)
 				continue
 			}
+			if warm {
+				// incoming exec stages on the target; the flip happens in
+				// 'activating' once it reports running.
+				continue
+			}
 			m.State = "done"
 			m.FinishedAt = &now
 			_ = s.UpdateMigration(ctx, m)
 			_ = s.EmitEvent(ctx, s.DB, srv.GroupID, &srv.ID, &m.ToNodeID,
 				"migration.completed", map[string]any{"snapshot_id": *m.FinalSnapshotID})
+
+		case "activating":
+			// warm mode only: wait for the incoming exec to report running,
+			// then flip serving/draining roles and let the source hand off.
+			if m.ToExecutionID == nil {
+				continue
+			}
+			next, err := s.GetExecution(ctx, *m.ToExecutionID)
+			if err != nil {
+				continue
+			}
+			if next.EndedAt != nil || next.State == "failed" {
+				// incoming exec died before the flip — abort; the source
+				// keeps serving and unfreezes via directives.
+				r.failMigration(ctx, m)
+				continue
+			}
+			if next.State != "running" {
+				continue
+			}
+			prev, err := s.GetExecution(ctx, m.FromExecutionID)
+			if err != nil {
+				continue
+			}
+			r.flipMigration(ctx, m, prev, next, now)
 		}
 	}
 	return nil
 }
 
+// warmMigrationTimeoutMs bounds staging+activation for a warm move before the
+// migration aborts and the source keeps serving.
+const warmMigrationTimeoutMs = 10 * 60 * 1000
+
+// routeDrainMs is how long the mesh keeps old-epoch streams alive after a
+// warm flip, so client handoffs ride their existing connections.
+const routeDrainMs = 30 * 1000
+
+func (r *Reconciler) failMigration(ctx context.Context, m *store.Migration) {
+	s := r.Store
+	now := s.NowMs()
+	if m.ToExecutionID != nil {
+		if e, err := s.GetExecution(ctx, *m.ToExecutionID); err == nil && e.EndedAt == nil {
+			e.Action = "stop"
+			reason := "migration"
+			e.StopReason = &reason
+			_ = s.UpdateExecutionState(ctx, s.DB, e)
+			// End it CP-side too: if the target is dead it will never report
+			// 'stopped', and reconcileServer only fences the serving lease —
+			// without this the incoming exec would stay open-ended forever.
+			_ = s.EndExecution(ctx, s.DB, e.ID, "aborted", now)
+		}
+	}
+	m.State = "failed"
+	m.FinishedAt = &now
+	_ = s.UpdateMigration(ctx, m)
+}
+
+// flipMigration promotes the incoming exec to serving and drains the old one:
+// routes point at the target while the source's existing streams stay up for
+// the drain window so drivers can hand connected clients off.
+func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev, next *store.Execution, now int64) {
+	s := r.Store
+	srv, err := s.GetServer(ctx, m.ServerID)
+	if err != nil {
+		return
+	}
+	reason := "handoff"
+	if err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+		prev.Role = "draining"
+		prev.Action = "stop"
+		prev.StopReason = &reason
+		if err := s.UpdateExecutionState(ctx, tx, prev); err != nil {
+			return err
+		}
+		next.Role = "serving"
+		if err := s.UpdateExecutionState(ctx, tx, next); err != nil {
+			return err
+		}
+		return s.EmitEvent(ctx, tx, srv.GroupID, &srv.ID, &m.ToNodeID, "server.assigned",
+			map[string]any{"execution_id": next.ID, "epoch": next.Epoch, "migration": m.ID})
+	}); err != nil {
+		// role flip didn't commit — stay in 'activating' and retry next pass
+		return
+	}
+	drain := now + routeDrainMs
+	m.State = "done"
+	m.FinishedAt = &now
+	m.DrainUntil = &drain
+	_ = s.UpdateMigration(ctx, m)
+	_ = s.EmitEvent(ctx, s.DB, srv.GroupID, &srv.ID, &m.ToNodeID,
+		"migration.completed", map[string]any{"snapshot_id": m.FinalSnapshotID})
+}
+
 // activateMigration creates the new execution on the target restoring the
-// migration snapshot (bypasses scheduler; target was user-chosen).
+// migration snapshot (bypasses scheduler; target was user-chosen). Warm moves
+// create it with role='incoming' so the source keeps serving until the flip.
 func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m *store.Migration) error {
 	s := r.Store
 	now := s.NowMs()
+	warm := m.Mode == "warm"
+	role := "serving"
+	if warm {
+		role = "incoming"
+	}
 	exec := &store.Execution{
 		ID:                ids.Must(ids.Execution),
 		ServerID:          srv.ID,
@@ -717,9 +828,15 @@ func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m
 		RestoreSnapshotID: m.FinalSnapshotID,
 		PlacementJSON:     mustJSON(map[string]any{"reasons": []string{"migration to " + m.ToNodeID}}),
 		CreatedAt:         now,
+		Role:              role,
 	}
 	if err := s.BumpEpochAndCreateExecution(ctx, exec); err != nil {
 		return err
+	}
+	if warm {
+		m.ToExecutionID = &exec.ID
+		_ = s.UpdateMigration(ctx, m)
+		return nil
 	}
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
 		if err := s.SetObservedState(ctx, tx, srv.ID, "starting", now); err != nil {

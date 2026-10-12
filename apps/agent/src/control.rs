@@ -177,6 +177,9 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                         .collect(),
                     host_node_id: r.host_node_id.clone(),
                     epoch: r.epoch.max(0) as u64,
+                    drain_host_node_id: r.drain_host_node_id.clone().unwrap_or_default(),
+                    drain_epoch: r.drain_epoch.unwrap_or_default().max(0) as u64,
+                    drain_until_unix_ms: r.drain_until_unix_ms.unwrap_or_default(),
                 })
                 .collect(),
         )
@@ -196,6 +199,8 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         match existing {
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
+                ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                ctl.set_stop_reason(e.stop_reason.clone());
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -219,6 +224,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                     continue;
                 }
                 let ctl = ExecCtl::new(e.clone());
+                ctl.set_want_frozen(e.freeze.unwrap_or(false));
                 *ctl.deadline.lock().unwrap() = Some(deadline);
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());

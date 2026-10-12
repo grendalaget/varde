@@ -168,10 +168,11 @@ CREATE TABLE IF NOT EXISTS server_executions (
     created_at          BIGINT NOT NULL,
     started_at          BIGINT,
     ended_at            BIGINT,
-    end_reason          TEXT
+    end_reason          TEXT,
+    role                TEXT NOT NULL DEFAULT 'serving'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_active
-    ON server_executions(server_id) WHERE ended_at IS NULL;
+    ON server_executions(server_id) WHERE ended_at IS NULL AND role='serving';
 CREATE INDEX IF NOT EXISTS idx_exec_node ON server_executions(node_id) WHERE ended_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS execution_info (
@@ -187,6 +188,9 @@ CREATE TABLE IF NOT EXISTS migrations (
     to_node_id         TEXT NOT NULL REFERENCES nodes(id),
     state              TEXT NOT NULL DEFAULT 'stopping'
                        CHECK (state IN ('stopping','await_replication','activating','done','failed')),
+    mode               TEXT NOT NULL DEFAULT 'serial',
+    to_execution_id    TEXT,
+    drain_until        BIGINT,
     final_snapshot_id  TEXT,
     created_at         BIGINT NOT NULL,
     finished_at        BIGINT

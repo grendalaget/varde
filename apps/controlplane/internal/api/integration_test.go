@@ -192,7 +192,7 @@ func (e *env) activeExec(serverID string) map[string]any {
 		Act   string `db:"action"`
 	}
 	if err := e.st.DB.Get(&ex, e.st.Rebind(
-		`SELECT id,node_id,epoch,state,action FROM server_executions WHERE server_id=? AND ended_at IS NULL`), serverID); err != nil {
+		`SELECT id,node_id,epoch,state,action FROM server_executions WHERE server_id=? AND ended_at IS NULL AND role='serving'`), serverID); err != nil {
 		return nil
 	}
 	return map[string]any{"id": ex.ID, "node": ex.Node, "epoch": ex.Epoch, "state": ex.State, "action": ex.Act}
@@ -259,6 +259,7 @@ type directives struct {
 		Epoch                  int64  `json:"epoch"`
 		Action                 string `json:"action"`
 		StopReason             string `json:"stop_reason"`
+		Freeze                 bool   `json:"freeze"`
 		LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms"`
 		Restore                *struct {
 			SnapshotID    string   `json:"snapshot_id"`
@@ -266,7 +267,12 @@ type directives struct {
 		} `json:"restore"`
 	} `json:"executions"`
 	Routes []struct {
-		ServerID string `json:"server_id"`
+		ServerID         string `json:"server_id"`
+		HostNodeId       string `json:"host_node_id"`
+		Epoch            int64  `json:"epoch"`
+		DrainHostNodeId  string `json:"drain_host_node_id"`
+		DrainEpoch       int64  `json:"drain_epoch"`
+		DrainUntilUnixMs int64  `json:"drain_until_unix_ms"`
 	} `json:"routes"`
 	ReplicationTasks []struct {
 		SnapshotID string `json:"snapshot_id"`
@@ -1379,6 +1385,134 @@ func TestMigrationEndToEnd(t *testing.T) {
 	}
 }
 
+// TestWarmMigrationEndToEnd drives the start-first handoff for a handoff-
+// capable driver (minecraft): source stays serving + frozen while the target
+// pre-stages, then routes flip with a drain window and the source gets a
+// 'handoff' stop.
+func TestWarmMigrationEndToEnd(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	javaCaps := caps()
+	javaCaps["runtimes"] = []string{"native", "java"}
+	a.heartbeatCaps(nil, javaCaps)
+	b.heartbeatCaps(nil, javaCaps)
+	srv := e.createServer("minecraft", "s1", nil)
+	hostAgent, execA, epA := e.startToRunning(srv, a, b)
+	var otherAgent *agent
+	if hostAgent == a {
+		otherAgent = b
+	} else {
+		otherAgent = a
+	}
+	target := otherAgent.nodeID
+
+	// moving to the current host is rejected (a warm 'incoming' exec would
+	// restore over the live server dir)
+	r := e.do("POST", "/v1/servers/"+srv+"/move",
+		map[string]any{"target_node_id": hostAgent.nodeID}, e.token)
+	if r.Status == 200 {
+		t.Fatal("same-node move accepted")
+	}
+
+	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/move",
+		map[string]any{"target_node_id": target}, e.token))
+
+	// source is NOT stopped: it gets freeze=true + a migration snapshot request
+	d, _ := hostAgent.heartbeat(nil)
+	var sawFreeze bool
+	for _, ex := range d.Executions {
+		if ex.ExecutionID == execA {
+			sawFreeze = ex.Freeze
+			if ex.Action == "stop" {
+				t.Fatalf("warm move stopped the source exec")
+			}
+		}
+	}
+	if !sawFreeze {
+		t.Fatalf("source exec not frozen: %+v", d.Executions)
+	}
+
+	// source produces its migration snapshot under freeze
+	if r := hostAgent.createSnapshot(execA, srv, "dep_x", epA, "migration", "snap_w", "77"); r.Status != 201 {
+		t.Fatalf("migration snap: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile() // stopping → await_replication, replica assigned to target
+	d, _ = otherAgent.heartbeat(nil)
+	var task bool
+	for _, rt := range d.ReplicationTasks {
+		if rt.SnapshotID == "snap_w" {
+			task = true
+		}
+	}
+	if !task {
+		t.Fatalf("no replication task on target: %+v", d.ReplicationTasks)
+	}
+	if r := otherAgent.replicaReady("snap_w"); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile() // await_replication → activating; incoming exec on target
+
+	// target's incoming exec restores snap_w but is not the serving exec yet
+	if ex := e.activeExec(srv); ex == nil || ex["id"] != execA {
+		t.Fatalf("active exec should still be the source: %+v", ex)
+	}
+	var execB string
+	var epB int64
+	d, _ = otherAgent.heartbeat(nil)
+	for _, ed := range d.Executions {
+		execB = ed.ExecutionID
+		epB = ed.Epoch
+		if ed.Restore == nil || ed.Restore.SnapshotID != "snap_w" {
+			t.Fatalf("restore: %+v", ed)
+		}
+	}
+	if execB == "" {
+		t.Fatal("no incoming execution directive on target")
+	}
+
+	// target reports running → flip
+	if r := otherAgent.execStatus(execB, srv, epB, "running"); r.Status != 204 {
+		t.Fatalf("running: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	ex := e.activeExec(srv)
+	if ex == nil || ex["id"] != execB {
+		t.Fatalf("active exec should be the target's: %+v", ex)
+	}
+
+	// source gets a 'handoff' stop; routes carry the drain window
+	d, _ = hostAgent.heartbeat(nil)
+	var sawHandoff bool
+	for _, ex := range d.Executions {
+		if ex.ExecutionID == execA && ex.Action == "stop" && ex.StopReason == "handoff" {
+			sawHandoff = true
+		}
+	}
+	if !sawHandoff {
+		t.Fatalf("no handoff stop on source: %+v", d.Executions)
+	}
+	var sawDrain bool
+	for _, rt := range d.Routes {
+		if rt.ServerID == srv && rt.DrainHostNodeId == hostAgent.nodeID &&
+			rt.DrainEpoch == epA && rt.DrainUntilUnixMs > 0 &&
+			rt.HostNodeId == target && rt.Epoch == epB {
+			sawDrain = true
+		}
+	}
+	if !sawDrain {
+		t.Fatalf("routes missing drain window: %+v", d.Routes)
+	}
+
+	// source stops; migration is done
+	if r := hostAgent.execStatus(execA, srv, epA, "stopped"); r.Status != 204 {
+		t.Fatalf("stopped: %d %s", r.Status, r.Raw)
+	}
+	if got := e.observed(srv); got != "running" {
+		t.Fatalf("observed=%q", got)
+	}
+}
+
 func TestRestartKeepsState(t *testing.T) {
 	dir := t.TempDir()
 	clk := &fakeClock{ms: 1735689600000}
@@ -2031,6 +2165,113 @@ func TestReplicaReadyRequiresAssignment(t *testing.T) {
 	// an assigned node can still report ready
 	if r := assigned.replicaReady("snap_x"); r.Status != 204 {
 		t.Fatalf("assigned replica ready: want 204, got %d %s", r.Status, r.Raw)
+	}
+}
+
+// If the incoming execution dies before it reaches 'running', the warm
+// migration fails and the source is unfrozen and keeps serving.
+func TestWarmMigrationAbortsWhenTargetFails(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	javaCaps := caps()
+	javaCaps["runtimes"] = []string{"native", "java"}
+	a.heartbeatCaps(nil, javaCaps)
+	b.heartbeatCaps(nil, javaCaps)
+	srv := e.createServer("minecraft", "s1", nil)
+	hostAgent, execA, epA := e.startToRunning(srv, a, b)
+	var otherAgent *agent
+	if hostAgent == a {
+		otherAgent = b
+	} else {
+		otherAgent = a
+	}
+
+	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/move",
+		map[string]any{"target_node_id": otherAgent.nodeID}, e.token))
+	if r := hostAgent.createSnapshot(execA, srv, "dep_x", epA, "migration", "snap_w", "77"); r.Status != 201 {
+		t.Fatalf("migration snap: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	if r := otherAgent.replicaReady("snap_w"); r.Status != 204 {
+		t.Fatalf("replica ready: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile() // activating; incoming exec on target
+	d, _ := otherAgent.heartbeat(nil)
+	var execB string
+	var epB int64
+	for _, ed := range d.Executions {
+		execB, epB = ed.ExecutionID, ed.Epoch
+	}
+
+	// the incoming exec dies before serving → migration fails
+	if r := otherAgent.execStatus(execB, srv, epB, "failed"); r.Status != 204 {
+		t.Fatalf("failed report: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	var mstate string
+	if err := e.st.DB.Get(&mstate, e.st.Rebind(
+		`SELECT state FROM migrations WHERE server_id=?`), srv); err != nil {
+		t.Fatalf("migration row: %v", err)
+	}
+	if mstate != "failed" {
+		t.Fatalf("migration state=%q", mstate)
+	}
+	if ex := e.activeExec(srv); ex == nil || ex["id"] != execA {
+		t.Fatalf("source should keep serving: %+v", ex)
+	}
+
+	// source is unfrozen again on its next heartbeat
+	d, _ = hostAgent.heartbeat(nil)
+	for _, ex := range d.Executions {
+		if ex.ExecutionID == execA {
+			if ex.Freeze {
+				t.Fatalf("source still frozen after abort")
+			}
+			if ex.Action == "stop" {
+				t.Fatalf("aborted warm move stopped the source")
+			}
+		}
+	}
+}
+
+// A warm migration that stalls mid-staging is failed after its deadline;
+// the source unfreezes and keeps serving.
+func TestWarmMigrationTimesOut(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("nodeA")
+	b := e.newAgent("nodeB")
+	javaCaps := caps()
+	javaCaps["runtimes"] = []string{"native", "java"}
+	a.heartbeatCaps(nil, javaCaps)
+	b.heartbeatCaps(nil, javaCaps)
+	srv := e.createServer("minecraft", "s1", nil)
+	hostAgent, execA, _ := e.startToRunning(srv, a, b)
+	var otherAgent *agent
+	if hostAgent == a {
+		otherAgent = b
+	} else {
+		otherAgent = a
+	}
+
+	e.mustOK(e.do("POST", "/v1/servers/"+srv+"/move",
+		map[string]any{"target_node_id": otherAgent.nodeID}, e.token))
+	// no migration snapshot ever arrives; the deadline elapses
+	e.clk.advance(10*60*1000 + 1)
+	e.reconcile()
+	var mstate string
+	if err := e.st.DB.Get(&mstate, e.st.Rebind(
+		`SELECT state FROM migrations WHERE server_id=?`), srv); err != nil {
+		t.Fatalf("migration row: %v", err)
+	}
+	if mstate != "failed" {
+		t.Fatalf("migration state=%q", mstate)
+	}
+	d, _ := hostAgent.heartbeat(nil)
+	for _, ex := range d.Executions {
+		if ex.ExecutionID == execA && (ex.Freeze || ex.Action == "stop") {
+			t.Fatalf("stalled warm move should unfreeze source: %+v", ex)
+		}
 	}
 }
 

@@ -100,6 +100,10 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	cols := []col{
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
 		{"users", "website_user_id", "TEXT"},
+		{"server_executions", "role", "TEXT NOT NULL DEFAULT 'serving'"},
+		{"migrations", "mode", "TEXT NOT NULL DEFAULT 'serial'"},
+		{"migrations", "to_execution_id", "TEXT"},
+		{"migrations", "drain_until", "BIGINT"},
 	}
 	for _, c := range cols {
 		if dialect == "postgres" {
@@ -123,8 +127,17 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	}
 	// UNIQUE on the federated id; sqlite can't add UNIQUE columns via ALTER,
 	// so both dialects get it through the index (NULLs don't collide).
-	_, err := db.Exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id)`)
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id)`); err != nil {
+		return err
+	}
+	// one_active predates execution roles: rebuild it to exclude non-serving
+	// executions (idempotent — safe on fresh databases too).
+	if _, err := db.Exec(`DROP INDEX IF EXISTS one_active`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_active
+		ON server_executions(server_id) WHERE ended_at IS NULL AND role='serving'`)
 	return err
 }
 

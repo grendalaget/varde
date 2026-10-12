@@ -120,6 +120,12 @@ message ServiceRoute {
   string host_node_id = 4;
   // Execution epoch of the current host; the host rejects streams with a different epoch.
   uint64 epoch = 5;
+  // Warm migration: the previous host whose old-epoch streams keep draining
+  // until drain_until_unix_ms, so drivers can hand clients off over their
+  // existing connections. Empty/absent fields mean no drain window.
+  string drain_host_node_id = 6;
+  uint64 drain_epoch = 7;
+  int64 drain_until_unix_ms = 8;
 }
 message SetRoutesRequest { repeated ServiceRoute routes = 1; }
 message SetRoutesResponse { repeated RouteBindError errors = 1; }

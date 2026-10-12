@@ -896,9 +896,15 @@ type ServiceRoute struct {
 	// Current host; empty when the server is not running (listeners stay bound and refuse/drop).
 	HostNodeId string `protobuf:"bytes,4,opt,name=host_node_id,json=hostNodeId,proto3" json:"host_node_id,omitempty"`
 	// Execution epoch of the current host; the host rejects streams with a different epoch.
-	Epoch         uint64 `protobuf:"varint,5,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Epoch uint64 `protobuf:"varint,5,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	// Warm migration: the previous host whose old-epoch streams keep draining
+	// until drain_until_unix_ms, so drivers can hand clients off over their
+	// existing connections. Empty/absent fields mean no drain window.
+	DrainHostNodeId  string `protobuf:"bytes,6,opt,name=drain_host_node_id,json=drainHostNodeId,proto3" json:"drain_host_node_id,omitempty"`
+	DrainEpoch       uint64 `protobuf:"varint,7,opt,name=drain_epoch,json=drainEpoch,proto3" json:"drain_epoch,omitempty"`
+	DrainUntilUnixMs int64  `protobuf:"varint,8,opt,name=drain_until_unix_ms,json=drainUntilUnixMs,proto3" json:"drain_until_unix_ms,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ServiceRoute) Reset() {
@@ -962,6 +968,27 @@ func (x *ServiceRoute) GetHostNodeId() string {
 func (x *ServiceRoute) GetEpoch() uint64 {
 	if x != nil {
 		return x.Epoch
+	}
+	return 0
+}
+
+func (x *ServiceRoute) GetDrainHostNodeId() string {
+	if x != nil {
+		return x.DrainHostNodeId
+	}
+	return ""
+}
+
+func (x *ServiceRoute) GetDrainEpoch() uint64 {
+	if x != nil {
+		return x.DrainEpoch
+	}
+	return 0
+}
+
+func (x *ServiceRoute) GetDrainUntilUnixMs() int64 {
+	if x != nil {
+		return x.DrainUntilUnixMs
 	}
 	return 0
 }
@@ -1904,7 +1931,7 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x05peers\x18\x01 \x03(\v2\x18.varde.mesh.v1.PeerStateR\x05peers\"S\n" +
 	"\bPortSpec\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\rR\x04port\x123\n" +
-	"\bprotocol\x18\x02 \x01(\x0e2\x17.varde.mesh.v1.ProtocolR\bprotocol\"\xb5\x01\n" +
+	"\bprotocol\x18\x02 \x01(\x0e2\x17.varde.mesh.v1.ProtocolR\bprotocol\"\xb2\x02\n" +
 	"\fServiceRoute\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x1f\n" +
@@ -1913,7 +1940,11 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x05ports\x18\x03 \x03(\v2\x17.varde.mesh.v1.PortSpecR\x05ports\x12 \n" +
 	"\fhost_node_id\x18\x04 \x01(\tR\n" +
 	"hostNodeId\x12\x14\n" +
-	"\x05epoch\x18\x05 \x01(\x04R\x05epoch\"G\n" +
+	"\x05epoch\x18\x05 \x01(\x04R\x05epoch\x12+\n" +
+	"\x12drain_host_node_id\x18\x06 \x01(\tR\x0fdrainHostNodeId\x12\x1f\n" +
+	"\vdrain_epoch\x18\a \x01(\x04R\n" +
+	"drainEpoch\x12-\n" +
+	"\x13drain_until_unix_ms\x18\b \x01(\x03R\x10drainUntilUnixMs\"G\n" +
 	"\x10SetRoutesRequest\x123\n" +
 	"\x06routes\x18\x01 \x03(\v2\x1b.varde.mesh.v1.ServiceRouteR\x06routes\"J\n" +
 	"\x11SetRoutesResponse\x125\n" +
