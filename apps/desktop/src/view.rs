@@ -28,6 +28,8 @@ pub struct TrayView {
     pub dashboard_url: Option<String>,
     /// The agent service answered: it can be stopped, not started.
     pub service_running: bool,
+    /// "Update to x.y.z" when the agent's checker found a newer release.
+    pub update_label: Option<String>,
 }
 
 pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
@@ -43,6 +45,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             relink: false,
             dashboard_url: None,
             service_running: false,
+            update_label: None,
         };
     };
     let state = s.state();
@@ -106,10 +109,15 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         relink: linked,
         dashboard_url: (!s.control_plane_url.is_empty()).then(|| s.control_plane_url.clone()),
         service_running: true,
+        update_label: s
+            .update
+            .as_ref()
+            .filter(|u| !u.available_version.is_empty())
+            .map(|u| format!("Update to {}", u.available_version)),
     }
 }
 
-fn hosting_line(h: &[pb::Hosting]) -> Option<String> {
+pub(crate) fn hosting_line(h: &[pb::Hosting]) -> Option<String> {
     match h {
         [] => None,
         [one] => {

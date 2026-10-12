@@ -9,6 +9,8 @@ mod app;
 mod autostart;
 #[cfg(windows)]
 mod svcctl;
+#[cfg(windows)]
+mod update;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod view;
 

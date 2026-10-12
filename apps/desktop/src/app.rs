@@ -28,8 +28,10 @@ static ICON_HOSTING: &[u8] = include_bytes!("../icons/tray-hosting.png");
 static ICON_WARN: &[u8] = include_bytes!("../icons/tray-warn.png");
 
 #[derive(Default)]
-struct State {
-    status: Mutex<Option<pb::Status>>,
+pub(crate) struct State {
+    pub(crate) status: Mutex<Option<pb::Status>>,
+    /// User picked "update when idle": apply on the next hosting-drained status.
+    pub(crate) update_when_idle: std::sync::atomic::AtomicBool,
     view: Mutex<Option<TrayView>>,
     /// Launched with `--link` (installer): start linking once the window opens.
     auto_link: std::sync::atomic::AtomicBool,
@@ -264,6 +266,7 @@ fn render(app: &AppHandle, force: bool) {
         }
     }
     *last = Some(v);
+    crate::update::maybe_apply_when_idle(app);
 }
 
 fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> {
@@ -277,6 +280,9 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         none,
     )?)?;
     m.append(&MenuItem::with_id(app, "open", "Open Varde", true, none)?)?;
+    if let Some(l) = &v.update_label {
+        m.append(&MenuItem::with_id(app, "update", l, true, none)?)?;
+    }
     m.append(&MenuItem::with_id(
         app,
         "svcstart",
@@ -316,6 +322,13 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         app,
         "logs",
         "Open logs folder",
+        true,
+        none,
+    )?)?;
+    m.append(&MenuItem::with_id(
+        app,
+        "checkupdate",
+        "Check for updates…",
         true,
         none,
     )?)?;
@@ -366,6 +379,8 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
             let _ = autostart::set(!autostart::enabled());
             render(app, true);
         }
+        "update" => crate::update::offer(app),
+        "checkupdate" => crate::update::recheck(app.clone()),
         "quit" => app.exit(0),
         _ => {}
     }

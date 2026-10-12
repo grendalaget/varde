@@ -16,6 +16,7 @@ serde = { version = "1", features = ["derive"] }
 [target.'cfg(windows)'.dependencies]
 anyhow = { workspace = true }
 cp-api = { path = "../../crates/cp-api" }
+minisign-verify = "0.3.0"
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon", "image-png", "custom-protocol"] }
 tauri-plugin-single-instance = "2"

@@ -5412,6 +5412,7 @@ dependencies = [
  "agent-ipc",
  "anyhow",
  "cp-api",
+ "minisign-verify",
  "serde",
  "serde_json",
  "tauri",
