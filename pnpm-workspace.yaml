@@ -1,9 +1,0 @@
-packages:
-  - "apps/web"
-  - "apps/desktop/ui"
-  - "tests/minecraft-bot"
-
-allowBuilds:
-  '@heroui-pro/react': true
-  '@zowe/secrets-for-zowe-sdk': false
-  esbuild: true

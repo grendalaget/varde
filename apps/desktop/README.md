@@ -35,11 +35,11 @@ React + Vite + TypeScript on **Fluent 2** (`@fluentui/react-components` +
 `@fluentui/react-icons`), dark-only Varde theme (`src/theme.ts`: Natt
 background, Skifer surfaces, Tåke text/primary — Glød stays off, it's the
 hosting signal). The tray embeds the built bundle (`frontendDist: ui/dist`),
-so `pnpm --dir apps/desktop/ui build` must run before `cargo build`.
+so `bun --cwd apps/desktop/ui run build` must run before `cargo build`.
 
 ```sh
-pnpm --dir apps/desktop/ui dev      # browser dev server (mock statuses)
-pnpm --dir apps/desktop/ui build
+bun --cwd apps/desktop/ui run dev      # browser dev server (mock statuses)
+bun --cwd apps/desktop/ui run build
 ```
 
 In a plain browser the UI runs on a mock bridge; pick a canned status with
