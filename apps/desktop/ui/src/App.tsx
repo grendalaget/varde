@@ -362,14 +362,18 @@ export default function App() {
   }, []);
 
   // installer launch (--link): start linking as soon as not_linked shows —
-  // varde.games sign-in on the hosted control plane, code flow elsewhere
+  // varde.games sign-in on the hosted control plane, code flow elsewhere.
+  // Decide off the status's own address: url/defaults can still hold the
+  // hosted fallback when the first status lands.
   useEffect(() => {
     if (view === "form" && autoPending && status?.state === "not_linked") {
       setAutoPending(false);
-      if (hosted) void beginVardeLogin();
-      else void doLink(effectiveUrl);
+      const autoUrl = status.control_plane_url || effectiveUrl;
+      if (hostOf(autoUrl) === HOSTED_CP_HOST && fedEligible)
+        void beginVardeLogin();
+      else void doLink(autoUrl);
     }
-  }, [view, autoPending, status, hosted, effectiveUrl, doLink, beginVardeLogin]);
+  }, [view, autoPending, status, fedEligible, effectiveUrl, doLink, beginVardeLogin]);
 
   const cancelFed = useCallback(() => {
     // clears the stored token/group pick and any mid-flight link
