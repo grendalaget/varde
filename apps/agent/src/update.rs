@@ -88,7 +88,7 @@ fn feed_url(cfg: &crate::config::UpdateCfg) -> Option<String> {
     }
     let release = match channel(cfg) {
         Channel::Stable => "latest/download",
-        Channel::Nightly => "nightly/download",
+        Channel::Nightly => "download/nightly",
         Channel::Off => return None,
     };
     Some(format!(
