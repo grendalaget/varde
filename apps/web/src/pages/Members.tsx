@@ -69,26 +69,26 @@ export default function Members() {
       )}
       <ErrorNote>{err}</ErrorNote>
       <Card>
-        <ul className="vd-stagger divide-y divide-skifer-800">
+        <ul className="vd-stagger divide-y divide-separator">
           {(members.data?.members ?? []).map((m) => (
             <li
               key={m.user_id}
               className="flex items-center justify-between gap-3 px-4 py-3"
             >
               <div>
-                <div className="font-medium text-skifer-100">
+                <div className="font-medium text-foreground">
                   {m.display_name}
                   {m.user_id === me.user.id && (
-                    <span className="text-skifer-500"> (you)</span>
+                    <span className="text-muted"> (you)</span>
                   )}
                 </div>
-                <div className="text-xs text-skifer-400">{m.email}</div>
+                <div className="text-xs text-muted">{m.email}</div>
               </div>
               <div className="flex items-center gap-2">
                 {admin && m.role !== "owner" && m.user_id !== me.user.id ? (
                   <>
                     <select
-                      className="rounded-md border border-skifer-700 bg-skifer-950 px-2 py-1 text-sm transition-colors duration-150"
+                      className="rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150"
                       value={m.role}
                       onChange={async (e) => {
                         const { error } = await api.PATCH(

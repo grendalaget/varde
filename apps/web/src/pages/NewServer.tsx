@@ -89,14 +89,14 @@ export default function NewServer() {
                 key={g.id}
                 onClick={() => setGameId(g.id)}
                 className={
-                  "rounded-md border px-3 py-3 text-left text-sm transition-all duration-200 ease-vd-out hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-take active:scale-[0.98] " +
+                  "rounded-md border px-3 py-3 text-left text-sm transition-all duration-200 ease-vd-out hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-foreground active:scale-[0.98] " +
                   (g.id === gameId
-                    ? "border-take bg-take/5"
-                    : "border-skifer-800 hover:border-skifer-600")
+                    ? "border-foreground bg-default/30"
+                    : "border-separator hover:border-field-border")
                 }
               >
                 <div className="font-medium">{g.name}</div>
-                <div className="mt-1 text-xs text-skifer-400">
+                <div className="mt-1 text-xs text-muted">
                   Needs {Math.round((g.min_memory_mb / 1024) * 10) / 10} GB RAM
                 </div>
               </button>
@@ -146,7 +146,7 @@ export default function NewServer() {
                 onChange={setStartNow}
                 label="Start now"
               />
-              <span className="text-sm text-skifer-300">
+              <span className="text-sm text-foreground">
                 Start it right away
               </span>
             </div>
@@ -188,8 +188,8 @@ export function ConfigInput({
       <div className="flex items-start gap-3">
         <Toggle checked={!!value} onChange={onChange} label={label} />
         <div>
-          <div className="text-sm text-skifer-200">{label}</div>
-          {f.help && <div className="text-xs text-skifer-400">{f.help}</div>}
+          <div className="text-sm text-foreground">{label}</div>
+          {f.help && <div className="text-xs text-muted">{f.help}</div>}
         </div>
       </div>
     );

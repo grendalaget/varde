@@ -35,20 +35,20 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-skifer-950 p-6 text-skifer-100">
+    <main className="flex min-h-screen items-center justify-center bg-field p-6 text-foreground">
       <div className="w-full max-w-sm">
         <div className="vd-enter mb-8 flex flex-col items-center gap-3 text-center">
           <h1 className="vd-hover mb-2">
             <Logo className="h-16" />
           </h1>
-          <p className="text-sm text-skifer-400">
-            Game servers your group owns together — they keep running and keep
+          <p className="text-sm text-muted">
+            Game servers your group owns together. They keep running and keep
             your saves safe, whoever's PC is on.
           </p>
         </div>
         <form
           onSubmit={submit}
-          className="vd-enter vd-d-1 space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
+          className="vd-enter vd-d-1 space-y-4 rounded-2xl border border-separator bg-surface p-6"
         >
           {mode === "signup" && (
             <div className="vd-reveal">
@@ -97,11 +97,11 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
           >
             {mode === "login" ? "Sign in" : "Create account"}
           </Button>
-          <p className="text-center text-sm text-skifer-400">
+          <p className="text-center text-sm text-muted">
             {mode === "login" ? "New here? " : "Already have an account? "}
             <button
               type="button"
-              className="text-take underline decoration-skifer-500 underline-offset-2 hover:decoration-take"
+              className="text-foreground underline decoration-muted underline-offset-2 hover:decoration-foreground"
               onClick={() => {
                 setErr(null);
                 setMode(mode === "login" ? "signup" : "login");

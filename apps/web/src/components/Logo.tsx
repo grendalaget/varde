@@ -23,7 +23,7 @@ export function Logo({
   return (
     <svg
       viewBox={LOCKUP.viewBox}
-      className={cx("vd w-auto text-take", className)}
+      className={cx("vd w-auto text-foreground", className)}
       role="img"
       aria-label={title}
     >
@@ -93,14 +93,16 @@ export function Loader({
     <span
       role="status"
       className={cx(
-        "inline-flex items-center gap-3 text-sm text-skifer-400",
+        "inline-flex items-center gap-3 text-sm text-muted",
         className,
       )}
     >
       <Mark
         state="moving"
         small={small}
-        className={small ? "h-3.5 w-3.5 text-current" : "h-10 w-10 text-take"}
+        className={
+          small ? "h-3.5 w-3.5 text-current" : "h-10 w-10 text-foreground"
+        }
       />
       {showLabel ? label : <span className="sr-only">{label}</span>}
     </span>
@@ -141,7 +143,10 @@ export function HostMarker({
 }) {
   return (
     <span
-      className={cx("inline-flex items-center gap-1.5 text-take", className)}
+      className={cx(
+        "inline-flex items-center gap-1.5 text-foreground",
+        className,
+      )}
       title={`${name} is hosting this server`}
     >
       <Ember key={nodeId} />
@@ -170,7 +175,7 @@ export function ServerMark({
   return (
     <Mark
       state={s}
-      className={cx(s === "idle" ? "text-skifer-600" : "text-take", className)}
+      className={cx(s === "idle" ? "text-muted" : "text-foreground", className)}
     />
   );
 }

@@ -21,7 +21,7 @@ export default function CreateGroup({
   return (
     <div className="vd-stagger space-y-4">
       <form
-        className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
+        className="space-y-4 rounded-2xl border border-separator bg-surface p-6"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -35,7 +35,7 @@ export default function CreateGroup({
       >
         <div>
           <h1 className="text-lg font-semibold">Create your group</h1>
-          <p className="mt-1 text-sm text-skifer-400">
+          <p className="mt-1 text-sm text-muted">
             A group is you and your friends. Machines and servers belong to the
             group, so anyone's PC can host.
           </p>
@@ -55,7 +55,7 @@ export default function CreateGroup({
         </Button>
       </form>
       <form
-        className="space-y-4 rounded-lg border border-skifer-800 bg-skifer-900/60 p-6"
+        className="space-y-4 rounded-2xl border border-separator bg-surface p-6"
         onSubmit={(e) => {
           e.preventDefault();
           const c = inviteCode(code);
@@ -64,7 +64,7 @@ export default function CreateGroup({
       >
         <div>
           <h2 className="text-lg font-semibold">Join your friends' group</h2>
-          <p className="mt-1 text-sm text-skifer-400">
+          <p className="mt-1 text-sm text-muted">
             Someone invited you? Paste the invite link or its code.
           </p>
         </div>

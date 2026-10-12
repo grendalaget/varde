@@ -57,8 +57,8 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <div className="vd-enter mb-4 rounded-md border border-skifer-800 bg-skifer-900/60 px-4 py-3 text-sm text-skifer-300">
-          <span className="font-medium text-skifer-100">Tip:</span> add an{" "}
+        <div className="vd-enter mb-4 rounded-md border border-separator bg-surface px-4 py-3 text-sm text-foreground">
+          <span className="font-medium text-foreground">Tip:</span> add an{" "}
           <span className="text-violet-300">always-on backup</span> (a NAS, home
           server or small VPS). It always has the latest save, even when
           everyone's PC is off.
@@ -112,7 +112,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
           <Dot tone={liveTone(n)} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate font-medium text-skifer-50">
+              <span className="truncate font-medium text-foreground">
                 {n.name}
               </span>
               {hosting.length > 0 && (
@@ -130,7 +130,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
                 <Badge tone="warn">{n.admin_state}</Badge>
               )}
             </div>
-            <div className="text-xs text-skifer-400">
+            <div className="text-xs text-muted">
               {live === "online"
                 ? "Online"
                 : `Last seen ${timeAgo(n.last_seen_at)}`}
@@ -160,7 +160,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
             ))}
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-skifer-300">
+        <div className="flex items-center gap-2 text-sm text-foreground">
           <Toggle
             checked={n.hosting_enabled}
             disabled={!admin}
@@ -174,7 +174,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
         </Button>
       </div>
       {open && (
-        <div className="vd-reveal space-y-4 border-t border-skifer-800 px-4 py-4 text-sm">
+        <div className="vd-reveal space-y-4 border-t border-separator px-4 py-4 text-sm">
           <div className="flex items-start gap-3">
             <Toggle
               checked={n.anchor}
@@ -183,20 +183,20 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
               label="Always-on backup"
             />
             <div>
-              <div className="text-skifer-200">Always-on backup</div>
-              <div className="text-xs text-skifer-400">
+              <div className="text-foreground">Always-on backup</div>
+              <div className="text-xs text-muted">
                 Gets a copy of every save from every server. Use this for
                 machines that are always on.
               </div>
             </div>
           </div>
-          <div className="grid gap-2 text-xs text-skifer-400 sm:grid-cols-2">
-            <div>Agent version: {n.agent_version ?? "—"}</div>
+          <div className="grid gap-2 text-xs text-muted sm:grid-cols-2">
+            <div>Agent version: {n.agent_version ?? "-"}</div>
             <div>
               Uptime:{" "}
-              {caps?.uptime_s ? `${Math.round(caps.uptime_s / 3600)} h` : "—"}
+              {caps?.uptime_s ? `${Math.round(caps.uptime_s / 3600)} h` : "-"}
             </div>
-            <div>Runtimes: {caps?.runtimes?.join(", ") || "—"}</div>
+            <div>Runtimes: {caps?.runtimes?.join(", ") || "-"}</div>
             <div>On battery: {caps?.on_battery ? "yes" : "no"}</div>
             <div className="sm:col-span-2 truncate font-mono">ID {n.id}</div>
           </div>

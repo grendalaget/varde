@@ -38,7 +38,7 @@ export function canAdmin(role: string) {
 export function useNodeName() {
   const { nodes } = useSession();
   return (id?: string | null) => {
-    if (!id) return "—";
+    if (!id) return "-";
     return nodes.find((n) => n.id === id)?.name ?? id;
   };
 }

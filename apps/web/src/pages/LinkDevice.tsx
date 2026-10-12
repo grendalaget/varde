@@ -48,7 +48,7 @@ export default function LinkDevice({ code }: { code: string }) {
               window on that PC.
             </ErrorNote>
           ) : !d ? (
-            <p className="text-sm text-skifer-400">Looking up code…</p>
+            <p className="text-sm text-muted">Looking up code…</p>
           ) : d.state !== "pending" ? (
             <ErrorNote>
               This code was already used or has expired ({d.state}).
@@ -72,8 +72,8 @@ export default function LinkDevice({ code }: { code: string }) {
                 }
               }}
             >
-              <p className="text-sm text-skifer-300">
-                <span className="font-medium text-skifer-100">
+              <p className="text-sm text-foreground">
+                <span className="font-medium text-foreground">
                   {d.hostname}
                 </span>{" "}
                 ({d.os}/{d.arch}) wants to join. Only approve it if you just
