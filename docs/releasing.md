@@ -56,15 +56,15 @@ Dry runs bypass the unchanged-main check and never create/move tags or releases.
 
 ## Assets
 
-`<ver>` below is the complete version, including nightly metadata. Each tarball
-contains `LICENSE` and the named binaries at its root. The agent tarball includes
-`varde-mesh` **next to** `varde-agent`; keep them together when extracting it.
+`<ver>` below is the complete version, including nightly metadata. Every
+package contains `LICENSE`; the agent package always includes `varde-mesh`
+**next to** `varde-agent`.
 
 | Platform | Assets |
 | --- | --- |
-| Linux amd64, arm64 | `varde-agent-<ver>-linux-<arch>.tar.gz` (agent + mesh), `varde-control-plane-<ver>-linux-<arch>.tar.gz`, `varde-relay-<ver>-linux-<arch>.tar.gz`; each component also has matching `.deb` and `.rpm` files |
-| Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting); `varde-<ver>-windows-amd64.zip` (agent, mesh, tray, control-plane, relay, LICENSE) |
-| macOS arm64, amd64 | `varde-agent-<ver>-darwin-<arch>.tar.gz` (agent + mesh), `varde-control-plane-<ver>-darwin-<arch>.tar.gz`, `varde-relay-<ver>-darwin-<arch>.tar.gz` |
+| Linux amd64, arm64 | `varde-<component>-<ver>-linux-<arch>.deb` and `.rpm` for each of agent, control-plane and relay; `varde-<component>-<ver>-linux-<arch>.snap` (strict confinement) for sideloading |
+| Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting) |
+| macOS arm64, amd64 | `varde-<component>-<ver>-darwin-<arch>.dmg` for each of agent (contains agent + mesh), control-plane and relay |
 | All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS** |
 
 Linux packages retain the existing systemd units, configuration, icons and
@@ -72,8 +72,13 @@ install/remove scripts. Packaged mesh lives in `/usr/lib/varde`, the agent's
 installed fallback path. Linux binaries are built natively on Ubuntu 24.04
 (including its arm runner); the Rust agent requires a compatible glibc runtime.
 The Go binaries disable CGO; control-plane embeds the **production** web UI.
-The Windows tray is never shipped on Linux/macOS. macOS installers, apps and
-disk images are intentionally deferred; only CLI-style tarballs are produced.
+The Windows tray is never shipped on Linux/macOS. The Linux snaps use strict
+confinement and run their daemons as root: agent state lives under
+`/var/snap/varde-agent/common`, the control-plane sqlite db under
+`/var/snap/varde-control-plane/common`; daemon configuration goes through
+`snap set <snap> <key>=<value>` (see `packaging/linux/snap/`). The deb/rpm
+packages remain the fully-supported installs. macOS ships unsigned `.dmg`
+bundles per component — Gatekeeper still applies as described below.
 The macOS agent passes its PID to mesh lifetime monitoring so abrupt agent exit
 releases the mesh's configured ports; Linux retains kernel parent-death signaling.
 
@@ -117,7 +122,7 @@ xattr -d com.apple.quarantine ./varde-agent ./varde-mesh
 
 `varde-agent.exe`, `varde-mesh.exe`, `varde-tray.exe`,
 `varde-control-plane.exe` and `varde-relay.exe` are signed **before**
-ISCC/zip packaging, and the installer is signed **after ISCC** — all before
+ISCC packaging, and the installer is signed **after ISCC** — all before
 checksum generation, Sigstore signing and publication. Signing uses Azure
 Artifact Signing; setup is documented in `packaging/windows/README.md`.
 
@@ -129,19 +134,19 @@ its `.sigstore.json` bundle, `SHA256SUMS` and `SHA256SUMS.sigstore.json`:
 
 ```sh
 gh release download v1.2.3 --repo grendalaget/varde \
-  --pattern 'varde-agent-1.2.3-linux-amd64.tar.gz*' --pattern 'SHA256SUMS*'
+  --pattern 'varde-agent-1.2.3-linux-amd64.deb*' --pattern 'SHA256SUMS*'
 
 # The identity is the reusable BUILD workflow, not the release caller.
 identity='https://github.com/grendalaget/varde/.github/workflows/build-release.yml@refs/tags/v1.2.3'
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity "$identity" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
-cosign verify-blob --bundle varde-agent-1.2.3-linux-amd64.tar.gz.sigstore.json \
+cosign verify-blob --bundle varde-agent-1.2.3-linux-amd64.deb.sigstore.json \
   --certificate-identity "$identity" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  varde-agent-1.2.3-linux-amd64.tar.gz
+  varde-agent-1.2.3-linux-amd64.deb
 sha256sum --check --ignore-missing SHA256SUMS
-gh attestation verify varde-agent-1.2.3-linux-amd64.tar.gz --repo grendalaget/varde
+gh attestation verify varde-agent-1.2.3-linux-amd64.deb --repo grendalaget/varde
 ```
 
 For nightly, download tag `nightly` and use the certificate identity ending in

@@ -1,0 +1,42 @@
+name: varde-relay
+base: core24
+confinement: strict
+grade: stable
+title: Varde Relay
+summary: Varde relay — encrypted fallback path for mesh traffic
+description: |
+  The Varde relay forwards encrypted mesh traffic when peers cannot reach
+  each other directly. Configure via `sudo snap set varde-relay
+  <key>=<value>` — keys: listen, id, control-plane-key, metrics.
+
+license: AGPL-3.0-or-later
+website: https://varde.games
+contact: https://github.com/grendalaget/varde/issues
+source-code: https://github.com/grendalaget/varde
+issues: https://github.com/grendalaget/varde/issues
+adopt-info: binaries
+
+apps:
+  relay:
+    command: bin/run
+    daemon: simple
+    restart-condition: always
+    plugs: [network, network-bind]
+  ctl:
+    command: bin/run --help
+    plugs: [network]
+
+parts:
+  binaries:
+    plugin: nil
+    source: .
+    override-pull: |
+      craftctl default
+      craftctl set "version=$(cat version.txt)"
+    override-build: |
+      mkdir -p "$CRAFT_PART_INSTALL/bin" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-relay"
+      cp "$CRAFT_PART_BUILD/wrapper/run" "$CRAFT_PART_BUILD/dist/varde-relay" \
+        "$CRAFT_PART_INSTALL/bin/"
+      cp "$CRAFT_PART_BUILD/dist/LICENSE" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-relay/"

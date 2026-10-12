@@ -62,8 +62,8 @@ name (the free SignPath Foundation application was declined).
 With signing configured:
 
 1. `dist/varde-*.exe` are signed, then ISCC packages the signed executables.
-2. `VardeSetup-<ver>.exe` is signed, then the `windows-amd64` zip asset is
-   packed from the signed executables.
+2. `VardeSetup-<ver>.exe` is signed; it is the only Windows asset (no zip
+   of raw binaries is published).
 
 SHA256SUMS and cosign/Sigstore signing still run last, covering the signed
 payloads.

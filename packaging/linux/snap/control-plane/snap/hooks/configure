@@ -1,0 +1,18 @@
+#!/bin/sh
+# `snap set varde-control-plane <key>=<value>` maps to VARDE_* env vars.
+env="$SNAP_DATA/env"
+tmp="$env.tmp"
+: > "$tmp"
+for opt in listen public-url db signup auth-mode federation-secret \
+           embedded-relay embedded-relay-addr log-level; do
+  v=$(snapctl get "$opt")
+  if [ -n "$v" ]; then
+    key=$(printf '%s' "$opt" | tr 'a-z-' 'A-Z_')
+    # values are sourced as root shell code; single-quote escape them
+    esc=$(printf '%s' "$v" | sed "s/'/'\\\\''/g")
+    printf "VARDE_%s='%s'\n" "$key" "$esc" >> "$tmp"
+  fi
+done
+mv "$tmp" "$env"
+
+snapctl restart varde-control-plane.control-plane

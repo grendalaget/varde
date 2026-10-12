@@ -202,12 +202,13 @@ jobs:
       - name: Package Windows assets
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Copy-Item packaging/windows/dist/VardeSetup-*.exe release-assets/
-          Compress-Archive -Path dist/* -DestinationPath "release-assets/varde-$env:VERSION-windows-amd64.zip"
+        run: Copy-Item packaging/windows/dist/VardeSetup-*.exe release-assets/
       - name: Install nfpm
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+      - name: Install snapcraft
+        if: runner.os == 'Linux'
+        run: sudo snap install snapcraft --classic
       - name: Package Unix assets
         if: runner.os != 'Windows'
         run: bash packaging/release/package-unix.sh

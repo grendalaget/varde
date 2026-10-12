@@ -1,0 +1,66 @@
+name: varde-agent
+base: core24
+confinement: strict
+grade: stable
+title: Varde Agent
+summary: Varde node agent — peer-hosted game servers for groups of friends
+description: |
+  The Varde agent runs on every machine that hosts or stores game servers:
+  it talks to the control plane, manages game processes and snapshots, and
+  runs the encrypted QUIC mesh (varde-mesh ships alongside it).
+
+  State lives under /var/snap/varde-agent/common (VARDE_DATA_DIR). Enroll
+  this machine with `sudo varde-agent.enroll --token <token>`; point it at a
+  self-hosted control plane first with
+  `sudo snap set varde-agent server-url=cp.example` (or a full https URL).
+
+license: AGPL-3.0-or-later
+website: https://varde.games
+contact: https://github.com/grendalaget/varde/issues
+source-code: https://github.com/grendalaget/varde
+issues: https://github.com/grendalaget/varde/issues
+adopt-info: binaries
+
+apps:
+  agent:
+    command: bin/run run
+    daemon: simple
+    restart-condition: always
+    # the agent drains executions (final snapshot + replication hold, 60 s)
+    # before stopping; give it the hold plus stop overhead like the unit
+    stop-timeout: 120s
+    plugs:
+      - network
+      - network-bind
+      - system-observe
+      - hardware-observe
+      - process-control
+    environment:
+      VARDE_DATA_DIR: $SNAP_COMMON
+      VARDE_MESH_BIN: $SNAP/bin/varde-mesh
+  enroll:
+    command: bin/run enroll
+    plugs: [network, system-observe, hardware-observe]
+    environment:
+      VARDE_DATA_DIR: $SNAP_COMMON
+      VARDE_MESH_BIN: $SNAP/bin/varde-mesh
+  status:
+    command: bin/run status
+    plugs: [system-observe, hardware-observe]
+    environment:
+      VARDE_DATA_DIR: $SNAP_COMMON
+
+parts:
+  binaries:
+    plugin: nil
+    source: .
+    override-pull: |
+      craftctl default
+      craftctl set "version=$(cat version.txt)"
+    override-build: |
+      mkdir -p "$CRAFT_PART_INSTALL/bin" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-agent"
+      cp "$CRAFT_PART_BUILD/wrapper/run" "$CRAFT_PART_BUILD/dist/varde-agent" \
+        "$CRAFT_PART_BUILD/dist/varde-mesh" "$CRAFT_PART_INSTALL/bin/"
+      cp "$CRAFT_PART_BUILD/dist/LICENSE" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-agent/"

@@ -1,0 +1,48 @@
+name: varde-control-plane
+base: core24
+confinement: strict
+grade: stable
+title: Varde Control Plane
+summary: Varde control plane — API, scheduler and dashboard
+description: |
+  The Varde control plane coordinates a group of agents: API, scheduler,
+  leases/epochs, anchors, migrations and the embedded web dashboard. The
+  sqlite database lives under /var/snap/varde-control-plane/common
+  (VARDE_DB); configure via `sudo snap set varde-control-plane <key>=<value>`
+  — keys: listen, public-url, db, signup, auth-mode, federation-secret,
+  embedded-relay, embedded-relay-addr, log-level.
+
+license: AGPL-3.0-or-later
+website: https://varde.games
+contact: https://github.com/grendalaget/varde/issues
+source-code: https://github.com/grendalaget/varde
+issues: https://github.com/grendalaget/varde/issues
+adopt-info: binaries
+
+apps:
+  control-plane:
+    command: bin/run
+    daemon: simple
+    restart-condition: always
+    plugs: [network, network-bind]
+    environment:
+      VARDE_DB: sqlite:///$SNAP_COMMON/cp.db
+      VARDE_LISTEN: ":8080"
+  ctl:
+    command: bin/run
+    plugs: [network]
+
+parts:
+  binaries:
+    plugin: nil
+    source: .
+    override-pull: |
+      craftctl default
+      craftctl set "version=$(cat version.txt)"
+    override-build: |
+      mkdir -p "$CRAFT_PART_INSTALL/bin" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-control-plane"
+      cp "$CRAFT_PART_BUILD/wrapper/run" \
+        "$CRAFT_PART_BUILD/dist/varde-control-plane" "$CRAFT_PART_INSTALL/bin/"
+      cp "$CRAFT_PART_BUILD/dist/LICENSE" \
+        "$CRAFT_PART_INSTALL/usr/share/licenses/varde-control-plane/"

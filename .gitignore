@@ -25,3 +25,11 @@ node_modules/
 apps/controlplane/control-plane
 apps/mesh/mesh
 apps/relay/relay
+
+# Snap build output (staged by packaging/release/package-unix.sh)
+packaging/linux/snap/*/dist/
+packaging/linux/snap/*/parts/
+packaging/linux/snap/*/prime/
+packaging/linux/snap/*/stage/
+packaging/linux/snap/*/version.txt
+packaging/linux/snap/*/*.snap

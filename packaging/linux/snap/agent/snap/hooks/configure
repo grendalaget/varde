@@ -1,0 +1,26 @@
+#!/bin/sh
+# `snap set varde-agent <key>=<value>` writes daemon config.
+env="$SNAP_DATA/env"
+tmp="$env.tmp"
+: > "$tmp"
+for opt in data-dir mesh-bin; do
+  v=$(snapctl get "$opt")
+  if [ -n "$v" ]; then
+    key=$(printf '%s' "$opt" | tr 'a-z-' 'A-Z_')
+    # values are sourced as root shell code; single-quote escape them
+    esc=$(printf '%s' "$v" | sed "s/'/'\\\\''/g")
+    printf "VARDE_%s='%s'\n" "$key" "$esc" >> "$tmp"
+  fi
+done
+mv "$tmp" "$env"
+
+# server-url mirrors the installer's server.url so enroll/tray need no flag.
+url=$(snapctl get server-url)
+if [ -n "$url" ]; then
+  mkdir -p "$SNAP_COMMON"
+  printf '%s\n' "$url" > "$SNAP_COMMON/server.url"
+else
+  rm -f "$SNAP_COMMON/server.url"
+fi
+
+snapctl restart varde-agent.agent

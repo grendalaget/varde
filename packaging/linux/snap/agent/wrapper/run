@@ -1,0 +1,9 @@
+#!/bin/sh
+# snap set values land in $SNAP_DATA/env via the configure hook.
+set -a
+# shellcheck source=/dev/null
+[ -f "$SNAP_DATA/env" ] && . "$SNAP_DATA/env"
+set +a
+export VARDE_DATA_DIR="${VARDE_DATA_DIR:-$SNAP_COMMON}"
+export VARDE_MESH_BIN="${VARDE_MESH_BIN:-$SNAP/bin/varde-mesh}"
+exec "$SNAP/bin/varde-agent" "$@"

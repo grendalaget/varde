@@ -1,0 +1,7 @@
+#!/bin/sh
+# snap set values land in $SNAP_DATA/env via the configure hook.
+set -a
+# shellcheck source=/dev/null
+[ -f "$SNAP_DATA/env" ] && . "$SNAP_DATA/env"
+set +a
+exec "$SNAP/bin/varde-relay" "$@"

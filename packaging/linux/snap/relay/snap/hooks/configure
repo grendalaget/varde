@@ -1,0 +1,20 @@
+#!/bin/sh
+# `snap set varde-relay <key>=<value>` maps to VARDE_RELAY_* env vars.
+env="$SNAP_DATA/env"
+tmp="$env.tmp"
+: > "$tmp"
+for opt in listen id control-plane-key metrics; do
+  v=$(snapctl get "$opt")
+  if [ -n "$v" ]; then
+    case "$opt" in
+      control-plane-key) key=CP_KEY ;;
+      *) key=$(printf '%s' "$opt" | tr 'a-z-' 'A-Z_') ;;
+    esac
+    # values are sourced as root shell code; single-quote escape them
+    esc=$(printf '%s' "$v" | sed "s/'/'\\\\''/g")
+    printf "VARDE_RELAY_%s='%s'\n" "$key" "$esc" >> "$tmp"
+  fi
+done
+mv "$tmp" "$env"
+
+snapctl restart varde-relay.relay
