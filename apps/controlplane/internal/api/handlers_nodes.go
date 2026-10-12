@@ -65,6 +65,7 @@ func genNode(s *Server, ctx context.Context, n *store.Node) (gen.Node, error) {
 		Os:              n.OS,
 		Arch:            n.Arch,
 		AgentVersion:    nilIfEmpty(n.AgentVersion),
+		UpdateAvailable: nilIfEmpty(n.UpdateAvailable),
 		HostingEnabled:  n.HostingEnabled == 1,
 		Anchor:          n.Anchor == 1,
 		Priority:        intPtrToPtrInt(ptr(int64(n.Priority))),

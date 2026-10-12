@@ -103,6 +103,7 @@ impl Hub {
             s.group_name = view.group_name;
             s.last_contact_unix_ms = view.last_contact_unix_ms;
             s.hosting = hosting(&a);
+            s.update = Some(crate::update::status_pb(&a.update.lock().unwrap()));
             let fresh = Duration::from_millis((view.heartbeat_interval_ms * 3).max(15_000) as u64);
             match *a.last_heartbeat_ok.lock().unwrap() {
                 _ if down => pb::State::ShuttingDown,
@@ -471,6 +472,19 @@ impl pb::local_service_server::LocalService for Svc {
             .unwrap_or_default();
         self.0.cancel_link_by(&peer)?;
         Ok(Response::new(pb::CancelLinkResponse {
+            status: Some(self.0.status()),
+        }))
+    }
+
+    async fn check_update(
+        &self,
+        _req: Request<pb::CheckUpdateRequest>,
+    ) -> Result<Response<pb::CheckUpdateResponse>, Status> {
+        let agent = self.0.agent.lock().unwrap().clone();
+        if let Some(a) = agent {
+            crate::update::check_once(&a).await;
+        }
+        Ok(Response::new(pb::CheckUpdateResponse {
             status: Some(self.0.status()),
         }))
     }

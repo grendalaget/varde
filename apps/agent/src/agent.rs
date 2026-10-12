@@ -42,6 +42,8 @@ pub struct Agent {
     pub shutting_down: AtomicBool,
     /// What the control plane last told us, for local status (tray).
     pub cp_view: Mutex<CpView>,
+    /// Last update-check outcome; surfaced via Status.update + heartbeat.
+    pub update: crate::update::Shared,
 }
 
 #[derive(Debug, Default, Clone)]

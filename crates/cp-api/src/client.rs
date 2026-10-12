@@ -217,6 +217,120 @@ impl CpClient {
     }
 }
 
+/// GET an arbitrary http(s) URL, following redirects (GitHub release assets
+/// 302 to the objects CDN). Not part of CpClient: no base, no signing.
+/// `max_bytes` bounds the response body (a stalled or hostile feed can't
+/// hang the caller or exhaust memory).
+pub async fn fetch_url(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut url = url.to_string();
+    for _ in 0..5 {
+        let (status, headers, bytes) =
+            tokio::time::timeout(Duration::from_secs(30), get_once(&url, max_bytes))
+                .await
+                .map_err(|_| Error::Http(format!("GET {url}: timed out")))??;
+        match status {
+            200..=299 => return Ok(bytes),
+            301 | 302 | 303 | 307 | 308 => {
+                let loc = headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("location"))
+                    .map(|(_, v)| v.clone())
+                    .ok_or_else(|| Error::Http("redirect without location".into()))?;
+                // relative locations resolve against the current URL's origin
+                if loc.starts_with('/') && !loc.starts_with("//") {
+                    let cur: Uri = url.parse().map_err(|_| Error::Url(url.to_string()))?;
+                    let scheme = cur.scheme_str().unwrap_or("https");
+                    let authority = cur.authority().ok_or_else(|| Error::Url(url.clone()))?;
+                    url = format!("{scheme}://{authority}{loc}");
+                } else {
+                    url = loc;
+                }
+            }
+            _ => return Err(Error::Http(format!("GET {url}: status {status}"))),
+        }
+    }
+    Err(Error::Http("too many redirects".into()))
+}
+
+/// One bare GET: (status, response headers, body). Used by fetch_url.
+async fn get_once(url: &str, max_bytes: usize) -> Result<(u16, Vec<(String, String)>, Vec<u8>)> {
+    let uri: Uri = url.parse().map_err(|_| Error::Url(url.to_string()))?;
+    let https = uri.scheme_str() == Some("https");
+    if !https && uri.scheme_str() != Some("http") {
+        return Err(Error::Url(url.to_string()));
+    }
+    let host = uri
+        .host()
+        .ok_or_else(|| Error::Url(url.to_string()))?
+        .to_string();
+    let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(&uri)
+        .header("host", host.clone())
+        .header(
+            "user-agent",
+            concat!("varde-agent/", env!("CARGO_PKG_VERSION")),
+        )
+        .body(Full::new(Bytes::new()))
+        .map_err(|e| Error::Http(e.to_string()))?;
+    let stream = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::net::TcpStream::connect((host.as_str(), port)),
+    )
+    .await
+    .map_err(|_| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "connect timeout",
+        ))
+    })?
+    .map_err(Error::Io)?;
+    let resp: Response<Incoming> = if https {
+        let cfg = rustls_client_config()?;
+        let server_name = rustls::pki_types::ServerName::try_from(host.clone())
+            .map_err(|e| Error::Url(format!("{host}: {e}")))?;
+        let tls = tokio_rustls::TlsConnector::from(cfg)
+            .connect(server_name, stream)
+            .await
+            .map_err(Error::Io)?;
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+            .send_request(req)
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?
+    } else {
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+            .send_request(req)
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?
+    };
+    let status = resp.status().as_u16();
+    let headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let bytes = http_body_util::Limited::new(resp.into_body(), max_bytes)
+        .collect()
+        .await
+        .map_err(|e| Error::Http(format!("GET {url}: {e}")))?
+        .to_bytes()
+        .to_vec();
+    Ok((status, headers, bytes))
+}
+
 pub fn api_error(status: u16, body: &[u8]) -> Error {
     match serde_json::from_slice::<ErrorBody>(body) {
         Ok(e) => Error::Api {

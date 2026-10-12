@@ -74,6 +74,13 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 		_, _ = s.Store.DB.ExecContext(ctx, s.Store.Rebind(
 			`UPDATE nodes SET agent_version=? WHERE id=?`), node.AgentVersion, node.ID)
 	}
+	// The agent reports "" once checked with nothing newer (clears a stale
+	// badge) and omits the field entirely before its first check.
+	if b.UpdateAvailable != nil {
+		node.UpdateAvailable = *b.UpdateAvailable
+		_, _ = s.Store.DB.ExecContext(ctx, s.Store.Rebind(
+			`UPDATE nodes SET update_available=? WHERE id=?`), node.UpdateAvailable, node.ID)
+	}
 	if err := s.Store.PutNodeStatus(ctx, &store.NodeStatus{
 		NodeID: node.ID, StatusJSON: statusJSON, MeshJSON: meshJSON, UpdatedAt: now,
 	}); err != nil {

@@ -153,6 +153,9 @@ pub struct AgentHeartbeat {
     pub snapshots_stored_bytes: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_snapshots: Option<Vec<String>>,
+    /// Newer version the node's update feed offers; absent = up to date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_available: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

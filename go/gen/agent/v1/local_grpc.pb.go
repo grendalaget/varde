@@ -31,6 +31,7 @@ const (
 	LocalService_WatchStatus_FullMethodName = "/varde.agent.v1.LocalService/WatchStatus"
 	LocalService_StartLink_FullMethodName   = "/varde.agent.v1.LocalService/StartLink"
 	LocalService_CancelLink_FullMethodName  = "/varde.agent.v1.LocalService/CancelLink"
+	LocalService_CheckUpdate_FullMethodName = "/varde.agent.v1.LocalService/CheckUpdate"
 )
 
 // LocalServiceClient is the client API for LocalService service.
@@ -44,6 +45,8 @@ type LocalServiceClient interface {
 	// in Status.link; the agent polls for approval and starts by itself.
 	StartLink(ctx context.Context, in *StartLinkRequest, opts ...grpc.CallOption) (*StartLinkResponse, error)
 	CancelLink(ctx context.Context, in *CancelLinkRequest, opts ...grpc.CallOption) (*CancelLinkResponse, error)
+	// Re-runs the update check now instead of waiting for the interval.
+	CheckUpdate(ctx context.Context, in *CheckUpdateRequest, opts ...grpc.CallOption) (*CheckUpdateResponse, error)
 }
 
 type localServiceClient struct {
@@ -103,6 +106,16 @@ func (c *localServiceClient) CancelLink(ctx context.Context, in *CancelLinkReque
 	return out, nil
 }
 
+func (c *localServiceClient) CheckUpdate(ctx context.Context, in *CheckUpdateRequest, opts ...grpc.CallOption) (*CheckUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckUpdateResponse)
+	err := c.cc.Invoke(ctx, LocalService_CheckUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LocalServiceServer is the server API for LocalService service.
 // All implementations must embed UnimplementedLocalServiceServer
 // for forward compatibility.
@@ -114,6 +127,8 @@ type LocalServiceServer interface {
 	// in Status.link; the agent polls for approval and starts by itself.
 	StartLink(context.Context, *StartLinkRequest) (*StartLinkResponse, error)
 	CancelLink(context.Context, *CancelLinkRequest) (*CancelLinkResponse, error)
+	// Re-runs the update check now instead of waiting for the interval.
+	CheckUpdate(context.Context, *CheckUpdateRequest) (*CheckUpdateResponse, error)
 	mustEmbedUnimplementedLocalServiceServer()
 }
 
@@ -135,6 +150,9 @@ func (UnimplementedLocalServiceServer) StartLink(context.Context, *StartLinkRequ
 }
 func (UnimplementedLocalServiceServer) CancelLink(context.Context, *CancelLinkRequest) (*CancelLinkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelLink not implemented")
+}
+func (UnimplementedLocalServiceServer) CheckUpdate(context.Context, *CheckUpdateRequest) (*CheckUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckUpdate not implemented")
 }
 func (UnimplementedLocalServiceServer) mustEmbedUnimplementedLocalServiceServer() {}
 func (UnimplementedLocalServiceServer) testEmbeddedByValue()                      {}
@@ -222,6 +240,24 @@ func _LocalService_CancelLink_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LocalService_CheckUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalServiceServer).CheckUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalService_CheckUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalServiceServer).CheckUpdate(ctx, req.(*CheckUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LocalService_ServiceDesc is the grpc.ServiceDesc for LocalService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -240,6 +276,10 @@ var LocalService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelLink",
 			Handler:    _LocalService_CancelLink_Handler,
+		},
+		{
+			MethodName: "CheckUpdate",
+			Handler:    _LocalService_CheckUpdate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

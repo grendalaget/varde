@@ -674,6 +674,9 @@ type AgentHeartbeat struct {
 	Executions           *[]ExecutionReport `json:"executions,omitempty"`
 	Mesh                 *MeshReport        `json:"mesh,omitempty"`
 	SnapshotsStoredBytes *int64             `json:"snapshots_stored_bytes,omitempty"`
+
+	// UpdateAvailable Newer version the node's update feed offers; empty string once checked with nothing newer, absent before the first check.
+	UpdateAvailable *string `json:"update_available,omitempty"`
 }
 
 // AgentSnapshot defines model for AgentSnapshot.
@@ -1096,6 +1099,9 @@ type Node struct {
 
 	// PublicKey base64 ed25519
 	PublicKey string `json:"public_key"`
+
+	// UpdateAvailable Newer version offered by the node's update feed; empty/absent = up to date or unchecked.
+	UpdateAvailable *string `json:"update_available,omitempty"`
 }
 
 // NodeAdminState defines model for Node.AdminState.

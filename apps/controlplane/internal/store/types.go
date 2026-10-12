@@ -124,6 +124,7 @@ type Node struct {
 	OS              string  `db:"os"`
 	Arch            string  `db:"arch"`
 	AgentVersion    string  `db:"agent_version"`
+	UpdateAvailable string  `db:"update_available"`
 	HostingEnabled  int64   `db:"hosting_enabled"`
 	Anchor          int64   `db:"anchor"`
 	Priority        int64   `db:"priority"`

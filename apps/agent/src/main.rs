@@ -14,6 +14,7 @@ mod mesh_child;
 mod mesh_ctl;
 mod state;
 mod sysinfo;
+mod update;
 
 pub use agent::Agent;
 
@@ -467,6 +468,7 @@ async fn run_linked(
         last_heartbeat_ok: Mutex::new(None),
         shutting_down: AtomicBool::new(false),
         cp_view: Mutex::new(Default::default()),
+        update: Mutex::new(update::UpdateState::default()),
     });
     hub.attach(agent.clone());
 
@@ -498,6 +500,9 @@ async fn run_linked(
     let a = agent.clone();
     let s = stop_rx.clone();
     tokio::spawn(async move { a.replication_worker(s).await });
+    let a = agent.clone();
+    let s = stop_rx.clone();
+    tokio::spawn(async move { update::update_loop(a, s).await });
 
     // GC loop
     {

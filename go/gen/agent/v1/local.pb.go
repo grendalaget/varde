@@ -245,6 +245,87 @@ func (x *Hosting) GetLatestSaveAtUnixMs() int64 {
 	return 0
 }
 
+type Update struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// When the manifest was last fetched; 0 = never checked.
+	CheckedAtUnixMs int64 `protobuf:"varint,1,opt,name=checked_at_unix_ms,json=checkedAtUnixMs,proto3" json:"checked_at_unix_ms,omitempty"`
+	// Newer version offered by the feed; empty = up to date (or unknown).
+	AvailableVersion string `protobuf:"bytes,2,opt,name=available_version,json=availableVersion,proto3" json:"available_version,omitempty"`
+	// Download URL + minisign signature for this install's own package; empty
+	// when the feed signs no entry for it — the update is then notify-only.
+	Url       string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	Signature string `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	// Why the last check or verification failed; empty when fine.
+	Error         string `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Update) Reset() {
+	*x = Update{}
+	mi := &file_agent_v1_local_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Update) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Update) ProtoMessage() {}
+
+func (x *Update) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Update.ProtoReflect.Descriptor instead.
+func (*Update) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Update) GetCheckedAtUnixMs() int64 {
+	if x != nil {
+		return x.CheckedAtUnixMs
+	}
+	return 0
+}
+
+func (x *Update) GetAvailableVersion() string {
+	if x != nil {
+		return x.AvailableVersion
+	}
+	return ""
+}
+
+func (x *Update) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *Update) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *Update) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type Status struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	State             State                  `protobuf:"varint,1,opt,name=state,proto3,enum=varde.agent.v1.State" json:"state,omitempty"`
@@ -259,15 +340,16 @@ type Status struct {
 	// Executions on this machine that haven't finished.
 	Hosting []*Hosting `protobuf:"bytes,9,rep,name=hosting,proto3" json:"hosting,omitempty"`
 	// Why the last link attempt failed (expired, unreachable, …); empty if none.
-	LinkError     string `protobuf:"bytes,10,opt,name=link_error,json=linkError,proto3" json:"link_error,omitempty"`
-	AgentVersion  string `protobuf:"bytes,11,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	LinkError     string  `protobuf:"bytes,10,opt,name=link_error,json=linkError,proto3" json:"link_error,omitempty"`
+	AgentVersion  string  `protobuf:"bytes,11,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	Update        *Update `protobuf:"bytes,12,opt,name=update,proto3" json:"update,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Status) Reset() {
 	*x = Status{}
-	mi := &file_agent_v1_local_proto_msgTypes[2]
+	mi := &file_agent_v1_local_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -279,7 +361,7 @@ func (x *Status) String() string {
 func (*Status) ProtoMessage() {}
 
 func (x *Status) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[2]
+	mi := &file_agent_v1_local_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -292,7 +374,7 @@ func (x *Status) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Status.ProtoReflect.Descriptor instead.
 func (*Status) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{2}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Status) GetState() State {
@@ -372,6 +454,13 @@ func (x *Status) GetAgentVersion() string {
 	return ""
 }
 
+func (x *Status) GetUpdate() *Update {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
 type GetStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -380,7 +469,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[3]
+	mi := &file_agent_v1_local_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -392,7 +481,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[3]
+	mi := &file_agent_v1_local_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,7 +494,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{3}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{4}
 }
 
 type GetStatusResponse struct {
@@ -417,7 +506,7 @@ type GetStatusResponse struct {
 
 func (x *GetStatusResponse) Reset() {
 	*x = GetStatusResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[4]
+	mi := &file_agent_v1_local_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +518,7 @@ func (x *GetStatusResponse) String() string {
 func (*GetStatusResponse) ProtoMessage() {}
 
 func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[4]
+	mi := &file_agent_v1_local_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +531,7 @@ func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{4}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetStatusResponse) GetStatus() *Status {
@@ -460,7 +549,7 @@ type WatchStatusRequest struct {
 
 func (x *WatchStatusRequest) Reset() {
 	*x = WatchStatusRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[5]
+	mi := &file_agent_v1_local_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -472,7 +561,7 @@ func (x *WatchStatusRequest) String() string {
 func (*WatchStatusRequest) ProtoMessage() {}
 
 func (x *WatchStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[5]
+	mi := &file_agent_v1_local_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -485,7 +574,7 @@ func (x *WatchStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchStatusRequest.ProtoReflect.Descriptor instead.
 func (*WatchStatusRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{5}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{6}
 }
 
 type WatchStatusResponse struct {
@@ -497,7 +586,7 @@ type WatchStatusResponse struct {
 
 func (x *WatchStatusResponse) Reset() {
 	*x = WatchStatusResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[6]
+	mi := &file_agent_v1_local_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -509,7 +598,7 @@ func (x *WatchStatusResponse) String() string {
 func (*WatchStatusResponse) ProtoMessage() {}
 
 func (x *WatchStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[6]
+	mi := &file_agent_v1_local_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -522,7 +611,7 @@ func (x *WatchStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchStatusResponse.ProtoReflect.Descriptor instead.
 func (*WatchStatusResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{6}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *WatchStatusResponse) GetStatus() *Status {
@@ -544,7 +633,7 @@ type StartLinkRequest struct {
 
 func (x *StartLinkRequest) Reset() {
 	*x = StartLinkRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[7]
+	mi := &file_agent_v1_local_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -556,7 +645,7 @@ func (x *StartLinkRequest) String() string {
 func (*StartLinkRequest) ProtoMessage() {}
 
 func (x *StartLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[7]
+	mi := &file_agent_v1_local_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -569,7 +658,7 @@ func (x *StartLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartLinkRequest.ProtoReflect.Descriptor instead.
 func (*StartLinkRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{7}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StartLinkRequest) GetControlPlaneUrl() string {
@@ -595,7 +684,7 @@ type StartLinkResponse struct {
 
 func (x *StartLinkResponse) Reset() {
 	*x = StartLinkResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[8]
+	mi := &file_agent_v1_local_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -607,7 +696,7 @@ func (x *StartLinkResponse) String() string {
 func (*StartLinkResponse) ProtoMessage() {}
 
 func (x *StartLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[8]
+	mi := &file_agent_v1_local_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -620,7 +709,7 @@ func (x *StartLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartLinkResponse.ProtoReflect.Descriptor instead.
 func (*StartLinkResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{8}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StartLinkResponse) GetStatus() *Status {
@@ -638,7 +727,7 @@ type CancelLinkRequest struct {
 
 func (x *CancelLinkRequest) Reset() {
 	*x = CancelLinkRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[9]
+	mi := &file_agent_v1_local_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -650,7 +739,7 @@ func (x *CancelLinkRequest) String() string {
 func (*CancelLinkRequest) ProtoMessage() {}
 
 func (x *CancelLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[9]
+	mi := &file_agent_v1_local_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -663,7 +752,7 @@ func (x *CancelLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelLinkRequest.ProtoReflect.Descriptor instead.
 func (*CancelLinkRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{9}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{10}
 }
 
 type CancelLinkResponse struct {
@@ -675,7 +764,7 @@ type CancelLinkResponse struct {
 
 func (x *CancelLinkResponse) Reset() {
 	*x = CancelLinkResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[10]
+	mi := &file_agent_v1_local_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -687,7 +776,7 @@ func (x *CancelLinkResponse) String() string {
 func (*CancelLinkResponse) ProtoMessage() {}
 
 func (x *CancelLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[10]
+	mi := &file_agent_v1_local_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -700,10 +789,90 @@ func (x *CancelLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelLinkResponse.ProtoReflect.Descriptor instead.
 func (*CancelLinkResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{10}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CancelLinkResponse) GetStatus() *Status {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+type CheckUpdateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckUpdateRequest) Reset() {
+	*x = CheckUpdateRequest{}
+	mi := &file_agent_v1_local_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckUpdateRequest) ProtoMessage() {}
+
+func (x *CheckUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckUpdateRequest.ProtoReflect.Descriptor instead.
+func (*CheckUpdateRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{12}
+}
+
+type CheckUpdateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        *Status                `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckUpdateResponse) Reset() {
+	*x = CheckUpdateResponse{}
+	mi := &file_agent_v1_local_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckUpdateResponse) ProtoMessage() {}
+
+func (x *CheckUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckUpdateResponse.ProtoReflect.Descriptor instead.
+func (*CheckUpdateResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CheckUpdateResponse) GetStatus() *Status {
 	if x != nil {
 		return x.Status
 	}
@@ -726,7 +895,13 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"serverName\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12;\n" +
 	"\x1blatest_safe_save_at_unix_ms\x18\x04 \x01(\x03R\x16latestSafeSaveAtUnixMs\x122\n" +
-	"\x16latest_save_at_unix_ms\x18\x05 \x01(\x03R\x12latestSaveAtUnixMs\"\xa3\x03\n" +
+	"\x16latest_save_at_unix_ms\x18\x05 \x01(\x03R\x12latestSaveAtUnixMs\"\xa8\x01\n" +
+	"\x06Update\x12+\n" +
+	"\x12checked_at_unix_ms\x18\x01 \x01(\x03R\x0fcheckedAtUnixMs\x12+\n" +
+	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
+	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1c\n" +
+	"\tsignature\x18\x04 \x01(\tR\tsignature\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xd3\x03\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +
@@ -741,7 +916,8 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\n" +
 	"link_error\x18\n" +
 	" \x01(\tR\tlinkError\x12#\n" +
-	"\ragent_version\x18\v \x01(\tR\fagentVersion\"\x12\n" +
+	"\ragent_version\x18\v \x01(\tR\fagentVersion\x12.\n" +
+	"\x06update\x18\f \x01(\v2\x16.varde.agent.v1.UpdateR\x06update\"\x12\n" +
 	"\x10GetStatusRequest\"C\n" +
 	"\x11GetStatusResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
@@ -755,6 +931,9 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x13\n" +
 	"\x11CancelLinkRequest\"D\n" +
 	"\x12CancelLinkResponse\x12.\n" +
+	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
+	"\x12CheckUpdateRequest\"E\n" +
+	"\x13CheckUpdateResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status*\x9b\x01\n" +
 	"\x05State\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
@@ -763,13 +942,14 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x10STATE_CONNECTING\x10\x03\x12\x10\n" +
 	"\fSTATE_ONLINE\x10\x04\x12\x11\n" +
 	"\rSTATE_OFFLINE\x10\x05\x12\x17\n" +
-	"\x13STATE_SHUTTING_DOWN\x10\x062\xe1\x02\n" +
+	"\x13STATE_SHUTTING_DOWN\x10\x062\xb9\x03\n" +
 	"\fLocalService\x12P\n" +
 	"\tGetStatus\x12 .varde.agent.v1.GetStatusRequest\x1a!.varde.agent.v1.GetStatusResponse\x12X\n" +
 	"\vWatchStatus\x12\".varde.agent.v1.WatchStatusRequest\x1a#.varde.agent.v1.WatchStatusResponse0\x01\x12P\n" +
 	"\tStartLink\x12 .varde.agent.v1.StartLinkRequest\x1a!.varde.agent.v1.StartLinkResponse\x12S\n" +
 	"\n" +
-	"CancelLink\x12!.varde.agent.v1.CancelLinkRequest\x1a\".varde.agent.v1.CancelLinkResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
+	"CancelLink\x12!.varde.agent.v1.CancelLinkRequest\x1a\".varde.agent.v1.CancelLinkResponse\x12V\n" +
+	"\vCheckUpdate\x12\".varde.agent.v1.CheckUpdateRequest\x1a#.varde.agent.v1.CheckUpdateResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_v1_local_proto_rawDescOnce sync.Once
@@ -784,42 +964,49 @@ func file_agent_v1_local_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_local_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_agent_v1_local_proto_goTypes = []any{
 	(State)(0),                  // 0: varde.agent.v1.State
 	(*Link)(nil),                // 1: varde.agent.v1.Link
 	(*Hosting)(nil),             // 2: varde.agent.v1.Hosting
-	(*Status)(nil),              // 3: varde.agent.v1.Status
-	(*GetStatusRequest)(nil),    // 4: varde.agent.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),   // 5: varde.agent.v1.GetStatusResponse
-	(*WatchStatusRequest)(nil),  // 6: varde.agent.v1.WatchStatusRequest
-	(*WatchStatusResponse)(nil), // 7: varde.agent.v1.WatchStatusResponse
-	(*StartLinkRequest)(nil),    // 8: varde.agent.v1.StartLinkRequest
-	(*StartLinkResponse)(nil),   // 9: varde.agent.v1.StartLinkResponse
-	(*CancelLinkRequest)(nil),   // 10: varde.agent.v1.CancelLinkRequest
-	(*CancelLinkResponse)(nil),  // 11: varde.agent.v1.CancelLinkResponse
+	(*Update)(nil),              // 3: varde.agent.v1.Update
+	(*Status)(nil),              // 4: varde.agent.v1.Status
+	(*GetStatusRequest)(nil),    // 5: varde.agent.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),   // 6: varde.agent.v1.GetStatusResponse
+	(*WatchStatusRequest)(nil),  // 7: varde.agent.v1.WatchStatusRequest
+	(*WatchStatusResponse)(nil), // 8: varde.agent.v1.WatchStatusResponse
+	(*StartLinkRequest)(nil),    // 9: varde.agent.v1.StartLinkRequest
+	(*StartLinkResponse)(nil),   // 10: varde.agent.v1.StartLinkResponse
+	(*CancelLinkRequest)(nil),   // 11: varde.agent.v1.CancelLinkRequest
+	(*CancelLinkResponse)(nil),  // 12: varde.agent.v1.CancelLinkResponse
+	(*CheckUpdateRequest)(nil),  // 13: varde.agent.v1.CheckUpdateRequest
+	(*CheckUpdateResponse)(nil), // 14: varde.agent.v1.CheckUpdateResponse
 }
 var file_agent_v1_local_proto_depIdxs = []int32{
 	0,  // 0: varde.agent.v1.Status.state:type_name -> varde.agent.v1.State
 	1,  // 1: varde.agent.v1.Status.link:type_name -> varde.agent.v1.Link
 	2,  // 2: varde.agent.v1.Status.hosting:type_name -> varde.agent.v1.Hosting
-	3,  // 3: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
-	3,  // 4: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
-	3,  // 5: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
-	3,  // 6: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
-	4,  // 7: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
-	6,  // 8: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
-	8,  // 9: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
-	10, // 10: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
-	5,  // 11: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
-	7,  // 12: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
-	9,  // 13: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
-	11, // 14: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
-	11, // [11:15] is the sub-list for method output_type
-	7,  // [7:11] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	3,  // 3: varde.agent.v1.Status.update:type_name -> varde.agent.v1.Update
+	4,  // 4: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
+	4,  // 5: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
+	4,  // 6: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
+	4,  // 7: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
+	4,  // 8: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 9: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
+	7,  // 10: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
+	9,  // 11: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
+	11, // 12: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
+	13, // 13: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
+	6,  // 14: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
+	8,  // 15: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
+	10, // 16: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
+	12, // 17: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
+	14, // 18: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
+	14, // [14:19] is the sub-list for method output_type
+	9,  // [9:14] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_local_proto_init() }
@@ -833,7 +1020,7 @@ func file_agent_v1_local_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_local_proto_rawDesc), len(file_agent_v1_local_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

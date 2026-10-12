@@ -1296,6 +1296,9 @@ components:
         os: { type: string }
         arch: { type: string }
         agent_version: { type: string }
+        update_available:
+          type: string
+          description: Newer version offered by the node's update feed; empty/absent = up to date or unchecked.
         hosting_enabled: { type: boolean }
         anchor: { type: boolean }
         priority: { type: integer }
@@ -1598,6 +1601,9 @@ components:
       type: object
       properties:
         agent_version: { type: string }
+        update_available:
+          type: string
+          description: Newer version the node's update feed offers; empty string once checked with nothing newer, absent before the first check.
         capabilities: { $ref: "#/components/schemas/Capabilities" }
         mesh: { $ref: "#/components/schemas/MeshReport" }
         executions:
