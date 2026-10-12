@@ -10,10 +10,10 @@ curl -sL -o /tmp/go.tgz https://go.dev/dl/go1.27.1.linux-amd64.tar.gz
 sudo tar -C /usr/local -xzf /tmp/go.tgz
 export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH
 
-# Node.js 22 LTS + pnpm (npm-installed; corepack also works)
+# Node.js 22 LTS + bun
 curl -sL -o /tmp/node.tar.xz https://nodejs.org/dist/v22.20.0/node-v22.20.0-linux-x64.tar.xz
 sudo tar -C /usr/local --strip-components=1 -xJf /tmp/node.tar.xz
-sudo npm install -g pnpm
+curl -fsSL https://bun.sh/install | bash
 
 # buf (protobuf lint + generation)
 sudo install -m 0755 \
@@ -38,7 +38,7 @@ rustup target add x86_64-pc-windows-gnu
 sudo apt-get install -y gcc-mingw-w64-x86-64
 ```
 
-Verified versions on this machine (2026-10): Go 1.27.1, Node 22.20.0, pnpm
+Verified versions on this machine (2026-10): Go 1.27.1, Node 22.20.0, bun
 12.9.1, buf 1.73.0, golangci-lint 2.14.0, rustc 1.97.1, nfpm 2.47.0,
 oapi-codegen 2.8.0, mingw-w64 gcc 10.
 
@@ -46,7 +46,7 @@ oapi-codegen 2.8.0, mingw-w64 gcc 10.
 
 ```sh
 make gen        # buf generate (Go protos) + openapi-typescript (web client)
-make build      # go build all modules + cargo build + pnpm build
+make build      # go build all modules + cargo build + bun run build
 make test       # go test + cargo test
 make lint       # buf lint, go vet, golangci-lint, clippy, eslint
 make fmt        # gofmt, cargo fmt, prettier

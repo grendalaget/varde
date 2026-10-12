@@ -35,13 +35,13 @@ jobs:
           check-latest: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes
@@ -76,13 +76,13 @@ jobs:
           check-latest: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes
@@ -119,13 +119,13 @@ jobs:
           check-latest: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+          cache: bun
       - uses: actions/cache@v4
         with:
           path: ~/.cache/varde-e2e-runtimes

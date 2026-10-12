@@ -71,21 +71,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.goos }}-${{ matrix.arch }}
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+          cache: bun
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Embed production web UI
         run: |
-          pnpm install --frozen-lockfile
-          pnpm --dir apps/web build
-          pnpm --dir apps/desktop/ui build
+          bun install --frozen-lockfile
+          bun run --filter "@varde/web" build
+          bun run --filter "@varde/desktop-ui" build
           make webui-dist
       - name: Set binary versions
         run: python packaging/release/version.py
@@ -172,7 +172,7 @@ jobs:
           Copy-Item dist/varde-*.exe apps/desktop/payload/
           Copy-Item packaging/windows/varde.ico apps/desktop/payload/
           Copy-Item LICENSE apps/desktop/payload/
-          pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
+          bunx tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
           $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           Copy-Item $setup.FullName "release-assets/VardeSetup-$env:VERSION.exe"

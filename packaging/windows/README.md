@@ -53,7 +53,7 @@ silent path is what `tauri-plugin-updater` runs on update — a silent
 install is a full drain-and-swap upgrade.
 
 ```sh
-pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
+bunx tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
 ```
 
 expects `apps/desktop/payload/` to contain `varde-agent.exe`,

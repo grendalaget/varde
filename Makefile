@@ -7,12 +7,12 @@ export PATH := $(HOME)/go/bin:$(PATH)
 
 gen:
 	buf generate
-	pnpm --dir apps/web gen:api
+	bun run --filter "@varde/web" gen:api
 
 build:
-	pnpm --dir apps/desktop/ui build
+	bun run --filter "@varde/desktop-ui" build
 	cargo build --workspace
-	pnpm --dir apps/web build
+	bun run --filter "@varde/web" build
 	$(MAKE) webui-dist
 	@for m in $(GO_MODULES); do (cd $$m && go build ./...) || exit 1; done
 	@mkdir -p $(BIN)
@@ -53,16 +53,16 @@ lint:
 	buf lint
 	@for m in $(GO_MODULES); do (cd $$m && go vet ./... && golangci-lint run ./...) || exit 1; done
 	cargo clippy --workspace -- -D warnings
-	pnpm --dir apps/web lint
-	pnpm --dir apps/web typecheck
-	pnpm --dir apps/desktop/ui lint
-	pnpm --dir apps/desktop/ui typecheck
+	bun run --filter "@varde/web" lint
+	bun run --filter "@varde/web" typecheck
+	bun run --filter "@varde/desktop-ui" lint
+	bun run --filter "@varde/desktop-ui" typecheck
 
 fmt:
 	@for m in $(GO_MODULES); do (cd $$m && gofmt -w .) || exit 1; done
 	cargo fmt
-	pnpm --dir apps/web format
-	pnpm --dir apps/desktop/ui format
+	bun run --filter "@varde/web" format
+	bun run --filter "@varde/desktop-ui" format
 
 # Linux packages (.deb + .rpm) via nfpm. Requires nfpm on PATH.
 #   make package VERSION=0.1.0
@@ -106,7 +106,7 @@ e2e-netns: test-bins
 .PHONY: e2e-minecraft
 e2e-minecraft: test-bins
 	@if ! sudo -n true 2>/dev/null; then echo "e2e-minecraft needs root: run 'sudo -v' first"; exit 1; fi
-	pnpm --filter varde-minecraft-bot install
+	bun install
 	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
 	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
 		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \
@@ -118,7 +118,7 @@ SOAK_MINUTES ?= 60
 .PHONY: e2e-soak
 e2e-soak: test-bins
 	@if ! sudo -n true 2>/dev/null; then echo "e2e-soak needs root: run 'sudo -v' first"; exit 1; fi
-	pnpm --filter varde-minecraft-bot install
+	bun install
 	cd tests/netns && go test -c -tags 'netns minecraft' -o ../../bin/netns-minecraft.test .
 	cd tests/netns && sudo VARDE_NODE=$(shell command -v node) \
 		VARDE_E2E_RUNTIME_SEED="$(VARDE_E2E_RUNTIME_SEED)" \

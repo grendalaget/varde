@@ -100,20 +100,20 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir apps/web lint
-      - run: pnpm --dir apps/web typecheck
-      - run: pnpm --dir apps/web build
-      - run: pnpm --dir apps/desktop/ui lint
-      - run: pnpm --dir apps/desktop/ui typecheck
-      - run: pnpm --dir apps/desktop/ui build
+          cache: bun
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter "@varde/web" lint
+      - run: bun run --filter "@varde/web" typecheck
+      - run: bun run --filter "@varde/web" build
+      - run: bun run --filter "@varde/desktop-ui" lint
+      - run: bun run --filter "@varde/desktop-ui" typecheck
+      - run: bun run --filter "@varde/desktop-ui" build
 
   contracts:
     runs-on: ubuntu-latest
@@ -127,22 +127,22 @@ jobs:
         with:
           go-version: stable
           check-latest: true
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
+          cache: bun
       - run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir apps/web add -D openapi-typescript
+      - run: bun install --frozen-lockfile
+      - run: bun add --cwd apps/web -d openapi-typescript
       - name: check generated files are up to date
         run: |
           buf generate
-          pnpm --dir apps/web gen:api
+          bun run --filter "@varde/web" gen:api
           git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts
 
   windows-installer:
@@ -159,15 +159,15 @@ jobs:
           target: x86_64-pc-windows-msvc
           override: true
       # the tray embeds the desktop UI at compile time (frontendDist)
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 12.9.1
+          bun-version: "1.4.3"
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir apps/desktop/ui build
+          cache: bun
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter "@varde/desktop-ui" build
       - name: build agent + mesh + tray + control plane (MSVC)
         shell: pwsh
         run: |
@@ -177,7 +177,7 @@ jobs:
           go build -o ../../packaging/windows/dist/varde-mesh.exe .
           cd ../..
           # the opt-in installer component ships varde-control-plane.exe
-          pnpm --dir apps/web build
+          bun run --filter "@varde/web" build
           Remove-Item -Recurse -Force apps/controlplane/internal/webui/dist -ErrorAction SilentlyContinue
           Copy-Item -Recurse apps/web/dist apps/controlplane/internal/webui/dist
           cd apps/controlplane
@@ -199,7 +199,7 @@ jobs:
             packaging/windows/dist/varde-mesh.exe, `
             packaging/windows/dist/varde-control-plane.exe, `
             packaging/windows/varde.ico, LICENSE $payload/
-          pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
+          bunx tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw 'tauri bundle failed' }
           # ref_name is e.g. "1/merge" on PRs; sanitize for the filename
           $ver = "${{ github.ref_name }}" -replace '[^0-9A-Za-z._-]','-'

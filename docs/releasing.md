@@ -124,7 +124,7 @@ certificate verification. Generate the keypair once per installation (never
 commit the private key):
 
 ```sh
-pnpm dlx @tauri-apps/cli@^2 signer generate -w ~/.tauri/varde.key
+bunx @tauri-apps/cli@^2 signer generate -w ~/.tauri/varde.key
 # private key + password  -> the two repository secrets above
 # public key              -> baked into update clients (agent, tray)
 ```

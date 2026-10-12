@@ -1,8 +1,17 @@
 {
   "name": "varde",
   "private": true,
-  "packageManager": "pnpm@12.9.1",
+  "packageManager": "bun@1.4.3",
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.2"
-  }
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/desktop/ui",
+    "tests/minecraft-bot"
+  ],
+  "trustedDependencies": [
+    "@heroui-pro/react",
+    "esbuild"
+  ]
 }
