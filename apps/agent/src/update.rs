@@ -15,10 +15,26 @@ use crate::Agent;
 /// How often to re-check when the config doesn't say otherwise.
 const DEFAULT_INTERVAL_S: i64 = 6 * 3600;
 
-/// minisign public key of the release signer (baked in at build time by the
-/// release pipeline; empty until the first signed release exists). The
+/// Decode a minisign signature. `tauri signer sign` emits the signature as a
+/// single-line base64 envelope of the minisign text (the .sig files on the
+/// release and the `signature` fields inside latest.json); accept that or the
+/// raw minisign text.
+fn decode_sig(text: &str) -> Result<minisign_verify::Signature> {
+    if let Ok(sig) = minisign_verify::Signature::decode(text) {
+        return Ok(sig);
+    }
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(text.trim())
+        .context("signature is neither minisign text nor its base64 envelope")?;
+    let text = String::from_utf8(raw).context("signature envelope is not utf-8")?;
+    minisign_verify::Signature::decode(&text).map_err(|e| anyhow::anyhow!("bad sig: {e}"))
+}
+
+/// minisign public key of the release signer; matches the
+/// TAURI_SIGNING_PRIVATE_KEY repo secret the pipeline signs with. The
 /// `update.pubkey` config key overrides it.
-pub const RELEASE_PUBKEY: &str = "";
+pub const RELEASE_PUBKEY: &str = "RWTGjRo20qP1eV0SYg+R+cQklu9rnXL+hHg1fS729LTc0IOdbuVXinns";
 
 #[derive(Debug, Default)]
 pub struct UpdateState {
@@ -175,10 +191,8 @@ async fn fetch_update(cfg: &crate::config::UpdateCfg) -> Result<Option<Available
         .context("fetch latest.json.sig")?;
     let pk = minisign_verify::PublicKey::from_base64(&key)
         .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let sig = minisign_verify::Signature::decode(
-        std::str::from_utf8(&sig_body).context("manifest sig not utf8")?,
-    )
-    .map_err(|e| anyhow::anyhow!("bad manifest sig: {e}"))?;
+    let sig = decode_sig(std::str::from_utf8(&sig_body).context("manifest sig not utf8")?)
+        .map_err(|e| anyhow::anyhow!("bad manifest sig: {e}"))?;
     pk.verify(&body, &sig, false)
         .map_err(|e| anyhow::anyhow!("manifest signature invalid: {e}"))?;
     pick(
@@ -459,7 +473,7 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
         &pubkey(&cfg).context("no update pubkey configured")?,
     )
     .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let s = minisign_verify::Signature::decode(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
     pk.verify(&body, &s, false)
         .map_err(|e| anyhow::anyhow!("package signature invalid: {e}"))?;
 
@@ -600,7 +614,7 @@ pub fn apply_staged(data_dir: &std::path::Path) -> Result<()> {
     .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
     let sig = std::fs::read(dir.join("pkg.sig")).context("staged signature missing")?;
     let sig = std::str::from_utf8(&sig).context("staged signature not utf-8")?;
-    let s = minisign_verify::Signature::decode(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
     let body = std::fs::read(&pkg).context("read staged package")?;
     pk.verify(&body, &s, false)
         .map_err(|e| anyhow::anyhow!("staged package signature invalid: {e}"))?;

@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 anyhow = { workspace = true }
+base64 = "0.22"
 cp-api = { path = "../../crates/cp-api" }
 minisign-verify = "0.3.0"
 serde_json = "1"
