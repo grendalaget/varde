@@ -369,11 +369,11 @@ export default function App() {
     if (view === "form" && autoPending && status?.state === "not_linked") {
       setAutoPending(false);
       const autoUrl = status.control_plane_url || effectiveUrl;
-      if (hostOf(autoUrl) === HOSTED_CP_HOST && fedEligible)
+      if (hostOf(autoUrl) === HOSTED_CP_HOST && !defaults?.relink)
         void beginVardeLogin();
       else void doLink(autoUrl);
     }
-  }, [view, autoPending, status, fedEligible, effectiveUrl, doLink, beginVardeLogin]);
+  }, [view, autoPending, status, defaults, effectiveUrl, doLink, beginVardeLogin]);
 
   const cancelFed = useCallback(() => {
     // clears the stored token/group pick and any mid-flight link
