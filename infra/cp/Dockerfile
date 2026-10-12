@@ -9,11 +9,11 @@
 
 # --- Stage 1: build the dashboard SPA (apps/web) --------------------------
 FROM mirror.gcr.io/library/node:22-slim AS web
-RUN npm install -g pnpm@12.9.1
+RUN npm install -g bun@1.4.3
 WORKDIR /src
 COPY . .
-RUN pnpm install --frozen-lockfile \
- && pnpm --dir apps/web build
+RUN bun install --frozen-lockfile \
+ && bun run --filter "@varde/web" build
 
 # --- Stage 2: build the CP binary with the embedded webui -----------------
 FROM mirror.gcr.io/library/golang:1.27-bookworm AS cp
