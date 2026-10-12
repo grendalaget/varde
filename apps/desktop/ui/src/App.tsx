@@ -303,14 +303,6 @@ export default function App() {
     }
   }, []);
 
-  // installer launch (--link): start linking as soon as not_linked shows
-  useEffect(() => {
-    if (view === "form" && autoPending && status?.state === "not_linked") {
-      setAutoPending(false);
-      void doLink(effectiveUrl);
-    }
-  }, [view, autoPending, status, effectiveUrl, doLink]);
-
   const service = useCallback(
     async (
       cmd: "start_service" | "stop_service",
@@ -368,6 +360,16 @@ export default function App() {
       setFed({ stage: "error", message: String(e) });
     }
   }, []);
+
+  // installer launch (--link): start linking as soon as not_linked shows —
+  // varde.games sign-in on the hosted control plane, code flow elsewhere
+  useEffect(() => {
+    if (view === "form" && autoPending && status?.state === "not_linked") {
+      setAutoPending(false);
+      if (hosted) void beginVardeLogin();
+      else void doLink(effectiveUrl);
+    }
+  }, [view, autoPending, status, hosted, effectiveUrl, doLink, beginVardeLogin]);
 
   const cancelFed = useCallback(() => {
     // clears the stored token/group pick and any mid-flight link
