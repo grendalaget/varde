@@ -99,6 +99,22 @@ Clients poll the release asset, never the GitHub API:
 `releases/latest/download/latest.json` for the stable channel and
 `releases/download/nightly/latest.json` for nightly.
 
+Apply paths per platform:
+
+- **Windows**: the tray downloads `VardeSetup-<ver>.exe`, verifies its
+  minisign signature and runs it `/S` — a silent NSIS install that drains
+  services, swaps binaries and relaunches the tray.
+- **Linux deb/rpm**: `varde-agent update` stages the verified package in
+  `/var/lib/varde/update/` and drops a `.pending` marker; the packaged
+  `varde-update.path` unit fires `varde-update.service`, which runs
+  `varde-agent apply-update` as root (`dpkg -i` / `rpm -U`). The package
+  postinst `try-restart`s the agent so the new binary takes over under the
+  normal drain timeout. The snap package is notify-only — strict snaps
+  self-refresh via snapd once store-published.
+- **macOS**: `varde-agent update` mounts the dmg and swaps `varde-agent` +
+  `varde-mesh` next to the running exe; restarting the agent (launchd or
+  manual) runs the new binary.
+
 Update signing uses a Tauri signer (minisign) keypair, stored as the
 **repository** secrets `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — repository secrets, not

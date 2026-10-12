@@ -83,6 +83,20 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Check the update feed and apply a newer release for this install
+    /// flavor (Windows: applied by the tray app instead).
+    Update {
+        /// Data dir (config read from <dir>/config.toml).
+        #[arg(long, env = "VARDE_DATA_DIR")]
+        data_dir: Option<PathBuf>,
+    },
+    /// Apply a staged update — invoked as root by varde-update.path.
+    #[command(hide = true)]
+    ApplyUpdate {
+        /// Data dir holding update/pkg.* and update/.pending.
+        #[arg(long, env = "VARDE_DATA_DIR")]
+        data_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -231,7 +245,29 @@ async fn main() -> Result<()> {
         }
         Cmd::Status { data_dir } => status(data_dir.unwrap_or_else(default_data_dir)),
         Cmd::Service { action } => service_dispatch(action).await,
+        Cmd::Update { data_dir } => update(data_dir.unwrap_or_else(default_data_dir)).await,
+        Cmd::ApplyUpdate { data_dir } => apply_update(data_dir.unwrap_or_else(default_data_dir)),
     }
+}
+
+#[cfg(unix)]
+async fn update(data_dir: PathBuf) -> Result<()> {
+    update::cli_update(&data_dir).await
+}
+
+#[cfg(windows)]
+async fn update(_data_dir: PathBuf) -> Result<()> {
+    anyhow::bail!("updates on Windows are applied by the tray app")
+}
+
+#[cfg(target_os = "linux")]
+fn apply_update(data_dir: PathBuf) -> Result<()> {
+    update::apply_staged(&data_dir)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_update(_data_dir: PathBuf) -> Result<()> {
+    anyhow::bail!("apply-update is Linux-only")
 }
 
 // ---------------- enroll ----------------

@@ -1,2 +1,9 @@
 #!/bin/sh
+# rpm %preun: $1 = instance count left after removal (0 = erase, 1 = upgrade).
+# deb prerm:   $1 = action word ("upgrade" on upgrades).
+# A real removal stops the service; an upgrade must not — the new package's
+# postinst try-restart is what swaps in the new binary.
+if [ "$1" = "1" ] || [ "$1" = "upgrade" ]; then
+    exit 0
+fi
 systemctl disable --now varde-agent.service || true

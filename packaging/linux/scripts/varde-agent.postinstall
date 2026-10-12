@@ -2,3 +2,7 @@
 getent passwd varde >/dev/null || useradd --system --home-dir /var/lib/varde --shell /usr/sbin/nologin varde
 systemctl daemon-reload || true
 systemctl enable --now varde-agent.service || true
+systemctl enable --now varde-update.path || true
+# package upgrade: restart a running agent so the new binary takes over
+# (first install leaves a not-running agent alone; enroll starts it later)
+systemctl try-restart varde-agent.service || true

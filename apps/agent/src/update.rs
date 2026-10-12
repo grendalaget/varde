@@ -58,16 +58,16 @@ pub enum Channel {
     Off,
 }
 
-pub fn channel(cfg: &crate::config::Config) -> Channel {
-    match cfg.update.channel.as_deref().unwrap_or("stable") {
+pub fn channel(cfg: &crate::config::UpdateCfg) -> Channel {
+    match cfg.channel.as_deref().unwrap_or("stable") {
         "nightly" => Channel::Nightly,
         "off" | "none" | "disabled" => Channel::Off,
         _ => Channel::Stable,
     }
 }
 
-fn feed_url(cfg: &crate::config::Config) -> Option<String> {
-    if let Some(u) = &cfg.update.feed_url {
+fn feed_url(cfg: &crate::config::UpdateCfg) -> Option<String> {
+    if let Some(u) = &cfg.feed_url {
         return Some(u.clone());
     }
     let release = match channel(cfg) {
@@ -124,9 +124,8 @@ pub fn platform_key() -> Option<String> {
     }
 }
 
-fn pubkey(cfg: &crate::config::Config) -> Option<String> {
+fn pubkey(cfg: &crate::config::UpdateCfg) -> Option<String> {
     let k = cfg
-        .update
         .pubkey
         .clone()
         .unwrap_or_else(|| RELEASE_PUBKEY.to_string());
@@ -140,7 +139,7 @@ fn pubkey(cfg: &crate::config::Config) -> Option<String> {
 /// One check. Writes the outcome into the shared state; errors land there too
 /// (never crash the agent for an update hiccup).
 pub async fn check_once(agent: &Arc<Agent>) {
-    let res = fetch_update(&agent.cfg).await;
+    let res = fetch_update(&agent.cfg.update).await;
     let mut st = agent.update.lock().unwrap();
     st.checked_at_ms = crate::now_ms();
     match res {
@@ -159,7 +158,7 @@ pub async fn check_once(agent: &Arc<Agent>) {
     }
 }
 
-async fn fetch_update(cfg: &crate::config::Config) -> Result<Option<Available>> {
+async fn fetch_update(cfg: &crate::config::UpdateCfg) -> Result<Option<Available>> {
     let Some(url) = feed_url(cfg) else {
         return Ok(None);
     };
@@ -236,7 +235,7 @@ fn nightly_date(v: &str) -> Option<u32> {
 
 /// Background loop: check on start, then on the configured interval.
 pub async fn update_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
-    if channel(&agent.cfg) == Channel::Off {
+    if channel(&agent.cfg.update) == Channel::Off {
         return;
     }
     let interval = Duration::from_secs(
@@ -376,6 +375,28 @@ mod tests {
         .unwrap()
         .is_none());
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn apply_staged_noops_without_pending() {
+        let d = std::env::temp_dir().join(format!("varde-upd-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("update")).unwrap();
+        assert!(apply_staged(&d).is_ok());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn apply_staged_errors_on_missing_pkg() {
+        let d = std::env::temp_dir().join(format!("varde-upd2-{}", std::process::id()));
+        let dir = d.join("update");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".pending"), b"").unwrap();
+        let r = apply_staged(&d);
+        assert!(r.is_err());
+        assert!(dir.join(".pending").exists(), "trigger kept for retry");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 }
 
 /// pb view of the shared state (called on every status build — keep cheap).
@@ -399,4 +420,207 @@ pub fn status_pb(state: &UpdateState) -> agent_ipc::pb::Update {
             .unwrap_or_default(),
         error: state.error.clone().unwrap_or_default(),
     }
+}
+
+// ---------- unix apply (linux systemd path-unit / macOS binary swap) ----------
+
+/// `varde-agent update` on unix. Linux deb/rpm: stage the verified package
+/// under <data>/update and drop the `.pending` marker — the packaged
+/// varde-update.path unit then runs `varde-agent apply-update` as root.
+/// macOS: mount the verified dmg and swap the binaries next to the running
+/// exe (dmg installs are manual; a launchd/supervisor restart picks it up).
+#[cfg(unix)]
+pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
+    use std::io::Write;
+    let cfg = crate::config::Config::load_opt(data_dir)?
+        .map(|c| c.update)
+        .unwrap_or_default();
+    let Some(av) = fetch_update(&cfg).await.context("check update feed")? else {
+        println!("already up to date ({})", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    };
+    let (Some(url), Some(sig)) = (av.url.as_deref(), av.signature.as_deref()) else {
+        println!(
+            "update available: {} — but the feed has no package for this install; download it from {}",
+            av.version,
+            url_host(data_dir)
+        );
+        return Ok(());
+    };
+    // artifacts must come over TLS; loopback http stays allowed for dev feeds
+    if !artifact_url_ok(url) {
+        anyhow::bail!("refusing non-https artifact url: {url}");
+    }
+    const MAX_PKG_BYTES: usize = 512 * 1024 * 1024;
+    let body = cp_api::client::fetch_url(url, MAX_PKG_BYTES)
+        .await
+        .with_context(|| format!("download {url}"))?;
+    let pk = minisign_verify::PublicKey::from_base64(
+        &pubkey(&cfg).context("no update pubkey configured")?,
+    )
+    .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
+    let s = minisign_verify::Signature::decode(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    pk.verify(&body, &s, false)
+        .map_err(|e| anyhow::anyhow!("package signature invalid: {e}"))?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let name = if url.ends_with(".deb") {
+            "pkg.deb"
+        } else if url.ends_with(".rpm") {
+            "pkg.rpm"
+        } else {
+            anyhow::bail!("feed URL is not a .deb/.rpm package: {url}");
+        };
+        let dir = data_dir.join("update");
+        std::fs::create_dir_all(&dir)?;
+        let tmp = dir.join("pkg.tmp");
+        std::fs::write(&tmp, &body).context("write staged package")?;
+        std::fs::rename(&tmp, dir.join(name))?;
+        // the signature rides along: the root-side apply re-verifies these
+        // bytes (this dir is varde-writable — trust nothing staged)
+        std::fs::write(dir.join("pkg.sig"), sig).context("write staged signature")?;
+        // the marker goes last: the path unit fires on it, never on a
+        // half-written package
+        std::fs::File::create(dir.join(".pending"))?.write_all(b"")?;
+        println!(
+            "staged {name} — varde-update.service applies it shortly (see `systemctl status varde-update.service`)"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        apply_dmg(&body).context("swap binaries")?;
+        println!("updated to {} — restart the agent to run it", av.version);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn url_host(_data_dir: &std::path::Path) -> &'static str {
+    "https://varde.games/download"
+}
+
+/// Artifact download policy: https everywhere; http only to loopback hosts
+/// (dev feeds). Anything else is a signed-but-wrong URL — never fetch it.
+#[cfg(unix)]
+fn artifact_url_ok(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    if u.starts_with("https://") {
+        return true;
+    }
+    if let Some(rest) = u.strip_prefix("http://") {
+        let host = rest.split([':', '/', '?', '#']).next().unwrap_or("");
+        return host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+    }
+    false
+}
+
+/// Mount a dmg into a temp dir, copy varde-agent/varde-mesh next to the
+/// running exe, detach. The exe dir is wherever the user installed them.
+#[cfg(target_os = "macos")]
+fn apply_dmg(dmg: &[u8]) -> Result<()> {
+    let exe_dir = std::env::current_exe()
+        .context("resolve exe")?
+        .parent()
+        .context("exe has no dir")?
+        .to_path_buf();
+    let tmp = std::env::temp_dir().join(format!("varde-update-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp)?;
+    let dmg_path = tmp.join("update.dmg");
+    let mnt = tmp.join("mnt");
+    std::fs::create_dir_all(&mnt)?;
+    std::fs::write(&dmg_path, dmg)?;
+    let run = |prog: &str, args: &[&str]| -> Result<()> {
+        let st = std::process::Command::new(prog).args(args).status()?;
+        if st.success() {
+            Ok(())
+        } else {
+            anyhow::bail!("{prog} {args:?} -> {st}")
+        }
+    };
+    run(
+        "hdiutil",
+        &[
+            "attach",
+            "-nobrowse",
+            "-readonly",
+            "-mountpoint",
+            mnt.to_str().unwrap(),
+            dmg_path.to_str().unwrap(),
+        ],
+    )?;
+    let res = (|| -> Result<()> {
+        for name in ["varde-agent", "varde-mesh"] {
+            let src = mnt.join(name);
+            if !src.exists() {
+                continue;
+            }
+            let dst_tmp = exe_dir.join(format!(".{name}.new"));
+            std::fs::copy(&src, &dst_tmp)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dst_tmp, std::fs::Permissions::from_mode(0o755))?;
+            }
+            std::fs::rename(&dst_tmp, exe_dir.join(name))?;
+        }
+        Ok(())
+    })();
+    let _ = std::process::Command::new("hdiutil")
+        .args(["detach", "-quiet", mnt.to_str().unwrap()])
+        .status();
+    let _ = std::fs::remove_dir_all(&tmp);
+    res
+}
+
+/// Root-side apply invoked by varde-update.path (Type=oneshot): install the
+/// staged package with the system package manager. The package's postinst
+/// restarts the agent with the new binary.
+#[cfg(target_os = "linux")]
+pub fn apply_staged(data_dir: &std::path::Path) -> Result<()> {
+    let dir = data_dir.join("update");
+    let pending = dir.join(".pending");
+    if !pending.exists() {
+        return Ok(());
+    }
+    let pkg = ["pkg.deb", "pkg.rpm"]
+        .iter()
+        .map(|n| dir.join(n))
+        .find(|p| p.exists())
+        .context("no staged package")?;
+    // Re-verify before root installs anything: the staging dir is
+    // varde-writable, so a swapped package must fail signature check —
+    // an attacker with the agent's uid can't forge minisign bytes.
+    let cfg = crate::config::Config::load_opt(data_dir)?
+        .map(|c| c.update)
+        .unwrap_or_default();
+    let pk = minisign_verify::PublicKey::from_base64(
+        &pubkey(&cfg).context("no update pubkey configured")?,
+    )
+    .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
+    let sig = std::fs::read(dir.join("pkg.sig")).context("staged signature missing")?;
+    let sig = std::str::from_utf8(&sig).context("staged signature not utf-8")?;
+    let s = minisign_verify::Signature::decode(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    let body = std::fs::read(&pkg).context("read staged package")?;
+    pk.verify(&body, &s, false)
+        .map_err(|e| anyhow::anyhow!("staged package signature invalid: {e}"))?;
+    let status = match pkg.extension().and_then(|e| e.to_str()) {
+        Some("deb") => std::process::Command::new("dpkg")
+            .args(["-i", pkg.to_str().unwrap()])
+            .status()?,
+        Some("rpm") => std::process::Command::new("rpm")
+            .args(["-U", pkg.to_str().unwrap()])
+            .status()?,
+        _ => anyhow::bail!("unknown staged package"),
+    };
+    if !status.success() {
+        // keep .pending + the package: the trigger stays armed so a re-run
+        // (or a fresh `varde-agent update`) can retry the failed install
+        anyhow::bail!("package install failed: {status}");
+    }
+    std::fs::remove_file(&pending)?;
+    std::fs::remove_file(&pkg)?;
+    let _ = std::fs::remove_file(dir.join("pkg.sig"));
+    println!("applied update");
+    Ok(())
 }
