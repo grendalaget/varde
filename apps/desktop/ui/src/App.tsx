@@ -291,8 +291,10 @@ export default function App() {
   const fedEligible = !defaults?.relink;
   const hosted = hostOf(effectiveUrl) === HOSTED_CP_HOST && fedEligible;
   const backToHosted = () => {
-    urlEditedRef.current = false;
-    setUrlEdited(false);
+    // counts as a user edit: otherwise the status handler would restore a
+    // remembered self-hosted address and hide sign-in again
+    urlEditedRef.current = true;
+    setUrlEdited(true);
     setUrl(HOSTED_CP_URL);
     setServerOpen(false);
   };
