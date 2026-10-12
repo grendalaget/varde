@@ -67,12 +67,51 @@ Function VardeComponentsPre
 FunctionEnd
 
 ; Parse /CPURL once (PREINSTALL): /CPURL=https://cp.example, trailing / trimmed.
+; Parsed manually — GetOptions treats '/' inside an unquoted scheme:// URL as a
+; new switch and truncates the value to "https:". Value runs to EOL or the
+; first space (Inno's param semantics); a quoted value honors its quotes.
 Function VardeParseCpUrl
-  ${GetOptions} $CMDLINE "/CPURL=" $CpUrl
-  ${If} ${Errors}
-    StrCpy $CpUrl ""
-  ${EndIf}
-  ${If} $CpUrl != ""
+  StrCpy $R1 $CMDLINE
+  Call VardeParseCpUrlFrom
+FunctionEnd
+
+; Parse /CPURL= out of the command line in $R1 → $CpUrl (extracted for testing).
+Function VardeParseCpUrlFrom
+  StrCpy $CpUrl ""
+  ${StrCase} $R0 $R1 "L"                ; case-insensitive match, like Inno params
+  ${StrStr} $0 $R0 "/cpurl="
+  ${If} $0 != ""
+    StrLen $1 $R1
+    StrLen $2 $0
+    IntOp $1 $1 - $2                    ; index of "/cpurl=" in $R1
+    IntOp $1 $1 + 7
+    StrCpy $CpUrl $R1 "" $1             ; everything after "/CPURL="
+    StrCpy $0 $CpUrl 1
+    ${If} $0 == '"'
+      StrCpy $CpUrl $CpUrl "" 1         ; drop opening quote
+      ${StrStr} $0 $CpUrl '"'           ; $0 = closing quote + tail
+      ${If} $0 != ""
+        StrLen $1 $CpUrl
+        StrLen $2 $0
+        IntOp $1 $1 - $2                ; chars inside the quotes
+        StrCpy $CpUrl $CpUrl $1
+      ${EndIf}
+    ${Else}
+      ; unquoted: value ends at the first space or EOL
+      StrLen $1 $CpUrl
+      StrCpy $2 0
+      ${Do}
+        ${If} $2 >= $1
+          ${ExitDo}
+        ${EndIf}
+        StrCpy $0 $CpUrl 1 $2
+        ${If} $0 == " "
+          StrCpy $CpUrl $CpUrl $2
+          ${ExitDo}
+        ${EndIf}
+        IntOp $2 $2 + 1
+      ${Loop}
+    ${EndIf}
     ${Do}
       StrCpy $0 $CpUrl 1 -1
       ${If} $0 == "/"
