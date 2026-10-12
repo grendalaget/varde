@@ -161,9 +161,10 @@ xattr -d com.apple.quarantine ./varde-agent ./varde-mesh
 
 `varde-agent.exe`, `varde-mesh.exe`, `varde-tray.exe`,
 `varde-control-plane.exe` and `varde-relay.exe` are signed **before**
-ISCC packaging, and the installer is signed **after ISCC** — all before
-checksum generation, Sigstore signing and publication. Signing uses Azure
-Artifact Signing; setup is documented in `packaging/windows/README.md`.
+NSIS packaging (`tauri build --no-build --bundles nsis`), and the installer
+is signed **after** — all before checksum generation, Sigstore signing and
+publication. Signing uses Azure Artifact Signing; setup is documented in
+`packaging/windows/README.md`.
 
 ## Verify downloads
 

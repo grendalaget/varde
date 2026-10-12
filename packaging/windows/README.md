@@ -1,14 +1,20 @@
 # Windows packaging
 
-`varde-agent.iss` (Inno Setup 6) builds `VardeSetup-<ver>.exe`, which:
+`apps/desktop/installer-hooks/` (Tauri bundler, NSIS) builds
+`VardeSetup-<ver>.exe` — the installer the auto-update mechanism also
+applies silently. The old Inno script (`varde-agent.iss`) was retired
+when the NSIS installer shipped; new installers silently uninstall the
+Inno install first (Inno→NSIS migration shim in `hooks.nsh`), keeping
+`%ProgramData%\Varde`. The installer:
 
 - installs `varde-agent.exe`, `varde-mesh.exe` and `varde-tray.exe`
   (`apps/desktop`) into `Program Files\Varde`, plus a Start menu entry
   for the tray
 - uses `varde.ico` for setup and uninstall and installs it with the binaries
-- shows the brand art in the wizard: `wizard/wizard-*.bmp` (mark + wordmark on
-  Natt, left panel) and `wizard/wizard-small-*.bmp` (mark on white, page header),
-  each at 100/125/150/200/250% DPI, rendered from `brand/svg/`
+- shows the brand art in the wizard: `wizard/wizard-100.bmp` (mark + wordmark
+  on Natt) as the NSIS sidebar and `apps/desktop/installer-hooks/header.bmp`
+  (mark on white, page header); the extra `wizard/wizard-*-*.bmp` DPI variants
+  were Inno-only
 - never asks for an address: the PC joins the hosted Varde (cp.varde.games).
   Self-hosting instead? `/CPURL=cp.example` (or a full https URL) writes
   `%ProgramData%\Varde\server.url`, which the unlinked service reports to
@@ -25,6 +31,10 @@
 - task "Start Varde at login" (on by default): HKLM `Run` value
   `varde-tray.exe --autostart`; each user can turn it off in the tray.
   Unticking it on an upgrade removes the earlier value
+- task "Control plane" (component, on by default like Inno's): installs
+  `varde-control-plane.exe`, registers and starts `VardeControlPlane`,
+  creates `%ProgramData%\VardeCP`, and makes `http://localhost:8080` this
+  PC's default server
 - at the end, launches the tray as the installing user with
   `--link`: the tray asks the service to link, shows the code and opens
   the dashboard to approve it
@@ -36,19 +46,28 @@ stop (final save), removes the `Run` value and Program Files, and keeps
 Yes to "Also delete Varde's data on this PC?" (default No; silent uninstall
 always keeps it).
 
-Silent install: `VardeSetup.exe /VERYSILENT` (add `/CPURL=…` only for a
-self-hosted control plane; then link with `varde-agent enroll --token …`,
-or from the tray).
+Silent install: `VardeSetup.exe /S` (add `/CPURL=…` only for a self-hosted
+control plane, `/TASKS="autostart"` to skip the control-plane component;
+then link with `varde-agent enroll --token …`, or from the tray). The
+silent path is what `tauri-plugin-updater` runs on update — a silent
+install is a full drain-and-swap upgrade.
 
 ```sh
-iscc /DVersion=0.1.0 packaging/windows/varde-agent.iss
+pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
 ```
 
-expects `packaging/windows/dist/` to contain `varde-agent.exe`,
-`varde-mesh.exe`, `varde-tray.exe` and `MicrosoftEdgeWebview2Setup.exe`
-(the Evergreen bootstrapper). CI job `windows-installer` builds them (MSVC
-toolchain for the Rust binaries), downloads the bootstrapper, runs ISCC via
-`choco install innosetup`, and uploads `VardeSetup-*` as an artifact.
+expects `apps/desktop/payload/` to contain `varde-agent.exe`,
+`varde-mesh.exe`, `varde-control-plane.exe`, `varde.ico` and `LICENSE`.
+`tauri.bundler.conf.json` merges `bundle.resources` (the payload map) onto
+`tauri.conf.json`; it lives outside the base config so plain dev builds and
+clippy don't demand files that only exist after staging. The bundle config
+is `apps/desktop/tauri.conf.json` (`bundle.windows.nsis`):
+`installer.nsi` is the Tauri v2.12 installer template with a components page
+added; `hooks.nsh` carries the service/registry/ACL/migration logic.
+WebView2's bootstrapper is embedded (`embedBootstrapper`) and only runs
+when WebView2 is missing — same behavior as the Inno installer. CI builds
+the exes, stages `payload/`, runs `tauri bundle --bundles nsis`,
+and signs `VardeSetup-*` as the release asset.
 
 ## Authenticode signing
 
@@ -61,7 +80,8 @@ name (the free SignPath Foundation application was declined).
 
 With signing configured:
 
-1. `dist/varde-*.exe` are signed, then ISCC packages the signed executables.
+1. `dist/varde-*.exe` are signed, then the NSIS bundle packages the signed
+   executables.
 2. `VardeSetup-<ver>.exe` is signed; it is the only Windows asset (no zip
    of raw binaries is published).
 

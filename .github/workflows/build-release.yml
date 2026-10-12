@@ -164,22 +164,18 @@ jobs:
         run: |
           (cd apps/mesh && go test -race -count=1 -run '^TestParent' ./...)
           cargo test --locked -p varde-agent mesh_child::tests
-      - name: Windows installer prerequisites
+      - name: Build Windows installer (Tauri NSIS)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force packaging/windows/dist | Out-Null
-          Copy-Item dist/varde-*.exe packaging/windows/dist/
-          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' `
-            -OutFile packaging/windows/dist/MicrosoftEdgeWebview2Setup.exe
-          choco install innosetup -y
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DVersion="$env:VERSION" packaging/windows/varde-agent.iss
-          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+          New-Item -ItemType Directory -Force apps/desktop/payload | Out-Null
+          Copy-Item dist/varde-*.exe apps/desktop/payload/
+          Copy-Item packaging/windows/varde.ico apps/desktop/payload/
+          Copy-Item LICENSE apps/desktop/payload/
+          pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "release-assets/VardeSetup-$env:VERSION.exe"
       - name: Sign Windows installer via Azure Artifact Signing
         if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
         uses: azure/artifact-signing-action@v2
@@ -187,7 +183,7 @@ jobs:
           endpoint: ${{ vars.AZURE_TSA_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_TSA_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_TSA_CERT_PROFILE }}
-          files: ${{ github.workspace }}\packaging\windows\dist\VardeSetup-${{ env.VERSION }}.exe
+          files: ${{ github.workspace }}\release-assets\VardeSetup-${{ env.VERSION }}.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -195,14 +191,10 @@ jobs:
         if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
         shell: pwsh
         run: |
-          $installer = Get-ChildItem packaging/windows/dist/VardeSetup-*.exe | Select-Object -First 1
+          $installer = Get-ChildItem release-assets/VardeSetup-*.exe | Select-Object -First 1
           $sig = Get-AuthenticodeSignature $installer.FullName
           if ($sig.Status -ne 'Valid') { throw "signature check failed: $($installer.Name) is $($sig.Status)" }
           Write-Host "$($installer.Name): signed by $($sig.SignerCertificate.Subject)"
-      - name: Package Windows assets
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Copy-Item packaging/windows/dist/VardeSetup-*.exe release-assets/
       - name: Install nfpm
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0

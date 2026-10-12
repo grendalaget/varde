@@ -190,16 +190,21 @@ jobs:
         run: |
           Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
             -OutFile packaging/windows/dist/MicrosoftEdgeWebview2Setup.exe
-      - name: Inno Setup
-        run: choco install innosetup -y
-      - name: build installer
+      - name: build installer (Tauri NSIS)
         shell: pwsh
         run: |
+          $payload = 'apps/desktop/payload'
+          New-Item -ItemType Directory -Force $payload | Out-Null
+          Copy-Item packaging/windows/dist/varde-agent.exe, `
+            packaging/windows/dist/varde-mesh.exe, `
+            packaging/windows/dist/varde-control-plane.exe, `
+            packaging/windows/varde.ico, LICENSE $payload/
+          pnpm exec tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'tauri bundle failed' }
           # ref_name is e.g. "1/merge" on PRs; sanitize for the filename
           $ver = "${{ github.ref_name }}" -replace '[^0-9A-Za-z._-]','-'
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-            /DVersion="$ver" `
-            packaging/windows/varde-agent.iss
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "packaging/windows/dist/VardeSetup-$ver.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: VardeSetup

@@ -34,3 +34,4 @@ packaging/linux/snap/*/stage/
 packaging/linux/snap/*/version.txt
 packaging/linux/snap/*/*.snap
 __pycache__/
+apps/desktop/payload/

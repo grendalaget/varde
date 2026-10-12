@@ -3,6 +3,7 @@
   "productName": "Varde",
   "version": "0.1.0",
   "identifier": "games.varde.tray",
+  "mainBinaryName": "varde-tray",
   "build": {
     "frontendDist": "ui/dist"
   },
@@ -14,7 +15,33 @@
     }
   },
   "bundle": {
-    "active": false,
-    "icon": ["icons/icon.ico"]
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "licenseFile": "../../LICENSE",
+    "publisher": "Varde contributors",
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "../../packaging/windows/varde.ico",
+        "sidebarImage": "../../packaging/windows/wizard/wizard-100.bmp",
+        "headerImage": "installer-hooks/header.bmp",
+        "template": "installer-hooks/installer.nsi",
+        "installerHooks": "installer-hooks/hooks.nsh",
+        "compression": "lzma"
+      }
+    }
   }
 }
