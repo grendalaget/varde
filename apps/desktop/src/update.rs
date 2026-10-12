@@ -7,9 +7,24 @@ use agent_ipc::pb;
 use anyhow::{Context as _, Result};
 use tauri::{AppHandle, Manager};
 
-/// Release signing public key, baked at build time once signed releases exist
-/// (same value as the agent's update::RELEASE_PUBKEY).
-pub const RELEASE_PUBKEY: &str = "";
+/// Release signing public key (same value as the agent's update::RELEASE_PUBKEY;
+/// matches the TAURI_SIGNING_PRIVATE_KEY repo secret).
+pub const RELEASE_PUBKEY: &str = "RWTGjRo20qP1eV0SYg+R+cQklu9rnXL+hHg1fS729LTc0IOdbuVXinns";
+
+/// Decode a minisign signature. The release pipeline emits Tauri's
+/// single-line base64 envelope of the minisign text; accept that or the raw
+/// minisign text.
+fn decode_sig(text: &str) -> Result<minisign_verify::Signature> {
+    if let Ok(sig) = minisign_verify::Signature::decode(text) {
+        return Ok(sig);
+    }
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(text.trim())
+        .context("signature is neither minisign text nor its base64 envelope")?;
+    let text = String::from_utf8(raw).context("signature envelope is not utf-8")?;
+    minisign_verify::Signature::decode(&text).map_err(|e| anyhow::anyhow!("bad sig: {e}"))
+}
 
 fn pubkey() -> Option<String> {
     std::env::var("VARDE_UPDATE_PUBKEY")
@@ -149,7 +164,7 @@ async fn download_verify_run(version: &str, url: &str, sig: &str) -> Result<()> 
         .context("download installer")?;
     let pk = minisign_verify::PublicKey::from_base64(&key)
         .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let s = minisign_verify::Signature::decode(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
     pk.verify(&exe, &s, false)
         .map_err(|e| anyhow::anyhow!("installer signature invalid: {e}"))?;
 
