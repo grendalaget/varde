@@ -49,6 +49,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      actions: read
     uses: ./.github/workflows/build-release.yml
     with:
       ref: ${{ github.sha }}

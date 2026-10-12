@@ -37,7 +37,9 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      actions: read
     uses: ./.github/workflows/build-release.yml
+    secrets: inherit
     with:
       ref: ${{ needs.prepare.outputs.ref }}
       version: ${{ needs.prepare.outputs.version }}

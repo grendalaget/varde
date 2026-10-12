@@ -38,7 +38,10 @@ deletes all previous assets, and uploads the new set. The release notes record
 the commit **only after** a successful upload; any previous success marker is
 cleared before replacing assets, so interrupted same-commit retries cannot look
 complete. Scheduled/publishing runs skip only if that successful-commit marker
-matches main and the current asset names exactly match the recorded
+matches main, the `<!-- nightly-signing:P -->` marker matches which
+Authenticode provider is currently configured (so enabling or switching
+signing rebuilds an unchanged main), and
+the current asset names exactly match the recorded
 `<!-- nightly-assets:[...] -->` manifest, including checksums and signature
 bundles. Missing assets or a missing/malformed manifest trigger a rebuild. A
 failed build or partial upload is retried on the next run, even if the tag has
@@ -76,22 +79,28 @@ releases the mesh's configured ports; Linux retains kernel parent-death signalin
 
 ## Signatures and platform warnings
 
-**No signing-provider secrets are needed.** Every payload and SHA256SUMS receives
-a keyless Sigstore signature via GitHub OIDC (`id-token: write`) and GitHub
-build provenance (`attestations: write`). Only the final release upload job
-receives `contents: write`. These signatures establish origin but do not
-replace platform-native code signing or suppress OS warnings.
+Every payload and SHA256SUMS receives a keyless Sigstore signature via GitHub
+OIDC (`id-token: write`) and GitHub build provenance (`attestations: write`).
+Only the final release upload job receives `contents: write`. These
+signatures establish origin but do not replace platform-native code signing.
 
-Platform code signing is deliberately deferred: Windows executables/installers
-are unsigned, Linux deb/rpm packages have no GPG signatures, and macOS has no
-Apple Developer ID signing or notarization.
+Windows executables and `VardeSetup-<ver>.exe` are Authenticode-signed in the
+Windows build job via [Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/)
+(~$10/month, publisher is the validated organization name; the free SignPath
+Foundation application was declined). The build signs automatically once the
+`AZURE_*` secrets/variables are configured; unconfigured and `dry-run` builds
+stay unsigned (setup: `packaging/windows/README.md`). Linux deb/rpm packages have no GPG
+signatures, and macOS has no Apple Developer ID signing or notarization.
 
 ### Windows SmartScreen
 
-The unsigned installer will trigger a Windows SmartScreen warning. After
-verifying the download as described below, choose **More info → Run anyway** to
-approve the installer manually. Managed device policies may prevent this;
-do not disable organization security controls.
+Signed builds show the validated organization as the verified publisher
+instead of an unknown publisher. SmartScreen per-file reputation still ramps per
+download, so a warning may appear for fresh releases: choose **More info →
+Run anyway** after verifying the download as described below. Unsigned
+builds (no provider configured, or dry runs) still trigger the unsigned
+warning. Managed device policies may prevent either path; do not disable
+organization security controls.
 
 ### macOS Gatekeeper
 
@@ -104,15 +113,13 @@ xattr -d com.apple.quarantine ./varde-agent ./varde-mesh
 # Likewise for ./varde-control-plane and ./varde-relay when using them.
 ```
 
-### Future: Windows code signing via SignPath Foundation
+### Windows code signing
 
-[SignPath Foundation](https://signpath.org) offers free OSS code signing.
-When adopted, sign `varde-agent.exe`, `varde-mesh.exe` and `varde-tray.exe`
-**before ISCC/zip packaging**, then sign the resulting installer **after ISCC**
-and before checksum generation, Sigstore signing and publication. Foundation
-enrollment and artifact/origin-verification configuration belong to that
-future change; no SignPath action, PFX/SignTool adapter or paid provider is
-implemented here.
+`varde-agent.exe`, `varde-mesh.exe`, `varde-tray.exe`,
+`varde-control-plane.exe` and `varde-relay.exe` are signed **before**
+ISCC/zip packaging, and the installer is signed **after ISCC** — all before
+checksum generation, Sigstore signing and publication. Signing uses Azure
+Artifact Signing; setup is documented in `packaging/windows/README.md`.
 
 ## Verify downloads
 
@@ -151,7 +158,7 @@ It runs actionlint + helper checks, the complete native matrix, packaging,
 provenance, cosign signing **and verification**, macOS abrupt-parent-death/port
 recovery tests and the agent launch-contract test, and uploads the result as the
 `release-assets` Actions artifact (seven-day retention). No provider secrets
-are required. Fork PRs run lint only because their tokens cannot
+are required; Authenticode signing is skipped for `dry-run` builds. Fork PRs run lint only because their tokens cannot
 write GitHub attestations; dispatch on a reviewed, trusted branch to test them.
 The publishing workflow is never called by the PR dry run.
 

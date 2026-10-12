@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,20 @@ def run_block(workflow, step):
     source = (ROOT / ".github/workflows" / workflow).read_text().split(step, 1)[1]
     match = re.search(r"        run: \|\n((?:          [^\n]*\n|\n)+)", source)
     return textwrap.dedent(match[1])
+
+
+FINGERPRINT_KEYS = ("AZURE_TSA_ENDPOINT", "AZURE_TSA_ACCOUNT", "AZURE_TSA_CERT_PROFILE")
+
+
+def expected_signing(env):
+    # mirror of the signing-marker computation in nightly.yml's source step
+    if all(env.get(k) for k in ("AZURE_TSA_ENDPOINT", "AZURE_TSA_ACCOUNT",
+                                "AZURE_TSA_CERT_PROFILE", "AZURE_CLIENT_ID")):
+        provider = "azure"
+    else:
+        return "none"
+    blob = "".join(env.get(k, "") + "\n" for k in FINGERPRINT_KEYS)
+    return f"{provider}-{hashlib.sha256(blob.encode()).hexdigest()[:8]}"
 
 
 class NightlyTests(unittest.TestCase):
@@ -53,6 +68,7 @@ fi
             DRY_RUN="false",
             VERSION="0.0.0-nightly.20261006+1234567",
             COMMIT=SHA,
+            SIGNING="none",
         )
 
     def notes(self):
@@ -99,6 +115,36 @@ fi
 
     def test_dry_run_bypasses_complete_release(self):
         self.env["DRY_RUN"] = "true"
+        self.assertTrue(self.changed(self.notes(), PAYLOADS))
+
+    def test_signing_state_change_rebuilds(self):
+        # enabling signing on an unchanged commit must publish signed assets
+        self.env.update(AZURE_TSA_ENDPOINT="https://example.test",
+                        AZURE_TSA_ACCOUNT="acct", AZURE_TSA_CERT_PROFILE="prof",
+                        AZURE_CLIENT_ID="id")
+        self.assertTrue(self.changed(self.notes(), PAYLOADS))
+        # signed notes + configured signing -> skip
+        (self.work / "output").unlink(missing_ok=True)
+        self.env["SIGNING"] = expected_signing(self.env)
+        self.assertFalse(self.changed(self.notes(), PAYLOADS))
+        # signed notes + signing deconfigured -> rebuild unsigned
+        del (self.env["AZURE_TSA_ENDPOINT"], self.env["AZURE_TSA_ACCOUNT"],
+             self.env["AZURE_TSA_CERT_PROFILE"], self.env["AZURE_CLIENT_ID"])
+        (self.work / "output").unlink(missing_ok=True)
+        self.assertTrue(self.changed(self.notes(), PAYLOADS))
+        # the rebuild above published unsigned notes
+        self.env["SIGNING"] = expected_signing(self.env)
+        # re-enabling (or adding the secret last) rebuilds too
+        self.env.update(AZURE_TSA_ENDPOINT="https://example.test",
+                        AZURE_TSA_ACCOUNT="acct", AZURE_TSA_CERT_PROFILE="prof",
+                        AZURE_CLIENT_ID="id")
+        (self.work / "output").unlink(missing_ok=True)
+        self.assertTrue(self.changed(self.notes(), PAYLOADS))
+        self.env["SIGNING"] = expected_signing(self.env)
+        (self.work / "output").unlink(missing_ok=True)
+        self.assertFalse(self.changed(self.notes(), PAYLOADS))
+        self.env["AZURE_TSA_CERT_PROFILE"] = "new-profile"
+        (self.work / "output").unlink(missing_ok=True)
         self.assertTrue(self.changed(self.notes(), PAYLOADS))
 
 

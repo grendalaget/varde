@@ -15,6 +15,11 @@ on:
       tag:
         required: true
         type: string
+      signing:
+        description: 'Authenticode provider that signed the build (azure/none); recorded in nightly notes so a signing change triggers a rebuild'
+        required: false
+        type: string
+        default: 'none'
 
 permissions: {}
 
@@ -35,6 +40,7 @@ jobs:
       TAG: ${{ inputs.tag }}
       VERSION: ${{ inputs.version }}
       COMMIT: ${{ inputs.ref }}
+      SIGNING: ${{ inputs.signing }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -77,8 +83,8 @@ jobs:
       - name: Mark nightly commit successfully published
         if: inputs.channel == 'nightly'
         run: |
-          printf 'Rolling nightly **%s**, built from %s.\n\n<!-- nightly-commit:%s -->\n' \
-            "$VERSION" "$COMMIT" "$COMMIT" > notes.md
+          printf 'Rolling nightly **%s**, built from %s.\n\n<!-- nightly-commit:%s -->\n<!-- nightly-signing:%s -->\n' \
+            "$VERSION" "$COMMIT" "$COMMIT" "$SIGNING" > notes.md
           manifest=$(find release-assets -maxdepth 1 -type f -printf '%f\n' |
             jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
           printf '<!-- nightly-assets:%s -->\n' "$manifest" >> notes.md

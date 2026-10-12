@@ -27,6 +27,7 @@ jobs:
       ref: ${{ steps.source.outputs.ref }}
       version: ${{ steps.source.outputs.version }}
       changed: ${{ steps.source.outputs.changed }}
+      signing: ${{ steps.source.outputs.signing }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,14 +38,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run || false }}
+          AZURE_TSA_ENDPOINT: ${{ vars.AZURE_TSA_ENDPOINT }}
+          AZURE_TSA_ACCOUNT: ${{ vars.AZURE_TSA_ACCOUNT }}
+          AZURE_TSA_CERT_PROFILE: ${{ vars.AZURE_TSA_CERT_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           sha=$(git rev-parse HEAD)
           echo "ref=$sha" >> "$GITHUB_OUTPUT"
           echo "version=0.0.0-nightly.$(date -u +%Y%m%d)+${sha:0:7}" >> "$GITHUB_OUTPUT"
+          # Signing state changes which bytes the assets contain but not their
+          # names, so it must trigger a rebuild on its own once configured.
+          # Mirrors build-release.yml's detect step: signing only counts as
+          # active once the full Azure config (secrets + vars) is present,
+          # so adding the secret last still flips the marker and rebuilds.
+          signing=none
+          if [[ -n "$AZURE_TSA_ENDPOINT" && -n "$AZURE_TSA_ACCOUNT" && \
+                -n "$AZURE_TSA_CERT_PROFILE" && -n "$AZURE_CLIENT_ID" ]]; then
+            signing=azure
+          fi
+          if [[ "$signing" != none ]]; then
+            # The signed bytes also change with the certificate profile and
+            # account configuration, so fingerprint those into the marker.
+            fp=$(printf '%s\n' "$AZURE_TSA_ENDPOINT" "$AZURE_TSA_ACCOUNT" \
+                   "$AZURE_TSA_CERT_PROFILE" | sha256sum | cut -c1-8)
+            signing=$signing-$fp
+          fi
+          echo "signing=$signing" >> "$GITHUB_OUTPUT"
           if [[ "$DRY_RUN" != true ]]; then
             if gh release view nightly --json body,assets > nightly.json 2> api.err; then
               if jq -e --arg marker "<!-- nightly-commit:$sha -->" \
-                '(.body | contains($marker)) and (
+                     --arg smarker "<!-- nightly-signing:$signing -->" \
+                '(.body | contains($marker)) and (.body | contains($smarker)) and (
                   (.body | capture("<!-- nightly-assets:(?<names>\\[[^\\r\\n]*\\]) -->").names | fromjson) as $expected |
                   ($expected | length > 0) and
                   (($expected | sort) == ([.assets[].name] | sort))
@@ -66,7 +90,9 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      actions: read
     uses: ./.github/workflows/build-release.yml
+    secrets: inherit
     with:
       ref: ${{ needs.prepare.outputs.ref }}
       version: ${{ needs.prepare.outputs.version }}
@@ -84,3 +110,4 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       channel: nightly
       tag: nightly
+      signing: ${{ needs.prepare.outputs.signing }}

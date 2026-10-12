@@ -23,6 +23,9 @@ jobs:
   build:
     name: build (${{ matrix.goos }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # Stable OIDC subject (repo:…:environment:release) for the Azure
+    # federated credential, whatever caller/ref spawned the build.
+    environment: release
     timeout-minutes: 60
     permissions:
       contents: read
@@ -107,6 +110,53 @@ jobs:
               -o "../../dist/varde-$name$suffix" .)
           done
           cp LICENSE dist/
+      - name: Detect signing configuration
+        id: signing
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          AZURE_TSA_ENDPOINT: ${{ vars.AZURE_TSA_ENDPOINT }}
+          AZURE_TSA_ACCOUNT: ${{ vars.AZURE_TSA_ACCOUNT }}
+          AZURE_TSA_CERT_PROFILE: ${{ vars.AZURE_TSA_CERT_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          provider=none
+          if [[ "$CHANNEL" == dry-run ]]; then
+            : # Authenticode signing never runs on dry-run builds
+          elif [[ -n "$AZURE_TSA_ENDPOINT" && -n "$AZURE_TSA_ACCOUNT" && \
+                  -n "$AZURE_TSA_CERT_PROFILE" && -n "$AZURE_CLIENT_ID" ]]; then
+            provider=azure
+          elif [[ "$GOOS" == windows ]]; then
+            echo 'Authenticode signing skipped: Azure Artifact Signing not configured (packaging/windows/README.md).' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
+      - name: Sign in to Azure
+        if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Windows executables via Azure Artifact Signing
+        if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_TSA_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_TSA_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TSA_CERT_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify signed executables
+        if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/varde-*.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            if ($sig.Status -ne 'Valid') { throw "signature check failed: $($_.Name) is $($sig.Status)" }
+            Write-Host "$($_.Name): signed by $($sig.SignerCertificate.Subject)"
+          }
       - name: Validate macOS mesh lifetime and agent launch contract
         if: runner.os == 'macOS'
         env:
@@ -130,6 +180,25 @@ jobs:
         run: |
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DVersion="$env:VERSION" packaging/windows/varde-agent.iss
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+      - name: Sign Windows installer via Azure Artifact Signing
+        if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_TSA_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_TSA_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TSA_CERT_PROFILE }}
+          files: ${{ github.workspace }}\packaging\windows\dist\VardeSetup-${{ env.VERSION }}.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify signed installer
+        if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem packaging/windows/dist/VardeSetup-*.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $installer.FullName
+          if ($sig.Status -ne 'Valid') { throw "signature check failed: $($installer.Name) is $($sig.Status)" }
+          Write-Host "$($installer.Name): signed by $($sig.SignerCertificate.Subject)"
       - name: Package Windows assets
         if: runner.os == 'Windows'
         shell: pwsh
@@ -147,7 +216,7 @@ jobs:
           subject-path: release-assets/*
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-bundles-${{ matrix.goos }}-${{ matrix.arch }}
+          name: bundles-${{ matrix.goos }}-${{ matrix.arch }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 7
@@ -164,7 +233,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: unsigned-bundles-*
+          pattern: bundles-*
           path: release-assets
           merge-multiple: true
       - name: SHA256SUMS
