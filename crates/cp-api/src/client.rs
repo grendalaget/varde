@@ -690,6 +690,9 @@ mod tests {
         let host = host_of("https://CP.VARDE.GAMES/x").unwrap();
         let scope = registrable(&host);
         assert!(in_scope("cp.varde.games", scope));
-        assert!(in_scope(&host_of("https://WWW.VARDE.GAMES/").unwrap(), scope));
+        assert!(in_scope(
+            &host_of("https://WWW.VARDE.GAMES/").unwrap(),
+            scope
+        ));
     }
 }
