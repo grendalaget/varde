@@ -298,6 +298,34 @@ FunctionEnd
   ${Else}
     ; upgrade with it unticked: service already removed above; drop the binary
     Delete "$INSTDIR\varde-control-plane.exe"
+    ; the bundled-CP default server.url is dead once that component is gone.
+    ; Drop it so an unlinked/migrated install falls back to the hosted
+    ; default — but only the exact address the component wrote: any other
+    ; loopback value is a deliberate server choice we must not touch.
+    ; (an explicit /CPURL always wins, even a loopback one)
+    ${If} $CpUrl == ""
+    ${AndIf} ${FileExists} "$APPDATA\Varde\server.url"
+      FileOpen $0 "$APPDATA\Varde\server.url" r
+      FileRead $0 $2
+      FileClose $0
+      ${Do}
+        StrCpy $3 $2 1 -1
+        ${If} $3 == "$\r"
+        ${OrIf} $3 == "$\n"
+        ${OrIf} $3 == " "
+        ${OrIf} $3 == "$\t"
+          StrCpy $2 $2 -1
+        ${Else}
+          ${ExitDo}
+        ${EndIf}
+      ${Loop}
+      ${StrCase} $3 $2 "L"
+      ${If} $3 == "http://localhost:8080"
+      ${OrIf} $3 == "http://localhost:8080/"
+        DetailPrint "Removing the stale bundled control-plane address"
+        Delete "$APPDATA\Varde\server.url"
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   DetailPrint "Registering the Varde service"

@@ -507,6 +507,12 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
+  ; Varde: the control plane is opt-in — off by default. /TASKS= or a
+  ; remembered selection can still turn it on (VardeApplyTaskParams runs
+  ; in the components PRE for interactive installs and PREINSTALL for
+  ; silent ones); the user can also tick it on the components page.
+  SectionSetFlags ${sec_controlplane} 0
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif
