@@ -29,8 +29,10 @@ const FED_AUTO_KEY = "varde.fed-auto";
 const SIGNED_OUT_KEY = "varde.signed-out";
 // Where to return after the federated bounce. Kept in tab storage on this
 // origin: putting it in `next` would hand paths like /invite/<code> to the
-// site's logs.
+// site's logs. Stored as `path|timestamp` — a stale value (sign-in abandoned
+// at the site) must not hijack a later, unrelated exchange.
 const FED_RETURN_KEY = "varde.fed-return";
+const FED_RETURN_TTL_MS = 15 * 60 * 1000;
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -77,8 +79,13 @@ export default function App() {
     // Back from the site's bounce: return to the page that sent us there.
     const back = sessionStorage.getItem(FED_RETURN_KEY);
     sessionStorage.removeItem(FED_RETURN_KEY);
-    if (back && back !== window.location.pathname + window.location.search) {
-      navigate(back, true);
+    const [path, ts] = (back ?? "").split("|");
+    if (
+      path.startsWith("/") &&
+      Date.now() - Number(ts) < FED_RETURN_TTL_MS &&
+      path !== window.location.pathname + window.location.search
+    ) {
+      navigate(path, true);
     }
   }, [refreshMe]);
 
@@ -86,6 +93,9 @@ export default function App() {
     if (window.location.hash.startsWith("#fed_token=")) {
       void exchangeFedToken();
     } else {
+      // mounted without a token: the bounce chain is over — any stored
+      // return path belongs to an abandoned sign-in
+      sessionStorage.removeItem(FED_RETURN_KEY);
       void refreshMe();
     }
   }, [exchangeFedToken, refreshMe]);
@@ -104,7 +114,7 @@ export default function App() {
     // locally, so invite codes never reach the site's query logs.
     sessionStorage.setItem(
       FED_RETURN_KEY,
-      window.location.pathname + window.location.search,
+      `${window.location.pathname + window.location.search}|${Date.now()}`,
     );
     window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
   }, []);
