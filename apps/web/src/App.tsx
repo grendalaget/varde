@@ -52,27 +52,38 @@ export default function App() {
     setMe(data);
   }, []);
 
-  useEffect(() => {
+  // The site hands the federation token back in the fragment so it never
+  // reaches server logs or referers; exchange it for a CP session.
+  const exchangeFedToken = useCallback(async () => {
     const m = window.location.hash.match(/^#fed_token=(.+)$/);
-    if (!m) {
-      void refreshMe();
-      return;
-    }
-    // The site hands the federation token back in the fragment so it never
-    // reaches server logs or referers; exchange it for a CP session now.
+    if (!m) return;
     history.replaceState(
       null,
       "",
       window.location.pathname + window.location.search,
     );
-    void (async () => {
-      const { error } = await api.POST("/v1/auth/external", {
-        body: { token: decodeURIComponent(m[1]) },
-      });
-      if (error) setFedError(errorMessage(error));
-      await refreshMe();
-    })();
+    const { error } = await api.POST("/v1/auth/external", {
+      body: { token: decodeURIComponent(m[1]) },
+    });
+    if (error) setFedError(errorMessage(error));
+    await refreshMe();
   }, [refreshMe]);
+
+  useEffect(() => {
+    if (window.location.hash.startsWith("#fed_token=")) {
+      void exchangeFedToken();
+    } else {
+      void refreshMe();
+    }
+  }, [exchangeFedToken, refreshMe]);
+
+  // A token pasted into an already-open tab is a fragment-only navigation -
+  // no remount, so catch it via hashchange too.
+  useEffect(() => {
+    const onHash = () => void exchangeFedToken();
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [exchangeFedToken]);
 
   // Logged out on a federated CP: if the browser already has a domain-wide
   // varde.games session, bounce to the site once - it mints a token and
