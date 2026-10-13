@@ -35,8 +35,8 @@ primary_region = "arn" # Stockholm — closest to the core users (Norway)
     name = "healthz"
     method = "GET"
     path = "/healthz"             # litefs passthrough — machine-local check
-    interval = 30000
-    timeout = 5000
+    interval = "30s"              # bare numbers parse as nanoseconds — keep units explicit
+    timeout = "5s"
     grace_period = "20s"          # litefs mount + primary connect on boot
 
 [mounts]
