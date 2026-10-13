@@ -1,15 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api/client";
 import { Logo } from "../components/Logo";
 import { Button, ErrorNote, Field, inputClass } from "../components/ui";
 
-export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
+export default function Login({
+  onAuthed,
+  federated,
+  initialError,
+  onContinue,
+}: {
+  onAuthed: () => Promise<void>;
+  federated?: boolean;
+  initialError?: string | null;
+  onContinue?: () => void;
+}) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(initialError ?? null);
+  // initialError seeds mount state AND syncs later arrivals (a failed token
+  // exchange on an already-open tab reports after Login is mounted).
+  useEffect(() => {
+    if (initialError) setErr(initialError);
+  }, [initialError]);
   const invite = window.location.pathname.startsWith("/invite/")
     ? window.location.pathname.split("/")[2]
     : undefined;
@@ -111,6 +126,22 @@ export default function Login({ onAuthed }: { onAuthed: () => Promise<void> }) {
             </button>
           </p>
         </form>
+        {federated && (
+          <div className="vd-enter vd-d-2 mt-4">
+            <div className="mb-3 flex items-center gap-3 text-xs text-muted">
+              <span className="h-px flex-1 bg-separator" />
+              or
+              <span className="h-px flex-1 bg-separator" />
+            </div>
+            <Button
+              className="w-full"
+              title="Use your varde.games account"
+              onClick={onContinue}
+            >
+              Continue with Varde
+            </Button>
+          </div>
+        )}
       </div>
     </main>
   );

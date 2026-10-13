@@ -19,10 +19,29 @@ import Servers from "./pages/Servers";
 import Settings from "./pages/Settings";
 
 const GROUP_KEY = "varde.group";
+// The site's federated sign-in bounce mints a token and hands it back in the
+// URL fragment. Kept in sync with auth.FederationIssuer on the CP.
+const VARDE_SITE = "https://varde.games";
+// Set once per tab so a failed exchange can't loop the bounce forever.
+const FED_AUTO_KEY = "varde.fed-auto";
+// Set by an explicit sign-out: a domain-wide site cookie would otherwise
+// bounce the user straight back into a fresh CP session.
+const SIGNED_OUT_KEY = "varde.signed-out";
+// Where to return after the federated bounce. Kept in tab storage on this
+// origin: putting it in `next` would hand paths like /invite/<code> to the
+// site's logs. Stored as `path|timestamp` — a stale value (sign-in abandoned
+// at the site) must not hijack a later, unrelated exchange.
+const FED_RETURN_KEY = "varde.fed-return";
+const FED_RETURN_TTL_MS = 15 * 60 * 1000;
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [fedError, setFedError] = useState<string | null>(null);
+  const [fed, setFed] = useState<{
+    enabled: boolean;
+    site_session: boolean;
+  } | null>(null);
   const [groupId, setGroupId] = useState<string | null>(() =>
     localStorage.getItem(GROUP_KEY),
   );
@@ -42,9 +61,91 @@ export default function App() {
     setMe(data);
   }, []);
 
-  useEffect(() => {
-    void refreshMe();
+  // The site hands the federation token back in the fragment so it never
+  // reaches server logs or referers; exchange it for a CP session.
+  const exchangeFedToken = useCallback(async () => {
+    const m = window.location.hash.match(/^#fed_token=(.+)$/);
+    if (!m) return;
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    const { error } = await api.POST("/v1/auth/external", {
+      body: { token: decodeURIComponent(m[1]) },
+    });
+    if (error) setFedError(errorMessage(error));
+    await refreshMe();
+    // Back from the site's bounce: return to the page that sent us there.
+    const back = sessionStorage.getItem(FED_RETURN_KEY);
+    sessionStorage.removeItem(FED_RETURN_KEY);
+    const [path, ts] = (back ?? "").split("|");
+    if (
+      path.startsWith("/") &&
+      Date.now() - Number(ts) < FED_RETURN_TTL_MS &&
+      path !== window.location.pathname + window.location.search
+    ) {
+      navigate(path, true);
+    }
   }, [refreshMe]);
+
+  useEffect(() => {
+    if (window.location.hash.startsWith("#fed_token=")) {
+      void exchangeFedToken();
+    } else {
+      // mounted without a token: the bounce chain is over — any stored
+      // return path belongs to an abandoned sign-in
+      sessionStorage.removeItem(FED_RETURN_KEY);
+      void refreshMe();
+    }
+  }, [exchangeFedToken, refreshMe]);
+
+  // A token pasted into an already-open tab is a fragment-only navigation -
+  // no remount, so catch it via hashchange too.
+  useEffect(() => {
+    const onHash = () => void exchangeFedToken();
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [exchangeFedToken]);
+
+  const continueWithVarde = useCallback(() => {
+    sessionStorage.removeItem(SIGNED_OUT_KEY);
+    // Preserve the current path (e.g. /invite/<code>) across the bounce —
+    // locally, so invite codes never reach the site's query logs.
+    sessionStorage.setItem(
+      FED_RETURN_KEY,
+      `${window.location.pathname + window.location.search}|${Date.now()}`,
+    );
+    window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
+  }, []);
+
+  // Logged out on a federated CP: if the browser already has a domain-wide
+  // varde.games session, bounce to the site once - it mints a token and
+  // returns it in the fragment, so no second login is needed.
+  useEffect(() => {
+    if (me !== null) return;
+    let dead = false;
+    fetch("/v1/federated/state", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((f) => {
+        if (dead || !f) return;
+        setFed(f);
+        if (
+          f.enabled &&
+          f.site_session &&
+          !fedError &&
+          !sessionStorage.getItem(FED_AUTO_KEY) &&
+          !sessionStorage.getItem(SIGNED_OUT_KEY)
+        ) {
+          sessionStorage.setItem(FED_AUTO_KEY, "1");
+          continueWithVarde();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, [me, fedError, continueWithVarde]);
 
   const selectGroup = useCallback((id: string) => {
     localStorage.setItem(GROUP_KEY, id);
@@ -63,7 +164,15 @@ export default function App() {
     );
   }
 
-  if (me === null) return <Login onAuthed={refreshMe} />;
+  if (me === null)
+    return (
+      <Login
+        onAuthed={refreshMe}
+        federated={fed?.enabled}
+        initialError={fedError}
+        onContinue={continueWithVarde}
+      />
+    );
 
   const inviteParams = match("/invite/:code", loc.pathname);
   if (inviteParams) {
@@ -259,6 +368,9 @@ function Layout() {
               className="text-muted transition-colors duration-150 hover:text-foreground"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
+                // A domain-wide site cookie would auto-bounce straight back
+                // into a fresh session - remember the explicit sign-out.
+                sessionStorage.setItem(SIGNED_OUT_KEY, "1");
                 window.location.href = "/";
               }}
             >
