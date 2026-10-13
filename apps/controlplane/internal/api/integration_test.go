@@ -2350,3 +2350,51 @@ func TestExternalLogin(t *testing.T) {
 		t.Fatalf("email collision: want 409, got %d %s", r.Status, r.Raw)
 	}
 }
+
+func TestFederatedState(t *testing.T) {
+	e := newEnv(t)
+
+	state := func(cookies ...string) map[string]any {
+		req, _ := http.NewRequest("GET", e.http.URL+"/v1/federated/state", nil)
+		for _, c := range cookies {
+			req.Header.Add("Cookie", c)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out map[string]any
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("federated/state: %d %s", resp.StatusCode, raw)
+		}
+		_ = json.Unmarshal(raw, &out)
+		return out
+	}
+
+	// local mode: federation off regardless of cookies
+	if s := state("__Secure-varde.session_token=abc"); s["enabled"] != false {
+		t.Fatalf("local mode should report enabled=false: %v", s)
+	}
+
+	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Federation = fed
+
+	// a domain-wide site session cookie is sniffed by name suffix, value opaque
+	for _, c := range []string{
+		"__Secure-varde.session_token=abc",
+		"varde.session_token=abc",
+		"unrelated=1; __Secure-varde.session_token=abc",
+	} {
+		if s := state(c); s["enabled"] != true || s["site_session"] != true {
+			t.Fatalf("cookie %q: want enabled+site_session, got %v", c, s)
+		}
+	}
+	if s := state("unrelated=1"); s["site_session"] != false {
+		t.Fatalf("no site cookie should report site_session=false: %v", s)
+	}
+}

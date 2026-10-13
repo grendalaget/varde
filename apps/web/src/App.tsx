@@ -19,10 +19,20 @@ import Servers from "./pages/Servers";
 import Settings from "./pages/Settings";
 
 const GROUP_KEY = "varde.group";
+// The site's federated sign-in bounce mints a token and hands it back in the
+// URL fragment. Kept in sync with auth.FederationIssuer on the CP.
+const VARDE_SITE = "https://varde.games";
+// Set once per tab so a failed exchange can't loop the bounce forever.
+const FED_AUTO_KEY = "varde.fed-auto";
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [fedError, setFedError] = useState<string | null>(null);
+  const [fed, setFed] = useState<{
+    enabled: boolean;
+    site_session: boolean;
+  } | null>(null);
   const [groupId, setGroupId] = useState<string | null>(() =>
     localStorage.getItem(GROUP_KEY),
   );
@@ -43,8 +53,53 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refreshMe();
+    const m = window.location.hash.match(/^#fed_token=(.+)$/);
+    if (!m) {
+      void refreshMe();
+      return;
+    }
+    // The site hands the federation token back in the fragment so it never
+    // reaches server logs or referers; exchange it for a CP session now.
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    void (async () => {
+      const { error } = await api.POST("/v1/auth/external", {
+        body: { token: decodeURIComponent(m[1]) },
+      });
+      if (error) setFedError(errorMessage(error));
+      await refreshMe();
+    })();
   }, [refreshMe]);
+
+  // Logged out on a federated CP: if the browser already has a domain-wide
+  // varde.games session, bounce to the site once - it mints a token and
+  // returns it in the fragment, so no second login is needed.
+  useEffect(() => {
+    if (me !== null) return;
+    let dead = false;
+    fetch("/v1/federated/state", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((f) => {
+        if (dead || !f) return;
+        setFed(f);
+        if (
+          f.enabled &&
+          f.site_session &&
+          !fedError &&
+          !sessionStorage.getItem(FED_AUTO_KEY)
+        ) {
+          sessionStorage.setItem(FED_AUTO_KEY, "1");
+          window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, [me, fedError]);
 
   const selectGroup = useCallback((id: string) => {
     localStorage.setItem(GROUP_KEY, id);
@@ -63,7 +118,14 @@ export default function App() {
     );
   }
 
-  if (me === null) return <Login onAuthed={refreshMe} />;
+  if (me === null)
+    return (
+      <Login
+        onAuthed={refreshMe}
+        federated={fed?.enabled}
+        initialError={fedError}
+      />
+    );
 
   const inviteParams = match("/invite/:code", loc.pathname);
   if (inviteParams) {

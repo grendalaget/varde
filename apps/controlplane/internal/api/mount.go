@@ -50,6 +50,8 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 			}
 		case p == "/metrics":
 			metrics.ServeHTTP(w, r)
+		case p == "/v1/federated/state":
+			s.serveFederatedState(w, r)
 		case strings.HasSuffix(p, "/events/stream") && strings.HasPrefix(p, "/v1/groups/"):
 			s.userAuth(http.HandlerFunc(s.ServeSSE)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/") || p == "/healthz" || p == "/readyz":
