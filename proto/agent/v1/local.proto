@@ -88,6 +88,9 @@ message Status {
   string link_error = 10;
   string agent_version = 11;
   Update update = 12;
+  // Technical form of link_error for the UI's "Additional information"
+  // disclosure; empty when there's nothing beyond link_error.
+  string link_error_detail = 13;
 }
 
 message GetStatusRequest {}

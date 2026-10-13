@@ -235,7 +235,7 @@ export function Toggle({
 export function ErrorNote({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (
-    <div className="vd-shake rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger-soft-foreground">
+    <div className="vd-shake w-fit max-w-full rounded-lg border border-danger/40 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-soft-foreground">
       {children}
     </div>
   );
@@ -243,7 +243,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 
 export function WarnNote({ children }: { children: ReactNode }) {
   return (
-    <div className="vd-in rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground">
+    <div className="vd-in w-fit max-w-full rounded-lg border border-warning/40 bg-warning-soft px-3.5 py-2.5 text-sm text-warning-soft-foreground">
       {children}
     </div>
   );

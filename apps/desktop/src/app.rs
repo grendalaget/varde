@@ -92,7 +92,14 @@ pub fn run() {
             svcctl::stop()
         };
         if let Err(e) = r {
-            message_box(&format!("{e:#}"));
+            let action = if launch.service_start {
+                "start"
+            } else {
+                "stop"
+            };
+            message_box(&format!(
+                "Varde couldn't {action} its service. Restart Varde and try again.\n\n{e:#}"
+            ));
             std::process::exit(1);
         }
         return;
@@ -660,6 +667,18 @@ async fn start_link(app: AppHandle, url: String) -> Result<UiStatus, String> {
     Ok(ui)
 }
 
+/// gRPC failures the user reads. Statuses the service returns carry
+/// user-facing text already; transport errors (service died mid-call) come
+/// back as Unknown with hyper plumbing in the message.
+fn grpc_err(e: agent_ipc::GrpcStatus) -> String {
+    match e.code() {
+        agent_ipc::GrpcCode::Unknown => {
+            "The Varde service on this PC isn't answering. Restart Varde and try again.".to_string()
+        }
+        _ => e.message().to_string(),
+    }
+}
+
 async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, String> {
     let relink = app.state::<State>().relink;
     let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
@@ -671,7 +690,7 @@ async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, Stri
             relink,
         })
         .await
-        .map_err(|e| e.message().to_string())?
+        .map_err(grpc_err)?
         .into_inner()
         .status
         .unwrap_or_default();
@@ -689,12 +708,47 @@ const SITE_DESKTOP_URL: &str = "https://varde.games/auth/desktop";
 #[derive(Serialize, Clone)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 enum FedEvent {
-    Confirm { email: String, name: String },
+    Confirm {
+        email: String,
+        name: String,
+    },
     WaitingBrowser,
     Exchanging,
-    PickGroup { groups: Vec<FedGroup> },
+    PickGroup {
+        groups: Vec<FedGroup>,
+    },
     Approving,
-    Error { message: String },
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+/// An error the window shows: `message` is the friendly sentence, `detail`
+/// the technical original behind the note's "Additional information".
+#[derive(Serialize)]
+struct UiErr {
+    message: String,
+    detail: Option<String>,
+}
+
+impl UiErr {
+    fn msg(m: impl Into<String>) -> Self {
+        UiErr {
+            message: m.into(),
+            detail: None,
+        }
+    }
+}
+
+/// cp_api failures: the user_message is what's read; the Display form
+/// ("api 404 http_error: 404 page not found") stays available for support.
+fn ui_err(e: cp_api::Error) -> UiErr {
+    UiErr {
+        message: e.user_message(),
+        detail: Some(e.to_string()),
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -779,7 +833,13 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
                     },
                 );
             }
-            Err(message) => emit_fed(&h, FedEvent::Error { message }),
+            Err(e) => emit_fed(
+                &h,
+                FedEvent::Error {
+                    message: e.message,
+                    detail: e.detail,
+                },
+            ),
         }
     });
 }
@@ -787,33 +847,33 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
 /// Exchange the site's JWT at the hosted CP. The token's audience is the
 /// hosted CP — a self-hosted one can't verify it, so this always goes to
 /// DEFAULT_CP_URL.
-async fn fed_exchange(fed_token: String) -> Result<(String, String, cp_api::AuthUser), String> {
+async fn fed_exchange(fed_token: String) -> Result<(String, String, cp_api::AuthUser), UiErr> {
     let cp = agent_ipc::DEFAULT_CP_URL.to_string();
     let resp: cp_api::AuthResponse = cp_api::CpClient::new(&cp)
-        .map_err(|e| e.to_string())?
+        .map_err(ui_err)?
         .json(
             "POST",
             "/v1/auth/external",
             Some(&cp_api::ExternalLoginRequest { token: fed_token }),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ui_err)?;
     Ok((resp.token, cp, resp.user))
 }
 
 /// After the user confirms: resolve which group this PC joins (create one
 /// when the account has none, auto-pick a single one, ask otherwise), then
 /// approve the device link.
-async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), String> {
+async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), UiErr> {
     let session = pending.session;
     let cp = pending.cp_url;
     let authed = cp_api::CpClient::new(&cp)
-        .map_err(|e| e.to_string())?
+        .map_err(ui_err)?
         .with_bearer(session.clone());
     let groups: cp_api::GroupList = authed
         .json("GET", "/v1/groups", None::<&serde_json::Value>)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ui_err)?;
     let group_id = match groups.groups.as_slice() {
         [] => {
             let g: cp_api::Group = authed
@@ -825,7 +885,7 @@ async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), Str
                     }),
                 )
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(ui_err)?;
             g.id
         }
         [one] => one.id.clone(),
@@ -866,7 +926,9 @@ async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
-        .map_err(|e| e.to_string())
+        .map_err(|_| {
+            "Couldn't open your browser. Check your default browser, then try again.".to_string()
+        })
 }
 
 /// The confirm card approved: continue with the session the exchange
@@ -882,8 +944,14 @@ async fn confirm_varde_login(app: AppHandle) -> Result<(), String> {
         .ok_or("No sign-in is waiting for confirmation.")?;
     emit_fed(&app, FedEvent::Exchanging);
     tauri::async_runtime::spawn(async move {
-        if let Err(message) = federated_login(&app, pending).await {
-            emit_fed(&app, FedEvent::Error { message });
+        if let Err(e) = federated_login(&app, pending).await {
+            emit_fed(
+                &app,
+                FedEvent::Error {
+                    message: e.message,
+                    detail: e.detail,
+                },
+            );
         }
     });
     Ok(())
@@ -921,19 +989,19 @@ fn federated_state(app: AppHandle) -> Option<FedEvent> {
 }
 
 #[tauri::command]
-async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), String> {
+async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), UiErr> {
     let pending = app
         .state::<State>()
         .fed
         .lock()
         .unwrap()
         .take()
-        .ok_or("No sign-in is waiting for a group choice.")?;
+        .ok_or_else(|| UiErr::msg("No sign-in is waiting for a group choice."))?;
     if !pending.groups.contains(&group_id) {
-        return Err("That group isn't one of yours.".to_string());
+        return Err(UiErr::msg("That group isn't one of yours."));
     }
     let client = cp_api::CpClient::new(&pending.cp_url)
-        .map_err(|e| e.to_string())?
+        .map_err(ui_err)?
         .with_bearer(pending.session);
     approve_link(&app, client, pending.cp_url, group_id).await
 }
@@ -945,7 +1013,7 @@ async fn approve_link(
     authed: cp_api::CpClient,
     cp_url: String,
     group_id: String,
-) -> Result<(), String> {
+) -> Result<(), UiErr> {
     // a cancel landing mid-flight (between exchange and here) must not
     // still start a link
     if !app
@@ -959,7 +1027,7 @@ async fn approve_link(
     app.state::<State>()
         .fed_started_link
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let s = start_link_ipc(app, cp_url).await?;
+    let s = start_link_ipc(app, cp_url).await.map_err(UiErr::msg)?;
     if !app
         .state::<State>()
         .fed_active
@@ -975,7 +1043,7 @@ async fn approve_link(
     }
     let link = s
         .link
-        .ok_or("The Varde service didn't produce a link code.")?;
+        .ok_or_else(|| UiErr::msg("The Varde service didn't produce a link code."))?;
     let dl: cp_api::DeviceLink = authed
         .json(
             "GET",
@@ -983,7 +1051,7 @@ async fn approve_link(
             None::<&serde_json::Value>,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ui_err)?;
     let _: serde_json::Value = authed
         .json(
             "POST",
@@ -999,7 +1067,7 @@ async fn approve_link(
             }),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ui_err)?;
     Ok(())
 }
 
@@ -1007,10 +1075,10 @@ async fn approve_link(
 async fn cancel_link() -> Result<(), String> {
     let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "The Varde service on this PC isn't running.".to_string())?;
     c.cancel_link(pb::CancelLinkRequest {})
         .await
-        .map_err(|e| e.message().to_string())?;
+        .map_err(grpc_err)?;
     Ok(())
 }
 
@@ -1047,9 +1115,9 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("not a web address".into());
     }
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
+    app.opener().open_url(url, None::<&str>).map_err(|_| {
+        "Couldn't open your browser. Check your default browser, then try again.".to_string()
+    })
 }
 
 #[tauri::command]

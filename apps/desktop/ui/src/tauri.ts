@@ -13,6 +13,7 @@ export interface UiStatus {
   link_url: string;
   expires_at_unix_ms: number;
   link_error: string;
+  link_error_detail: string;
   hosting: boolean;
   relink: boolean;
 }
@@ -30,7 +31,7 @@ export type FedState =
   | { stage: "exchanging" }
   | { stage: "pick_group"; groups: { id: string; name: string }[] }
   | { stage: "approving" }
-  | { stage: "error"; message: string };
+  | { stage: "error"; message: string; detail?: string };
 
 type Handler<T> = (e: { payload: T }) => void;
 type Unlisten = () => void;
@@ -60,6 +61,7 @@ function linked(hosting: boolean): UiStatus {
     link_url: "",
     expires_at_unix_ms: 0,
     link_error: "",
+    link_error_detail: "",
     hosting,
     relink: false,
   };
@@ -75,6 +77,7 @@ const canned: Record<string, UiStatus | null> = {
     link_url: "",
     expires_at_unix_ms: 0,
     link_error: "",
+    link_error_detail: "",
     hosting: false,
     relink: false,
   },
@@ -87,6 +90,7 @@ const canned: Record<string, UiStatus | null> = {
     link_url: "https://cp.varde.games/link?code=WXYZ-1234",
     expires_at_unix_ms: Date.now() + 298_000,
     link_error: "",
+    link_error_detail: "",
     hosting: false,
     relink: false,
   },
@@ -161,6 +165,7 @@ function mock(): TauriGlobal {
                   ? emit("federated-auth", {
                       stage: "error",
                       message: "Couldn't reach varde.games (simulated)",
+                      detail: "api 404 http_error: 404 page not found",
                     })
                   : multi
                     ? emit("federated-auth", {

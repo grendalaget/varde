@@ -159,6 +159,7 @@ pub struct UiStatus {
     pub link_url: String,
     pub expires_at_unix_ms: i64,
     pub link_error: String,
+    pub link_error_detail: String,
     pub hosting: bool,
     /// The pending code is an administrator's re-link.
     pub relink: bool,
@@ -183,6 +184,7 @@ impl From<&pb::Status> for UiStatus {
             link_url: link.link_url,
             expires_at_unix_ms: link.expires_at_unix_ms,
             link_error: s.link_error.clone(),
+            link_error_detail: s.link_error_detail.clone(),
             hosting: !s.hosting.is_empty(),
             relink: link.relink,
         }

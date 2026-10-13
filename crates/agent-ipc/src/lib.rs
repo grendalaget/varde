@@ -18,6 +18,8 @@ pub mod pb {
 pub mod server;
 
 pub use pb::local_service_client::LocalServiceClient;
+// Callers display RPC failures without taking a tonic dep.
+pub use tonic::{Code as GrpcCode, Status as GrpcStatus};
 
 /// The agent service's pipe. One agent service per Windows machine.
 pub const PIPE_NAME: &str = r"\\.\pipe\varde-agent";

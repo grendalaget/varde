@@ -45,6 +45,59 @@ impl Error {
             _ => None,
         }
     }
+
+    /// What a user should read. `Display` stays the technical form for logs
+    /// ("api 404 http_error: 404 page not found"); this is the sentence the
+    /// tray, CLI prompts, and other UI surfaces show instead.
+    pub fn user_message(&self) -> String {
+        match self {
+            Error::Url(_) => {
+                "That doesn't look like a Varde server address. Check the address and try again."
+                    .to_string()
+            }
+            Error::Http(_) | Error::Io(_) => {
+                "Varde couldn't reach the server. Check your internet connection and the server address, then try again."
+                    .to_string()
+            }
+            Error::Json(_) => {
+                "The server answered, but not in a way Varde understands. It may not be a Varde control plane."
+                    .to_string()
+            }
+            Error::Api {
+                status,
+                code,
+                message,
+                ..
+            } => api_user_message(*status, code, message),
+        }
+    }
+}
+
+fn api_user_message(status: u16, code: &str, message: &str) -> String {
+    if code == "http_error" {
+        // The body wasn't a Varde error document, so the request reached a
+        // proxy, a web server, or nothing at all - never a control plane.
+        return match status {
+            404 => {
+                "No Varde server answered at that address. Check the address. If you're running your own control plane, make sure it's up."
+                    .to_string()
+            }
+            401 | 403 => {
+                "The server didn't accept that request. Sign in again and retry."
+                    .to_string()
+            }
+            _ if status >= 500 => {
+                "The Varde server had a problem. Try again in a moment."
+                    .to_string()
+            }
+            _ => "The server couldn't handle that request. Try again.".to_string(),
+        };
+    }
+    // Varde error documents already carry user-facing messages.
+    if !message.is_empty() {
+        return message.to_string();
+    }
+    "The Varde server couldn't complete that request. Try again.".to_string()
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

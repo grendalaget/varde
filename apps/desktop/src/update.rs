@@ -147,7 +147,10 @@ fn spawn_apply(app: AppHandle) {
     };
     tauri::async_runtime::spawn(async move {
         if let Err(e) = download_verify_run(&version, &url, &sig).await {
-            info_box("Update failed", &format!("{e:#}"));
+            info_box(
+                "Update failed",
+                &format!("Varde couldn't install the update. It will try again later.\n\n{e:#}"),
+            );
         }
     });
 }

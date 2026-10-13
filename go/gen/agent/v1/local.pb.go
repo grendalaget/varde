@@ -340,11 +340,14 @@ type Status struct {
 	// Executions on this machine that haven't finished.
 	Hosting []*Hosting `protobuf:"bytes,9,rep,name=hosting,proto3" json:"hosting,omitempty"`
 	// Why the last link attempt failed (expired, unreachable, …); empty if none.
-	LinkError     string  `protobuf:"bytes,10,opt,name=link_error,json=linkError,proto3" json:"link_error,omitempty"`
-	AgentVersion  string  `protobuf:"bytes,11,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	Update        *Update `protobuf:"bytes,12,opt,name=update,proto3" json:"update,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	LinkError    string  `protobuf:"bytes,10,opt,name=link_error,json=linkError,proto3" json:"link_error,omitempty"`
+	AgentVersion string  `protobuf:"bytes,11,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	Update       *Update `protobuf:"bytes,12,opt,name=update,proto3" json:"update,omitempty"`
+	// Technical form of link_error for the UI's "Additional information"
+	// disclosure; empty when there's nothing beyond link_error.
+	LinkErrorDetail string `protobuf:"bytes,13,opt,name=link_error_detail,json=linkErrorDetail,proto3" json:"link_error_detail,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Status) Reset() {
@@ -459,6 +462,13 @@ func (x *Status) GetUpdate() *Update {
 		return x.Update
 	}
 	return nil
+}
+
+func (x *Status) GetLinkErrorDetail() string {
+	if x != nil {
+		return x.LinkErrorDetail
+	}
+	return ""
 }
 
 type GetStatusRequest struct {
@@ -901,7 +911,7 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\tR\tsignature\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xd3\x03\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xff\x03\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +
@@ -917,7 +927,8 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"link_error\x18\n" +
 	" \x01(\tR\tlinkError\x12#\n" +
 	"\ragent_version\x18\v \x01(\tR\fagentVersion\x12.\n" +
-	"\x06update\x18\f \x01(\v2\x16.varde.agent.v1.UpdateR\x06update\"\x12\n" +
+	"\x06update\x18\f \x01(\v2\x16.varde.agent.v1.UpdateR\x06update\x12*\n" +
+	"\x11link_error_detail\x18\r \x01(\tR\x0flinkErrorDetail\"\x12\n" +
 	"\x10GetStatusRequest\"C\n" +
 	"\x11GetStatusResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
