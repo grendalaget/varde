@@ -3,7 +3,8 @@
 ## Language boundaries (mandatory)
 
 - **TypeScript**: web dashboard and generated API clients (`apps/web`), plus the
-  desktop app's webview UI (`apps/desktop/ui`, Fluent 2 / `@fluentui/react-components`).
+  desktop app's webview UI (`apps/desktop/ui`, HeroUI + Tailwind, same mouve
+  design system as `apps/web`).
 - **Go**: control-plane, relay, mesh, scheduler, networking (`apps/*`, `go/`).
 - **Rust**: local agent, storage, executors, game drivers (`apps/agent`,
   `crates/*`, `games/*`).

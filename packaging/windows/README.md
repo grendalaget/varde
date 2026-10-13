@@ -11,10 +11,10 @@ Inno install first (Inno→NSIS migration shim in `hooks.nsh`), keeping
   (`apps/desktop`) into `Program Files\Varde`, plus a Start menu entry
   for the tray
 - uses `varde.ico` for setup and uninstall and installs it with the binaries
-- shows the brand art in the wizard: `wizard/wizard-100.bmp` (mark + wordmark
-  on Natt) as the NSIS sidebar and `apps/desktop/installer-hooks/header.bmp`
-  (mark on white, page header); the extra `wizard/wizard-*-*.bmp` DPI variants
-  were Inno-only
+- shows the brand art in the wizard: `wizard/wizard.bmp` (mark + wordmark
+  on Natt, rendered at 3x so NSIS downscales crisply on HiDPI) as the NSIS
+  sidebar and `apps/desktop/installer-hooks/header.bmp` (mark on white,
+  page header, 4x for the same reason)
 - never asks for an address: the PC joins the hosted Varde (cp.varde.games).
   Self-hosting instead? `/CPURL=cp.example` (or a full https URL) writes
   `%ProgramData%\Varde\server.url`, which the unlinked service reports to

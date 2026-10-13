@@ -12,7 +12,7 @@ platforms the binary is a stub, so the workspace builds everywhere.
   Link this PC… / Re-link… (relaunches elevated with `--relink`; refused by
   the service while hosting), Open logs folder, Start at login, Quit tray (the service keeps
   running).
-- App window (`main`, Fluent 2 UI in `ui/`): Varde address → code,
+- App window (`main`, mouve design-system UI in `ui/`): Varde address → code,
   Copy code / Open again / Cancel, countdown, "Linked to <group> as <name>",
   this-PC status, service start/stop.
   An administrator's pending re-link shows "An administrator is re-linking this
@@ -31,10 +31,10 @@ Flags: `--link` (installer; starts linking with the service's address), `--relin
 
 ## UI (`ui/`)
 
-React + Vite + TypeScript on **Fluent 2** (`@fluentui/react-components` +
-`@fluentui/react-icons`), dark-only Varde theme (`src/theme.ts`: Natt
-background, Skifer surfaces, Tåke text/primary — Glød stays off, it's the
-hosting signal). The tray embeds the built bundle (`frontendDist: ui/dist`),
+React + Vite + TypeScript on the shared Varde design system
+(`@heroui/react` + Tailwind + the vendored mouve theme, same as
+`apps/web`): dark-only, Natt background, Tåke text, Glød accent. The tray
+embeds the built bundle (`frontendDist: ui/dist`),
 so `bun --cwd apps/desktop/ui run build` must run before `cargo build`.
 
 ```sh

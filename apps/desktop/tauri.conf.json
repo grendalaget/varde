@@ -36,7 +36,7 @@
         ],
         "displayLanguageSelector": false,
         "installerIcon": "../../packaging/windows/varde.ico",
-        "sidebarImage": "../../packaging/windows/wizard/wizard-100.bmp",
+        "sidebarImage": "../../packaging/windows/wizard/wizard.bmp",
         "headerImage": "installer-hooks/header.bmp",
         "template": "installer-hooks/installer.nsi",
         "installerHooks": "installer-hooks/hooks.nsh",

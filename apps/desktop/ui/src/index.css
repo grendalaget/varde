@@ -1,25 +1,464 @@
-@font-face {
-  font-family: "Inter Variable";
-  font-weight: 100 900;
-  font-display: swap;
-  src: url("./assets/fonts/inter-latin-wght-normal.woff2") format("woff2");
+@import "tailwindcss";
+@import "@heroui/styles";
+@import "./mouve.css";
+/* pro component layer omitted: the app uses no pro components */
+
+/*
+ * Varde design system (HeroUI Pro design system cc850839, theme "mouve").
+ * Warm-tinted dark surfaces, Glød #FF5B1F accent, Inter. The mouve theme
+ * below is the source of truth; the named Varde colors map onto it so
+ * utility classes (natt/take/slider/glod/warn) stay consistent.
+ */
+@theme {
+  --color-natt: #110c0a;
+  --color-take: #fcfcfc;
+  --color-papir: #f4efed;
+  --color-glod: #ff5b1f;
+  --color-warn: #f7b750;
+  --color-skifer-50: #fcfcfc;
+  --color-skifer-100: #ebe5e3;
+  --color-skifer-200: #c9c1be;
+  --color-skifer-300: #958d8b;
+  --color-skifer-400: #8b8380;
+  --color-skifer-500: #857d7a;
+  --color-skifer-600: #44403e;
+  --color-skifer-700: #38312f;
+  --color-skifer-800: #231e1c;
+  --color-skifer-900: #1a1513;
+  --color-skifer-950: #110c0a;
+
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Motion: fast expo-out for transitions, light spring for entrances. */
+  --ease-vd-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-vd-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Numbered surface tiers used across the docs pages: aliases onto the
+     mouve theme vars so bg-surface-100..400 actually paint. */
+  --color-surface-100: var(--surface);
+  --color-surface-200: var(--surface-secondary);
+  --color-surface-300: var(--surface-tertiary);
+  --color-surface-400: var(--border);
 }
 
-:root {
-  color-scheme: light dark;
+/* Design system export (saved overrides on top of the mouve theme).
+ * Source: get_design_system_export css; keep in sync with the DS. */
+.mouve-light,
+[data-theme="mouve-light"],
+.mouve-dark,
+[data-theme="mouve-dark"] {
+  /* Border Radius */
+  --radius: 1rem;
+  --field-radius: 2rem;
+
+  /* Spacing */
+  --spacing: 0.234375rem;
 }
-html,
-body,
-#root {
-  margin: 0;
-  height: 100%;
+
+.mouve-light,
+[data-theme="mouve-light"] {
+  /* Theme Colors */
+  --background: oklch(95.5% 0.0056 37.96);
+  --muted: oklch(58% 0.014 37.96);
+  --scrollbar: oklch(82% 0.0093 37.96);
+  --surface: oklch(97.5% 0.0037 37.96);
+  --surface-secondary: oklch(95% 0.0056 37.96);
+  --surface-tertiary: oklch(93.5% 0.0075 37.96);
+  --overlay: oklch(97.5% 0.0037 37.96);
+  --default: oklch(92% 0.0056 37.96);
+  --accent: oklch(68.35% 0.2099 37.96);
+  --accent-foreground: oklch(15% 0.03 37.96);
+  --field-background: oklch(97% 0.0028 37.96);
+  --field-border: oklch(88% 0.0093 37.96);
+  --border: oklch(88% 0.007 37.96);
+  --separator: oklch(92% 0.0047 37.96);
+  --focus: oklch(68.35% 0.2099 37.96);
+  --backdrop: oklch(50% 0.0187 37.96 / 0.4);
+  --accent-soft: color-mix(
+    in oklab,
+    oklch(68.35% 0.2099 37.96) 15%,
+    transparent
+  );
+  --accent-hover: color-mix(
+    in oklab,
+    oklch(68.35% 0.2099 37.96) 90%,
+    oklch(15% 0.03 37.96) 10%
+  );
+
+  /* Charts */
+  --chart-1: oklch(42% 0.14 37.96);
+  --chart-2: oklch(50% 0.16 37.96);
+  --chart-3: oklch(55% 0.18 37.96);
+  --chart-4: oklch(65% 0.14 37.96);
+  --chart-5: oklch(75% 0.1 37.96);
 }
+
+.mouve-dark,
+[data-theme="mouve-dark"] {
+  color-scheme: dark;
+  /* Theme Colors */
+  --background: oklch(16% 0.0093 37.96);
+  --muted: oklch(65% 0.0093 37.96);
+  --scrollbar: oklch(35% 0.0093 37.96);
+  --surface: oklch(20% 0.0093 37.96);
+  --surface-secondary: oklch(24% 0.0093 37.96);
+  --surface-tertiary: oklch(27% 0.0093 37.96);
+  --overlay: oklch(20% 0.0093 37.96);
+  --default: oklch(26% 0.0093 37.96);
+  --accent: oklch(68.35% 0.2099 37.96);
+  --accent-foreground: oklch(15% 0.03 37.96);
+  --success-foreground: oklch(20% 0.0093 37.96);
+  --warning-foreground: oklch(20% 0.0093 37.96);
+  --field-background: oklch(22% 0.0084 37.96);
+  --field-border: oklch(32% 0.0117 37.96);
+  --segment: oklch(28% 0.0117 37.96);
+  --border: oklch(30% 0.0093 37.96);
+  --separator: oklch(28% 0.0084 37.96);
+  --focus: oklch(68.35% 0.2099 37.96);
+  --accent-soft: color-mix(
+    in oklab,
+    oklch(68.35% 0.2099 37.96) 15%,
+    transparent
+  );
+  --accent-hover: color-mix(
+    in oklab,
+    oklch(68.35% 0.2099 37.96) 90%,
+    oklch(15% 0.03 37.96) 10%
+  );
+
+  /* Charts */
+  --chart-1: oklch(50% 0.12 37.96);
+  --chart-2: oklch(60% 0.14 37.96);
+  --chart-3: oklch(70% 0.16 37.96);
+  --chart-4: oklch(78% 0.12 37.96);
+  --chart-5: oklch(85% 0.08 37.96);
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
 body {
-  /* pre-React flash only; Fluent tokens take over once mounted */
-  background: #f4efed;
+  background: var(--background);
+  color: var(--foreground);
 }
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #110c0a;
+
+::selection {
+  background: color-mix(in oklab, #ff5b1f 35%, transparent);
+}
+
+/* Brand marks: stones use currentColor (Tåke on Natt); Glød is only the lit
+   stone: the machine currently hosting a server. Resting state is static:
+   no flicker. On entry the varde stacks itself stone by stone (vd-b*, on
+   <g> wrappers); on hover/focus the mark warms into a glow and the ember
+   hops the upper stones, the failover motif, user-invited. */
+.vd {
+  --vd-stone: currentColor;
+  --vd-ember: #ff5b1f;
+  transition:
+    transform 300ms var(--ease-vd-spring),
+    filter 300ms var(--ease-vd-out);
+}
+.vd:hover,
+.vd:focus-visible {
+  transform: scale(1.04);
+  filter: drop-shadow(0 0 40px rgba(255, 91, 31, 0.15))
+    drop-shadow(0 0 14px rgba(255, 91, 31, 0.45));
+}
+.vd-s,
+.vd-h {
+  fill: var(--vd-stone);
+}
+.vd:hover .vd-h,
+.vd:focus-visible .vd-h {
+  animation-name: vd-lit;
+  animation-duration: 3.6s;
+  animation-iteration-count: infinite;
+}
+.vd-h1 {
+  animation-delay: 0s;
+}
+.vd-h2 {
+  animation-delay: -2.4s;
+}
+.vd-h3 {
+  animation-delay: -1.2s;
+}
+@keyframes vd-lit {
+  0%,
+  25% {
+    fill: var(--vd-ember);
   }
+  30%,
+  97% {
+    fill: var(--vd-stone);
+  }
+  100% {
+    fill: var(--vd-ember);
+  }
+}
+
+/* Entry build: stones drop into place, bottom up (longhand so the hop
+   animation-delay classes keep working when the ember runs on the paths). */
+@keyframes vd-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-26px);
+  }
+}
+.vd-b1 {
+  animation: vd-drop 520ms var(--ease-vd-spring) backwards;
+}
+.vd-b2 {
+  animation: vd-drop 520ms var(--ease-vd-spring) 90ms backwards;
+}
+.vd-b3 {
+  animation: vd-drop 520ms var(--ease-vd-spring) 180ms backwards;
+}
+.vd-b4 {
+  animation: vd-drop 520ms var(--ease-vd-spring) 270ms backwards;
+}
+.vd-b5 {
+  animation: vd-drop 520ms var(--ease-vd-spring) 360ms backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vd-b1,
+  .vd-b2,
+  .vd-b3,
+  .vd-b4,
+  .vd-b5,
+  .vd-h {
+    animation: none !important;
+  }
+  .vd-h1 {
+    fill: var(--vd-ember);
+  }
+}
+/* Static ember: only the host stone is Glød. */
+.vd-ember {
+  fill: var(--vd-ember);
+}
+
+/* Hero cairn halo: soft Glød glow radiating from the mark itself.
+   Opacity-only breathe so the positioning transform stays untouched. */
+.vd-cairn-glow {
+  background: radial-gradient(
+    circle at 50% 52%,
+    rgba(255, 91, 31, 0.24) 0%,
+    rgba(255, 91, 31, 0.1) 38%,
+    transparent 68%
+  );
+  filter: blur(20px);
+  animation: vd-glow-breathe 7s ease-in-out infinite;
+}
+@keyframes vd-glow-breathe {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vd-cairn-glow {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Motion layer, same vocabulary as the dashboard (varde apps/web).
+ * Entrances use fill-mode backwards so post-animation transforms (hover lifts,
+ * presses) still work. Scroll/mount staggers live in components/reveal.tsx.
+ * ------------------------------------------------------------------------- */
+
+@keyframes vd-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes vd-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+@keyframes vd-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes vd-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-3px);
+  }
+  40%,
+  60% {
+    transform: translateX(3px);
+  }
+}
+
+.vd-enter {
+  animation: vd-rise 380ms var(--ease-vd-out) backwards;
+}
+.vd-fade {
+  animation: vd-fade 320ms var(--ease-vd-out) backwards;
+}
+.vd-pop {
+  animation: vd-pop 340ms var(--ease-vd-spring) backwards;
+}
+.vd-shake {
+  animation: vd-shake 450ms ease-in-out both;
+}
+
+.vd-d-1 {
+  animation-delay: 60ms;
+}
+.vd-d-2 {
+  animation-delay: 120ms;
+}
+.vd-d-3 {
+  animation-delay: 180ms;
+}
+.vd-d-4 {
+  animation-delay: 240ms;
+}
+.vd-d-5 {
+  animation-delay: 300ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vd-enter,
+  .vd-fade,
+  .vd-pop,
+  .vd-shake {
+    animation: none !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Dashboard-only extras on top of the shared varde.games stylesheet.
+ * The site's font comes from next/font; here it is @fontsource-variable/inter.
+ * ------------------------------------------------------------------------- */
+:root {
+  --font-inter: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Brand mark hooks used by the app logo: lit stones can run continuously
+   (vd-moving) or only while hovered (vd-hover); vd-unlit keeps a stone cold. */
+.vd-moving .vd-h,
+.vd-hover:hover .vd-h,
+.vd-hover:focus-visible .vd-h {
+  animation-name: vd-lit;
+  animation-duration: 3.6s;
+  animation-iteration-count: infinite;
+}
+.vd-h1.vd-unlit {
+  fill: var(--vd-stone);
+}
+.vd-ignite {
+  animation: vd-ignite 0.9s ease-out;
+}
+@keyframes vd-ignite {
+  from {
+    fill: var(--color-skifer-600);
+  }
+  to {
+    fill: var(--vd-ember);
+  }
+}
+
+/* Entrances/motion the dashboard uses that the site does not. */
+@keyframes vd-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes vd-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@keyframes vd-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.vd-in {
+  animation: vd-in 240ms var(--ease-vd-out) backwards;
+}
+.vd-reveal {
+  animation: vd-reveal 220ms var(--ease-vd-out) backwards;
+}
+.vd-menu {
+  transform-origin: top right;
+  animation: vd-pop 180ms var(--ease-vd-spring) backwards;
+}
+.vd-pulse {
+  animation: vd-live 2.4s ease-in-out infinite;
+}
+.vd-stagger > * {
+  animation: vd-pop 380ms var(--ease-vd-spring) backwards;
+}
+.vd-stagger > :nth-child(2) {
+  animation-delay: 45ms;
+}
+.vd-stagger > :nth-child(3) {
+  animation-delay: 90ms;
+}
+.vd-stagger > :nth-child(4) {
+  animation-delay: 135ms;
+}
+.vd-stagger > :nth-child(5) {
+  animation-delay: 180ms;
+}
+.vd-stagger > :nth-child(6) {
+  animation-delay: 225ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vd-in,
+  .vd-reveal,
+  .vd-menu,
+  .vd-stagger > *,
+  .vd-ignite {
+    animation: none !important;
+  }
+  .vd-pulse {
+    animation: none;
+  }
+}
+
+/* The app's cairn keeps a resting ember: lit = the host is up.
+   The site only lights stones on hover/reduced-motion; here the mark is
+   semantic state, so vd-h1 stays Glød unless explicitly unlit (idle). */
+.vd-h1:not(.vd-unlit) {
+  fill: var(--vd-ember);
 }

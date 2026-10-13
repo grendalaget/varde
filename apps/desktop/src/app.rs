@@ -386,27 +386,10 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
     }
 }
 
-/// Window background while the page loads: light or dark per the OS "apps"
-/// personalization setting, so the app doesn't flash the wrong theme color.
-/// Defaults to dark (Natt) when the preference can't be read.
+/// Window background while the page loads. The UI is dark-only (mouve
+/// Natt), matching the dashboard.
 fn window_background() -> tauri::window::Color {
-    let light = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
-        .map(|v| v != 0)
-        .unwrap_or(false);
-    theme_background(if light {
-        tauri::Theme::Light
-    } else {
-        tauri::Theme::Dark
-    })
-}
-
-fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
-    match theme {
-        tauri::Theme::Light => tauri::window::Color(0xf3, 0xf5, 0xf6, 0xff),
-        _ => tauri::window::Color(0x10, 0x16, 0x1a, 0xff),
-    }
+    tauri::window::Color(0x11, 0x0c, 0x0a, 0xff)
 }
 
 // Glass is gated to Mica-capable Windows (11+): it's the one recipe that
@@ -427,35 +410,12 @@ fn glass_supported() -> bool {
 
 /// Mica on Windows 11; acrylic (blurred glass) as the fallback elsewhere.
 /// Returns whether a backdrop actually composited.
-fn apply_glass(w: &WebviewWindow, dark: bool) -> bool {
-    if window_vibrancy::apply_mica(w, Some(dark)).is_ok() {
+fn apply_glass(w: &WebviewWindow) -> bool {
+    if window_vibrancy::apply_mica(w, Some(true)).is_ok() {
         return true;
     }
-    // themed tint over the blur so the panel still matches the theme
-    let tint = if dark {
-        (0x10, 0x16, 0x1a, 0xcc)
-    } else {
-        (0xf3, 0xf5, 0xf6, 0xcc)
-    };
-    window_vibrancy::apply_acrylic(w, Some(tint)).is_ok()
-}
-
-/// The user's OS accent color (HKCU DWM\AccentColor, stored ABGR) as an
-/// sRGB hex string, so the page can accent-tone its brand controls the way
-/// WinUI does with SystemAccentColor. WebView2 doesn't expose it via the
-/// AccentColor CSS color, so it comes over the init script.
-fn os_accent() -> Option<String> {
-    let v: u32 = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(r"Software\Microsoft\Windows\DWM")
-        .ok()?
-        .get_value("AccentColor")
-        .ok()?;
-    Some(format!(
-        "#{:02x}{:02x}{:02x}",
-        v & 0xff,
-        (v >> 8) & 0xff,
-        (v >> 16) & 0xff
-    ))
+    // Natt tint over the blur so the panel still matches the theme
+    window_vibrancy::apply_acrylic(w, Some((0x11, 0x0c, 0x0a, 0xcc))).is_ok()
 }
 
 /// Where the service writes its logs (see packaging/windows).
@@ -479,7 +439,6 @@ fn open_main_window(app: &AppHandle) {
         "Varde"
     };
     let glass = glass_supported();
-    let accent = os_accent().unwrap_or_default();
     let built = tauri::webview_version().is_ok()
         && WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title(title)
@@ -487,41 +446,36 @@ fn open_main_window(app: &AppHandle) {
             .resizable(false)
             .maximizable(false)
             .center()
-            // follow the OS light/dark theme; the page picks its Fluent
-            // theme from prefers-color-scheme
-            .theme(None)
+            // the UI is dark-only; pin dark so WebView2 doesn't flash a
+            // light webview or light scrollbars
+            .theme(Some(tauri::Theme::Dark))
             .background_color(window_background())
             // glass panels: transparent window + transparent webview over
             // a Mica/acrylic backdrop (the layered host is required for the
             // webview's alpha to composite)
             .transparent(glass)
-            .initialization_script(format!(
-                "window.__VARDE_GLASS__ = {}; window.__VARDE_ACCENT__ = {accent:?};",
-                glass
-            ))
+            .initialization_script(format!("window.__VARDE_GLASS__ = {};", glass))
             .build()
             .map(|w| {
                 if glass {
-                    let dark = matches!(w.theme(), Ok(tauri::Theme::Dark));
                     // only let the webview go transparent when a backdrop
                     // really composited — with nothing behind it the window
                     // reads as broken; the builder's themed background stays
-                    if apply_glass(&w, dark) {
+                    if apply_glass(&w) {
                         let _ = w.set_background_color(None);
                     }
                 }
-                // keep the pre-render background + glass in sync when the
-                // OS theme flips while the window is open
+                // re-composite the backdrop if Windows reports a theme flip
+                // (the window stays dark either way)
                 let app = w.app_handle().clone();
                 w.on_window_event(move |event| {
-                    if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                    if let tauri::WindowEvent::ThemeChanged(_) = event {
                         if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
-                            let composited =
-                                glass && apply_glass(&w, !matches!(*theme, tauri::Theme::Light));
+                            let composited = glass && apply_glass(&w);
                             let _ = w.set_background_color(if composited {
                                 None
                             } else {
-                                Some(theme_background(*theme))
+                                Some(window_background())
                             });
                         }
                     }
