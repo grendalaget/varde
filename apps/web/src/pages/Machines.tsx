@@ -24,16 +24,6 @@ type NodePatch = NonNullable<
 
 type Conn = { node_id: string; name?: string; path: string; rtt_us?: number };
 
-// Drop the keys a settled request wrote — but only when the optimistic value
-// still matches it; a later queued patch may already own that key.
-function clearPatch(o: Partial<NodePatch>, body: NodePatch): Partial<NodePatch> {
-  const next = { ...o };
-  for (const k of Object.keys(body) as (keyof NodePatch)[]) {
-    if (next[k] === body[k]) delete next[k];
-  }
-  return next;
-}
-
 export default function Machines() {
   const { nodes, group } = useSession();
   const hasAnchor = nodes.some((n) => n.anchor);
@@ -105,14 +95,22 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
 
   const [opt, setOpt] = useState<Partial<NodePatch>>({});
   const queue = useRef(Promise.resolve());
+  // In-flight request count per patched key: an optimistic value stays until
+  // every request that wrote that key settles, so true/false/true can't flip
+  // the switch back mid-flight.
+  const pending = useRef(new Map<keyof NodePatch, number>());
 
   // Optimistic: flip the switch now, reconcile after PATCH + refresh.
-  // Patches serialize per row so rapid toggles can't settle out of order;
-  // each request clears only its own optimistic keys.
+  // Patches serialize per row so rapid toggles can't settle out of order.
   function patch(body: NodePatch) {
     setErr(null);
+    const keys = Object.keys(body) as (keyof NodePatch)[];
+    for (const k of keys) {
+      pending.current.set(k, (pending.current.get(k) ?? 0) + 1);
+    }
     setOpt((o) => ({ ...o, ...body }));
-    queue.current = queue.current.then(async () => {
+    // catch() first: a rejected request must not wedge the queue
+    queue.current = queue.current.catch(() => {}).then(async () => {
       const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
         params: { path: { nodeId: n.id } },
         body,
@@ -124,7 +122,19 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
         // refresh reconciles the switch with the server anyway
         await refreshNodes().catch(() => {});
       }
-      setOpt((o) => clearPatch(o, body));
+      setOpt((o) => {
+        const next = { ...o };
+        for (const k of keys) {
+          const left = (pending.current.get(k) ?? 1) - 1;
+          if (left > 0) {
+            pending.current.set(k, left);
+          } else {
+            pending.current.delete(k);
+            delete next[k];
+          }
+        }
+        return next;
+      });
     });
   }
 
