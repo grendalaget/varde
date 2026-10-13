@@ -257,9 +257,9 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
               </Button>
             </div>
           )}
-          <ErrorNote>{err}</ErrorNote>
         </div>
       )}
+      <ErrorNote>{err}</ErrorNote>
     </Card>
   );
 }
