@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, errorMessage, type Node } from "../api/client";
 import type { paths } from "../api/schema";
 import {
@@ -24,9 +24,13 @@ type NodePatch = NonNullable<
 
 type Conn = { node_id: string; name?: string; path: string; rtt_us?: number };
 
+// Drop the keys a settled request wrote — but only when the optimistic value
+// still matches it; a later queued patch may already own that key.
 function clearPatch(o: Partial<NodePatch>, body: NodePatch): Partial<NodePatch> {
   const next = { ...o };
-  for (const k of Object.keys(body) as (keyof NodePatch)[]) delete next[k];
+  for (const k of Object.keys(body) as (keyof NodePatch)[]) {
+    if (next[k] === body[k]) delete next[k];
+  }
   return next;
 }
 
@@ -100,22 +104,28 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
   ).filter((c) => c.path !== "none");
 
   const [opt, setOpt] = useState<Partial<NodePatch>>({});
+  const queue = useRef(Promise.resolve());
 
   // Optimistic: flip the switch now, reconcile after PATCH + refresh.
-  async function patch(body: NodePatch) {
+  // Patches serialize per row so rapid toggles can't settle out of order;
+  // each request clears only its own optimistic keys.
+  function patch(body: NodePatch) {
     setErr(null);
     setOpt((o) => ({ ...o, ...body }));
-    const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
-      params: { path: { nodeId: n.id } },
-      body,
-    });
-    if (error) {
-      setErr(errorMessage(error));
+    queue.current = queue.current.then(async () => {
+      const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
+        params: { path: { nodeId: n.id } },
+        body,
+      });
+      if (error) {
+        setErr(errorMessage(error));
+      } else {
+        // a refresh failure must not strand the optimistic value — the next
+        // refresh reconciles the switch with the server anyway
+        await refreshNodes().catch(() => {});
+      }
       setOpt((o) => clearPatch(o, body));
-      return;
-    }
-    await refreshNodes();
-    setOpt((o) => clearPatch(o, body));
+    });
   }
 
   const hostingEnabled = opt.hosting_enabled ?? n.hosting_enabled;

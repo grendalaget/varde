@@ -68,7 +68,6 @@ export default function NewServer() {
       setErr(errorMessage(error));
       return;
     }
-    setCreatedId(data.id);
     if (startNow) {
       const { error: startError } = await api.POST(
         "/v1/servers/{serverId}/start",
@@ -79,6 +78,8 @@ export default function NewServer() {
       );
       if (startError) {
         setBusy(false);
+        // the server exists — offer "Open server" alongside the error
+        setCreatedId(data.id);
         setErr(
           `The server was created, but starting it failed: ${errorMessage(startError)}`,
         );
