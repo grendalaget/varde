@@ -24,6 +24,9 @@ const GROUP_KEY = "varde.group";
 const VARDE_SITE = "https://varde.games";
 // Set once per tab so a failed exchange can't loop the bounce forever.
 const FED_AUTO_KEY = "varde.fed-auto";
+// Set by an explicit sign-out: a domain-wide site cookie would otherwise
+// bounce the user straight back into a fresh CP session.
+const SIGNED_OUT_KEY = "varde.signed-out";
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -85,6 +88,15 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [exchangeFedToken]);
 
+  const continueWithVarde = useCallback(() => {
+    sessionStorage.removeItem(SIGNED_OUT_KEY);
+    // Preserve the current path (e.g. /invite/<code>) across the bounce.
+    const next = encodeURIComponent(
+      window.location.pathname + window.location.search,
+    );
+    window.location.assign(`${VARDE_SITE}/federate/cp?next=${next}`);
+  }, []);
+
   // Logged out on a federated CP: if the browser already has a domain-wide
   // varde.games session, bounce to the site once - it mints a token and
   // returns it in the fragment, so no second login is needed.
@@ -100,17 +112,18 @@ export default function App() {
           f.enabled &&
           f.site_session &&
           !fedError &&
-          !sessionStorage.getItem(FED_AUTO_KEY)
+          !sessionStorage.getItem(FED_AUTO_KEY) &&
+          !sessionStorage.getItem(SIGNED_OUT_KEY)
         ) {
           sessionStorage.setItem(FED_AUTO_KEY, "1");
-          window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
+          continueWithVarde();
         }
       })
       .catch(() => {});
     return () => {
       dead = true;
     };
-  }, [me, fedError]);
+  }, [me, fedError, continueWithVarde]);
 
   const selectGroup = useCallback((id: string) => {
     localStorage.setItem(GROUP_KEY, id);
@@ -135,6 +148,7 @@ export default function App() {
         onAuthed={refreshMe}
         federated={fed?.enabled}
         initialError={fedError}
+        onContinue={continueWithVarde}
       />
     );
 
@@ -332,6 +346,9 @@ function Layout() {
               className="text-muted transition-colors duration-150 hover:text-foreground"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
+                // A domain-wide site cookie would auto-bounce straight back
+                // into a fresh session - remember the explicit sign-out.
+                sessionStorage.setItem(SIGNED_OUT_KEY, "1");
                 window.location.href = "/";
               }}
             >

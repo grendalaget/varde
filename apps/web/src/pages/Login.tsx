@@ -7,10 +7,12 @@ export default function Login({
   onAuthed,
   federated,
   initialError,
+  onContinue,
 }: {
   onAuthed: () => Promise<void>;
   federated?: boolean;
   initialError?: string | null;
+  onContinue?: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -134,9 +136,7 @@ export default function Login({
             <Button
               className="w-full"
               title="Use your varde.games account"
-              onClick={() =>
-                window.location.assign("https://varde.games/federate/cp?next=/")
-              }
+              onClick={onContinue}
             >
               Continue with Varde
             </Button>
