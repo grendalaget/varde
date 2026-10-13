@@ -291,11 +291,13 @@ fn origin(url: &str) -> Result<String> {
     Ok(format!("{scheme}://{authority}"))
 }
 
-/// host of an http(s) URL, without port or brackets.
+/// host of an http(s) URL, without port or brackets, lowercased —
+/// DNS names are case-insensitive, so redirects that only change casing
+/// must still compare equal.
 fn host_of(url: &str) -> Result<String> {
     let uri: Uri = url.parse().map_err(|_| Error::Url(url.to_string()))?;
     uri.host()
-        .map(|h| h.to_string())
+        .map(|h| h.to_ascii_lowercase())
         .ok_or_else(|| Error::Url(url.to_string()))
 }
 
@@ -328,7 +330,10 @@ fn resolve_location(cur: &str, loc: &str) -> Result<String> {
         Some(i) => loc.as_bytes()[i] == b':',
         None => false,
     };
-    let next = if abs {
+    let next = if loc.is_empty() {
+        // an empty reference is the same document, fragment dropped
+        cur.split('#').next().unwrap_or(cur).to_string()
+    } else if abs {
         loc.to_string()
     } else if loc.starts_with("//") {
         let scheme = cur.split(':').next().unwrap_or("https");
@@ -346,8 +351,14 @@ fn resolve_location(cur: &str, loc: &str) -> Result<String> {
             Some(i) => &uri.path()[..=i],
             None => "/",
         };
-        let merged = normalize_segments(&format!("{dir}{loc}"));
-        format!("{}{}", origin(cur)?, merged)
+        // only the path part merges — dots inside a query or fragment
+        // are data, not segments ("next?token=a/../b" keeps its query)
+        let (lpath, lrest) = match loc.find(['?', '#']) {
+            Some(i) => (&loc[..i], &loc[i..]),
+            None => (loc, ""),
+        };
+        let merged = normalize_segments(&format!("{dir}{lpath}"));
+        format!("{}{}{}", origin(cur)?, merged, lrest)
     };
     origin(&next)?;
     Ok(next)
@@ -620,6 +631,27 @@ mod tests {
     }
 
     #[test]
+    fn relative_query_and_fragment_survive_merge() {
+        // dot-segments inside a query are opaque data
+        assert_eq!(
+            resolve_location("https://a.example/v1/x", "next?token=a/../b").unwrap(),
+            "https://a.example/v1/next?token=a/../b"
+        );
+        assert_eq!(
+            resolve_location("https://a.example/v1/x", "next#../f").unwrap(),
+            "https://a.example/v1/next#../f"
+        );
+    }
+
+    #[test]
+    fn empty_location_is_the_same_document() {
+        assert_eq!(
+            resolve_location("https://a.example/v1/agent/poll?x=1#f", "").unwrap(),
+            "https://a.example/v1/agent/poll?x=1"
+        );
+    }
+
+    #[test]
     fn dot_segments_normalize() {
         assert_eq!(
             resolve_location("https://a.example/a/b/c", ".././d").unwrap(),
@@ -651,5 +683,13 @@ mod tests {
         assert!(!in_scope("evil-varde.games", scope));
         assert!(!in_scope("varde.games.evil.example", scope));
         assert!(!in_scope("other.example", scope));
+    }
+
+    #[test]
+    fn hosts_compare_case_insensitively() {
+        let host = host_of("https://CP.VARDE.GAMES/x").unwrap();
+        let scope = registrable(&host);
+        assert!(in_scope("cp.varde.games", scope));
+        assert!(in_scope(&host_of("https://WWW.VARDE.GAMES/").unwrap(), scope));
     }
 }
