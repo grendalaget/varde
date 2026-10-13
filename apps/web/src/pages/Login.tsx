@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api/client";
 import { Logo } from "../components/Logo";
 import { Button, ErrorNote, Field, inputClass } from "../components/ui";
@@ -18,6 +18,11 @@ export default function Login({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(initialError ?? null);
+  // initialError seeds mount state AND syncs later arrivals (a failed token
+  // exchange on an already-open tab reports after Login is mounted).
+  useEffect(() => {
+    if (initialError) setErr(initialError);
+  }, [initialError]);
   const invite = window.location.pathname.startsWith("/invite/")
     ? window.location.pathname.split("/")[2]
     : undefined;
