@@ -767,13 +767,11 @@ export default function App() {
             <h1 className="font-display text-xl font-semibold tracking-tight">
               Varde isn't running
             </h1>
-            <div className="mt-3.5">
-              <WarnNote>
-                <strong>Service unreachable.</strong> The Varde service on this
-                PC isn't answering. Varde can't host or join servers until it
-                runs again.
-              </WarnNote>
-            </div>
+            <WarnNote>
+              <strong>Service unreachable.</strong> The Varde service on this PC
+              isn't answering. Varde can't host or join servers until it runs
+              again.
+            </WarnNote>
             <p className="mt-3.5 text-sm text-muted">
               It normally starts with Windows. Starting it needs administrator
               approval once.

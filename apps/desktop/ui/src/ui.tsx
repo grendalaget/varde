@@ -74,7 +74,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   return (
     <div
       role="alert"
-      className="vd-shake rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger-soft-foreground"
+      className="vd-shake mt-3.5 w-fit max-w-full rounded-lg border border-danger/40 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-soft-foreground"
     >
       {children}
     </div>
@@ -102,7 +102,7 @@ export function describeError(e: unknown): string {
 
 export function WarnNote({ children }: { children: ReactNode }) {
   return (
-    <div className="vd-in rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning-soft-foreground">
+    <div className="vd-in mt-3.5 w-fit max-w-full rounded-lg border border-warning/40 bg-warning-soft px-3.5 py-2.5 text-sm text-warning-soft-foreground">
       {children}
     </div>
   );
