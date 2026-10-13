@@ -2343,30 +2343,52 @@ func TestExternalLogin(t *testing.T) {
 		}
 	}
 
-	// email colliding with a local account links it: the site only mints
-	// tokens for verified emails, so the collision is the same person.
-	opMe := e.mustOK(e.do("GET", "/v1/me", nil, e.token))
-	opID := opMe["user"].(map[string]any)["id"]
+	// email colliding with a local account conflicts: local signup never
+	// verified the email, so an unauthenticated exchange can't merge.
 	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
 		"wuser_9", "op@example.com", exp)
+	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
+		t.Fatalf("email collision: want 409, got %d %s", r.Status, r.Raw)
+	}
+	// the link path proves local ownership via the session instead:
+	// unauthenticated callers and mismatched emails are rejected.
+	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, ""); r.Status != 401 {
+		t.Fatalf("unauthed link: want 401, got %d %s", r.Status, r.Raw)
+	}
+	mismatch := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_10", "someone-else@example.com", exp)
+	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": mismatch}, e.token); r.Status != 409 {
+		t.Fatalf("email mismatch link: want 409, got %d %s", r.Status, r.Raw)
+	}
+	r = e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, e.token)
+	b = e.mustOK(r)
+	opMe := e.mustOK(e.do("GET", "/v1/me", nil, e.token))
+	opID := opMe["user"].(map[string]any)["id"]
+	if b["id"] != opID {
+		t.Fatal("link did not bind the signed-in account")
+	}
+	// the same token now exchanges into the linked account
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
 	linkedMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
 	if linkedMe["user"].(map[string]any)["id"] != opID {
-		t.Fatal("email collision did not link the existing account")
+		t.Fatal("external login after link hit a different account")
 	}
-	// local password login still works on the now-linked account
-	if r := e.do("POST", "/v1/auth/login", map[string]any{"email": "op@example.com", "password": "password123"}, ""); r.Status != 200 {
-		t.Fatalf("local login after link: %d %s", r.Status, r.Raw)
-	}
-	// a recreated site identity (new sub, same email) rebinds rather than conflicts
+	// a recreated site identity (new sub, same email) still collides…
 	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
 		"wuser_99", "op@example.com", exp)
+	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
+		t.Fatalf("recreated identity collision: want 409, got %d %s", r.Status, r.Raw)
+	}
+	// …and rebinds through the authenticated link
+	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, e.token); r.Status != 200 {
+		t.Fatalf("rebind link: %d %s", r.Status, r.Raw)
+	}
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
 	reboundMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
 	if reboundMe["user"].(map[string]any)["id"] != opID {
-		t.Fatal("recreated site identity did not rebind the account")
+		t.Fatal("rebound identity did not reach the linked account")
 	}
 }
 

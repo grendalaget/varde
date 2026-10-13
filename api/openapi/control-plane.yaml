@@ -130,6 +130,31 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /v1/auth/link:
+    post:
+      operationId: linkExternal
+      tags: [auth]
+      summary: >
+        Bind a varde.games identity to the signed-in account — how a
+        pre-federation local account proves ownership before federated
+        sign-in works. The federation token's email must match the account
+        email. Only available when VARDE_AUTH_MODE=federated.
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
+      responses:
+        "200":
+          description: Account linked; returns the updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/auth/logout:
     post:
       operationId: logout
