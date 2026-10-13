@@ -27,6 +27,10 @@ const FED_AUTO_KEY = "varde.fed-auto";
 // Set by an explicit sign-out: a domain-wide site cookie would otherwise
 // bounce the user straight back into a fresh CP session.
 const SIGNED_OUT_KEY = "varde.signed-out";
+// Where to return after the federated bounce. Kept in tab storage on this
+// origin: putting it in `next` would hand paths like /invite/<code> to the
+// site's logs.
+const FED_RETURN_KEY = "varde.fed-return";
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -70,6 +74,12 @@ export default function App() {
     });
     if (error) setFedError(errorMessage(error));
     await refreshMe();
+    // Back from the site's bounce: return to the page that sent us there.
+    const back = sessionStorage.getItem(FED_RETURN_KEY);
+    sessionStorage.removeItem(FED_RETURN_KEY);
+    if (back && back !== window.location.pathname + window.location.search) {
+      navigate(back, true);
+    }
   }, [refreshMe]);
 
   useEffect(() => {
@@ -90,11 +100,13 @@ export default function App() {
 
   const continueWithVarde = useCallback(() => {
     sessionStorage.removeItem(SIGNED_OUT_KEY);
-    // Preserve the current path (e.g. /invite/<code>) across the bounce.
-    const next = encodeURIComponent(
+    // Preserve the current path (e.g. /invite/<code>) across the bounce —
+    // locally, so invite codes never reach the site's query logs.
+    sessionStorage.setItem(
+      FED_RETURN_KEY,
       window.location.pathname + window.location.search,
     );
-    window.location.assign(`${VARDE_SITE}/federate/cp?next=${next}`);
+    window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
   }, []);
 
   // Logged out on a federated CP: if the browser already has a domain-wide
