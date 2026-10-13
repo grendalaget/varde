@@ -1,29 +1,16 @@
 // Link / status window. Talks only to the tray process (typed commands),
 // which talks to the local Varde service.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Button,
-  Dropdown,
-  Field,
   Input,
-  Link,
-  MessageBar,
-  MessageBarBody,
-  MessageBarTitle,
-  Option,
-  Text,
-  Title2,
-  makeStyles,
-  tokens,
-} from "@fluentui/react-components";
-import {
-  Board20Regular,
-  Copy20Regular,
-  Dismiss20Regular,
-  Open20Regular,
-  Power20Regular,
-} from "@fluentui/react-icons";
+  Label,
+  ListBox,
+  Select,
+  Spinner,
+  TextField,
+} from "@heroui/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Logo, Mark } from "./Logo";
 import {
   invoke,
   listen,
@@ -31,11 +18,9 @@ import {
   type LinkDefaults,
   type UiStatus,
 } from "./tauri";
-import markUrl from "./assets/mark.svg";
+import { Button, ErrorNote, Field, WarnNote } from "./ui";
 
 const LINKED = ["connecting", "online", "offline"];
-const brandFont =
-  "'Inter Variable', 'Inter', 'Segoe UI', system-ui, sans-serif";
 
 const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
 
@@ -43,83 +28,102 @@ const hostOf = (u: string) => u.replace(/^[a-z]+:\/\//i, "").split("/")[0];
 const HOSTED_CP_HOST = "cp.varde.games";
 const HOSTED_CP_URL = "https://cp.varde.games";
 
-const useStyles = makeStyles({
-  page: {
-    boxSizing: "border-box",
-    height: "100%",
-    padding: "24px 28px",
-    backgroundColor: tokens.colorNeutralBackground1,
-    color: tokens.colorNeutralForeground1,
-    overflowY: "auto",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    marginBottom: "28px",
-  },
-  mark: {
-    width: "28px",
-    height: "28px",
-    // the asset is a single-color path; masking keeps it visible in both
-    // light and dark themes (it inherits the themed foreground color)
-    backgroundColor: tokens.colorNeutralForeground1,
-    maskImage: `url("${markUrl}")`,
-    maskSize: "contain",
-  },
-  brand: {
-    fontFamily: brandFont,
-    fontSize: "20px",
-    fontWeight: 600,
-    letterSpacing: "-0.012em",
-  },
-  title: {
-    display: "block",
-    fontFamily: brandFont,
-    marginTop: 0,
-    marginBottom: "10px",
-  },
-  lead: { display: "block", marginBottom: "14px" },
-  muted: {
-    display: "block",
-    color: tokens.colorNeutralForeground3,
-    marginBottom: "14px",
-  },
-  bar: { marginBottom: "14px" },
-  code: {
-    fontFamily: "Consolas, ui-monospace, monospace",
-    fontSize: "34px",
-    fontWeight: 600,
-    lineHeight: 1.2,
-    letterSpacing: "0.06em",
-    backgroundColor: tokens.colorNeutralBackground2,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: "8px",
-    padding: "18px 12px",
-    textAlign: "center",
-    marginTop: "6px",
-    marginBottom: "12px",
-    userSelect: "all",
-  },
-  row: {
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap",
-    marginTop: "8px",
-  },
-  form: {
-    marginTop: "14px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px",
-  },
-  serverRow: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: "10px",
-    flexWrap: "wrap",
-  },
-});
+type IconProps = { className?: string };
+
+const iconClass = "h-4 w-4 shrink-0";
+
+function CopyIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  );
+}
+
+function OpenIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
+}
+
+function CloseIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+function DashboardIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect width="7" height="9" x="3" y="3" rx="1" />
+      <rect width="7" height="5" x="14" y="3" rx="1" />
+      <rect width="7" height="9" x="14" y="12" rx="1" />
+      <rect width="7" height="5" x="3" y="16" rx="1" />
+    </svg>
+  );
+}
+
+function PowerIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M12 2v10" />
+      <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+    </svg>
+  );
+}
 
 type View = "wait" | "form" | "fed" | "code" | "done" | "linked" | "noagent";
 
@@ -127,11 +131,10 @@ function describe(s: UiStatus) {
   if (s.group_name && s.node_name)
     return `Linked to ${s.group_name} as ${s.node_name}.`;
   if (s.group_name) return `Linked to ${s.group_name}.`;
-  return "Linked. Connecting to Varde…";
+  return "Linked. Connecting to Varde...";
 }
 
 export default function App() {
-  const styles = useStyles();
   const [defaults, setDefaults] = useState<LinkDefaults | null>(null);
   const [status, setStatus] = useState<UiStatus | null>(null);
   const [seen, setSeen] = useState(false);
@@ -188,7 +191,7 @@ export default function App() {
         if (p.stage === "pick_group") setFedGroup(p.groups[0]?.id ?? "");
       });
       // a deep link may have progressed the sign-in before this window
-      // subscribed — hydrate the current stage
+      // subscribed - hydrate the current stage
       const f = await invoke<FedState | null>("federated_state").catch(
         () => null,
       );
@@ -228,7 +231,7 @@ export default function App() {
     if (!s) return;
     setSeen(true);
     setForceForm(false);
-    // a federated sign-in is done once ITS link flow reaches the service —
+    // a federated sign-in is done once ITS link flow reaches the service -
     // during a re-link the old link still reports a LINKED state until the
     // new one is approved, so wait for our own link to have started
     if (started && LINKED.includes(s.state)) setFed(null);
@@ -256,10 +259,10 @@ export default function App() {
     return "noagent";
   }, [status, seen, graceDone, started, forceForm, formState, fed]);
 
-  // auto-close the "Linked" view on the transition INTO online — status
+  // auto-close the "Linked" view on the transition INTO online - status
   // still says "online" while a re-link is being set up (and after Cancel),
   // so arming on any done+online render would self-close under a pending
-  // link; keying on a code→done view transition misses because approval
+  // link; keying on a code->done view transition misses because approval
   // emits connecting (LINKED) before online
   const prevState = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -284,7 +287,7 @@ export default function App() {
 
   const effectiveUrl =
     urlEdited || url ? url : status?.control_plane_url || defaults?.url || "";
-  // varde.games sign-in only exists on the hosted control plane — and not
+  // varde.games sign-in only exists on the hosted control plane - and not
   // in the elevated re-link window: a browser callback lands in a normal
   // instance that the agent refuses to re-link, so re-link uses the code
   // flow (browser-side approval) only
@@ -370,7 +373,7 @@ export default function App() {
     }
   }, []);
 
-  // installer launch (--link): start linking as soon as not_linked shows —
+  // installer launch (--link): start linking as soon as not_linked shows -
   // varde.games sign-in on the hosted control plane, code flow elsewhere.
   // Decide off the status's own address: url/defaults can still hold the
   // hosted fallback when the first status lands.
@@ -382,7 +385,15 @@ export default function App() {
         void beginVardeLogin();
       else void doLink(autoUrl);
     }
-  }, [view, autoPending, status, defaults, effectiveUrl, doLink, beginVardeLogin]);
+  }, [
+    view,
+    autoPending,
+    status,
+    defaults,
+    effectiveUrl,
+    doLink,
+    beginVardeLogin,
+  ]);
 
   const cancelFed = useCallback(() => {
     // clears the stored token/group pick and any mid-flight link
@@ -422,31 +433,35 @@ export default function App() {
   const locked = !!status?.relink && !defaults?.relink;
 
   return (
-    <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.mark} />
-        <span className={styles.brand}>varde</span>
+    <div className="h-full overflow-y-auto px-7 py-6 text-foreground">
+      <header className="mb-7 flex items-center">
+        <Logo className="h-7" />
       </header>
       <main>
+        {view === "wait" && (
+          <section className="vd-fade flex items-center gap-3 text-sm text-muted">
+            <Mark state="moving" className="h-7 w-7 text-foreground" />
+            Starting Varde...
+          </section>
+        )}
+
         {view === "form" && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
-            </Title2>
-            <Text className={styles.lead} as="p">
+            </h1>
+            <p className="mt-2.5 text-sm leading-relaxed">
               {defaults?.relink
                 ? "Varde opens your dashboard so you can approve this PC. Sign up there, then create a group or join your friends with an invite link."
                 : "Sign in with your varde.games account to link this PC to a group. Running your own server? Use the self-hosted option instead."}
-            </Text>
+            </p>
             {defaults?.relink && (
-              <MessageBar intent="warning" className={styles.bar}>
-                <MessageBarBody>
-                  This PC leaves its current group and gets a new identity.
-                </MessageBarBody>
-              </MessageBar>
+              <WarnNote>
+                This PC leaves its current group and gets a new identity.
+              </WarnNote>
             )}
             <form
-              className={styles.form}
+              className="mt-3.5 flex flex-col gap-3.5"
               onSubmit={(e) => {
                 e.preventDefault();
                 void doLink(effectiveUrl.trim());
@@ -457,47 +472,46 @@ export default function App() {
                   label={
                     fedEligible ? "Self-hosted Varde server" : "Varde server"
                   }
-                  hint={
+                  help={
                     fedEligible
                       ? "The URL of your group's control plane."
                       : "Only if your group runs its own Varde, for example a friend's."
                   }
                 >
-                  <Input
+                  <TextField
                     type="url"
-                    required
-                    spellCheck={false}
-                    autoComplete="url"
-                    value={url}
-                    onChange={(_, d) => {
+                    isRequired
+                    className="w-full"
+                    onChange={(v) => {
                       urlEditedRef.current = true;
-                      setUrl(d.value);
+                      setUrl(v);
                       setUrlEdited(true);
                     }}
-                  />
+                    value={url}
+                  >
+                    <Input
+                      spellCheck={false}
+                      autoComplete="url"
+                      placeholder="https://cp.example.com"
+                    />
+                  </TextField>
                 </Field>
               ) : !hosted ? (
-                <div className={styles.serverRow}>
-                  <Text as="span">
-                    Server: {hostOf(effectiveUrl) || HOSTED_CP_HOST}
-                  </Text>
-                  <Link as="button" onClick={() => setServerOpen(true)}>
+                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm">
+                  <span>Server: {hostOf(effectiveUrl) || HOSTED_CP_HOST}</span>
+                  <button
+                    type="button"
+                    className="text-accent underline-offset-4 transition-colors hover:underline"
+                    onClick={() => setServerOpen(true)}
+                  >
                     Use a different server
-                  </Link>
+                  </button>
                 </div>
               ) : null}
-              {formError && (
-                <MessageBar intent="error" className={styles.bar}>
-                  <MessageBarBody>{formError}</MessageBarBody>
-                </MessageBar>
-              )}
+              <ErrorNote>{formError}</ErrorNote>
               {serverOpen ? (
-                <div className={styles.row}>
-                  <Button
-                    appearance="primary"
-                    type="submit"
-                    disabled={linkBusy}
-                  >
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="primary" type="submit" busy={linkBusy}>
                     Continue
                   </Button>
                   {fedEligible && (
@@ -509,32 +523,24 @@ export default function App() {
               ) : hosted ? (
                 <>
                   <Button
-                    appearance="primary"
-                    disabled={linkBusy}
+                    variant="primary"
+                    busy={linkBusy}
                     onClick={() => void beginVardeLogin()}
                   >
                     Continue with your Varde account
                   </Button>
-                  <div className={styles.row}>
+                  <div className="flex flex-wrap gap-2">
                     <Button onClick={() => setServerOpen(true)}>
                       Use a self-hosted instance
                     </Button>
-                    <Button
-                      type="submit"
-                      appearance="subtle"
-                      disabled={linkBusy}
-                    >
+                    <Button variant="ghost" type="submit" busy={linkBusy}>
                       Use a code instead
                     </Button>
                   </div>
                 </>
               ) : (
-                <div>
-                  <Button
-                    appearance="primary"
-                    type="submit"
-                    disabled={linkBusy}
-                  >
+                <div className="mt-2">
+                  <Button variant="primary" type="submit" busy={linkBusy}>
                     Continue
                   </Button>
                 </div>
@@ -544,75 +550,74 @@ export default function App() {
         )}
 
         {view === "fed" && fed && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               Log in with Varde
-            </Title2>
+            </h1>
             {fed.stage === "confirm" && (
               <>
-                <Text className={styles.lead} as="p">
+                <p className="mt-2.5 text-sm leading-relaxed">
                   varde.games wants to link this PC to{" "}
                   {fed.email ? <strong>{fed.email}</strong> : "your account"}.
-                </Text>
-                <Text className={styles.muted} as="p">
+                </p>
+                <p className="mt-2 text-sm text-muted">
                   Only continue if you just clicked Log in with Varde.
-                </Text>
+                </p>
               </>
             )}
             {fed.stage === "waiting_browser" && (
               <>
-                <Text className={styles.lead} as="p">
-                  Finish signing in at varde.games — you'll come back here
+                <p className="mt-2.5 text-sm leading-relaxed">
+                  Finish signing in at varde.games - you'll come back here
                   automatically.
-                </Text>
-                <Text className={styles.muted} as="p">
-                  Waiting for your browser…
-                </Text>
+                </p>
+                <p className="mt-2 flex items-center gap-2 text-sm text-muted">
+                  <Spinner size="sm" /> Waiting for your browser...
+                </p>
               </>
             )}
             {fed.stage === "exchanging" && (
-              <Text className={styles.lead} as="p">
-                Signing you in…
-              </Text>
+              <p className="mt-2.5 flex items-center gap-2 text-sm leading-relaxed">
+                <Spinner size="sm" /> Signing you in...
+              </p>
             )}
             {fed.stage === "approving" && (
-              <Text className={styles.lead} as="p">
-                Linking this PC…
-              </Text>
+              <p className="mt-2.5 flex items-center gap-2 text-sm leading-relaxed">
+                <Spinner size="sm" /> Linking this PC...
+              </p>
             )}
             {fed.stage === "pick_group" && (
               <>
-                <Text className={styles.lead} as="p">
+                <p className="mt-2.5 text-sm leading-relaxed">
                   Pick the group this PC joins.
-                </Text>
-                <Field label="Group">
-                  <Dropdown
-                    value={
-                      fed.groups.find((g) => g.id === fedGroup)?.name ?? ""
-                    }
-                    selectedOptions={fedGroup ? [fedGroup] : []}
-                    onOptionSelect={(_, d) =>
-                      setFedGroup(String(d.optionValue ?? ""))
-                    }
-                  >
-                    {fed.groups.map((g) => (
-                      <Option key={g.id} value={g.id}>
-                        {g.name}
-                      </Option>
-                    ))}
-                  </Dropdown>
-                </Field>
+                </p>
+                <Select
+                  selectedKey={fedGroup}
+                  onSelectionChange={(k) => setFedGroup(String(k))}
+                  className="mt-3.5 w-full"
+                >
+                  <Label>Group</Label>
+                  <Select.Trigger>
+                    <Select.Value />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      {fed.groups.map((g) => (
+                        <ListBox.Item key={g.id} id={g.id}>
+                          {g.name}
+                        </ListBox.Item>
+                      ))}
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
               </>
             )}
-            {fed.stage === "error" && (
-              <MessageBar intent="error" className={styles.bar}>
-                <MessageBarBody>{fed.message}</MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.row}>
+            {fed.stage === "error" && <ErrorNote>{fed.message}</ErrorNote>}
+            <div className="mt-3.5 flex flex-wrap gap-2">
               {fed.stage === "confirm" && (
                 <Button
-                  appearance="primary"
+                  variant="primary"
                   onClick={() => void confirmVardeLogin()}
                 >
                   Link this PC
@@ -620,7 +625,7 @@ export default function App() {
               )}
               {fed.stage === "pick_group" && (
                 <Button
-                  appearance="primary"
+                  variant="primary"
                   disabled={!fedGroup}
                   onClick={() => void finishVardeLogin()}
                 >
@@ -629,62 +634,56 @@ export default function App() {
               )}
               {fed.stage === "error" && (
                 <Button
-                  appearance="primary"
+                  variant="primary"
                   onClick={() => void beginVardeLogin()}
                 >
                   Try again
                 </Button>
               )}
-              <Button icon={<Dismiss20Regular />} onClick={() => cancelFed()}>
-                Cancel
+              <Button onClick={() => cancelFed()}>
+                <CloseIcon /> Cancel
               </Button>
             </div>
           </section>
         )}
 
         {view === "code" && status && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               Approve this PC in your browser
-            </Title2>
-            <Text className={styles.lead} as="p">
+            </h1>
+            <p className="mt-2.5 text-sm leading-relaxed">
               Your browser opened Varde. Check that it shows this code, then
               approve:
-            </Text>
-            <div id="link-code" className={styles.code} aria-live="polite">
+            </p>
+            <div
+              id="link-code"
+              aria-live="polite"
+              className="mt-1.5 mb-3 select-all rounded-lg border border-separator bg-surface-secondary px-3 py-4 text-center font-mono text-4xl font-semibold tracking-widest"
+            >
               {code}
             </div>
-            <Text className={styles.muted} as="p">
-              {expiry}
-            </Text>
+            <p className="text-sm text-muted">{expiry}</p>
             {locked && (
-              <Text className={styles.muted} as="p">
+              <p className="mt-1 text-sm text-muted">
                 An administrator is re-linking this PC.
-              </Text>
+              </p>
             )}
-            {codeError && (
-              <MessageBar intent="error" className={styles.bar}>
-                <MessageBarBody>{codeError}</MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.row}>
-              <Button icon={<Copy20Regular />} onClick={() => void copy()}>
-                {copied ? "Copied" : "Copy code"}
+            <ErrorNote>{codeError}</ErrorNote>
+            <div className="mt-3.5 flex flex-wrap gap-2">
+              <Button onClick={() => void copy()}>
+                <CopyIcon /> {copied ? "Copied" : "Copy code"}
               </Button>
               <Button
-                icon={<Open20Regular />}
                 onClick={() =>
                   void invoke("open_url", { url: status.link_url })
                 }
               >
-                Open again
+                <OpenIcon /> Open again
               </Button>
               {!locked && (
-                <Button
-                  icon={<Dismiss20Regular />}
-                  onClick={() => void cancelLink()}
-                >
-                  Cancel
+                <Button variant="ghost" onClick={() => void cancelLink()}>
+                  <CloseIcon /> Cancel
                 </Button>
               )}
             </div>
@@ -692,19 +691,17 @@ export default function App() {
         )}
 
         {view === "done" && status && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               Linked
-            </Title2>
-            <Text className={styles.lead} as="p">
-              {describe(status)}
-            </Text>
-            <Text className={styles.muted} as="p">
+            </h1>
+            <p className="mt-2.5 text-sm leading-relaxed">{describe(status)}</p>
+            <p className="mt-2 text-sm text-muted">
               The Varde service is running on this PC.
-            </Text>
-            <div className={styles.row}>
+            </p>
+            <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
-                appearance="primary"
+                variant="primary"
                 onClick={() => void invoke("close_window")}
               >
                 Close
@@ -714,25 +711,18 @@ export default function App() {
         )}
 
         {view === "linked" && status && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               This PC is linked
-            </Title2>
-            <Text className={styles.lead} as="p">
-              {describe(status)}
-            </Text>
-            <Text className={styles.muted} as="p">
+            </h1>
+            <p className="mt-2.5 text-sm leading-relaxed">{describe(status)}</p>
+            <p className="mt-2 text-sm text-muted">
               The Varde service is running on this PC.
-            </Text>
-            {linkedError && (
-              <MessageBar intent="error" className={styles.bar}>
-                <MessageBarBody>{linkedError}</MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.row}>
+            </p>
+            <ErrorNote>{linkedError}</ErrorNote>
+            <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
-                appearance="primary"
-                icon={<Board20Regular />}
+                variant="primary"
                 onClick={() => {
                   setLinkedError("");
                   void invoke("open_dashboard").catch((e) =>
@@ -740,76 +730,71 @@ export default function App() {
                   );
                 }}
               >
-                Open dashboard
+                <DashboardIcon /> Open dashboard
               </Button>
               <Button
-                appearance="subtle"
-                icon={<Open20Regular />}
+                variant="ghost"
                 onClick={() =>
                   void invoke("open_url", { url: status.control_plane_url })
                 }
               >
-                Open in browser
+                <OpenIcon /> Open in browser
               </Button>
               {/* stopping while hosting would leave the game running unmanaged */}
               {!status.hosting && (
                 <Button
-                  icon={<Power20Regular />}
-                  disabled={busy["svc-stop"]}
+                  busy={busy["svc-stop"]}
                   onClick={() =>
                     void service("stop_service", "svc-stop", setLinkedError)
                   }
                 >
-                  {busy["svc-stop"] ? "Stopping…" : "Stop Varde"}
+                  <PowerIcon />{" "}
+                  {busy["svc-stop"] ? "Stopping..." : "Stop Varde"}
                 </Button>
               )}
               <Button
-                icon={<Dismiss20Regular />}
+                variant="ghost"
                 onClick={() => void invoke("close_window")}
               >
-                Close
+                <CloseIcon /> Close
               </Button>
             </div>
           </section>
         )}
 
         {view === "noagent" && (
-          <section>
-            <Title2 className={styles.title} as="h1">
+          <section className="vd-enter">
+            <h1 className="font-display text-xl font-semibold tracking-tight">
               Varde isn't running
-            </Title2>
-            <MessageBar intent="warning" className={styles.bar}>
-              <MessageBarBody>
-                <MessageBarTitle>Service unreachable</MessageBarTitle>
-                The Varde service on this PC isn't answering. Varde can't host
-                or join servers until it runs again.
-              </MessageBarBody>
-            </MessageBar>
-            <Text className={styles.muted} as="p">
+            </h1>
+            <div className="mt-3.5">
+              <WarnNote>
+                <strong>Service unreachable.</strong> The Varde service on this
+                PC isn't answering. Varde can't host or join servers until it
+                runs again.
+              </WarnNote>
+            </div>
+            <p className="mt-3.5 text-sm text-muted">
               It normally starts with Windows. Starting it needs administrator
               approval once.
-            </Text>
-            {noagentError && (
-              <MessageBar intent="error" className={styles.bar}>
-                <MessageBarBody>{noagentError}</MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.row}>
+            </p>
+            <ErrorNote>{noagentError}</ErrorNote>
+            <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
-                appearance="primary"
-                icon={<Power20Regular />}
-                disabled={busy["svc-start"]}
+                variant="primary"
+                busy={busy["svc-start"]}
                 onClick={() =>
                   void service("start_service", "svc-start", setNoagentError)
                 }
               >
-                {busy["svc-start"] ? "Starting…" : "Start Varde"}
+                <PowerIcon />{" "}
+                {busy["svc-start"] ? "Starting..." : "Start Varde"}
               </Button>
               <Button
-                icon={<Dismiss20Regular />}
+                variant="ghost"
                 onClick={() => void invoke("close_window")}
               >
-                Close
+                <CloseIcon /> Close
               </Button>
             </div>
           </section>

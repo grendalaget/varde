@@ -19,5 +19,8 @@ export default tseslint.config([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    // ui.tsx shares cx() and style constants alongside components, like
+    // apps/web does
+    rules: { "react-refresh/only-export-components": "off" },
   },
 ]);

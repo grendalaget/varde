@@ -151,9 +151,7 @@ function mock(): TauriGlobal {
           }
           case "confirm_varde_login": {
             emit("federated-auth", { stage: "exchanging" });
-            const fedp = new URLSearchParams(window.location.search).get(
-              "fed",
-            );
+            const fedp = new URLSearchParams(window.location.search).get("fed");
             const multi = fedp === "multi";
             // TEMP-TEST: simulate a federated-auth failure with ?fed=error
             const err = fedp === "error";
