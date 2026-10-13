@@ -86,12 +86,14 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 // that still looks like plumbing is swapped for a safe line rather than
 // painting "api 404 http_error: 404 page not found" on the screen.
 export function describeError(e: unknown): string {
-  const s = String(e);
+  // `String(new Error("x"))` yields "Error: x" - strip the class name so an
+  // Error-typed rejection with a friendly message still shows it, while one
+  // holding plumbing ("Error: api 404 http_error: ...") is caught below.
+  const s = String(e).replace(/^Error:\s*/, "");
   if (
     /http_error|page not found|transport error|error trying to connect|status:?\s*\d{3}|mock:/i.test(
       s,
-    ) ||
-    s.startsWith("Error:")
+    )
   ) {
     return "Something went wrong. Try again, or restart Varde if it keeps happening.";
   }
