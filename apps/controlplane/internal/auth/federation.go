@@ -146,12 +146,18 @@ func (f *Federation) LinkExternal(ctx context.Context, u *store.User, raw string
 	if u.WebsiteUserID != nil && *u.WebsiteUserID == claims.Subject {
 		return u, nil // already linked to this identity
 	}
+	st := f.Local.Store
+	if other, err := st.UserByWebsiteID(ctx, claims.Subject); err == nil && other.ID != u.ID {
+		return nil, fmt.Errorf("conflict: this varde.games identity is already linked to a different account")
+	}
 	name := strings.TrimSpace(claims.Name)
 	if name == "" {
 		name = email
 	}
-	st := f.Local.Store
 	if err := st.BindWebsiteUserID(ctx, u.ID, claims.Subject, email, name); err != nil {
+		if store.IsUniqueViolation(err) {
+			return nil, fmt.Errorf("conflict: this varde.games identity is already linked to a different account")
+		}
 		return nil, err
 	}
 	u.Email, u.DisplayName = email, name
