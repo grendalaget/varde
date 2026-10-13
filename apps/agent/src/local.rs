@@ -37,6 +37,7 @@ struct LinkState {
     cp_url: String,
     active: Option<pb::Link>,
     error: String,
+    error_detail: String,
     task: Option<tokio::task::JoinHandle<()>>,
     /// The active flow is a re-link (only an administrator may cancel it).
     relink: bool,
@@ -87,6 +88,7 @@ impl Hub {
             let l = self.link.lock().unwrap();
             s.link = l.active.clone();
             s.link_error = l.error.clone();
+            s.link_error_detail = l.error_detail.clone();
             s.control_plane_url = l.cp_url.clone();
         }
         let linking = s.link.is_some();
@@ -207,7 +209,11 @@ impl Hub {
         {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => {
-                return Err(self.link_failed(&url, reach_err(&url, &e)))
+                return Err(self.link_failed(
+                    &url,
+                    reach_err(&url, &e),
+                    format!("{e:#}"),
+                ))
             }
             Err(_) => {
                 return Err(self.link_failed(
@@ -215,6 +221,7 @@ impl Hub {
                     format!(
                         "The server at {url} isn't answering. Check the address and that the control plane is running."
                     ),
+                    "start_device timed out after 15s".to_string(),
                 ))
             }
         };
@@ -240,18 +247,20 @@ impl Hub {
             l.cp_url = url;
             l.active = Some(active);
             l.error.clear();
+            l.error_detail.clear();
             l.relink = linked;
         }
         self.bump();
         Ok(self.status())
     }
 
-    fn link_failed(&self, url: &str, msg: String) -> Status {
-        warn!(%url, error = %msg, "linking failed");
+    fn link_failed(&self, url: &str, msg: String, detail: String) -> Status {
+        warn!(%url, error = %msg, detail = %detail, "linking failed");
         {
             let mut l = self.link.lock().unwrap();
             l.cp_url = url.to_string();
             l.error = msg.clone();
+            l.error_detail = detail;
         }
         self.bump();
         Status::unavailable(msg)
@@ -269,15 +278,18 @@ impl Hub {
         let every = Duration::from_secs(dev.interval.max(1) as u64);
         let err = loop {
             if Instant::now() >= deadline {
-                break CODE_EXPIRED.to_string();
+                break (CODE_EXPIRED.to_string(), String::new());
             }
             tokio::time::sleep(every).await;
             match link::poll_device(&client, &dev.device_code).await {
                 Ok(link::Poll::Pending) => {}
-                Ok(link::Poll::Expired) => break CODE_EXPIRED.to_string(),
+                Ok(link::Poll::Expired) => break (CODE_EXPIRED.to_string(), String::new()),
                 Ok(link::Poll::Approved(_)) if relink && self.hosting_now() => {
-                    break "This PC started hosting a server, so the re-link was cancelled."
-                        .to_string();
+                    break (
+                        "This PC started hosting a server, so the re-link was cancelled."
+                            .to_string(),
+                        String::new(),
+                    );
                 }
                 Ok(link::Poll::Approved(r)) => match self.write_link(&url, &r, &key, relink) {
                     Ok(()) => {
@@ -293,20 +305,25 @@ impl Hub {
                         return;
                     }
                     Err(e) => {
-                        warn!(error = %format!("{e:#}"), "could not save the link");
-                        break "Your link was approved, but Varde couldn't save it on this PC. Try linking again, or restart the Varde service."
-                            .to_string();
+                        let detail = format!("{e:#}");
+                        warn!(error = %detail, "could not save the link");
+                        break (
+                            "Your link was approved, but Varde couldn't save it on this PC. Try linking again, or restart the Varde service."
+                                .to_string(),
+                            detail,
+                        );
                     }
                 },
                 // transient (offline, CP restarting): keep polling until expiry
                 Err(e) => warn!(error = %format!("{e:#}"), "link poll failed; retrying"),
             }
         };
-        warn!(error = %err, "linking stopped");
+        warn!(error = %err.0, "linking stopped");
         {
             let mut l = self.link.lock().unwrap();
             l.active = None;
-            l.error = err;
+            l.error = err.0;
+            l.error_detail = err.1;
             l.task = None;
             l.relink = false;
         }

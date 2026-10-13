@@ -18,7 +18,16 @@ import {
   type LinkDefaults,
   type UiStatus,
 } from "./tauri";
-import { Button, describeError, ErrorNote, Field, WarnNote } from "./ui";
+import {
+  Button,
+  describeError,
+  ErrorNote,
+  errorParts,
+  Field,
+  WarnNote,
+} from "./ui";
+
+type ErrParts = { text: string; detail?: string };
 
 const LINKED = ["connecting", "online", "offline"];
 
@@ -149,10 +158,10 @@ export default function App() {
   const urlEditedRef = useRef(false);
   const [code, setCode] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const [formError, setFormError] = useState("");
-  const [codeError, setCodeError] = useState("");
-  const [linkedError, setLinkedError] = useState("");
-  const [noagentError, setNoagentError] = useState("");
+  const [formError, setFormError] = useState<ErrParts | null>(null);
+  const [codeError, setCodeError] = useState<ErrParts | null>(null);
+  const [linkedError, setLinkedError] = useState<ErrParts | null>(null);
+  const [noagentError, setNoagentError] = useState<ErrParts | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -238,12 +247,16 @@ export default function App() {
     if (s.state === "linking" && s.user_code) {
       setStarted(true);
       // a new code: drop a refusal shown for the previous one
-      if (s.user_code !== code) setCodeError("");
+      if (s.user_code !== code) setCodeError(null);
       setCode(s.user_code);
     }
     if (!urlEditedRef.current && s.control_plane_url)
       setUrl(s.control_plane_url);
-    if (formState) setFormError(describeError(s.link_error));
+    if (formState)
+      setFormError({
+        text: describeError(s.link_error),
+        detail: s.link_error_detail || undefined,
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
@@ -303,13 +316,13 @@ export default function App() {
   };
 
   const doLink = useCallback(async (u: string) => {
-    setFormError("");
+    setFormError(null);
     setLinkBusy(true);
     try {
       setStatus(await invoke<UiStatus>("start_link", { url: u }));
     } catch (e) {
       setStarted(false);
-      setFormError(describeError(e));
+      setFormError(errorParts(e));
     } finally {
       setLinkBusy(false);
     }
@@ -319,9 +332,9 @@ export default function App() {
     async (
       cmd: "start_service" | "stop_service",
       key: string,
-      setErr: (m: string) => void,
+      setErr: (m: ErrParts | null) => void,
     ) => {
-      setErr("");
+      setErr(null);
       setBusy((b) => ({ ...b, [key]: true }));
       try {
         // the elevated instance does the work; status arrives on its own
@@ -329,7 +342,7 @@ export default function App() {
         setTimeout(() => setBusy((b) => ({ ...b, [key]: false })), 4000);
       } catch (e) {
         setBusy((b) => ({ ...b, [key]: false }));
-        setErr(describeError(e));
+        setErr(errorParts(e));
       }
     },
     [],
@@ -353,11 +366,11 @@ export default function App() {
   }, [code]);
 
   const cancelLink = useCallback(async () => {
-    setCodeError("");
+    setCodeError(null);
     try {
       await invoke("cancel_link");
     } catch (e) {
-      setCodeError(describeError(e));
+      setCodeError(errorParts(e));
       return;
     }
     setStarted(false);
@@ -365,11 +378,12 @@ export default function App() {
   }, []);
 
   const beginVardeLogin = useCallback(async () => {
-    setFormError("");
+    setFormError(null);
     try {
       await invoke("begin_varde_login");
     } catch (e) {
-      setFed({ stage: "error", message: describeError(e) });
+      const p = errorParts(e);
+      setFed({ stage: "error", message: p.text, detail: p.detail });
     }
   }, []);
 
@@ -405,7 +419,8 @@ export default function App() {
     try {
       await invoke("finish_varde_login", { groupId: fedGroup });
     } catch (e) {
-      setFed({ stage: "error", message: describeError(e) });
+      const p = errorParts(e);
+      setFed({ stage: "error", message: p.text, detail: p.detail });
     }
   }, [fedGroup]);
 
@@ -413,7 +428,8 @@ export default function App() {
     try {
       await invoke("confirm_varde_login");
     } catch (e) {
-      setFed({ stage: "error", message: describeError(e) });
+      const p = errorParts(e);
+      setFed({ stage: "error", message: p.text, detail: p.detail });
     }
   }, []);
 
@@ -508,7 +524,9 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
-              <ErrorNote>{formError}</ErrorNote>
+              <ErrorNote detail={formError?.detail}>
+                {formError?.text}
+              </ErrorNote>
               {serverOpen ? (
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button variant="primary" type="submit" busy={linkBusy}>
@@ -613,7 +631,9 @@ export default function App() {
                 </Select>
               </>
             )}
-            {fed.stage === "error" && <ErrorNote>{fed.message}</ErrorNote>}
+            {fed.stage === "error" && (
+              <ErrorNote detail={fed.detail}>{fed.message}</ErrorNote>
+            )}
             <div className="mt-3.5 flex flex-wrap gap-2">
               {fed.stage === "confirm" && (
                 <Button
@@ -669,7 +689,7 @@ export default function App() {
                 An administrator is re-linking this PC.
               </p>
             )}
-            <ErrorNote>{codeError}</ErrorNote>
+            <ErrorNote detail={codeError?.detail}>{codeError?.text}</ErrorNote>
             <div className="mt-3.5 flex flex-wrap gap-2">
               <Button onClick={() => void copy()}>
                 <CopyIcon /> {copied ? "Copied" : "Copy code"}
@@ -719,14 +739,16 @@ export default function App() {
             <p className="mt-2 text-sm text-muted">
               The Varde service is running on this PC.
             </p>
-            <ErrorNote>{linkedError}</ErrorNote>
+            <ErrorNote detail={linkedError?.detail}>
+              {linkedError?.text}
+            </ErrorNote>
             <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 onClick={() => {
-                  setLinkedError("");
+                  setLinkedError(null);
                   void invoke("open_dashboard").catch((e) =>
-                    setLinkedError(describeError(e)),
+                    setLinkedError(errorParts(e)),
                   );
                 }}
               >
@@ -776,7 +798,9 @@ export default function App() {
               It normally starts with Windows. Starting it needs administrator
               approval once.
             </p>
-            <ErrorNote>{noagentError}</ErrorNote>
+            <ErrorNote detail={noagentError?.detail}>
+              {noagentError?.text}
+            </ErrorNote>
             <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
                 variant="primary"
