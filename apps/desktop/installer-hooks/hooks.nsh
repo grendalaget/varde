@@ -126,35 +126,6 @@ Function VardeCheckPlainHttp
   StrCpy $9 "0"
 FunctionEnd
 
-; Loopback URL check for server.url contents: a loopback address only ever
-; meant the bundled control plane, so it is dead once that component is gone.
-; $0 = url in, $9 = "1" loopback / "0" other. host[:port][/path], any scheme.
-Function VardeIsLoopbackUrl
-  ${StrCase} $0 $0 "L"
-  StrCpy $1 $0 7
-  ${If} $1 == "http://"
-    StrCpy $0 $0 "" 7
-  ${Else}
-    StrCpy $1 $0 8
-    ${If} $1 == "https://"
-      StrCpy $0 $0 "" 8
-    ${EndIf}
-  ${EndIf}
-  StrCpy $9 "0"
-  StrCpy $1 $0 10
-  ${If} $1 == "localhost:"
-  ${OrIf} $1 == "localhost/"
-  ${OrIf} $0 == "localhost"
-    StrCpy $9 "1"
-    Return
-  ${EndIf}
-  StrCpy $1 $0 4
-  ${If} $1 == "127."
-  ${OrIf} $1 == "[::1"
-    StrCpy $9 "1"
-  ${EndIf}
-FunctionEnd
-
 ; icacls: grant SYSTEM + Administrators full (matching Inno's
 ; Permissions: system-full admins-full); logs also get Users read/exec.
 Function VardeAcl
@@ -285,8 +256,10 @@ FunctionEnd
   ${Else}
     ; upgrade with it unticked: service already removed above; drop the binary
     Delete "$INSTDIR\varde-control-plane.exe"
-    ; a loopback server.url only pointed at the bundled CP — dead now. Drop it
-    ; so an unlinked/migrated install falls back to the hosted default.
+    ; the bundled-CP default server.url is dead once that component is gone.
+    ; Drop it so an unlinked/migrated install falls back to the hosted
+    ; default — but only the exact address the component wrote: any other
+    ; loopback value is a deliberate server choice we must not touch.
     ; (an explicit /CPURL always wins, even a loopback one)
     ${If} $CpUrl == ""
     ${AndIf} ${FileExists} "$APPDATA\Varde\server.url"
@@ -304,10 +277,10 @@ FunctionEnd
           ${ExitDo}
         ${EndIf}
       ${Loop}
-      StrCpy $0 $2
-      Call VardeIsLoopbackUrl
-      ${If} $9 == "1"
-        DetailPrint "Removing the stale local control-plane address"
+      ${StrCase} $3 $2 "L"
+      ${If} $3 == "http://localhost:8080"
+      ${OrIf} $3 == "http://localhost:8080/"
+        DetailPrint "Removing the stale bundled control-plane address"
         Delete "$APPDATA\Varde\server.url"
       ${EndIf}
     ${EndIf}
