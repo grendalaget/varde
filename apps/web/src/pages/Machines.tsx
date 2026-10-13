@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, errorMessage, type Node } from "../api/client";
 import type { paths } from "../api/schema";
 import {
@@ -93,15 +93,53 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
     (n as Node & { connections?: Conn[] }).connections ?? []
   ).filter((c) => c.path !== "none");
 
-  async function patch(body: NodePatch) {
+  const [opt, setOpt] = useState<Partial<NodePatch>>({});
+  const queue = useRef(Promise.resolve());
+  // In-flight request count per patched key: an optimistic value stays until
+  // every request that wrote that key settles, so true/false/true can't flip
+  // the switch back mid-flight.
+  const pending = useRef(new Map<keyof NodePatch, number>());
+
+  // Optimistic: flip the switch now, reconcile after PATCH + refresh.
+  // Patches serialize per row so rapid toggles can't settle out of order.
+  function patch(body: NodePatch) {
     setErr(null);
-    const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
-      params: { path: { nodeId: n.id } },
-      body,
+    const keys = Object.keys(body) as (keyof NodePatch)[];
+    for (const k of keys) {
+      pending.current.set(k, (pending.current.get(k) ?? 0) + 1);
+    }
+    setOpt((o) => ({ ...o, ...body }));
+    // catch() first: a rejected request must not wedge the queue
+    queue.current = queue.current.catch(() => {}).then(async () => {
+      const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
+        params: { path: { nodeId: n.id } },
+        body,
+      });
+      if (error) {
+        setErr(errorMessage(error));
+      } else {
+        // a refresh failure must not strand the optimistic value — the next
+        // refresh reconciles the switch with the server anyway
+        await refreshNodes().catch(() => {});
+      }
+      setOpt((o) => {
+        const next = { ...o };
+        for (const k of keys) {
+          const left = (pending.current.get(k) ?? 1) - 1;
+          if (left > 0) {
+            pending.current.set(k, left);
+          } else {
+            pending.current.delete(k);
+            delete next[k];
+          }
+        }
+        return next;
+      });
     });
-    if (error) setErr(errorMessage(error));
-    await refreshNodes();
   }
+
+  const hostingEnabled = opt.hosting_enabled ?? n.hosting_enabled;
+  const anchor = opt.anchor ?? n.anchor;
 
   const caps = n.capabilities;
   const live = n.liveness ?? (n.online ? "online" : "offline");
@@ -125,7 +163,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
                   <span className="truncate">Hosting {hosting.join(", ")}</span>
                 </Badge>
               )}
-              {n.anchor && <Badge tone="violet">Always-on backup</Badge>}
+              {anchor && <Badge tone="violet">Always-on backup</Badge>}
               {n.admin_state !== "active" && (
                 <Badge tone="warn">{n.admin_state}</Badge>
               )}
@@ -168,15 +206,14 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
             ))}
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-foreground">
-          <Toggle
-            checked={n.hosting_enabled}
-            disabled={!admin}
-            onChange={(v) => void patch({ hosting_enabled: v })}
-            label="Can host"
-          />
-          Can host
-        </div>
+        <Toggle
+          checked={hostingEnabled}
+          disabled={!admin}
+          onChange={(v) => void patch({ hosting_enabled: v })}
+          label="Can host"
+        >
+          <span className="text-sm text-foreground">Can host</span>
+        </Toggle>
         <Button variant="ghost" onClick={() => setOpen(!open)}>
           {open ? "Less" : "More"}
         </Button>
@@ -185,18 +222,19 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
         <div className="vd-reveal space-y-4 border-t border-separator px-4 py-4 text-sm">
           <div className="flex items-start gap-3">
             <Toggle
-              checked={n.anchor}
+              checked={anchor}
               disabled={!admin}
               onChange={(v) => void patch({ anchor: v })}
               label="Always-on backup"
-            />
-            <div>
-              <div className="text-foreground">Always-on backup</div>
-              <div className="text-xs text-muted">
-                Gets a copy of every save from every server. Use this for
-                machines that are always on.
-              </div>
-            </div>
+            >
+              <span>
+                <span className="block text-foreground">Always-on backup</span>
+                <span className="block text-xs text-muted">
+                  Gets a copy of every save from every server. Use this for
+                  machines that are always on.
+                </span>
+              </span>
+            </Toggle>
           </div>
           <div className="grid gap-2 text-xs text-muted sm:grid-cols-2">
             <div>Agent version: {n.agent_version ?? "-"}</div>
@@ -239,9 +277,9 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
               </Button>
             </div>
           )}
-          <ErrorNote>{err}</ErrorNote>
         </div>
       )}
+      <ErrorNote>{err}</ErrorNote>
     </Card>
   );
 }

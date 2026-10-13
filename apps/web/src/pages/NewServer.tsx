@@ -24,6 +24,7 @@ export default function NewServer() {
   const [startNow, setStartNow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const visibleGames = games.filter(
     (g) => g.id !== "testgame" || import.meta.env.DEV,
@@ -68,10 +69,22 @@ export default function NewServer() {
       return;
     }
     if (startNow) {
-      await api.POST("/v1/servers/{serverId}/start", {
-        params: { path: { serverId: data.id } },
-        body: {},
-      });
+      const { error: startError } = await api.POST(
+        "/v1/servers/{serverId}/start",
+        {
+          params: { path: { serverId: data.id } },
+          body: {},
+        },
+      );
+      if (startError) {
+        setBusy(false);
+        // the server exists — offer "Open server" alongside the error
+        setCreatedId(data.id);
+        setErr(
+          `The server was created, but starting it failed: ${errorMessage(startError)}`,
+        );
+        return;
+      }
     }
     navigate(`/servers/${data.id}`);
   }
@@ -140,16 +153,11 @@ export default function NewServer() {
                 ))}
               </select>
             </Field>
-            <div className="flex items-center gap-3">
-              <Toggle
-                checked={startNow}
-                onChange={setStartNow}
-                label="Start now"
-              />
+            <Toggle checked={startNow} onChange={setStartNow} label="Start now">
               <span className="text-sm text-foreground">
                 Start it right away
               </span>
-            </div>
+            </Toggle>
           </div>
         </Card>
         <ErrorNote>{err}</ErrorNote>
@@ -157,14 +165,24 @@ export default function NewServer() {
           <Button type="button" variant="ghost" onClick={() => navigate("/")}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            busy={busy}
-            disabled={!gameId}
-          >
-            Create server
-          </Button>
+          {createdId ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => navigate(`/servers/${createdId}`)}
+            >
+              Open server
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              variant="primary"
+              busy={busy}
+              disabled={!gameId}
+            >
+              Create server
+            </Button>
+          )}
         </div>
       </form>
     </>
@@ -186,11 +204,12 @@ export function ConfigInput({
   if (f.type === "bool") {
     return (
       <div className="flex items-start gap-3">
-        <Toggle checked={!!value} onChange={onChange} label={label} />
-        <div>
-          <div className="text-sm text-foreground">{label}</div>
-          {f.help && <div className="text-xs text-muted">{f.help}</div>}
-        </div>
+        <Toggle checked={!!value} onChange={onChange} label={label}>
+          <span>
+            <span className="block text-sm text-foreground">{label}</span>
+            {f.help && <span className="block text-xs text-muted">{f.help}</span>}
+          </span>
+        </Toggle>
       </div>
     );
   }

@@ -195,11 +195,13 @@ export function Toggle({
   onChange,
   disabled,
   label,
+  children,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   label?: string;
+  children?: ReactNode;
 }) {
   return (
     <button
@@ -209,18 +211,23 @@ export function Toggle({
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={cx(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-vd-out disabled:opacity-50",
-        checked ? "bg-accent" : "bg-field-border",
-      )}
+      className="inline-flex items-center gap-2 text-left disabled:opacity-50"
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-spring active:scale-90",
-          checked ? "bg-accent-foreground" : "bg-foreground",
-          checked ? "translate-x-4" : "translate-x-0.5",
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-vd-out",
+          checked ? "bg-accent" : "bg-field-border",
         )}
-      />
+      >
+        <span
+          className={cx(
+            "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-spring active:scale-90",
+            checked ? "bg-accent-foreground" : "bg-foreground",
+            checked ? "translate-x-4" : "translate-x-0.5",
+          )}
+        />
+      </span>
+      {children}
     </button>
   );
 }

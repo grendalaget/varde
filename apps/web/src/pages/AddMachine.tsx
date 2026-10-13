@@ -90,21 +90,19 @@ export default function AddMachine() {
             subtitle="Create a one-time token and use it in the enroll command on that machine."
           />
           <div className="space-y-4 p-4">
-            <div className="flex items-center gap-3 text-sm">
+            <div className="text-sm">
               <Toggle
                 checked={anchor}
                 onChange={setAnchor}
                 label="Always-on backup"
-              />
-              <span>Always-on backup: keeps a copy of every save</span>
+              >
+                <span>Always-on backup: keeps a copy of every save</span>
+              </Toggle>
             </div>
-            <div className="flex items-center gap-3 text-sm">
-              <Toggle
-                checked={hosting}
-                onChange={setHosting}
-                label="Can host"
-              />
-              <span>Can host servers too</span>
+            <div className="text-sm">
+              <Toggle checked={hosting} onChange={setHosting} label="Can host">
+                <span>Can host servers too</span>
+              </Toggle>
             </div>
             <Button onClick={createToken} busy={busy}>
               Create token
