@@ -92,7 +92,14 @@ pub fn run() {
             svcctl::stop()
         };
         if let Err(e) = r {
-            message_box(&format!("{e:#}"));
+            let action = if launch.service_start {
+                "start"
+            } else {
+                "stop"
+            };
+            message_box(&format!(
+                "Varde couldn't {action} its service. Restart Varde and try again.\n\n{e:#}"
+            ));
             std::process::exit(1);
         }
         return;
@@ -660,6 +667,18 @@ async fn start_link(app: AppHandle, url: String) -> Result<UiStatus, String> {
     Ok(ui)
 }
 
+/// gRPC failures the user reads. Statuses the service returns carry
+/// user-facing text already; transport errors (service died mid-call) come
+/// back as Unknown with hyper plumbing in the message.
+fn grpc_err(e: agent_ipc::GrpcStatus) -> String {
+    match e.code() {
+        agent_ipc::GrpcCode::Unknown => {
+            "The Varde service on this PC isn't answering. Restart Varde and try again.".to_string()
+        }
+        _ => e.message().to_string(),
+    }
+}
+
 async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, String> {
     let relink = app.state::<State>().relink;
     let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
@@ -671,7 +690,7 @@ async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, Stri
             relink,
         })
         .await
-        .map_err(|e| e.message().to_string())?
+        .map_err(grpc_err)?
         .into_inner()
         .status
         .unwrap_or_default();
@@ -790,14 +809,14 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
 async fn fed_exchange(fed_token: String) -> Result<(String, String, cp_api::AuthUser), String> {
     let cp = agent_ipc::DEFAULT_CP_URL.to_string();
     let resp: cp_api::AuthResponse = cp_api::CpClient::new(&cp)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.user_message())?
         .json(
             "POST",
             "/v1/auth/external",
             Some(&cp_api::ExternalLoginRequest { token: fed_token }),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message())?;
     Ok((resp.token, cp, resp.user))
 }
 
@@ -808,12 +827,12 @@ async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), Str
     let session = pending.session;
     let cp = pending.cp_url;
     let authed = cp_api::CpClient::new(&cp)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.user_message())?
         .with_bearer(session.clone());
     let groups: cp_api::GroupList = authed
         .json("GET", "/v1/groups", None::<&serde_json::Value>)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message())?;
     let group_id = match groups.groups.as_slice() {
         [] => {
             let g: cp_api::Group = authed
@@ -825,7 +844,7 @@ async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), Str
                     }),
                 )
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.user_message())?;
             g.id
         }
         [one] => one.id.clone(),
@@ -866,7 +885,9 @@ async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
-        .map_err(|e| e.to_string())
+        .map_err(|_| {
+            "Couldn't open your browser. Check your default browser, then try again.".to_string()
+        })
 }
 
 /// The confirm card approved: continue with the session the exchange
@@ -933,7 +954,7 @@ async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), Stri
         return Err("That group isn't one of yours.".to_string());
     }
     let client = cp_api::CpClient::new(&pending.cp_url)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.user_message())?
         .with_bearer(pending.session);
     approve_link(&app, client, pending.cp_url, group_id).await
 }
@@ -983,7 +1004,7 @@ async fn approve_link(
             None::<&serde_json::Value>,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message())?;
     let _: serde_json::Value = authed
         .json(
             "POST",
@@ -999,7 +1020,7 @@ async fn approve_link(
             }),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message())?;
     Ok(())
 }
 
@@ -1007,10 +1028,10 @@ async fn approve_link(
 async fn cancel_link() -> Result<(), String> {
     let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "The Varde service on this PC isn't running.".to_string())?;
     c.cancel_link(pb::CancelLinkRequest {})
         .await
-        .map_err(|e| e.message().to_string())?;
+        .map_err(grpc_err)?;
     Ok(())
 }
 
@@ -1047,9 +1068,9 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("not a web address".into());
     }
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
+    app.opener().open_url(url, None::<&str>).map_err(|_| {
+        "Couldn't open your browser. Check your default browser, then try again.".to_string()
+    })
 }
 
 #[tauri::command]

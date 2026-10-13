@@ -188,10 +188,15 @@ impl Hub {
             let p = link::key_path(&self.data_dir);
             identity::load_or_create(&p)
                 .and_then(|_| identity::load(&p))
-                .map_err(|e| Status::internal(format!("node key: {e:#}")))?
+                .map_err(|e| {
+                    warn!(error = %format!("{e:#}"), "node key load failed");
+                    Status::internal(
+                        "Something went wrong on this PC while preparing to link. Restart Varde and try again."
+                    )
+                })?
         };
         let client =
-            cp_api::CpClient::new(&url).map_err(|e| Status::invalid_argument(format!("{e}")))?;
+            cp_api::CpClient::new(&url).map_err(|e| Status::invalid_argument(e.user_message()))?;
         self.cancel_link();
         let gen = self.link.lock().unwrap().gen;
         let dev = match tokio::time::timeout(
@@ -202,9 +207,16 @@ impl Hub {
         {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => {
-                return Err(self.link_failed(&url, format!("could not reach {url}: {e:#}")))
+                return Err(self.link_failed(&url, reach_err(&url, &e)))
             }
-            Err(_) => return Err(self.link_failed(&url, format!("{url} did not answer"))),
+            Err(_) => {
+                return Err(self.link_failed(
+                    &url,
+                    format!(
+                        "The server at {url} isn't answering. Check the address and that the control plane is running."
+                    ),
+                ))
+            }
         };
         let active = pb::Link {
             user_code: dev.user_code.clone(),
@@ -280,7 +292,11 @@ impl Hub {
                         self.linked.notify_one();
                         return;
                     }
-                    Err(e) => break format!("could not save the link: {e:#}"),
+                    Err(e) => {
+                        warn!(error = %format!("{e:#}"), "could not save the link");
+                        break "Your link was approved, but Varde couldn't save it on this PC. Try linking again, or restart the Varde service."
+                            .to_string();
+                    }
                 },
                 // transient (offline, CP restarting): keep polling until expiry
                 Err(e) => warn!(error = %format!("{e:#}"), "link poll failed; retrying"),
@@ -362,6 +378,17 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));
     out
+}
+
+/// A link-start failure the user can act on: cp_api errors map to
+/// user_message; anything else gets the generic unreachable line. The full
+/// chain still lands in the log via `link_failed`'s warn!.
+fn reach_err(url: &str, e: &anyhow::Error) -> String {
+    if let Some(api) = e.downcast_ref::<cp_api::Error>() {
+        api.user_message()
+    } else {
+        format!("Varde couldn't reach {url}. Check your internet connection and the server address, then try again.")
+    }
 }
 
 /// Linking a machine that isn't linked is open to any local user (that's
@@ -714,6 +741,10 @@ mod tests {
         assert_eq!(e.code(), tonic::Code::Unavailable);
         let s = hub.status();
         assert_eq!(s.state(), pb::State::NotLinked);
-        assert!(s.link_error.contains("could not reach"), "{}", s.link_error);
+        assert!(
+            s.link_error.contains("couldn't reach the server"),
+            "{}",
+            s.link_error
+        );
     }
 }

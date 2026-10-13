@@ -18,7 +18,7 @@ import {
   type LinkDefaults,
   type UiStatus,
 } from "./tauri";
-import { Button, ErrorNote, Field, WarnNote } from "./ui";
+import { Button, describeError, ErrorNote, Field, WarnNote } from "./ui";
 
 const LINKED = ["connecting", "online", "offline"];
 
@@ -243,7 +243,7 @@ export default function App() {
     }
     if (!urlEditedRef.current && s.control_plane_url)
       setUrl(s.control_plane_url);
-    if (formState) setFormError(s.link_error);
+    if (formState) setFormError(describeError(s.link_error));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
@@ -309,7 +309,7 @@ export default function App() {
       setStatus(await invoke<UiStatus>("start_link", { url: u }));
     } catch (e) {
       setStarted(false);
-      setFormError(String(e));
+      setFormError(describeError(e));
     } finally {
       setLinkBusy(false);
     }
@@ -329,7 +329,7 @@ export default function App() {
         setTimeout(() => setBusy((b) => ({ ...b, [key]: false })), 4000);
       } catch (e) {
         setBusy((b) => ({ ...b, [key]: false }));
-        setErr(String(e));
+        setErr(describeError(e));
       }
     },
     [],
@@ -357,7 +357,7 @@ export default function App() {
     try {
       await invoke("cancel_link");
     } catch (e) {
-      setCodeError(String(e));
+      setCodeError(describeError(e));
       return;
     }
     setStarted(false);
@@ -369,7 +369,7 @@ export default function App() {
     try {
       await invoke("begin_varde_login");
     } catch (e) {
-      setFed({ stage: "error", message: String(e) });
+      setFed({ stage: "error", message: describeError(e) });
     }
   }, []);
 
@@ -405,7 +405,7 @@ export default function App() {
     try {
       await invoke("finish_varde_login", { groupId: fedGroup });
     } catch (e) {
-      setFed({ stage: "error", message: String(e) });
+      setFed({ stage: "error", message: describeError(e) });
     }
   }, [fedGroup]);
 
@@ -413,7 +413,7 @@ export default function App() {
     try {
       await invoke("confirm_varde_login");
     } catch (e) {
-      setFed({ stage: "error", message: String(e) });
+      setFed({ stage: "error", message: describeError(e) });
     }
   }, []);
 
@@ -726,7 +726,7 @@ export default function App() {
                 onClick={() => {
                   setLinkedError("");
                   void invoke("open_dashboard").catch((e) =>
-                    setLinkedError(String(e)),
+                    setLinkedError(describeError(e)),
                   );
                 }}
               >
