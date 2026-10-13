@@ -1,7 +1,8 @@
 // Federation: the hosted control plane trusts identities from varde.games.
 // The site signs a short-lived HS256 JWT; the CP verifies it with the shared
 // VARDE_FEDERATION_SECRET and upserts a local user (matched by
-// website_user_id). Self-hosted CPs never enable this.
+// website_user_id, linking an existing account on verified-email collision).
+// Self-hosted CPs never enable this.
 package auth
 
 import (
@@ -102,10 +103,18 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 		return u, token, err
 	}
 
-	// No federated user yet. A local account holding the same email is not
-	// silently merged — the user proves local ownership by logging in.
-	if _, err := st.UserByEmail(ctx, email); err == nil {
-		return nil, "", fmt.Errorf("conflict: an account with this email already exists on this control plane")
+	// No federated user under this site id. The site only mints tokens for
+	// signed-in sessions of verified-email accounts, so a matching email is
+	// the same person — link the existing account rather than conflict. This
+	// covers both pre-federation local accounts (website_user_id NULL) and
+	// stale bindings left behind when a site identity is recreated.
+	if u, err := st.UserByEmail(ctx, email); err == nil {
+		if err := st.BindWebsiteUserID(ctx, u.ID, sub, email, name); err != nil {
+			return nil, "", err
+		}
+		u.Email, u.DisplayName = email, name
+		token, err := f.Local.issue(ctx, u.ID)
+		return u, token, err
 	}
 
 	u := &store.User{

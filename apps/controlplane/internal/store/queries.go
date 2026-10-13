@@ -70,6 +70,14 @@ func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName s
 	return err
 }
 
+// BindWebsiteUserID links an existing account to a varde.games identity,
+// refreshing its mirrored profile fields in the same write.
+func (s *Store) BindWebsiteUserID(ctx context.Context, id, websiteUserID, email, displayName string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE users SET website_user_id=?, email=?, display_name=? WHERE id=?`), websiteUserID, email, displayName, id)
+	return err
+}
+
 func (s *Store) UserCount(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.q().GetContext(ctx, &n, `SELECT COUNT(*) FROM users`)
