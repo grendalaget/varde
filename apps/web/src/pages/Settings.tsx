@@ -136,16 +136,17 @@ export default function Settings() {
                 disabled={!admin}
                 onChange={(v) => setS({ ...s, require_anchor_for_commit: v })}
                 label="Require always-on backup"
-              />
-              <div>
-                <div className="text-sm text-foreground">
-                  Require the always-on backup
-                </div>
-                <div className="text-xs text-muted">
-                  A save only counts as safe once an always-on backup has it
-                  (applies when the group has one).
-                </div>
-              </div>
+              >
+                <span>
+                  <span className="block text-sm text-foreground">
+                    Require the always-on backup
+                  </span>
+                  <span className="block text-xs text-muted">
+                    A save only counts as safe once an always-on backup has it
+                    (applies when the group has one).
+                  </span>
+                </span>
+              </Toggle>
             </div>
           </div>
         </Card>
