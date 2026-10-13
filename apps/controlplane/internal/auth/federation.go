@@ -1,7 +1,8 @@
 // Federation: the hosted control plane trusts identities from varde.games.
 // The site signs a short-lived HS256 JWT; the CP verifies it with the shared
 // VARDE_FEDERATION_SECRET and upserts a local user (matched by
-// website_user_id). Self-hosted CPs never enable this.
+// website_user_id, linking an existing account on verified-email collision).
+// Self-hosted CPs never enable this.
 package auth
 
 import (
@@ -103,9 +104,11 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 	}
 
 	// No federated user yet. A local account holding the same email is not
-	// silently merged — the user proves local ownership by logging in.
+	// silently merged — local signup never verified the email, so the
+	// account could belong to someone else. The owner proves local
+	// ownership by logging in and linking via LinkExternal.
 	if _, err := st.UserByEmail(ctx, email); err == nil {
-		return nil, "", fmt.Errorf("conflict: an account with this email already exists on this control plane")
+		return nil, "", fmt.Errorf("conflict: an account with this email already exists on this control plane; sign in to link it")
 	}
 
 	u := &store.User{
@@ -124,4 +127,40 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 	}
 	token, err := f.Local.issue(ctx, u.ID)
 	return u, token, err
+}
+
+// LinkExternal binds a varde.games identity to an already-authenticated
+// account. The token's email must match the account's: local signup never
+// verified email ownership, so a matching verified email is the proof that
+// the caller owns both. Also rebinds stale bindings (recreated site
+// identities), since possession of the local session is the authority.
+func (f *Federation) LinkExternal(ctx context.Context, u *store.User, raw string) (*store.User, error) {
+	claims, err := f.verify(raw)
+	if err != nil {
+		return nil, err
+	}
+	email := strings.TrimSpace(strings.ToLower(claims.Email))
+	if !strings.EqualFold(email, u.Email) {
+		return nil, fmt.Errorf("conflict: the varde.games account must use the same email address")
+	}
+	if u.WebsiteUserID != nil && *u.WebsiteUserID == claims.Subject {
+		return u, nil // already linked to this identity
+	}
+	st := f.Local.Store
+	if other, err := st.UserByWebsiteID(ctx, claims.Subject); err == nil && other.ID != u.ID {
+		return nil, fmt.Errorf("conflict: this varde.games identity is already linked to a different account")
+	}
+	name := strings.TrimSpace(claims.Name)
+	if name == "" {
+		name = email
+	}
+	if err := st.BindWebsiteUserID(ctx, u.ID, claims.Subject, email, name); err != nil {
+		if store.IsUniqueViolation(err) {
+			return nil, fmt.Errorf("conflict: this varde.games identity is already linked to a different account")
+		}
+		return nil, err
+	}
+	u.Email, u.DisplayName = email, name
+	u.WebsiteUserID = &claims.Subject
+	return u, nil
 }
