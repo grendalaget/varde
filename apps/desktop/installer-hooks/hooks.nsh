@@ -126,6 +126,35 @@ Function VardeCheckPlainHttp
   StrCpy $9 "0"
 FunctionEnd
 
+; Loopback URL check for server.url contents: a loopback address only ever
+; meant the bundled control plane, so it is dead once that component is gone.
+; $0 = url in, $9 = "1" loopback / "0" other. host[:port][/path], any scheme.
+Function VardeIsLoopbackUrl
+  ${StrCase} $0 $0 "L"
+  StrCpy $1 $0 7
+  ${If} $1 == "http://"
+    StrCpy $0 $0 "" 7
+  ${Else}
+    StrCpy $1 $0 8
+    ${If} $1 == "https://"
+      StrCpy $0 $0 "" 8
+    ${EndIf}
+  ${EndIf}
+  StrCpy $9 "0"
+  StrCpy $1 $0 10
+  ${If} $1 == "localhost:"
+  ${OrIf} $1 == "localhost/"
+  ${OrIf} $0 == "localhost"
+    StrCpy $9 "1"
+    Return
+  ${EndIf}
+  StrCpy $1 $0 4
+  ${If} $1 == "127."
+  ${OrIf} $1 == "[::1"
+    StrCpy $9 "1"
+  ${EndIf}
+FunctionEnd
+
 ; icacls: grant SYSTEM + Administrators full (matching Inno's
 ; Permissions: system-full admins-full); logs also get Users read/exec.
 Function VardeAcl
@@ -256,6 +285,32 @@ FunctionEnd
   ${Else}
     ; upgrade with it unticked: service already removed above; drop the binary
     Delete "$INSTDIR\varde-control-plane.exe"
+    ; a loopback server.url only pointed at the bundled CP — dead now. Drop it
+    ; so an unlinked/migrated install falls back to the hosted default.
+    ; (an explicit /CPURL always wins, even a loopback one)
+    ${If} $CpUrl == ""
+    ${AndIf} ${FileExists} "$APPDATA\Varde\server.url"
+      FileOpen $0 "$APPDATA\Varde\server.url" r
+      FileRead $0 $2
+      FileClose $0
+      ${Do}
+        StrCpy $3 $2 1 -1
+        ${If} $3 == "$\r"
+        ${OrIf} $3 == "$\n"
+        ${OrIf} $3 == " "
+        ${OrIf} $3 == "$\t"
+          StrCpy $2 $2 -1
+        ${Else}
+          ${ExitDo}
+        ${EndIf}
+      ${Loop}
+      StrCpy $0 $2
+      Call VardeIsLoopbackUrl
+      ${If} $9 == "1"
+        DetailPrint "Removing the stale local control-plane address"
+        Delete "$APPDATA\Varde\server.url"
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   DetailPrint "Registering the Varde service"
