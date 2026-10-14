@@ -62,6 +62,16 @@ var testTimings = reconciler.Timings{
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	e := newBareEnv(t)
+	e.token = e.signup("op@example.com", "password123")
+	e.group = e.createGroup("g1")
+	return e
+}
+
+// newBareEnv is newEnv without the bootstrap signup/group — for tests
+// that need an empty user table (e.g. first-federated-user is operator).
+func newBareEnv(t *testing.T) *env {
+	t.Helper()
 	clk := &fakeClock{ms: 1735689600000}
 	st, err := store.Open("sqlite://"+t.TempDir()+"/cp.db", clk)
 	if err != nil {
@@ -79,8 +89,6 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, clk: clk, st: st, recon: recon, srv: srv}
 	e.http = httptest.NewServer(api.NewHandler(srv, nil))
 	t.Cleanup(func() { e.http.Close(); _ = st.Close() })
-	e.token = e.signup("op@example.com", "password123")
-	e.group = e.createGroup("g1")
 	return e
 }
 
@@ -2343,52 +2351,61 @@ func TestExternalLogin(t *testing.T) {
 		}
 	}
 
-	// email colliding with a local account conflicts: local signup never
-	// verified the email, so an unauthenticated exchange can't merge.
-	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
-		"wuser_9", "op@example.com", exp)
-	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
-		t.Fatalf("email collision: want 409, got %d %s", r.Status, r.Raw)
-	}
-	// the link path proves local ownership via the session instead:
-	// unauthenticated callers and mismatched emails are rejected.
-	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, ""); r.Status != 401 {
-		t.Fatalf("unauthed link: want 401, got %d %s", r.Status, r.Raw)
-	}
-	mismatch := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
-		"wuser_10", "someone-else@example.com", exp)
-	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": mismatch}, e.token); r.Status != 409 {
-		t.Fatalf("email mismatch link: want 409, got %d %s", r.Status, r.Raw)
-	}
-	r = e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, e.token)
-	b = e.mustOK(r)
+	// Email collision with an existing account (e.g. a legacy row or a
+	// recreated site identity with a new sub) rebinds instead of
+	// conflicting: in federated mode every row comes from a verified site
+	// token, so an email match is the site asserting ownership.
 	opMe := e.mustOK(e.do("GET", "/v1/me", nil, e.token))
 	opID := opMe["user"].(map[string]any)["id"]
-	if b["id"] != opID {
-		t.Fatal("link did not bind the signed-in account")
-	}
-	// the same token now exchanges into the linked account
+	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_9", "op@example.com", exp)
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
 	linkedMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
 	if linkedMe["user"].(map[string]any)["id"] != opID {
-		t.Fatal("external login after link hit a different account")
+		t.Fatal("email match did not rebind to the existing account")
 	}
-	// a recreated site identity (new sub, same email) still collides…
+	// a recreated site identity (new sub, same email) rebinds the same way
 	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
 		"wuser_99", "op@example.com", exp)
-	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
-		t.Fatalf("recreated identity collision: want 409, got %d %s", r.Status, r.Raw)
-	}
-	// …and rebinds through the authenticated link
-	if r := e.do("POST", "/v1/auth/link", map[string]any{"token": tok}, e.token); r.Status != 200 {
-		t.Fatalf("rebind link: %d %s", r.Status, r.Raw)
-	}
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
 	reboundMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
 	if reboundMe["user"].(map[string]any)["id"] != opID {
-		t.Fatal("rebound identity did not reach the linked account")
+		t.Fatal("rebound identity did not reach the same account")
+	}
+
+	// local signup/login are disabled in federated mode
+	if r := e.do("POST", "/v1/auth/signup", map[string]any{
+		"email": "new@example.com", "password": "password123"}, ""); r.Status != 404 {
+		t.Fatalf("federated signup: want 404, got %d %s", r.Status, r.Raw)
+	}
+	if r := e.do("POST", "/v1/auth/login", map[string]any{
+		"email": "op@example.com", "password": "password123"}, ""); r.Status != 404 {
+		t.Fatalf("federated login: want 404, got %d %s", r.Status, r.Raw)
+	}
+}
+
+// The first federated user gets operator, same as the first local signup.
+func TestExternalLoginFirstUserIsOperator(t *testing.T) {
+	e := newBareEnv(t)
+	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Federation = fed
+	tok := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_1", "first@example.com", time.Now().Add(5*time.Minute))
+	b := e.mustOK(e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""))
+	if b["user"].(map[string]any)["is_operator"] != true {
+		t.Fatalf("first federated user not operator: %s", b)
+	}
+	// second user is not
+	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_2", "second@example.com", time.Now().Add(5*time.Minute))
+	b = e.mustOK(e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""))
+	if b["user"].(map[string]any)["is_operator"] != false {
+		t.Fatalf("second federated user unexpectedly operator: %s", b)
 	}
 }
 

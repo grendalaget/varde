@@ -1449,9 +1449,6 @@ type AgentReplicaReadyJSONRequestBody AgentReplicaReadyJSONBody
 // ExternalLoginJSONRequestBody defines body for ExternalLogin for application/json ContentType.
 type ExternalLoginJSONRequestBody = ExternalLoginRequest
 
-// LinkExternalJSONRequestBody defines body for LinkExternal for application/json ContentType.
-type LinkExternalJSONRequestBody = ExternalLoginRequest
-
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -1535,16 +1532,13 @@ type ServerInterface interface {
 	// ExternalLogin Exchange a varde.games federation token for a CP session. Only available when the control plane runs with VARDE_AUTH_MODE=federated; self-hosted (local) control planes answer 404.
 	// (POST /v1/auth/external)
 	ExternalLogin(w http.ResponseWriter, r *http.Request)
-	// LinkExternal Bind a varde.games identity to the signed-in account — how a pre-federation local account proves ownership before federated sign-in works. The federation token's email must match the account email. Only available when VARDE_AUTH_MODE=federated.
-	// (POST /v1/auth/link)
-	LinkExternal(w http.ResponseWriter, r *http.Request)
-
+	// Login Password sign-in for self-hosted control planes. Disabled (404) when VARDE_AUTH_MODE=federated.
 	// (POST /v1/auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
-	// Signup Create an account. First user becomes operator.
+	// Signup Create an account. First user becomes operator. Disabled (404) when the control plane runs with VARDE_AUTH_MODE=federated — hosted CPs only accept varde.games federation sign-in.
 	// (POST /v1/auth/signup)
 	Signup(w http.ResponseWriter, r *http.Request)
 
@@ -1896,20 +1890,6 @@ func (siw *ServerInterfaceWrapper) ExternalLogin(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ExternalLogin(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// LinkExternal operation middleware
-func (siw *ServerInterfaceWrapper) LinkExternal(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.LinkExternal(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3090,7 +3070,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/signup", wrapper.Signup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/external", wrapper.ExternalLogin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/link", wrapper.LinkExternal)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups", wrapper.ListGroups)
@@ -3743,84 +3722,6 @@ func (response ExternalLogin404JSONResponse) VisitExternalLoginResponse(w http.R
 type ExternalLogin409JSONResponse Error
 
 func (response ExternalLogin409JSONResponse) VisitExternalLoginResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type LinkExternalRequestObject struct {
-	Body *LinkExternalJSONRequestBody
-}
-
-type LinkExternalResponseObject interface {
-	VisitLinkExternalResponse(w http.ResponseWriter) error
-}
-
-type LinkExternal200JSONResponse User
-
-func (response LinkExternal200JSONResponse) VisitLinkExternalResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type LinkExternal400JSONResponse struct{ ErrorJSONResponse }
-
-func (response LinkExternal400JSONResponse) VisitLinkExternalResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type LinkExternal401JSONResponse Error
-
-func (response LinkExternal401JSONResponse) VisitLinkExternalResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type LinkExternal404JSONResponse Error
-
-func (response LinkExternal404JSONResponse) VisitLinkExternalResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type LinkExternal409JSONResponse Error
-
-func (response LinkExternal409JSONResponse) VisitLinkExternalResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -5971,16 +5872,13 @@ type StrictServerInterface interface {
 	// ExternalLogin Exchange a varde.games federation token for a CP session. Only available when the control plane runs with VARDE_AUTH_MODE=federated; self-hosted (local) control planes answer 404.
 	// (POST /v1/auth/external)
 	ExternalLogin(ctx context.Context, request ExternalLoginRequestObject) (ExternalLoginResponseObject, error)
-	// LinkExternal Bind a varde.games identity to the signed-in account — how a pre-federation local account proves ownership before federated sign-in works. The federation token's email must match the account email. Only available when VARDE_AUTH_MODE=federated.
-	// (POST /v1/auth/link)
-	LinkExternal(ctx context.Context, request LinkExternalRequestObject) (LinkExternalResponseObject, error)
-
+	// Login Password sign-in for self-hosted control planes. Disabled (404) when VARDE_AUTH_MODE=federated.
 	// (POST /v1/auth/login)
 	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
 
 	// (POST /v1/auth/logout)
 	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
-	// Signup Create an account. First user becomes operator.
+	// Signup Create an account. First user becomes operator. Disabled (404) when the control plane runs with VARDE_AUTH_MODE=federated — hosted CPs only accept varde.games federation sign-in.
 	// (POST /v1/auth/signup)
 	Signup(ctx context.Context, request SignupRequestObject) (SignupResponseObject, error)
 
@@ -6524,37 +6422,6 @@ func (sh *strictHandler) ExternalLogin(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ExternalLoginResponseObject); ok {
 		if err := validResponse.VisitExternalLoginResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// LinkExternal operation middleware
-func (sh *strictHandler) LinkExternal(w http.ResponseWriter, r *http.Request) {
-	var request LinkExternalRequestObject
-
-	var body LinkExternalJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.LinkExternal(ctx, request.(LinkExternalRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "LinkExternal")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(LinkExternalResponseObject); ok {
-		if err := validResponse.VisitLinkExternalResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

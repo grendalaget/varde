@@ -61,6 +61,9 @@ export default function Login({
             your saves safe, whoever's PC is on.
           </p>
         </div>
+        {/* Federated CPs only accept varde.games sign-in — no local
+            accounts exist, so the form would be a dead door. */}
+        {!federated && (
         <form
           onSubmit={submit}
           className="vd-enter vd-d-1 space-y-4 rounded-2xl border border-separator bg-surface p-6"
@@ -126,14 +129,12 @@ export default function Login({
             </button>
           </p>
         </form>
+        )}
         {federated && (
-          <div className="vd-enter vd-d-2 mt-4">
-            <div className="mb-3 flex items-center gap-3 text-xs text-muted">
-              <span className="h-px flex-1 bg-separator" />
-              or
-              <span className="h-px flex-1 bg-separator" />
-            </div>
+          <div className="vd-enter vd-d-2 mt-4 space-y-4 rounded-2xl border border-separator bg-surface p-6">
+            <ErrorNote>{err}</ErrorNote>
             <Button
+              variant="primary"
               className="w-full"
               title="Use your varde.games account"
               onClick={onContinue}

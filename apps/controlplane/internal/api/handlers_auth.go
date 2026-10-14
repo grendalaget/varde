@@ -38,6 +38,11 @@ func genUser(u *store.User) gen.User {
 }
 
 func (s *Server) Signup(ctx context.Context, req gen.SignupRequestObject) (gen.SignupResponseObject, error) {
+	if s.Federation != nil {
+		// Federated CPs authenticate via varde.games only — no local
+		// accounts exist, so there is nothing to sign up for.
+		return nil, errResp(gen.NotFound, "local signup is disabled on this control plane", nil)
+	}
 	b := req.Body
 	if b == nil {
 		return nil, errResp(gen.Validation, "missing body", nil)
@@ -58,6 +63,9 @@ func (s *Server) Signup(ctx context.Context, req gen.SignupRequestObject) (gen.S
 }
 
 func (s *Server) Login(ctx context.Context, req gen.LoginRequestObject) (gen.LoginResponseObject, error) {
+	if s.Federation != nil {
+		return nil, errResp(gen.NotFound, "local login is disabled on this control plane", nil)
+	}
 	b := req.Body
 	if b == nil {
 		return nil, errResp(gen.Validation, "missing body", nil)
@@ -91,29 +99,6 @@ func (s *Server) ExternalLogin(ctx context.Context, req gen.ExternalLoginRequest
 		User:  genUser(u),
 		Token: token,
 	}, nil
-}
-
-// LinkExternal binds a varde.games identity to the caller's account —
-// the owner-proves-local-ownership path for pre-federation accounts
-// whose email collides in LoginExternal.
-func (s *Server) LinkExternal(ctx context.Context, req gen.LinkExternalRequestObject) (gen.LinkExternalResponseObject, error) {
-	if s.Federation == nil {
-		return nil, errResp(gen.NotFound, "federation is not enabled on this control plane", nil)
-	}
-	u, err := s.requireUser(ctx)
-	if err != nil {
-		return nil, err
-	}
-	b := req.Body
-	if b == nil || strings.TrimSpace(b.Token) == "" {
-		return nil, errResp(gen.Validation, "missing token", nil)
-	}
-	u, err = s.Federation.LinkExternal(ctx, u, b.Token)
-	if err != nil {
-		return nil, apiErrFromMsg(err)
-	}
-	_ = s.Store.Audit(ctx, s.Store.DB, nil, "user", u.ID, "user.external_link", u.ID, map[string]any{"email": u.Email})
-	return gen.LinkExternal200JSONResponse(genUser(u)), nil
 }
 
 func (s *Server) Logout(ctx context.Context, _ gen.LogoutRequestObject) (gen.LogoutResponseObject, error) {

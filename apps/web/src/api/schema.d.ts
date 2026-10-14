@@ -81,7 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create an account. First user becomes operator. */
+        /** Create an account. First user becomes operator. Disabled (404) when the control plane runs with VARDE_AUTH_MODE=federated — hosted CPs only accept varde.games federation sign-in. */
         post: operations["signup"];
         delete?: never;
         options?: never;
@@ -98,6 +98,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Password sign-in for self-hosted control planes. Disabled (404) when VARDE_AUTH_MODE=federated. */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -116,23 +117,6 @@ export interface paths {
         put?: never;
         /** Exchange a varde.games federation token for a CP session. Only available when the control plane runs with VARDE_AUTH_MODE=federated; self-hosted (local) control planes answer 404. */
         post: operations["externalLogin"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/link": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Bind a varde.games identity to the signed-in account — how a pre-federation local account proves ownership before federated sign-in works. The federation token's email must match the account email. Only available when VARDE_AUTH_MODE=federated. */
-        post: operations["linkExternal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1466,34 +1450,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthResponse"];
-                };
-            };
-            400: components["responses"]["Error"];
-            401: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    linkExternal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExternalLoginRequest"];
-            };
-        };
-        responses: {
-            /** @description Account linked; returns the updated user. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
                 };
             };
             400: components["responses"]["Error"];
