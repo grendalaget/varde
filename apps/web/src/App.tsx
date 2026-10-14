@@ -33,9 +33,6 @@ const SIGNED_OUT_KEY = "varde.signed-out";
 // at the site) must not hijack a later, unrelated exchange.
 const FED_RETURN_KEY = "varde.fed-return";
 const FED_RETURN_TTL_MS = 15 * 60 * 1000;
-// A federation token whose exchange collided with an existing local account
-// (409). Kept so signing in can complete the link, then the exchange retries.
-const FED_LINK_KEY = "varde.fed-link";
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -75,12 +72,9 @@ export default function App() {
       window.location.pathname + window.location.search,
     );
     const token = decodeURIComponent(m[1]);
-    const { error, response } = await api.POST("/v1/auth/external", {
+    const { error } = await api.POST("/v1/auth/external", {
       body: { token },
     });
-    if (response?.status === 409) {
-      sessionStorage.setItem(FED_LINK_KEY, token);
-    }
     if (error) setFedError(errorMessage(error));
     await refreshMe();
     // Back from the site's bounce: return to the page that sent us there.
@@ -114,29 +108,6 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [exchangeFedToken]);
-
-  // A 409-stashed token means the email matched a local account: once
-  // signed in, bind the site identity, then replay the exchange into the
-  // now-linked account.
-  useEffect(() => {
-    const pending = sessionStorage.getItem(FED_LINK_KEY);
-    if (!me || !pending) return;
-    void (async () => {
-      const { error } = await api.POST("/v1/auth/link", {
-        body: { token: pending },
-      });
-      sessionStorage.removeItem(FED_LINK_KEY);
-      if (error) {
-        setFedError(errorMessage(error));
-        return;
-      }
-      const { error: exErr } = await api.POST("/v1/auth/external", {
-        body: { token: pending },
-      });
-      setFedError(exErr ? errorMessage(exErr) : null);
-      await refreshMe();
-    })();
-  }, [me, refreshMe]);
 
   const continueWithVarde = useCallback(() => {
     sessionStorage.removeItem(SIGNED_OUT_KEY);

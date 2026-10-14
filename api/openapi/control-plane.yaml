@@ -76,7 +76,10 @@ paths:
     post:
       operationId: signup
       tags: [auth]
-      summary: Create an account. First user becomes operator.
+      summary: >
+        Create an account. First user becomes operator. Disabled (404)
+        when the control plane runs with VARDE_AUTH_MODE=federated —
+        hosted CPs only accept varde.games federation sign-in.
       requestBody:
         required: true
         content:
@@ -90,11 +93,15 @@ paths:
               schema: { $ref: "#/components/schemas/AuthResponse" }
         "400": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
   /v1/auth/login:
     post:
       operationId: login
       tags: [auth]
+      summary: >
+        Password sign-in for self-hosted control planes. Disabled (404)
+        when VARDE_AUTH_MODE=federated.
       requestBody:
         required: true
         content:
@@ -107,6 +114,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
         "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /v1/auth/external:
     post:
       operationId: externalLogin
@@ -126,31 +134,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        "409": { $ref: "#/components/responses/Error" }
-  /v1/auth/link:
-    post:
-      operationId: linkExternal
-      tags: [auth]
-      summary: >
-        Bind a varde.games identity to the signed-in account — how a
-        pre-federation local account proves ownership before federated
-        sign-in works. The federation token's email must match the account
-        email. Only available when VARDE_AUTH_MODE=federated.
-      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ExternalLoginRequest" }
-      responses:
-        "200":
-          description: Account linked; returns the updated user.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
