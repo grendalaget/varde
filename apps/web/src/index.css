@@ -275,16 +275,12 @@ body {
  * presses) still work. Scroll/mount staggers live in components/reveal.tsx.
  * ------------------------------------------------------------------------- */
 
-@keyframes vd-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-}
+/* Entry motion is opacity-only: every navigation/tab switch re-mounts these
+   classes, and travel plus staggered cascades read as dizziness. */
 @keyframes vd-pop {
   from {
     opacity: 0;
-    transform: scale(0.96) translateY(6px);
+    transform: scale(0.98);
   }
 }
 @keyframes vd-fade {
@@ -313,13 +309,13 @@ body {
 }
 
 .vd-enter {
-  animation: vd-rise 380ms var(--ease-vd-out) backwards;
+  animation: vd-fade 200ms var(--ease-vd-out) backwards;
 }
 .vd-fade {
-  animation: vd-fade 320ms var(--ease-vd-out) backwards;
+  animation: vd-fade 160ms var(--ease-vd-out) backwards;
 }
 .vd-pop {
-  animation: vd-pop 340ms var(--ease-vd-spring) backwards;
+  animation: vd-pop 180ms var(--ease-vd-out) backwards;
 }
 .vd-shake {
   animation: vd-shake 450ms ease-in-out both;
@@ -391,18 +387,6 @@ body {
 }
 
 /* Entrances/motion the dashboard uses that the site does not. */
-@keyframes vd-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-}
-@keyframes vd-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-}
 @keyframes vd-live {
   0%,
   100% {
@@ -413,10 +397,10 @@ body {
   }
 }
 .vd-in {
-  animation: vd-in 240ms var(--ease-vd-out) backwards;
+  animation: vd-fade 160ms var(--ease-vd-out) backwards;
 }
 .vd-reveal {
-  animation: vd-reveal 220ms var(--ease-vd-out) backwards;
+  animation: vd-fade 180ms var(--ease-vd-out) backwards;
 }
 .vd-menu {
   transform-origin: top right;
@@ -426,22 +410,7 @@ body {
   animation: vd-live 2.4s ease-in-out infinite;
 }
 .vd-stagger > * {
-  animation: vd-pop 380ms var(--ease-vd-spring) backwards;
-}
-.vd-stagger > :nth-child(2) {
-  animation-delay: 45ms;
-}
-.vd-stagger > :nth-child(3) {
-  animation-delay: 90ms;
-}
-.vd-stagger > :nth-child(4) {
-  animation-delay: 135ms;
-}
-.vd-stagger > :nth-child(5) {
-  animation-delay: 180ms;
-}
-.vd-stagger > :nth-child(6) {
-  animation-delay: 225ms;
+  animation: vd-fade 180ms var(--ease-vd-out) backwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .vd-in,
