@@ -2351,28 +2351,36 @@ func TestExternalLogin(t *testing.T) {
 		}
 	}
 
-	// Email collision with an existing account (e.g. a legacy row or a
-	// recreated site identity with a new sub) rebinds instead of
-	// conflicting: in federated mode every row comes from a verified site
-	// token, so an email match is the site asserting ownership.
-	opMe := e.mustOK(e.do("GET", "/v1/me", nil, e.token))
-	opID := opMe["user"].(map[string]any)["id"]
+	// Email collision rebinding only applies to rows already bound to a
+	// site identity: bound rows come from verified site tokens, so a new
+	// sub + matching email is a recreated site identity reclaiming its
+	// account.
 	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
-		"wuser_9", "op@example.com", exp)
+		"wuser_9", "rebind@example.com", exp)
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
-	linkedMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
-	if linkedMe["user"].(map[string]any)["id"] != opID {
-		t.Fatal("email match did not rebind to the existing account")
-	}
-	// a recreated site identity (new sub, same email) rebinds the same way
+	boundMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
+	boundID := boundMe["user"].(map[string]any)["id"]
+
+	// a recreated site identity (new sub, same email) rebinds the same
+	// account instead of creating a second one
 	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
-		"wuser_99", "op@example.com", exp)
+		"wuser_99", "rebind@example.com", exp)
 	r = e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, "")
 	b = e.mustOK(r)
 	reboundMe := e.mustOK(e.do("GET", "/v1/me", nil, b["token"].(string)))
-	if reboundMe["user"].(map[string]any)["id"] != opID {
+	if reboundMe["user"].(map[string]any)["id"] != boundID {
 		t.Fatal("rebound identity did not reach the same account")
+	}
+
+	// An unbound row (created before federation existed — no
+	// website_user_id) can never be claimed by a token: its email was
+	// never verified. The e.token bootstrap user is unbound; a token on
+	// its email must conflict, not rebind.
+	tok = mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_7", "op@example.com", exp)
+	if r := e.do("POST", "/v1/auth/external", map[string]any{"token": tok}, ""); r.Status != 409 {
+		t.Fatalf("unbound email collision: want 409, got %d %s", r.Status, r.Raw)
 	}
 
 	// local signup/login are disabled in federated mode

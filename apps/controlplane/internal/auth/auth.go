@@ -161,10 +161,10 @@ func (l *Local) Signup(ctx context.Context, email, password, displayName, invite
 		PasswordHash: ph,
 		CreatedAt:    l.Store.NowMs(),
 	}
-	if first {
-		u.IsOperator = 1
-	}
-	if err := l.Store.CreateUser(ctx, u); err != nil {
+	// The operator bit is decided inside the INSERT (empty table ⇒
+	// operator), not by the earlier count, so concurrent first signups
+	// can't both take the role.
+	if err := l.Store.CreateUserFirstOperator(ctx, u); err != nil {
 		if store.IsUniqueViolation(err) {
 			return nil, "", fmt.Errorf("conflict: email already registered")
 		}

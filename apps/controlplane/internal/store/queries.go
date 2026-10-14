@@ -35,6 +35,20 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	return err
 }
 
+// CreateUserFirstOperator inserts a user that becomes operator iff the
+// users table is empty — decided inside the INSERT, so two concurrent
+// sign-ups racing an empty table can't both gain the role. On return,
+// u.IsOperator holds the value actually stored.
+func (s *Store) CreateUserFirstOperator(ctx context.Context, u *User) error {
+	return s.q().GetContext(ctx, &u.IsOperator, s.Rebind(
+		`INSERT INTO users (id,email,display_name,password_hash,is_operator,website_user_id,created_at)
+		 SELECT ?,?,?,?,
+		        CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 1 ELSE 0 END,
+		        ?,?
+		 RETURNING is_operator`),
+		u.ID, u.Email, u.DisplayName, u.PasswordHash, u.WebsiteUserID, u.CreatedAt)
+}
+
 func (s *Store) UserByEmail(ctx context.Context, email string) (*User, error) {
 	var u User
 	err := s.q().GetContext(ctx, &u, s.Rebind(`SELECT * FROM users WHERE email=?`), email)

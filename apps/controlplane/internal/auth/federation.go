@@ -105,10 +105,14 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 
 	// An email match with an unknown sub is a stale binding: the site
 	// identity was recreated (db reset) while the CP account survived.
-	// Safe to rebind — federated mode has no local signup, so every row
-	// was created from a verified site token; the token's email is the
-	// site's assertion of who owns it.
+	// Only rows already bound to a site identity may rebind — bound rows
+	// only ever come from a verified site token, so the email match is
+	// the site asserting ownership. An unbound row predates federation;
+	// its email was never verified, so it must not be claimable.
 	if u, err := st.UserByEmail(ctx, email); err == nil {
+		if u.WebsiteUserID == nil {
+			return nil, "", fmt.Errorf("conflict: an account with this email already exists on this control plane")
+		}
 		if err := st.BindWebsiteUserID(ctx, u.ID, sub, email, name); err != nil {
 			return nil, "", err
 		}
@@ -118,7 +122,6 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 		return u, token, err
 	}
 
-	n, _ := st.UserCount(ctx)
 	u := &store.User{
 		ID:            ids.Must(ids.User),
 		Email:         email,
@@ -127,10 +130,10 @@ func (f *Federation) LoginExternal(ctx context.Context, raw string) (*store.User
 		WebsiteUserID: &sub,
 		CreatedAt:     st.NowMs(),
 	}
-	if n == 0 {
-		u.IsOperator = 1 // same rule as local signup: first user is operator
-	}
-	if err := st.CreateUser(ctx, u); err != nil {
+	// Same rule as local signup: first user is operator. Decided inside
+	// the INSERT so two first-time exchanges racing an empty table can't
+	// both take the role.
+	if err := st.CreateUserFirstOperator(ctx, u); err != nil {
 		if store.IsUniqueViolation(err) {
 			return nil, "", fmt.Errorf("conflict: account already exists")
 		}
