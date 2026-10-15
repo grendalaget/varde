@@ -57,8 +57,8 @@ cat > "$WORK/appdmg.json" <<EOF
   },
   "icon-size": 88,
   "contents": [
-    { "x": 132, "y": 196, "type": "file", "path": "$WORK/Varde.app" },
-    { "x": 408, "y": 196, "type": "link", "path": "/Applications" }
+    { "x": 132, "y": 170, "type": "file", "path": "$WORK/Varde.app" },
+    { "x": 408, "y": 170, "type": "link", "path": "/Applications" }
   ]
 }
 EOF

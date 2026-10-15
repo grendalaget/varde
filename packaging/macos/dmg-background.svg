@@ -1,16 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="540" height="360" viewBox="0 0 540 360">
   <!-- Varde DMG backdrop, no-Chrome fallback (qlmanage renders this): Natt
-       field, white-variant cairn mark up top, a Glød arrow on the icon
-       row's centerline pointing the drag from Varde.app (left) to
-       /Applications (right). The real backdrop is dmg-background.html —
+       field, an ASCII-glyph Glød arrow on the icon row's centerline
+       pointing the drag from Varde.app (left) to /Applications (right).
+       The real backdrop is dmg-background.html —
        the varde.games ASCII-cloud hero rendered by headless Chrome.
-       Icon anchors in appdmg.json: (132,196) and (408,196). -->
+       Icon anchors in appdmg.json: (132,170) and (408,170). -->
   <rect width="540" height="360" fill="#211D1A"/>
   <ellipse cx="378" cy="72" rx="162" ry="90" fill="#FF5B1F" opacity="0.05"/>
   <ellipse cx="108" cy="288" rx="135" ry="72" fill="#38312F" opacity="0.35"/>
-  <g stroke="#FF5B1F" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M196 196 H338"/>
-    <path d="M322 180 L346 196 L322 212"/>
-  </g>
-  <text x="270" y="332" text-anchor="middle" font-family="-apple-system, 'Helvetica Neue', sans-serif" font-size="13" fill="#8A8179">Drag Varde to Applications</text>
+  <text x="275" y="180" text-anchor="middle" font-family="'SF Mono', Menlo, monospace" font-size="26" font-weight="bold" letter-spacing="3" fill="#FF5B1F">· · ──<tspan font-size="30">▶</tspan></text>
+  <text x="270" y="326" text-anchor="middle" font-family="-apple-system, 'Helvetica Neue', sans-serif" font-size="13" fill="#8A8179">Drag Varde to Applications</text>
 </svg>

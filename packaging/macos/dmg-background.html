@@ -9,7 +9,7 @@
   no-Chrome fallback for qlmanage. No logo here — Varde.app's icon
   already carries the mark.
 
-  Icon anchors in appdmg.json: (132,196) and (408,196); the arrow sits on
+  Icon anchors in appdmg.json: (132,170) and (408,170); the arrow sits on
   the icon row's centerline.
 -->
 <html>
@@ -29,9 +29,9 @@
       radial-gradient(ellipse 50% 40% at 20% 80%, rgba(56,49,47,0.35), transparent 70%);
   }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .chrome { position: absolute; inset: 0; }
+
   .caption {
-    position: absolute; left: 0; right: 0; top: 318px; text-align: center;
+    position: absolute; left: 0; right: 0; top: 306px; text-align: center;
     font: 13px/1.4 -apple-system, "Helvetica Neue", sans-serif;
     color: #8a8179;
   }
@@ -40,12 +40,6 @@
 <body>
 <div class="wash"></div>
 <canvas id="field"></canvas>
-<svg class="chrome" width="540" height="360" viewBox="0 0 540 360">
-  <g stroke="#FF5B1F" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M196 196 H338"/>
-    <path d="M322 180 L346 196 L322 212"/>
-  </g>
-</svg>
 <div class="caption">Drag Varde to Applications</div>
 <script>
 "use strict";
@@ -204,6 +198,31 @@ function makeAtlas(gl) {
   return tex;
 }
 
+/* Arrow mask: the drag arrow is drawn by the field itself — cells inside
+   the mask's green channel light up in Glød, same mechanism the hero uses
+   for the host stone. Mask lives in the mark texture's g channel. */
+function makeArrowTex(gl) {
+  const c = document.createElement("canvas");
+  c.width = 296; c.height = 80;   // sampled over the 148x40 css arrow rect
+  const x = c.getContext("2d");
+  x.fillStyle = "rgb(0,255,0)";
+  x.fillRect(0, 28, 210, 24);                 // shaft
+  x.beginPath();                              // head
+  x.moveTo(210, 6); x.lineTo(210, 74); x.lineTo(296, 40);
+  x.closePath(); x.fill();
+
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+  gl.activeTexture(gl.TEXTURE0);
+  return tex;
+}
+
 function compile(gl, type, src) {
   const sh = gl.createShader(type);
   gl.shaderSource(sh, src);
@@ -247,7 +266,11 @@ function paint() {
   gl.uniform3fv(U("u_colPeak"), COL.peak);
   gl.uniform3fv(U("u_colGlod"), COL.glod);
 
-  gl.uniform4f(U("u_mark"), 0, 0, 0, 0); // clouds only; crisp mark is the SVG
+  makeArrowTex(gl);
+  gl.uniform1i(U("u_markTex"), 1);
+  /* arrow rect: css x 196-344, y 150-190 (icon-row centerline), y flipped */
+  gl.uniform4f(U("u_mark"),
+    196 * dpr, canvas.height - 190 * dpr, 148 * dpr, 40 * dpr);
 
   gl.uniform1f(U("u_time"), TIME);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
