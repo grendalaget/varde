@@ -177,7 +177,16 @@ pub fn ensure_started() -> Result<()> {
         }
         return Ok(());
     }
-    if user_stopped() || (plist.exists() && plist_targets_current(&plist)?) {
+    if user_stopped() {
+        // The stop is honored — but still repair a stale plist so the
+        // next login's RunAtLoad finds a moved Varde.app instead of a
+        // dead path.
+        if !plist.exists() || !plist_targets_current(&plist).unwrap_or(false) {
+            let _ = write_plist();
+        }
+        return Ok(());
+    }
+    if plist.exists() && plist_targets_current(&plist)? {
         return Ok(());
     }
     start()
