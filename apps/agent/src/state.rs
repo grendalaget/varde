@@ -189,8 +189,9 @@ mod tests {
             }],
         };
         st.reap_orphans();
+        // /proc is Linux-only; try_wait is the portable "still running" check
         assert!(
-            Path::new(&format!("/proc/{}/stat", child.id())).exists(),
+            matches!(child.try_wait(), Ok(None)),
             "mismatched record must not kill"
         );
         child.kill().ok();
