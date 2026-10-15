@@ -194,6 +194,9 @@ func (s *Server) scopedActor(ctx context.Context, groupID, scope, minRole string
 		if !st.Allows(scope) {
 			return "", "", errResp(gen.Forbidden, "service token lacks "+scope+" scope", nil)
 		}
+		if !st.AllowsGroup(groupID) {
+			return "", "", errResp(gen.Forbidden, "service token not bound to group", nil)
+		}
 		// audit_log.actor_type has no 'service' value; system + a
 		// "service:<name>" id keeps the actor readable without a schema change.
 		return "system", "service:" + st.Name, nil

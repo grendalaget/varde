@@ -53,7 +53,7 @@ func serviceTokenFlags() (*flag.FlagSet, *string) {
 // serviceScopes is the allowlist for --scopes. '*' is explicit opt-in to
 // every scope; anything else is validated so a typo cannot quietly grant
 // more (or less) than the operator meant.
-var serviceScopes = map[string]bool{"enroll": true, "nodes": true, "*": true}
+var serviceScopes = map[string]bool{"enroll": true, "members": true, "nodes": true, "*": true}
 
 func openServiceStore(dbURL string) (*store.Store, error) {
 	if p := sqlitePath(dbURL); p != "" {
@@ -67,7 +67,8 @@ func openServiceStore(dbURL string) (*store.Store, error) {
 func serviceTokenCreate(args []string) error {
 	fs, dbURL := serviceTokenFlags()
 	name := fs.String("name", "", "token name (appears in the audit log)")
-	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,nodes; * for all)")
+	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,members,nodes; * for all)")
+	groups := fs.String("groups", "", "comma-separated group ids the token may act in (empty = all groups)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -82,7 +83,13 @@ func serviceTokenCreate(args []string) error {
 	}
 	for _, s := range scopeList {
 		if !serviceScopes[s] {
-			return fmt.Errorf("unknown scope %q (known: enroll, nodes, *)", s)
+			return fmt.Errorf("unknown scope %q (known: enroll, members, nodes, *)", s)
+		}
+	}
+	groupList := []string{}
+	for _, g := range strings.Split(*groups, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			groupList = append(groupList, g)
 		}
 	}
 	secret, err := enroll.ServiceToken()
@@ -95,12 +102,19 @@ func serviceTokenCreate(args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 	scopeJSON, _ := json.Marshal(scopeList)
+	var groupJSON *string
+	if len(groupList) > 0 {
+		b, _ := json.Marshal(groupList)
+		s := string(b)
+		groupJSON = &s
+	}
 	t := &store.ServiceToken{
-		ID:         ids.Must("svt_"),
-		Name:       *name,
-		TokenHash:  enroll.Hash(secret),
-		ScopesJSON: string(scopeJSON),
-		CreatedAt:  st.NowMs(),
+		ID:           ids.Must("svt_"),
+		Name:         *name,
+		TokenHash:    enroll.Hash(secret),
+		ScopesJSON:   string(scopeJSON),
+		GroupIDsJSON: groupJSON,
+		CreatedAt:    st.NowMs(),
 	}
 	if err := st.CreateServiceToken(context.Background(), t); err != nil {
 		return err

@@ -137,7 +137,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req gen.DeleteGroupRequestObje
 }
 
 func (s *Server) ListMembers(ctx context.Context, req gen.ListMembersRequestObject) (gen.ListMembersResponseObject, error) {
-	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, req.GroupId, "members", "member"); err != nil {
 		return nil, err
 	}
 	ms, err := s.Store.ListMembers(ctx, req.GroupId)

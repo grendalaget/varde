@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS service_tokens (
     token_hash   TEXT NOT NULL UNIQUE,
     scopes       TEXT NOT NULL DEFAULT '[]',
     created_at   BIGINT NOT NULL,
+    group_ids    TEXT,
     last_used_at BIGINT,
     revoked_at   BIGINT
 );

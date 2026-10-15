@@ -2531,6 +2531,31 @@ func TestServiceTokenScopedAccess(t *testing.T) {
 	}
 }
 
+// A token bound to other groups may not act in this group, and the members
+// scope gates the members list the same way enroll/nodes gate their handlers.
+func TestServiceTokenGroupBindingAndMembers(t *testing.T) {
+	e := newEnv(t)
+	bound := mustServiceToken(t, e, "bound", []string{"enroll", "nodes", "members"})
+	if _, err := e.st.DB.ExecContext(context.Background(),
+		`UPDATE service_tokens SET group_ids='["grp_other"]' WHERE id='svt_bound'`); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, bound); r.Status != 403 {
+		t.Fatalf("group-bound token reached nodes: %d, want 403", r.Status)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/members", nil, bound); r.Status != 403 {
+		t.Fatalf("group-bound token reached members: %d, want 403", r.Status)
+	}
+
+	unbound := mustServiceToken(t, e, "unbound", []string{"members"})
+	if r := e.do("GET", "/v1/groups/"+e.group+"/members", nil, unbound); r.Status != 200 {
+		t.Fatalf("members scope list: %d %s", r.Status, r.Raw)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, unbound); r.Status != 403 {
+		t.Fatalf("members-only token reached nodes: %d, want 403", r.Status)
+	}
+}
+
 // A token without the needed scope gets 403; unknown and revoked tokens 401.
 func TestServiceTokenDeniedAndRevoked(t *testing.T) {
 	e := newEnv(t)

@@ -353,8 +353,8 @@ func (s *Store) ConsumeEnrollmentToken(ctx context.Context, hash string) (*Enrol
 
 func (s *Store) CreateServiceToken(ctx context.Context, t *ServiceToken) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO service_tokens (id,name,token_hash,scopes,created_at) VALUES (?,?,?,?,?)`),
-		t.ID, t.Name, t.TokenHash, t.ScopesJSON, t.CreatedAt)
+		`INSERT INTO service_tokens (id,name,token_hash,scopes,group_ids,created_at) VALUES (?,?,?,?,?,?)`),
+		t.ID, t.Name, t.TokenHash, t.ScopesJSON, t.GroupIDsJSON, t.CreatedAt)
 	return err
 }
 
