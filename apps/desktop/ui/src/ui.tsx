@@ -1,12 +1,5 @@
-// Shared UI helpers on Fluent UI (Microsoft's Fluent Design), keeping the
-// same call shapes as before — kept in sync with apps/web where sensible.
-import {
-  Button as FButton,
-  makeStyles,
-  MessageBar,
-  MessageBarBody,
-  Spinner,
-} from "@fluentui/react-components";
+// Shared UI helpers, kept in sync with apps/web/src/components/ui.tsx.
+import { Button as HButton } from "@heroui/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -14,14 +7,6 @@ export function cx(...c: (string | false | null | undefined)[]) {
 }
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
-
-const useButtonStyles = makeStyles({
-  danger: {
-    color: "var(--danger)",
-    ":hover": { color: "var(--danger)" },
-    ":hover:active": { color: "var(--danger)" },
-  },
-});
 
 export function Button({
   variant = "secondary",
@@ -42,25 +27,24 @@ export function Button({
   type?: "button" | "submit" | "reset";
   title?: string;
 }) {
-  const styles = useButtonStyles();
-  const appearances = {
+  const variants = {
     primary: "primary",
     secondary: "secondary",
-    danger: "secondary",
-    ghost: "subtle",
+    danger: "danger-soft",
+    ghost: "ghost",
   } as const;
   return (
-    <FButton
-      appearance={appearances[variant]}
-      className={cx(variant === "danger" && styles.danger, className)}
-      disabled={disabled || busy}
-      icon={busy ? <Spinner size="tiny" /> : undefined}
-      onClick={(e) => onClick?.(e)}
+    <HButton
+      className={className}
+      variant={variants[variant]}
+      isDisabled={disabled || busy}
+      isPending={busy}
+      onPress={(e) => onClick?.(e as never)}
       type={type}
-      title={title}
+      {...(title ? ({ title } as Record<string, unknown>) : {})}
     >
       {children}
-    </FButton>
+    </HButton>
   );
 }
 
@@ -82,6 +66,9 @@ export function Field({
   );
 }
 
+export const inputClass =
+  "w-full rounded-field border border-field-border bg-field px-3 py-1.5 text-sm text-field-foreground shadow-field outline-none transition-colors duration-150 ease-vd-out placeholder:text-field-placeholder hover:bg-field-hover focus:border-field-border-focus focus:bg-field-focus";
+
 export function ErrorNote({
   children,
   detail,
@@ -92,21 +79,22 @@ export function ErrorNote({
 }) {
   if (!children) return null;
   return (
-    <MessageBar intent="error" className="vd-shake mt-3.5 w-fit max-w-full">
-      <MessageBarBody>
-        {children}
-        {detail ? (
-          <details className="mt-1.5">
-            <summary className="cursor-pointer text-xs opacity-80 underline-offset-2 transition-opacity hover:underline hover:opacity-100">
-              Additional information
-            </summary>
-            <p className="mt-1.5 font-mono text-xs break-all whitespace-pre-wrap opacity-70">
-              {detail}
-            </p>
-          </details>
-        ) : null}
-      </MessageBarBody>
-    </MessageBar>
+    <div
+      role="alert"
+      className="vd-shake mt-3.5 w-fit max-w-full rounded-lg border border-danger/40 bg-danger-soft px-3.5 py-2.5 text-sm text-danger-soft-foreground"
+    >
+      {children}
+      {detail ? (
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-xs opacity-80 underline-offset-2 transition-opacity hover:underline hover:opacity-100">
+            Additional information
+          </summary>
+          <p className="mt-1.5 font-mono text-xs break-all whitespace-pre-wrap opacity-70">
+            {detail}
+          </p>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
@@ -151,8 +139,8 @@ export function errorParts(e: unknown): { text: string; detail?: string } {
 
 export function WarnNote({ children }: { children: ReactNode }) {
   return (
-    <MessageBar intent="warning" className="vd-in mt-3.5 w-fit max-w-full">
-      <MessageBarBody>{children}</MessageBarBody>
-    </MessageBar>
+    <div className="vd-in mt-3.5 w-fit max-w-full rounded-lg border border-warning/40 bg-warning-soft px-3.5 py-2.5 text-sm text-warning-soft-foreground">
+      {children}
+    </div>
   );
 }

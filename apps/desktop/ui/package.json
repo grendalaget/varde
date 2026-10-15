@@ -12,8 +12,9 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.74.9",
     "@fontsource-variable/inter": "^5.3.0",
+    "@heroui/react": "^3.2.6",
+    "@heroui/styles": "^3.2.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

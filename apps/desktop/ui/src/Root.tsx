@@ -1,7 +1,5 @@
-import { FluentProvider } from "@fluentui/react-components";
 import { useEffect } from "react";
 import App from "./App";
-import { vardeTheme } from "./fluent";
 
 declare global {
   interface Window {
@@ -17,9 +15,5 @@ export default function Root() {
     if (window.__VARDE_GLASS__ === true)
       document.body.style.background = "transparent";
   }, []);
-  return (
-    <FluentProvider theme={vardeTheme} style={{ display: "contents" }}>
-      <App />
-    </FluentProvider>
-  );
+  return <App />;
 }
