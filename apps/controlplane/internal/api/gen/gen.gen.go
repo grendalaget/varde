@@ -997,8 +997,17 @@ type ExecutionDirective struct {
 
 	// LatestSafeSaveAtUnixMs created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
 	LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms,omitempty"`
-	LeaseExpiresAtUnixMs   int64  `json:"lease_expires_at_unix_ms"`
-	Restore                *struct {
+
+	// LatestSafeSaveOn Nodes holding a ready copy of the latest committed save; absent when the server has none. Display only.
+	LatestSafeSaveOn *[]SaveHolder `json:"latest_safe_save_on,omitempty"`
+
+	// LatestSaveAtUnixMs created_at of the server's newest snapshot of any state (which may still be replicating); absent when it has none. Display only.
+	LatestSaveAtUnixMs *int64 `json:"latest_save_at_unix_ms,omitempty"`
+
+	// LatestSaveOn Nodes holding a ready copy of the newest save of any state (which may still be replicating); absent when the server has none. Display only.
+	LatestSaveOn         *[]SaveHolder `json:"latest_save_on,omitempty"`
+	LeaseExpiresAtUnixMs int64         `json:"lease_expires_at_unix_ms"`
+	Restore              *struct {
 		ManifestDigest string   `json:"manifest_digest"`
 		SnapshotId     string   `json:"snapshot_id"`
 		SourceNodeIds  []string `json:"source_node_ids"`
@@ -1242,6 +1251,17 @@ type ReplicationTask struct {
 // Role defines model for Role.
 type Role string
 
+// SaveHolder defines model for SaveHolder.
+type SaveHolder struct {
+	Anchor     bool   `json:"anchor"`
+	LastSeenAt *int64 `json:"last_seen_at,omitempty"`
+	Name       string `json:"name"`
+	NodeId     string `json:"node_id"`
+
+	// Online The node heartbeats regularly; offline means the copy exists but can't be served until the machine returns.
+	Online bool `json:"online"`
+}
+
 // Server defines model for Server.
 type Server struct {
 	Config            map[string]interface{} `json:"config"`
@@ -1272,17 +1292,14 @@ type ServerSummary struct {
 	} `json:"hosting_on,omitempty"`
 	JoinCode       *string `json:"join_code,omitempty"`
 	LatestSafeSave *struct {
-		CreatedAt int64 `json:"created_at"`
-		Replicas  *[]struct {
-			Anchor bool   `json:"anchor"`
-			Name   string `json:"name"`
-			NodeId string `json:"node_id"`
-		} `json:"replicas,omitempty"`
-		SnapshotId string `json:"snapshot_id"`
+		CreatedAt  int64         `json:"created_at"`
+		Replicas   *[]SaveHolder `json:"replicas,omitempty"`
+		SnapshotId string        `json:"snapshot_id"`
 	} `json:"latest_safe_save,omitempty"`
 	LatestSave *struct {
-		CreatedAt  int64  `json:"created_at"`
-		SnapshotId string `json:"snapshot_id"`
+		CreatedAt  int64         `json:"created_at"`
+		Replicas   *[]SaveHolder `json:"replicas,omitempty"`
+		SnapshotId string        `json:"snapshot_id"`
 	} `json:"latest_save,omitempty"`
 	OnlyOnOneMachine *bool `json:"only_on_one_machine,omitempty"`
 }

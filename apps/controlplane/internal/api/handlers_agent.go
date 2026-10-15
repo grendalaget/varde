@@ -302,8 +302,15 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			Action:               gen.ExecutionDirectiveAction(e.Action),
 			SnapshotIntervalS:    ptr(int(srv.SnapshotIntervalS)),
 		}
-		if at, err := s.Store.LatestCommittedSnapshotAt(ctx, srv.ID); err == nil {
-			ed.LatestSafeSaveAtUnixMs = at
+		if snap, err := s.Store.LatestCommittedSnapshot(ctx, srv.ID); err == nil && snap != nil {
+			ed.LatestSafeSaveAtUnixMs = &snap.CreatedAt
+			holders := s.saveHolders(ctx, snap.ID)
+			ed.LatestSafeSaveOn = &holders
+		}
+		if snap, err := s.Store.LatestSnapshot(ctx, srv.ID); err == nil && snap != nil {
+			ed.LatestSaveAtUnixMs = &snap.CreatedAt
+			holders := s.saveHolders(ctx, snap.ID)
+			ed.LatestSaveOn = &holders
 		}
 		if frozenExecs[e.ID] {
 			ed.Freeze = ptr(true)

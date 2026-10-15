@@ -739,6 +739,9 @@ export default function App() {
             <p className="mt-2 text-sm text-muted">
               The Varde service is running on this PC.
             </p>
+            {status.save_line && (
+              <p className="mt-2 text-sm text-muted">{status.save_line}</p>
+            )}
             <ErrorNote detail={linkedError?.detail}>
               {linkedError?.text}
             </ErrorNote>

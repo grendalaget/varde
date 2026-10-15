@@ -7,6 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use agent_ipc::pb;
 use anyhow::Result;
 use base64::Engine;
 use tracing::{debug, info, warn};
@@ -134,6 +135,34 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
             .executions
             .iter()
             .filter_map(|e| Some((e.server_id.clone(), e.latest_safe_save_at_unix_ms?)))
+            .collect();
+        let offset = v.cp_clock_offset_ms;
+        let to_holders = |hs: &[cp_api::SaveHolder]| -> Vec<pb::SaveHolder> {
+            hs.iter()
+                .map(|h| pb::SaveHolder {
+                    node_name: h.name.clone().unwrap_or_else(|| h.node_id.clone()),
+                    anchor: h.anchor.unwrap_or(false),
+                    online: h.online.unwrap_or(false),
+                    last_seen_at_unix_ms: h.last_seen_at.map(|ms| ms - offset).unwrap_or(0),
+                })
+                .collect()
+        };
+        v.latest_safe_save_on = d
+            .executions
+            .iter()
+            .filter(|e| !e.latest_safe_save_on.is_empty())
+            .map(|e| (e.server_id.clone(), to_holders(&e.latest_safe_save_on)))
+            .collect();
+        v.latest_save_on = d
+            .executions
+            .iter()
+            .filter(|e| !e.latest_save_on.is_empty())
+            .map(|e| (e.server_id.clone(), to_holders(&e.latest_save_on)))
+            .collect();
+        v.latest_save = d
+            .executions
+            .iter()
+            .filter_map(|e| Some((e.server_id.clone(), e.latest_save_at_unix_ms?)))
             .collect();
     }
     // ---- mesh: configure + peers + routes ----

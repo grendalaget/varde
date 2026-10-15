@@ -130,45 +130,21 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 		}
 	}
 	if latest != nil {
+		holders := s.saveHolders(ctx, latest.ID)
 		v.Summary.LatestSave = &struct {
-			CreatedAt  int64  `json:"created_at"`
-			SnapshotId string `json:"snapshot_id"`
-		}{CreatedAt: latest.CreatedAt, SnapshotId: latest.ID}
+			CreatedAt  int64             `json:"created_at"`
+			Replicas   *[]gen.SaveHolder `json:"replicas,omitempty"`
+			SnapshotId string            `json:"snapshot_id"`
+		}{CreatedAt: latest.CreatedAt, SnapshotId: latest.ID, Replicas: &holders}
 	}
 	if latestSafe != nil {
-		reps, _ := s.Store.ReplicasForSnapshot(ctx, latestSafe.ID)
-		repList := []struct {
-			Anchor bool   `json:"anchor"`
-			Name   string `json:"name"`
-			NodeId string `json:"node_id"`
-		}{}
-		ready := 0
-		for _, r := range reps {
-			if r.State != "ready" {
-				continue
-			}
-			ready++
-			n, _ := s.Store.GetNode(ctx, r.NodeID)
-			name, anchor := r.NodeID, false
-			if n != nil {
-				name = n.Name
-				anchor = n.Anchor == 1
-			}
-			repList = append(repList, struct {
-				Anchor bool   `json:"anchor"`
-				Name   string `json:"name"`
-				NodeId string `json:"node_id"`
-			}{Anchor: anchor, Name: name, NodeId: r.NodeID})
-		}
+		holders := s.saveHolders(ctx, latestSafe.ID)
+		ready := len(holders)
 		v.Summary.LatestSafeSave = &struct {
-			CreatedAt int64 `json:"created_at"`
-			Replicas  *[]struct {
-				Anchor bool   `json:"anchor"`
-				Name   string `json:"name"`
-				NodeId string `json:"node_id"`
-			} `json:"replicas,omitempty"`
-			SnapshotId string `json:"snapshot_id"`
-		}{CreatedAt: latestSafe.CreatedAt, SnapshotId: latestSafe.ID, Replicas: &repList}
+			CreatedAt  int64             `json:"created_at"`
+			Replicas   *[]gen.SaveHolder `json:"replicas,omitempty"`
+			SnapshotId string            `json:"snapshot_id"`
+		}{CreatedAt: latestSafe.CreatedAt, SnapshotId: latestSafe.ID, Replicas: &holders}
 		v.Summary.OnlyOnOneMachine = ptr(ready <= 1)
 	} else if latest != nil {
 		reps, _ := s.Store.ReplicasForSnapshot(ctx, latest.ID)
@@ -181,6 +157,29 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 		v.Summary.OnlyOnOneMachine = ptr(ready <= 1)
 	}
 	return v, nil
+}
+
+// saveHolders lists the nodes holding a ready copy of a snapshot with
+// their liveness, so UIs can say where a save lives and whether it can be
+// served right now.
+func (s *Server) saveHolders(ctx context.Context, snapshotID string) []gen.SaveHolder {
+	reps, _ := s.Store.ReplicasForSnapshot(ctx, snapshotID)
+	holders := []gen.SaveHolder{}
+	for _, r := range reps {
+		if r.State != "ready" {
+			continue
+		}
+		n, _ := s.Store.GetNode(ctx, r.NodeID)
+		h := gen.SaveHolder{NodeId: r.NodeID, Name: r.NodeID}
+		if n != nil {
+			h.Name = n.Name
+			h.Anchor = n.Anchor == 1
+			h.Online = s.Recon.Liveness(n) == "online"
+			h.LastSeenAt = n.LastSeenAt
+		}
+		holders = append(holders, h)
+	}
+	return holders
 }
 
 func (s *Server) ListServers(ctx context.Context, req gen.ListServersRequestObject) (gen.ListServersResponseObject, error) {

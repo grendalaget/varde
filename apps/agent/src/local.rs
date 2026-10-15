@@ -391,7 +391,23 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
                     .copied()
                     .unwrap_or(0),
             ),
-            latest_save_at_unix_ms: cp.to_local_ms(c.latest_save_ms()),
+            // the newest of this exec's own snapshots and the CP's newest
+            // (a post-restart exec has none of its own yet); both stamps
+            // are on the CP's clock, so max before converting
+            latest_save_at_unix_ms: cp.to_local_ms(
+                c.latest_save_ms()
+                    .max(cp.latest_save.get(&c.dir.server_id).copied().unwrap_or(0)),
+            ),
+            latest_safe_save_on: cp
+                .latest_safe_save_on
+                .get(&c.dir.server_id)
+                .cloned()
+                .unwrap_or_default(),
+            latest_save_on: cp
+                .latest_save_on
+                .get(&c.dir.server_id)
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));

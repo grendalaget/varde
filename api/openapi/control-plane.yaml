@@ -1481,13 +1481,7 @@ components:
             created_at: { type: integer, format: int64 }
             replicas:
               type: array
-              items:
-                type: object
-                required: [node_id, name, anchor]
-                properties:
-                  node_id: { type: string }
-                  name: { type: string }
-                  anchor: { type: boolean }
+              items: { $ref: "#/components/schemas/SaveHolder" }
         latest_save:
           type: object
           nullable: true
@@ -1495,9 +1489,25 @@ components:
           properties:
             snapshot_id: { type: string }
             created_at: { type: integer, format: int64 }
+            replicas:
+              type: array
+              items: { $ref: "#/components/schemas/SaveHolder" }
         only_on_one_machine: { type: boolean }
         address: { type: string, example: "127.77.12.34:25565" }
         join_code: { type: string, nullable: true }
+    SaveHolder:
+      type: object
+      required: [node_id, name, anchor, online]
+      properties:
+        node_id: { type: string }
+        name: { type: string }
+        anchor: { type: boolean }
+        online:
+          type: boolean
+          description: >-
+            The node heartbeats regularly; offline means the copy exists but
+            can't be served until the machine returns.
+        last_seen_at: { type: integer, format: int64, nullable: true }
     Server:
       type: object
       required: [id, group_id, name, game_id, desired_state, observed_state, epoch,
@@ -1807,6 +1817,27 @@ components:
           type: integer
           format: int64
           nullable: true
+        latest_safe_save_on:
+          description: >-
+            Nodes holding a ready copy of the latest committed save; absent
+            when the server has none. Display only.
+          type: array
+          items: { $ref: "#/components/schemas/SaveHolder" }
+        latest_save_at_unix_ms:
+          description: >-
+            created_at of the server's newest snapshot of any state (which
+            may still be replicating); absent when it has none. Display
+            only.
+          type: integer
+          format: int64
+          nullable: true
+        latest_save_on:
+          description: >-
+            Nodes holding a ready copy of the newest save of any state
+            (which may still be replicating); absent when the server has
+            none. Display only.
+          type: array
+          items: { $ref: "#/components/schemas/SaveHolder" }
     AgentDirectives:
       type: object
       required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]
