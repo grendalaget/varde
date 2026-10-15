@@ -28,10 +28,7 @@ const MAX_PENDING: usize = 64;
 pub fn submit_local(data_dir: &Path, m: agent_ipc::pb::CrashReportMsg) -> Result<()> {
     let dir = dir(data_dir);
     if m.dump.len() as u64 > crash_report::MAX_DUMP_BYTES {
-        anyhow::bail!(
-            "dump exceeds {}-byte cap",
-            crash_report::MAX_DUMP_BYTES
-        );
+        anyhow::bail!("dump exceeds {}-byte cap", crash_report::MAX_DUMP_BYTES);
     }
     if crash_report::collect(&dir).map(|v| v.len()).unwrap_or(0) >= MAX_PENDING {
         anyhow::bail!("crash report backlog full ({MAX_PENDING} pending)");
