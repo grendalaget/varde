@@ -86,6 +86,17 @@ func EnrollmentToken() (string, error) {
 		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)), nil
 }
 
+// ServiceToken returns "vst_" + 32 base32 chars: a machine-to-machine
+// credential minted by an operator (service-token create), never via API.
+func ServiceToken() (string, error) {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "vst_" + strings.ToLower(
+		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)), nil
+}
+
 // Hash is the storage form for all enroll secrets.
 func Hash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))

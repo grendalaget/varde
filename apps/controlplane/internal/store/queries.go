@@ -349,6 +349,47 @@ func (s *Store) ConsumeEnrollmentToken(ctx context.Context, hash string) (*Enrol
 	return s.EnrollmentTokenByHash(ctx, hash)
 }
 
+// ---- service tokens ----
+
+func (s *Store) CreateServiceToken(ctx context.Context, t *ServiceToken) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO service_tokens (id,name,token_hash,scopes,created_at) VALUES (?,?,?,?,?)`),
+		t.ID, t.Name, t.TokenHash, t.ScopesJSON, t.CreatedAt)
+	return err
+}
+
+func (s *Store) ServiceTokenByHash(ctx context.Context, hash string) (*ServiceToken, error) {
+	var t ServiceToken
+	err := s.q().GetContext(ctx, &t, s.Rebind(`SELECT * FROM service_tokens WHERE token_hash=?`), hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &t, err
+}
+
+func (s *Store) ListServiceTokens(ctx context.Context) ([]ServiceToken, error) {
+	var ts []ServiceToken
+	err := s.q().SelectContext(ctx, &ts, `SELECT * FROM service_tokens ORDER BY created_at`)
+	return ts, err
+}
+
+func (s *Store) RevokeServiceToken(ctx context.Context, id string) error {
+	res, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE service_tokens SET revoked_at=? WHERE id=? AND revoked_at IS NULL`), s.NowMs(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// TouchServiceToken stamps last_used_at; best-effort from the auth path.
+func (s *Store) TouchServiceToken(ctx context.Context, id string) {
+	_, _ = s.q().ExecContext(ctx, s.Rebind(`UPDATE service_tokens SET last_used_at=? WHERE id=?`), s.NowMs(), id)
+}
+
 func (s *Store) CreateDeviceLink(ctx context.Context, d *DeviceLink) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`INSERT INTO device_links (user_code,device_code_hash,public_key,hostname,os,arch,agent_version,state,expires_at,created_at)

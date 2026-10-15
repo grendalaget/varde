@@ -1179,6 +1179,12 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+      description: >
+        Either a user session token or a `vst_…` service token.
+        Service tokens are operator-minted machine credentials
+        (`varde-control-plane service-token create --scopes …`) that carry
+        named scopes instead of group membership; currently `enroll`
+        (enrollment-token CRUD on any group) and `nodes` (node read/delete).
     cookieAuth:
       type: apiKey
       in: cookie

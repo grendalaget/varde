@@ -23,6 +23,7 @@ import (
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/identity"
@@ -2462,5 +2463,89 @@ func TestFederatedState(t *testing.T) {
 	}
 	if s := state("unrelated=1"); s["site_session"] != false {
 		t.Fatalf("no site cookie should report site_session=false: %v", s)
+	}
+}
+
+// ---- service tokens (machine-to-machine) ----
+
+func mustServiceToken(t *testing.T, e *env, name string, scopes []string) string {
+	t.Helper()
+	secret, err := enroll.ServiceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeJSON, _ := json.Marshal(scopes)
+	st := &store.ServiceToken{
+		ID: "svt_" + name, Name: name, TokenHash: enroll.Hash(secret),
+		ScopesJSON: string(scopeJSON), CreatedAt: e.st.NowMs(),
+	}
+	if err := e.st.CreateServiceToken(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	return secret
+}
+
+// A service token with enroll+nodes scopes can mint anchor enrollment tokens
+// and read/delete nodes on groups it has no membership in; everything else
+// stays unauthorized.
+func TestServiceTokenScopedAccess(t *testing.T) {
+	e := newEnv(t)
+	secret := mustServiceToken(t, e, "provisioner", []string{"enroll", "nodes"})
+
+	r := e.do("POST", "/v1/groups/"+e.group+"/enrollment-tokens",
+		map[string]any{"anchor": true, "max_uses": 1}, secret)
+	if r.Status != 201 {
+		t.Fatalf("service create enrollment token: %d %s", r.Status, r.Raw)
+	}
+	if r.Body["anchor"] != true || r.Body["token"] == "" {
+		t.Fatalf("bad enrollment token body: %s", r.Raw)
+	}
+	tokID := r.Body["id"].(string)
+
+	if r := e.do("GET", "/v1/groups/"+e.group+"/enrollment-tokens", nil, secret); r.Status != 200 {
+		t.Fatalf("service list enrollment tokens: %d %s", r.Status, r.Raw)
+	}
+	if r := e.do("DELETE", "/v1/groups/"+e.group+"/enrollment-tokens/"+tokID, nil, secret); r.Status != 204 {
+		t.Fatalf("service delete enrollment token: %d %s", r.Status, r.Raw)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, secret); r.Status != 200 {
+		t.Fatalf("service list nodes: %d %s", r.Status, r.Raw)
+	}
+
+	// Out of scope: anything outside enroll/nodes stays unauthorized.
+	for _, path := range []string{"/v1/groups/" + e.group, "/v1/groups/" + e.group + "/servers"} {
+		if r := e.do("GET", path, nil, secret); r.Status == 200 {
+			t.Fatalf("service token reached %s without scope", path)
+		}
+	}
+
+	// The audit trail records the service principal, not a user.
+	var actorType, actorID string
+	row := e.st.DB.QueryRowxContext(context.Background(),
+		`SELECT actor_type, actor_id FROM audit_log WHERE action='enrollment_token.create' ORDER BY rowid DESC LIMIT 1`)
+	if err := row.Scan(&actorType, &actorID); err != nil {
+		t.Fatal(err)
+	}
+	if actorType != "system" || actorID != "service:provisioner" {
+		t.Fatalf("audit actor = %s/%s, want system/service:provisioner", actorType, actorID)
+	}
+}
+
+// A token without the needed scope gets 403; unknown and revoked tokens 401.
+func TestServiceTokenDeniedAndRevoked(t *testing.T) {
+	e := newEnv(t)
+	narrow := mustServiceToken(t, e, "narrow", []string{"enroll"})
+
+	if r := e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, narrow); r.Status != 403 {
+		t.Fatalf("nodes list without nodes scope: %d, want 403", r.Status)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/nodes", nil, "vst_unknownsecret"); r.Status != 401 {
+		t.Fatalf("unknown token: %d, want 401", r.Status)
+	}
+	if err := e.st.RevokeServiceToken(context.Background(), "svt_narrow"); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.do("GET", "/v1/groups/"+e.group+"/enrollment-tokens", nil, narrow); r.Status != 401 {
+		t.Fatalf("revoked token: %d, want 401", r.Status)
 	}
 }

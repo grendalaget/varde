@@ -100,6 +100,34 @@ type EnrollmentToken struct {
 	CreatedBy      string `db:"created_by"`
 }
 
+// ServiceToken is a machine-to-machine credential (`vst_…` bearer) scoped to
+// a narrow set of API operations — e.g. a provisioning service minting
+// enrollment tokens without a user session.
+type ServiceToken struct {
+	ID         string `db:"id"`
+	Name       string `db:"name"`
+	TokenHash  string `db:"token_hash"`
+	ScopesJSON string `db:"scopes"`
+	CreatedAt  int64  `db:"created_at"`
+	LastUsedAt *int64 `db:"last_used_at"`
+	RevokedAt  *int64 `db:"revoked_at"`
+}
+
+// Allows reports whether the token carries the given scope ("*" is a
+// wildcard; an unknown or malformed scope list allows nothing).
+func (t *ServiceToken) Allows(scope string) bool {
+	var scopes []string
+	if err := json.Unmarshal([]byte(t.ScopesJSON), &scopes); err != nil {
+		return false
+	}
+	for _, s := range scopes {
+		if s == scope || s == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 type DeviceLink struct {
 	UserCode       string  `db:"user_code"`
 	DeviceCodeHash string  `db:"device_code_hash"`

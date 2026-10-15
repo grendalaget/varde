@@ -124,7 +124,7 @@ func derefInt64(v *int64) int64 {
 // ---- enrollment tokens (user side) ----
 
 func (s *Server) ListEnrollmentTokens(ctx context.Context, req gen.ListEnrollmentTokensRequestObject) (gen.ListEnrollmentTokensResponseObject, error) {
-	if _, _, err := s.requireRole(ctx, req.GroupId, "admin"); err != nil {
+	if _, _, err := s.scopedActor(ctx, req.GroupId, "enroll", "admin"); err != nil {
 		return nil, err
 	}
 	ts, err := s.Store.ListEnrollmentTokens(ctx, req.GroupId)
@@ -145,7 +145,7 @@ func (s *Server) ListEnrollmentTokens(ctx context.Context, req gen.ListEnrollmen
 }
 
 func (s *Server) CreateEnrollmentToken(ctx context.Context, req gen.CreateEnrollmentTokenRequestObject) (gen.CreateEnrollmentTokenResponseObject, error) {
-	u, _, err := s.requireRole(ctx, req.GroupId, "admin")
+	actorType, actorID, err := s.scopedActor(ctx, req.GroupId, "enroll", "admin")
 	if err != nil {
 		return nil, err
 	}
@@ -181,12 +181,12 @@ func (s *Server) CreateEnrollmentToken(ctx context.Context, req gen.CreateEnroll
 		LabelsJSON:     mustJSON(labels),
 		ExpiresAt:      exp,
 		MaxUses:        maxUses,
-		CreatedBy:      u.ID,
+		CreatedBy:      actorID, // "service:<name>" for service-token callers
 	}
 	if err := s.Store.CreateEnrollmentToken(ctx, t); err != nil {
 		return nil, err
 	}
-	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "enrollment_token.create", t.ID, nil)
+	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, actorType, actorID, "enrollment_token.create", t.ID, nil)
 	var labelsPtr *map[string]string
 	if labels != nil {
 		labelsPtr = &labels
@@ -198,14 +198,14 @@ func (s *Server) CreateEnrollmentToken(ctx context.Context, req gen.CreateEnroll
 }
 
 func (s *Server) DeleteEnrollmentToken(ctx context.Context, req gen.DeleteEnrollmentTokenRequestObject) (gen.DeleteEnrollmentTokenResponseObject, error) {
-	u, _, err := s.requireRole(ctx, req.GroupId, "admin")
+	actorType, actorID, err := s.scopedActor(ctx, req.GroupId, "enroll", "admin")
 	if err != nil {
 		return nil, err
 	}
 	if err := s.Store.DeleteEnrollmentToken(ctx, req.GroupId, req.TokenId); err != nil {
 		return nil, errResp(gen.NotFound, "token not found", nil)
 	}
-	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "enrollment_token.delete", req.TokenId, nil)
+	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, actorType, actorID, "enrollment_token.delete", req.TokenId, nil)
 	return gen.DeleteEnrollmentToken204Response{}, nil
 }
 
@@ -407,7 +407,7 @@ func (s *Server) checkNodeLimit(ctx context.Context, groupID string) error {
 // ---- nodes ----
 
 func (s *Server) ListNodes(ctx context.Context, req gen.ListNodesRequestObject) (gen.ListNodesResponseObject, error) {
-	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, req.GroupId, "nodes", "member"); err != nil {
 		return nil, err
 	}
 	ns, err := s.Store.ListNodes(ctx, req.GroupId)
@@ -430,7 +430,7 @@ func (s *Server) GetNode(ctx context.Context, req gen.GetNodeRequestObject) (gen
 	if err != nil {
 		return nil, errResp(gen.NotFound, "node not found", nil)
 	}
-	if _, _, err := s.requireRole(ctx, n.GroupID, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, n.GroupID, "nodes", "member"); err != nil {
 		return nil, err
 	}
 	gn, err := genNode(s, ctx, n)
@@ -513,14 +513,14 @@ func (s *Server) DeleteNode(ctx context.Context, req gen.DeleteNodeRequestObject
 	if err != nil {
 		return nil, errResp(gen.NotFound, "node not found", nil)
 	}
-	u, _, err := s.requireRole(ctx, n.GroupID, "admin")
+	actorType, actorID, err := s.scopedActor(ctx, n.GroupID, "nodes", "admin")
 	if err != nil {
 		return nil, err
 	}
 	if err := s.Store.DeleteNode(ctx, req.NodeId); err != nil {
 		return nil, err
 	}
-	_ = s.Store.Audit(ctx, s.Store.DB, &n.GroupID, "user", u.ID, "node.delete", n.ID, nil)
+	_ = s.Store.Audit(ctx, s.Store.DB, &n.GroupID, actorType, actorID, "node.delete", n.ID, nil)
 	return gen.DeleteNode204Response{}, nil
 }
 
