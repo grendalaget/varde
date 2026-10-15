@@ -106,6 +106,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 		{"migrations", "drain_until", "BIGINT"},
 		{"nodes", "update_available", "TEXT NOT NULL DEFAULT ''"},
 		{"crash_reports", "client_ref", "TEXT NOT NULL DEFAULT ''"},
+		{"service_tokens", "group_ids", "TEXT"},
 	}
 	for _, c := range cols {
 		if dialect == "postgres" {

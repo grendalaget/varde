@@ -144,6 +144,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(serviceCmd(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "service-token" {
+		os.Exit(serviceTokenCmd(os.Args[2:]))
+	}
 	fs, cfg := serveFlags()
 	_ = fs.Parse(os.Args[1:])
 

@@ -21,6 +21,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
@@ -55,6 +56,7 @@ type ctxKey int
 
 const (
 	ctxUser ctxKey = iota
+	ctxService
 	ctxNode
 	ctxToken
 	ctxAuthCookie // bool: session resolved from the varde_session cookie
@@ -68,6 +70,13 @@ func userFrom(ctx context.Context) *store.User {
 func nodeFrom(ctx context.Context) *store.Node {
 	n, _ := ctx.Value(ctxNode).(*store.Node)
 	return n
+}
+
+// serviceFrom returns the service-token principal for machine-to-machine
+// callers (vst_… bearer), or nil for user sessions.
+func serviceFrom(ctx context.Context) *store.ServiceToken {
+	t, _ := ctx.Value(ctxService).(*store.ServiceToken)
+	return t
 }
 
 // ---------- error helpers ----------
@@ -131,7 +140,15 @@ func (s *Server) userAuth(next http.Handler) http.Handler {
 			token = strings.TrimPrefix(h, "Bearer ")
 		}
 		if token != "" {
-			if u, err := s.Auth.SessionUser(r.Context(), token); err == nil {
+			if strings.HasPrefix(token, "vst_") {
+				// Machine-to-machine service token: stored hashed, scoped;
+				// resolved to a service principal instead of a user.
+				if st, err := s.Store.ServiceTokenByHash(r.Context(), enroll.Hash(token)); err == nil && st.RevokedAt == nil {
+					s.Store.TouchServiceToken(r.Context(), st.ID)
+					ctx := context.WithValue(r.Context(), ctxService, st)
+					r = r.WithContext(ctx)
+				}
+			} else if u, err := s.Auth.SessionUser(r.Context(), token); err == nil {
 				ctx := context.WithValue(r.Context(), ctxUser, u)
 				ctx = context.WithValue(ctx, ctxToken, token)
 				ctx = context.WithValue(ctx, ctxAuthCookie, fromCookie)
@@ -168,6 +185,27 @@ func (s *Server) requireRole(ctx context.Context, groupID string, min string) (*
 		return nil, "", errResp(gen.Forbidden, "insufficient role", nil)
 	}
 	return u, role, nil
+}
+
+// scopedActor authorizes either a service token carrying the given scope or
+// a user holding at least minRole in the group, and returns the audit actor.
+func (s *Server) scopedActor(ctx context.Context, groupID, scope, minRole string) (actorType, actorID string, err error) {
+	if st := serviceFrom(ctx); st != nil {
+		if !st.Allows(scope) {
+			return "", "", errResp(gen.Forbidden, "service token lacks "+scope+" scope", nil)
+		}
+		if !st.AllowsGroup(groupID) {
+			return "", "", errResp(gen.Forbidden, "service token not bound to group", nil)
+		}
+		// audit_log.actor_type has no 'service' value; system + a
+		// "service:<name>" id keeps the actor readable without a schema change.
+		return "system", "service:" + st.Name, nil
+	}
+	u, _, err := s.requireRole(ctx, groupID, minRole)
+	if err != nil {
+		return "", "", err
+	}
+	return "user", u.ID, nil
 }
 
 func (s *Server) requireOperator(ctx context.Context) (*store.User, error) {

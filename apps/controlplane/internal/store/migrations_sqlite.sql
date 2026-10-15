@@ -70,6 +70,17 @@ CREATE TABLE IF NOT EXISTS enrollment_tokens (
     created_by      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS service_tokens (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    token_hash   TEXT NOT NULL UNIQUE,
+    scopes       TEXT NOT NULL DEFAULT '[]',
+    created_at   BIGINT NOT NULL,
+    group_ids    TEXT,
+    last_used_at BIGINT,
+    revoked_at   BIGINT
+);
+
 CREATE TABLE IF NOT EXISTS device_links (
     user_code        TEXT PRIMARY KEY,
     device_code_hash TEXT NOT NULL UNIQUE,
