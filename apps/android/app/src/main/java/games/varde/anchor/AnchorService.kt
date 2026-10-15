@@ -148,6 +148,10 @@ class AnchorService : Service() {
                 Log.i(TAG, line)
                 // agent logs JSON lines; surface the message field, not raw JSON
                 val msg = MESSAGE_RE.find(line)?.groupValues?.get(1)
+                    ?.replace("\\\"", "\"")
+                    ?.replace("\\n", " ")
+                    ?.replace("\\t", " ")
+                    ?.replace("\\\\", "\\")
                     ?: line.take(80)
                 if (msg.isNotBlank()) {
                     broadcast(msg.take(80))
