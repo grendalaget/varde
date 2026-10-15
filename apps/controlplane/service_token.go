@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -49,6 +50,20 @@ func serviceTokenFlags() (*flag.FlagSet, *string) {
 	return fs, db
 }
 
+// serviceScopes is the allowlist for --scopes. '*' is explicit opt-in to
+// every scope; anything else is validated so a typo cannot quietly grant
+// more (or less) than the operator meant.
+var serviceScopes = map[string]bool{"enroll": true, "nodes": true, "*": true}
+
+func openServiceStore(dbURL string) (*store.Store, error) {
+	if p := sqlitePath(dbURL); p != "" {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+	}
+	return store.Open(dbURL, store.RealClock)
+}
+
 func serviceTokenCreate(args []string) error {
 	fs, dbURL := serviceTokenFlags()
 	name := fs.String("name", "", "token name (appears in the audit log)")
@@ -65,11 +80,16 @@ func serviceTokenCreate(args []string) error {
 	if *name == "" || len(scopeList) == 0 {
 		return fmt.Errorf("--name and --scopes are required")
 	}
+	for _, s := range scopeList {
+		if !serviceScopes[s] {
+			return fmt.Errorf("unknown scope %q (known: enroll, nodes, *)", s)
+		}
+	}
 	secret, err := enroll.ServiceToken()
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(*dbURL, store.RealClock)
+	st, err := openServiceStore(*dbURL)
 	if err != nil {
 		return err
 	}
@@ -96,7 +116,7 @@ func serviceTokenList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, err := store.Open(*dbURL, store.RealClock)
+	st, err := openServiceStore(*dbURL)
 	if err != nil {
 		return err
 	}
@@ -124,7 +144,7 @@ func serviceTokenRevoke(args []string) error {
 	if *id == "" {
 		return fmt.Errorf("--id is required")
 	}
-	st, err := store.Open(*dbURL, store.RealClock)
+	st, err := openServiceStore(*dbURL)
 	if err != nil {
 		return err
 	}

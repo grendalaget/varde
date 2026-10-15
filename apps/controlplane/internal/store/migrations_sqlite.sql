@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS enrollment_tokens (
 
 CREATE TABLE IF NOT EXISTS service_tokens (
     id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
+    name         TEXT NOT NULL UNIQUE,
     token_hash   TEXT NOT NULL UNIQUE,
     scopes       TEXT NOT NULL DEFAULT '[]',
     created_at   BIGINT NOT NULL,

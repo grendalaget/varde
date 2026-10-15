@@ -149,6 +149,10 @@ func (s *Server) CreateEnrollmentToken(ctx context.Context, req gen.CreateEnroll
 	if err != nil {
 		return nil, err
 	}
+	createdBy := ""
+	if actorType == "user" {
+		createdBy = actorID
+	}
 	secret, err := enroll.EnrollmentToken()
 	if err != nil {
 		return nil, err
@@ -181,7 +185,11 @@ func (s *Server) CreateEnrollmentToken(ctx context.Context, req gen.CreateEnroll
 		LabelsJSON:     mustJSON(labels),
 		ExpiresAt:      exp,
 		MaxUses:        maxUses,
-		CreatedBy:      actorID, // "service:<name>" for service-token callers
+		// Only users own enrollment tokens: nodes.owner_user_id references
+		// users(id), so a service principal leaves created_by empty (the
+		// enrolled node's owner stays NULL and admin-only editable). The
+		// service name is still in the audit actor.
+		CreatedBy: createdBy,
 	}
 	if err := s.Store.CreateEnrollmentToken(ctx, t); err != nil {
 		return nil, err
