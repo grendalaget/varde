@@ -86,11 +86,22 @@ func serviceTokenCreate(args []string) error {
 			return fmt.Errorf("unknown scope %q (known: enroll, members, nodes, *)", s)
 		}
 	}
+	groupsProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "groups" {
+			groupsProvided = true
+		}
+	})
 	groupList := []string{}
 	for _, g := range strings.Split(*groups, ",") {
 		if g = strings.TrimSpace(g); g != "" {
 			groupList = append(groupList, g)
 		}
+	}
+	// An explicit --groups that parses to nothing would silently create an
+	// unbound (all-groups) token — fail closed instead.
+	if groupsProvided && len(groupList) == 0 {
+		return fmt.Errorf("--groups given but no group ids parsed (omit --groups for a token valid in every group)")
 	}
 	secret, err := enroll.ServiceToken()
 	if err != nil {
