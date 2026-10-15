@@ -359,7 +359,7 @@ body {
   html {
     scroll-behavior: auto;
   }
-  *,
+  *:not(.keep-motion, .keep-motion *),
   *::before,
   *::after {
     transition-duration: 0.01ms !important;

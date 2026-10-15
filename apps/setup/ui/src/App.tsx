@@ -236,7 +236,7 @@ export default function App() {
                     </button>
                     <div
                       className={cx(
-                        "grid transition-[grid-template-rows,opacity] duration-300 ease-vd-out motion-reduce:transition-none",
+                        "keep-motion grid transition-[grid-template-rows,opacity] duration-300 ease-vd-out",
                         advanced
                           ? "grid-rows-[1fr] opacity-100"
                           : "grid-rows-[0fr] opacity-0",
