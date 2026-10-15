@@ -1,0 +1,24 @@
+#!/bin/sh
+# Anchor machine entrypoint: fetch a one-use enroll token from the
+# reconciler's bootstrap endpoint over the 6PN private network (the server
+# verifies the caller's private IP against the machine record), enroll as
+# the group's anchor node, then run the agent in the foreground.
+#
+# A failed bootstrap exits nonzero; Fly's restart policy retries. A 404
+# means nothing to provision anymore (the anchor is being torn down) and
+# the machine will be destroyed by the reconciler.
+set -eu
+
+: "${VARDE_BOOTSTRAP_URL:?missing VARDE_BOOTSTRAP_URL}"
+export VARDE_DATA_DIR="${VARDE_DATA_DIR:-/var/lib/varde}"
+
+resp=$(curl -fsS --retry 20 --retry-delay 3 --retry-all-errors \
+  --connect-timeout 5 "$VARDE_BOOTSTRAP_URL")
+token=$(printf '%s' "$resp" | sed -n 's/.*"enroll_token" *: *"\([^"]*\)".*/\1/p')
+cp=$(printf '%s' "$resp" | sed -n 's/.*"cp_url" *: *"\([^"]*\)".*/\1/p')
+server=${cp:-$VARDE_CP_URL}
+: "${server:?missing cp_url (bootstrap response or VARDE_CP_URL)}"
+[ -n "$token" ] || { echo "anchor-entry: bootstrap returned no enroll_token" >&2; exit 1; }
+
+varde-agent enroll --server "$server" --token "$token" --anchor
+exec varde-agent run
