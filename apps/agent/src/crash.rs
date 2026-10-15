@@ -115,8 +115,14 @@ async fn drain(agent: &Arc<Agent>, dir: &Path) -> Result<()> {
     for p in crash_report::collect(dir)? {
         let mut body = body_of(&p.report);
         // the stem is this machine's idempotency key: a lost ack retries
-        // with the same ref instead of duplicating the report
-        body.client_ref = p.stem.clone();
+        // with the same ref instead of duplicating the report. Bare WER
+        // dumps are named <exe>.<pid>.dmp — a reused pid produces the same
+        // stem for a different crash, so the dump's mtime goes in the ref.
+        body.client_ref = if p.json_path.is_none() {
+            format!("{}.{}", p.stem, p.report.created_at_unix_ms)
+        } else {
+            p.stem.clone()
+        };
         attach_dump(&mut body, &p);
         agent.cp.submit_crash_report(&body).await?;
         crash_report::mark_sent(dir, &p)?;

@@ -294,6 +294,5 @@ CREATE TABLE IF NOT EXISTS crash_reports (
     client_ref     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_crash_group ON crash_reports(group_id, created_at DESC);
--- the uploader's idempotency key: a retried upload does not duplicate
-CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_node_ref
-    ON crash_reports(node_id, client_ref) WHERE client_ref != '';
+-- idx_crash_node_ref (uploader idempotency) is created by ensureColumns
+-- after it adds client_ref to databases that predate the column.
