@@ -291,11 +291,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Install Android SDK components
+        # The ubuntu runner image ships the SDK at $ANDROID_HOME (setup-android
+        # v3 is broken against cmdline-tools 16). These installs are no-ops
+        # while the image carries them and self-heal when it rotates.
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          sdkmanager=$(find "$ANDROID_HOME"/cmdline-tools -name sdkmanager | sort -V | tail -1)
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - name: Build arm64 agent + mesh
         run: |
           cargo install cross --locked
