@@ -66,13 +66,15 @@ fn wait_for(svc: &Service, want: ServiceState, timeout: Duration) -> Result<()> 
     }
 }
 
-/// Whether SCM reports the service not-Stopped. Querying needs no admin,
-/// so Exit checks this before deciding to raise UAC at all.
-pub fn running() -> bool {
+/// Whether SCM reports the service not-Stopped — `None` when the query
+/// itself fails, so callers keep trying to stop instead of assuming a
+/// dead service. Querying needs no admin, so Exit checks this before
+/// deciding to raise UAC at all.
+pub fn running() -> Option<bool> {
     open(ServiceAccess::QUERY_STATUS)
         .and_then(|svc| state(&svc))
+        .ok()
         .map(|s| s != ServiceState::Stopped)
-        .unwrap_or(false)
 }
 
 /// True while the service answers on its local IPC pipe — the tray's own
