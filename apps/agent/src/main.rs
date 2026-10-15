@@ -112,14 +112,9 @@ enum ServiceAction {
 }
 
 fn default_data_dir() -> PathBuf {
-    if cfg!(windows) {
-        std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("Varde")
-    } else {
-        PathBuf::from("/var/lib/varde")
-    }
+    // %ProgramData%\Varde on Windows, ~/Library/Application Support/Varde on
+    // macOS (per-user LaunchAgent installs), /var/lib/varde on other Unix.
+    agent_ipc::default_data_dir()
 }
 
 fn default_mesh_bin() -> Result<PathBuf> {

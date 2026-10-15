@@ -39,6 +39,10 @@ ASSET_PLATFORMS = [
         re.compile(r"^varde-(agent|control-plane|relay)-.+-darwin-arm64\.dmg$"),
         "darwin-aarch64-{0}",
     ),
+    # The Varde.app drag-install DMG — the agent picks this flavor when its
+    # exe lives inside a .app bundle (see platform_key() in apps/agent).
+    (re.compile(r"^Varde-.+-macos-amd64\.dmg$"), "darwin-x86_64-app"),
+    (re.compile(r"^Varde-.+-macos-arm64\.dmg$"), "darwin-aarch64-app"),
 ]
 
 

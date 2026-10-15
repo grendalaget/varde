@@ -28,6 +28,37 @@ pub const PIPE_NAME: &str = r"\\.\pipe\varde-agent";
 /// server (`server.url`, `--link`, installer /CPURL, `enroll --server`).
 pub const DEFAULT_CP_URL: &str = "https://cp.varde.games";
 
+/// The agent's default data directory: `%ProgramData%\Varde` on Windows,
+/// `~/Library/Application Support/Varde` on macOS (the per-user LaunchAgent
+/// install — a root-run daemon still wants `--data-dir /var/lib/varde`),
+/// `/var/lib/varde` on other Unix.
+pub fn default_data_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        std::env::var_os("ProgramData")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"))
+            .join("Varde")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/Users/Shared"))
+            .join("Library/Application Support/Varde")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::path::PathBuf::from("/var/lib/varde")
+    }
+}
+
+/// IPC endpoint of an agent installed with its default data dir — where a
+/// tray or CLI client looks without reading any config first.
+pub fn default_endpoint() -> String {
+    endpoint(&default_data_dir())
+}
+
 /// IPC endpoint for an agent whose data dir is `data_dir`.
 pub fn endpoint(data_dir: &Path) -> String {
     #[cfg(windows)]

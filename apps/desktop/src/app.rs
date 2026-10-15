@@ -78,7 +78,9 @@ pub fn run() {
     // Point varde:// at this exe; the installer writes the same keys machine-
     // wide, this keeps portable/dev launches reachable too. Skipped in the
     // elevated re-link window: a callback there would land in a non-elevated
-    // instance that the agent refuses to re-link anyway.
+    // instance that the agent refuses to re-link anyway. On macOS the
+    // bundle's CFBundleURLTypes claims varde:// instead.
+    #[cfg(windows)]
     if !launch.relink {
         register_protocol();
     }
@@ -107,6 +109,7 @@ pub fn run() {
         return;
     }
     let relink = launch.relink;
+    #[cfg(windows)]
     if relink {
         // UIPI blocks the shared-profile browser handshake: a medium-IL
         // WebView2 browser already running as the tray can't reply to this
@@ -120,6 +123,16 @@ pub fn run() {
                 .unwrap_or(std::path::Path::new(r"C:\ProgramData\Varde"))
                 .join("EBWebView-admin"),
         );
+    }
+    // First launch from a drag-installed .app: there was no installer to
+    // register the service or the login item, so the app does it itself.
+    // Bootstrapping launchd takes a moment — do it off the startup path.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = autostart::ensure_installed();
+        std::thread::spawn(|| {
+            let _ = svcctl::ensure_started();
+        });
     }
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     if !relink {
@@ -202,11 +215,24 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("start the Varde tray");
     app.run(move |_app, event| {
-        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-            // closing the window keeps the tray; only Quit (exit code) ends it
-            if code.is_none() && !relink {
-                api.prevent_exit();
+        match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                // closing the window keeps the tray; only Quit (exit code) ends it
+                if code.is_none() && !relink {
+                    api.prevent_exit();
+                }
             }
+            // macOS delivers varde:// callbacks as open events (the
+            // CFBundleURLTypes claim), not as argv.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Opened { urls } => {
+                for u in urls {
+                    if u.scheme() == "varde" {
+                        handle_deep_link(_app, u.as_str());
+                    }
+                }
+            }
+            _ => {}
         }
     });
 }
@@ -230,7 +256,7 @@ fn icon(i: Icon) -> Image<'static> {
 /// Follows the agent's status; reconnects every 2 s while the service is down.
 async fn watch(app: AppHandle) {
     loop {
-        if let Ok(mut c) = agent_ipc::connect(agent_ipc::PIPE_NAME).await {
+        if let Ok(mut c) = agent_ipc::connect(&agent_ipc::default_endpoint()).await {
             if let Ok(r) = c.watch_status(pb::WatchStatusRequest {}).await {
                 let mut stream = r.into_inner();
                 while let Ok(Some(m)) = stream.message().await {
@@ -374,10 +400,21 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
     match e.id().as_ref() {
         "open" => open_main_window(app),
         "svcstart" => {
+            #[cfg(windows)]
             let _ = elevate_self("--service-start");
+            // no elevation on macOS: the LaunchAgent is ours to control
+            #[cfg(target_os = "macos")]
+            std::thread::spawn(|| {
+                let _ = svcctl::start();
+            });
         }
         "svcstop" => {
+            #[cfg(windows)]
             let _ = elevate_self("--service-stop");
+            #[cfg(target_os = "macos")]
+            std::thread::spawn(|| {
+                let _ = svcctl::stop();
+            });
         }
         "dashboard" => {
             if let Some(url) = v.and_then(|v| v.dashboard_url) {
@@ -385,7 +422,7 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
             }
         }
         "link" => match v {
-            Some(v) if v.relink => elevate_relink(),
+            Some(v) if v.relink => relink_window(app),
             _ => open_main_window(app),
         },
         "logs" => {
@@ -432,7 +469,8 @@ fn window_background() -> tauri::window::Color {
 // on Server 2022: the webview's alpha doesn't punch through on an opaque
 // host, and acrylic behind a transparent (layered) window doesn't blend
 // either — so older builds get a deliberate opaque window instead of a
-// broken see-through one.
+// broken see-through one. macOS keeps the flat Natt window (no Mica analog).
+#[cfg(windows)]
 fn glass_supported() -> bool {
     winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
         .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
@@ -445,6 +483,7 @@ fn glass_supported() -> bool {
 
 /// Mica on Windows 11; acrylic (blurred glass) as the fallback elsewhere.
 /// Returns whether a backdrop actually composited.
+#[cfg(windows)]
 fn apply_glass(w: &WebviewWindow) -> bool {
     if window_vibrancy::apply_mica(w, Some(true)).is_ok() {
         return true;
@@ -453,12 +492,20 @@ fn apply_glass(w: &WebviewWindow) -> bool {
     window_vibrancy::apply_acrylic(w, Some((0x11, 0x0c, 0x0a, 0xcc))).is_ok()
 }
 
-/// Where the service writes its logs (see packaging/windows).
+/// Where the service writes its logs (see packaging/windows; the agent's
+/// data dir on unix).
 fn logs_dir() -> std::path::PathBuf {
-    std::env::var_os("ProgramData")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| r"C:\ProgramData".into())
-        .join(r"Varde\logs")
+    #[cfg(windows)]
+    {
+        std::env::var_os("ProgramData")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| r"C:\ProgramData".into())
+            .join(r"Varde\logs")
+    }
+    #[cfg(not(windows))]
+    {
+        agent_ipc::default_data_dir().join("logs")
+    }
 }
 
 fn open_main_window(app: &AppHandle) {
@@ -473,7 +520,10 @@ fn open_main_window(app: &AppHandle) {
     } else {
         "Varde"
     };
+    #[cfg(windows)]
     let glass = glass_supported();
+    #[cfg(not(windows))]
+    let glass = false;
     let built = tauri::webview_version().is_ok()
         && WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title(title)
@@ -481,8 +531,8 @@ fn open_main_window(app: &AppHandle) {
             .resizable(false)
             .maximizable(false)
             .center()
-            // the UI is dark-only; pin dark so WebView2 doesn't flash a
-            // light webview or light scrollbars
+            // the UI is dark-only; pin dark so the webview doesn't flash a
+            // light background or light scrollbars
             .theme(Some(tauri::Theme::Dark))
             .background_color(window_background())
             // glass panels: transparent window + transparent webview over
@@ -492,29 +542,33 @@ fn open_main_window(app: &AppHandle) {
             .initialization_script(format!("window.__VARDE_GLASS__ = {};", glass))
             .build()
             .map(|w| {
-                if glass {
-                    // only let the webview go transparent when a backdrop
-                    // really composited — with nothing behind it the window
-                    // reads as broken; the builder's themed background stays
-                    if apply_glass(&w) {
-                        let _ = w.set_background_color(None);
-                    }
-                }
-                // re-composite the backdrop if Windows reports a theme flip
-                // (the window stays dark either way)
-                let app = w.app_handle().clone();
-                w.on_window_event(move |event| {
-                    if let tauri::WindowEvent::ThemeChanged(_) = event {
-                        if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
-                            let composited = glass && apply_glass(&w);
-                            let _ = w.set_background_color(if composited {
-                                None
-                            } else {
-                                Some(window_background())
-                            });
+                #[cfg(windows)]
+                {
+                    if glass {
+                        // only let the webview go transparent when a backdrop
+                        // really composited — with nothing behind it the window
+                        // reads as broken; the builder's themed background stays
+                        if apply_glass(&w) {
+                            let _ = w.set_background_color(None);
                         }
                     }
-                });
+                    // re-composite the backdrop if Windows reports a theme flip
+                    // (the window stays dark either way)
+                    let app = w.app_handle().clone();
+                    w.on_window_event(move |event| {
+                        if let tauri::WindowEvent::ThemeChanged(_) = event {
+                            if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
+                                let composited = glass && apply_glass(&w);
+                                let _ = w.set_background_color(if composited {
+                                    None
+                                } else {
+                                    Some(window_background())
+                                });
+                            }
+                        }
+                    });
+                }
+                let _ = w;
             })
             .is_ok();
     if !built {
@@ -596,10 +650,12 @@ async fn link_and_describe(app: &AppHandle) -> String {
     }
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(windows)]
 fn message_box(text: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
     let (t, c) = (wide(text), wide("Varde"));
@@ -614,14 +670,31 @@ fn message_box(text: &str) {
     };
 }
 
-/// Re-link needs an administrator: relaunch elevated (UAC) with `--relink`.
-fn elevate_relink() {
+#[cfg(target_os = "macos")]
+fn message_box(text: &str) {
+    rfd::MessageDialog::new()
+        .set_title("Varde")
+        .set_description(text)
+        .set_level(rfd::MessageLevel::Info)
+        .show();
+}
+
+/// Re-link opens a second instance in relink mode (elevated on Windows,
+/// where the agent runs as SYSTEM; plain on macOS, where the LaunchAgent
+/// is the user's own).
+fn relink_window(_app: &AppHandle) {
+    #[cfg(windows)]
     let _ = elevate_self("--relink");
+    #[cfg(target_os = "macos")]
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe).arg("--relink").spawn();
+    }
 }
 
 /// Privileged actions relaunch this exe elevated (UAC) with a single flag:
 /// `--relink`, `--service-start`, `--service-stop`. Declining the prompt
 /// surfaces as an error the caller can show or ignore.
+#[cfg(windows)]
 fn elevate_self(arg: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -660,6 +733,8 @@ struct LinkDefaults {
     /// Start linking as soon as the service reports not_linked.
     auto: bool,
     relink: bool,
+    /// "windows" or "macos" — the UI swaps a few service-management strings.
+    os: &'static str,
 }
 
 fn defaults(app: &AppHandle) -> LinkDefaults {
@@ -677,6 +752,11 @@ fn defaults(app: &AppHandle) -> LinkDefaults {
             .swap(false, std::sync::atomic::Ordering::SeqCst),
         url: known.unwrap_or_else(|| agent_ipc::DEFAULT_CP_URL.into()),
         relink: st.relink,
+        os: if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "windows"
+        },
     }
 }
 
@@ -709,7 +789,7 @@ fn grpc_err(e: agent_ipc::GrpcStatus) -> String {
 
 async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, String> {
     let relink = app.state::<State>().relink;
-    let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
+    let mut c = agent_ipc::connect(&agent_ipc::default_endpoint())
         .await
         .map_err(|_| "The Varde service on this PC isn't running.".to_string())?;
     let s = c
@@ -792,7 +872,9 @@ fn emit_fed(app: &AppHandle, ev: FedEvent) {
 
 /// Register varde:// for the current user so the browser can return the
 /// sign-in token. HKCU needs no admin; missing-write failures just leave
-/// deep links unhandled.
+/// deep links unhandled. macOS claims the scheme via the bundle's
+/// CFBundleURLTypes instead.
+#[cfg(windows)]
 fn register_protocol() {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
@@ -1101,7 +1183,7 @@ async fn approve_link(
 
 #[tauri::command]
 async fn cancel_link() -> Result<(), String> {
-    let mut c = agent_ipc::connect(agent_ipc::PIPE_NAME)
+    let mut c = agent_ipc::connect(&agent_ipc::default_endpoint())
         .await
         .map_err(|_| "The Varde service on this PC isn't running.".to_string())?;
     c.cancel_link(pb::CancelLinkRequest {})
@@ -1112,11 +1194,18 @@ async fn cancel_link() -> Result<(), String> {
 
 #[tauri::command]
 fn start_service() -> Result<(), String> {
+    // the macOS LaunchAgent is user-owned — no elevation needed
+    #[cfg(target_os = "macos")]
+    return svcctl::start().map_err(|e| format!("{e:#}"));
+    #[cfg(windows)]
     elevate_self("--service-start")
 }
 
 #[tauri::command]
 fn stop_service() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return svcctl::stop().map_err(|e| format!("{e:#}"));
+    #[cfg(windows)]
     elevate_self("--service-stop")
 }
 

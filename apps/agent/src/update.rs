@@ -107,7 +107,11 @@ pub fn platform_key() -> Option<String> {
     }
     #[cfg(target_os = "macos")]
     {
-        Some(format!("darwin-{arch}-agent"))
+        // Inside a .app the release's Varde-*.dmg is the matching package
+        // (it replaces the whole app's binaries, tray included); a bare
+        // binary install keeps the flat agent dmg.
+        let flavor = if in_app_bundle() { "app" } else { "agent" };
+        Some(format!("darwin-{arch}-{flavor}"))
     }
     #[cfg(target_os = "linux")]
     {
@@ -441,11 +445,11 @@ pub fn status_pb(state: &UpdateState) -> agent_ipc::pb::Update {
 /// `varde-agent update` on unix. Linux deb/rpm: stage the verified package
 /// under <data>/update and drop the `.pending` marker — the packaged
 /// varde-update.path unit then runs `varde-agent apply-update` as root.
-/// macOS: mount the verified dmg and swap the binaries next to the running
-/// exe (dmg installs are manual; a launchd/supervisor restart picks it up).
+/// macOS: mount the verified dmg and swap the binaries — inside
+/// `Varde.app/Contents/MacOS` for app installs, next to the running exe for
+/// flat installs (a launchd/supervisor restart picks it up).
 #[cfg(unix)]
 pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
-    use std::io::Write;
     let cfg = crate::config::Config::load_opt(data_dir)?
         .map(|c| c.update)
         .unwrap_or_default();
@@ -529,8 +533,25 @@ fn artifact_url_ok(url: &str) -> bool {
     false
 }
 
-/// Mount a dmg into a temp dir, copy varde-agent/varde-mesh next to the
-/// running exe, detach. The exe dir is wherever the user installed them.
+/// The .app bundle the running exe belongs to, if any.
+#[cfg(target_os = "macos")]
+fn app_bundle() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app"))
+        .map(|p| p.to_path_buf())
+}
+
+#[cfg(target_os = "macos")]
+fn in_app_bundle() -> bool {
+    app_bundle().is_some()
+}
+
+/// Mount a dmg into a temp dir, copy the binaries it carries next to the
+/// running exe, detach. The exe dir is wherever the user installed them —
+/// inside Varde.app this swaps agent, mesh AND the tray in one go. Two
+/// dmg layouts: the flat varde-agent dmg (binaries at the root) and the
+/// Varde app dmg (inside Varde.app/Contents/MacOS).
 #[cfg(target_os = "macos")]
 fn apply_dmg(dmg: &[u8]) -> Result<()> {
     let exe_dir = std::env::current_exe()
@@ -564,8 +585,13 @@ fn apply_dmg(dmg: &[u8]) -> Result<()> {
         ],
     )?;
     let res = (|| -> Result<()> {
-        for name in ["varde-agent", "varde-mesh"] {
-            let src = mnt.join(name);
+        // App dmgs hold the binaries inside the bundle; flat dmgs at the root.
+        let src_dir = match mnt.join("Varde.app/Contents/MacOS") {
+            d if d.is_dir() => d,
+            _ => mnt.clone(),
+        };
+        for name in ["varde-agent", "varde-mesh", "varde-tray"] {
+            let src = src_dir.join(name);
             if !src.exists() {
                 continue;
             }
@@ -577,6 +603,16 @@ fn apply_dmg(dmg: &[u8]) -> Result<()> {
                 std::fs::set_permissions(&dst_tmp, std::fs::Permissions::from_mode(0o755))?;
             }
             std::fs::rename(&dst_tmp, exe_dir.join(name))?;
+        }
+        // Replaced binaries invalidate the bundle's first-open check anyway,
+        // and our own signature check already vetted the payload — drop the
+        // quarantine flag so the next `open` doesn't re-gate the app (an
+        // unsigned dev build would read as damaged).
+        if let Some(app) = app_bundle() {
+            let _ = std::process::Command::new("xattr")
+                .args(["-dr", "com.apple.quarantine"])
+                .arg(&app)
+                .status();
         }
         Ok(())
     })();

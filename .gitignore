@@ -28,6 +28,10 @@ apps/relay/relay
 
 # Snap build output (staged by packaging/release/package-unix.sh)
 packaging/linux/snap/*/dist/
+
+# Release artifacts staged by packaging/release scripts
+release-assets/
+apps/desktop/payload/
 packaging/linux/snap/*/parts/
 packaging/linux/snap/*/prime/
 packaging/linux/snap/*/stage/

@@ -445,8 +445,9 @@ export default function App() {
     return `Code expires in ${m}:${sec}`;
   })();
 
-  // only the elevated --relink window can cancel an administrator's re-link
+  // only the --relink window can cancel a pending re-link
   const locked = !!status?.relink && !defaults?.relink;
+  const onMac = defaults?.os === "macos";
 
   return (
     <div className="h-full overflow-y-auto px-7 py-6 text-foreground">
@@ -686,7 +687,9 @@ export default function App() {
             <p className="text-sm text-muted">{expiry}</p>
             {locked && (
               <p className="mt-1 text-sm text-muted">
-                An administrator is re-linking this PC.
+                {onMac
+                  ? "Varde is re-linking this PC."
+                  : "An administrator is re-linking this PC."}
               </p>
             )}
             <ErrorNote detail={codeError?.detail}>{codeError?.text}</ErrorNote>
@@ -795,8 +798,9 @@ export default function App() {
               again.
             </WarnNote>
             <p className="mt-3.5 text-sm text-muted">
-              It normally starts with Windows. Starting it needs administrator
-              approval once.
+              {onMac
+                ? "It normally starts when you log in."
+                : "It normally starts with Windows. Starting it needs administrator approval once."}
             </p>
             <ErrorNote detail={noagentError?.detail}>
               {noagentError?.text}

@@ -94,13 +94,15 @@ jobs:
           crates=(-p varde-agent)
           suffix=''
           if [[ "$GOOS" == windows ]]; then
-            crates+=(-p varde-tray)
             suffix='.exe'
+          fi
+          if [[ "$GOOS" == windows || "$GOOS" == darwin ]]; then
+            crates+=(-p varde-tray)
           fi
           cargo build --locked --release "${crates[@]}"
           cp "target/release/varde-agent$suffix" dist/
-          if [[ "$GOOS" == windows ]]; then
-            cp target/release/varde-tray.exe dist/
+          if [[ "$GOOS" == windows || "$GOOS" == darwin ]]; then
+            cp "target/release/varde-tray$suffix" dist/
           fi
           for component in controlplane relay mesh; do
             name="$component"
@@ -117,15 +119,29 @@ jobs:
           AZURE_TSA_ACCOUNT: ${{ vars.AZURE_TSA_ACCOUNT }}
           AZURE_TSA_CERT_PROFILE: ${{ vars.AZURE_TSA_CERT_PROFILE }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           provider=none
           if [[ "$CHANNEL" == dry-run ]]; then
-            : # Authenticode signing never runs on dry-run builds
-          elif [[ -n "$AZURE_TSA_ENDPOINT" && -n "$AZURE_TSA_ACCOUNT" && \
-                  -n "$AZURE_TSA_CERT_PROFILE" && -n "$AZURE_CLIENT_ID" ]]; then
+            : # Code signing never runs on dry-run builds
+          elif [[ "$GOOS" == windows && -n "$AZURE_TSA_ENDPOINT" && \
+                  -n "$AZURE_TSA_ACCOUNT" && -n "$AZURE_TSA_CERT_PROFILE" && \
+                  -n "$AZURE_CLIENT_ID" ]]; then
             provider=azure
+          elif [[ "$GOOS" == darwin && -n "$APPLE_TEAM_ID" && \
+                  -n "$APPLE_CERTIFICATE_P12" && -n "$APPLE_CERTIFICATE_PASSWORD" && \
+                  -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" && \
+                  -n "$APPLE_API_KEY" ]]; then
+            provider=apple
           elif [[ "$GOOS" == windows ]]; then
             echo 'Authenticode signing skipped: Azure Artifact Signing not configured (packaging/windows/README.md).' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$GOOS" == darwin ]]; then
+            echo 'codesigning skipped: Apple Developer ID not configured — Varde.app is ad-hoc signed and unnotarized (packaging/macos/README.md).' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "provider=$provider" >> "$GITHUB_OUTPUT"
       - name: Sign in to Azure
@@ -163,6 +179,49 @@ jobs:
         run: |
           (cd apps/mesh && go test -race -count=1 -run '^TestParent' ./...)
           cargo test --locked -p varde-agent mesh_child::tests
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS' && steps.signing.outputs.provider == 'apple'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain=/tmp/varde-signing.keychain-db
+          echo "$APPLE_CERTIFICATE_P12" | base64 -d > /tmp/varde-dev-id.p12
+          security create-keychain -p varde-ci "$keychain"
+          security default-keychain -s "$keychain"
+          security unlock-keychain -p varde-ci "$keychain"
+          security import /tmp/varde-dev-id.p12 -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k varde-ci "$keychain"
+          rm /tmp/varde-dev-id.p12
+          security find-identity -v -p codesigning "$keychain"
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -m1 'Developer ID Application' | sed -E 's/.*"(.+)"/\1/')
+          if [[ -z "$identity" ]]; then
+            echo 'No Developer ID Application identity in APPLE_CERTIFICATE_P12' >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - name: Build Varde.app and release DMG
+        if: runner.os == 'macOS'
+        run: |
+          bash packaging/macos/package-app.sh
+          bash packaging/macos/make-dmg.sh \
+            target/release/bundle/macos/Varde.app \
+            "release-assets/Varde-$VERSION-macos-$GOARCH.dmg"
+      - name: Notarize and staple the release DMG
+        if: runner.os == 'macOS' && steps.signing.outputs.provider == 'apple'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          printf '%s' "$APPLE_API_KEY" > /tmp/varde-AuthKey.p8
+          dmg="release-assets/Varde-$VERSION-macos-$GOARCH.dmg"
+          xcrun notarytool submit "$dmg" \
+            --key /tmp/varde-AuthKey.p8 --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          rm /tmp/varde-AuthKey.p8
       - name: Build Windows installer (Tauri NSIS)
         if: runner.os == 'Windows'
         shell: pwsh

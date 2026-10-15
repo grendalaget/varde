@@ -22,7 +22,9 @@
     "licenseFile": "../../LICENSE",
     "publisher": "Varde contributors",
     "icon": [
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.icns",
+      "icons/icon.png"
     ],
     "windows": {
       "webviewInstallMode": {
