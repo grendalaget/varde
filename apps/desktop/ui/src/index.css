@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import "@heroui/styles";
 @import "./mouve.css";
 /* pro component layer omitted: the app uses no pro components */
 
@@ -27,8 +26,13 @@
   --color-skifer-900: #1a1513;
   --color-skifer-950: #110c0a;
 
-  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* Fluent's face on Windows (Segoe UI Variable), bundled Inter elsewhere. */
+  --font-display:
+    "Segoe UI Variable Text", "Segoe UI", var(--font-inter), ui-sans-serif,
+    system-ui, sans-serif;
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", var(--font-inter), ui-sans-serif,
+    system-ui, sans-serif;
 
   /* Motion: fast expo-out for transitions, light spring for entrances. */
   --ease-vd-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -40,6 +44,15 @@
   --color-surface-200: var(--surface-secondary);
   --color-surface-300: var(--surface-tertiary);
   --color-surface-400: var(--border);
+
+  /* mouve vars the window still uses directly (Fluent UI supplies the
+     interactive components now — these paint layout and notes). */
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-separator: var(--separator);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
 }
 
 /* Design system export (saved overrides on top of the mouve theme).

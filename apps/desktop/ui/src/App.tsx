@@ -1,14 +1,7 @@
 // Link / status window. Talks only to the tray process (typed commands),
 // which talks to the local Varde service.
 
-import {
-  Input,
-  Label,
-  ListBox,
-  Select,
-  Spinner,
-  TextField,
-} from "@heroui/react";
+import { Dropdown, Input, Option, Spinner } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Logo, Mark } from "./Logo";
 import {
@@ -495,23 +488,20 @@ export default function App() {
                       : "Only if your group runs its own Varde, for example a friend's."
                   }
                 >
-                  <TextField
+                  <Input
                     type="url"
-                    isRequired
+                    required
                     className="w-full"
-                    onChange={(v) => {
+                    onChange={(_, d) => {
                       urlEditedRef.current = true;
-                      setUrl(v);
+                      setUrl(d.value);
                       setUrlEdited(true);
                     }}
                     value={url}
-                  >
-                    <Input
-                      spellCheck={false}
-                      autoComplete="url"
-                      placeholder="https://cp.example.com"
-                    />
-                  </TextField>
+                    spellCheck={false}
+                    autoComplete="url"
+                    placeholder="https://cp.example.com"
+                  />
                 </Field>
               ) : !hosted ? (
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm">
@@ -591,18 +581,18 @@ export default function App() {
                   automatically.
                 </p>
                 <p className="mt-2 flex items-center gap-2 text-sm text-muted">
-                  <Spinner size="sm" /> Waiting for your browser...
+                  <Spinner size="extra-small" /> Waiting for your browser...
                 </p>
               </>
             )}
             {fed.stage === "exchanging" && (
               <p className="mt-2.5 flex items-center gap-2 text-sm leading-relaxed">
-                <Spinner size="sm" /> Signing you in...
+                <Spinner size="extra-small" /> Signing you in...
               </p>
             )}
             {fed.stage === "approving" && (
               <p className="mt-2.5 flex items-center gap-2 text-sm leading-relaxed">
-                <Spinner size="sm" /> Linking this PC...
+                <Spinner size="extra-small" /> Linking this PC...
               </p>
             )}
             {fed.stage === "pick_group" && (
@@ -610,26 +600,22 @@ export default function App() {
                 <p className="mt-2.5 text-sm leading-relaxed">
                   Pick the group this PC joins.
                 </p>
-                <Select
-                  selectedKey={fedGroup}
-                  onSelectionChange={(k) => setFedGroup(String(k))}
-                  className="mt-3.5 w-full"
-                >
-                  <Label>Group</Label>
-                  <Select.Trigger>
-                    <Select.Value />
-                    <Select.Indicator />
-                  </Select.Trigger>
-                  <Select.Popover>
-                    <ListBox>
-                      {fed.groups.map((g) => (
-                        <ListBox.Item key={g.id} id={g.id}>
-                          {g.name}
-                        </ListBox.Item>
-                      ))}
-                    </ListBox>
-                  </Select.Popover>
-                </Select>
+                <Field label="Group">
+                  <Dropdown
+                    value={
+                      fed.groups.find((g) => g.id === fedGroup)?.name ?? ""
+                    }
+                    selectedOptions={fedGroup ? [fedGroup] : []}
+                    onOptionSelect={(_, d) => setFedGroup(d.optionValue ?? "")}
+                    className="mt-1 w-full"
+                  >
+                    {fed.groups.map((g) => (
+                      <Option key={g.id} value={g.id} text={g.name}>
+                        {g.name}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
               </>
             )}
             {fed.stage === "error" && (
