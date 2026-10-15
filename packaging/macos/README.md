@@ -21,8 +21,8 @@ that installs it per-user is a possible follow-up.
   a TIFF, writes `dmg.json`, and runs `npx appdmg`.
 - `dmg-background.html` — the DMG window artwork: the varde.games hero's
   ASCII-cloud glyph field (a WebGL2 port of `ascii-clouds.tsx` rendering one
-  fixed frame) with the white-variant cairn mark and the drag arrow on the
-  icon-row centerline. Window 540×360, rendered headless at 2x.
+  fixed frame) and the drag arrow on the icon-row centerline (no logo — the
+  app icon carries the mark). Window 540×360, rendered headless at 2x.
 - `dmg-background.svg` — the degraded fallback when Chrome isn't available
   (rendered via `qlmanage`): same layout, flat Natt field, no glyph clouds.
 - `Info-overlay.plist` — merged into `Info.plist`: `LSUIElement` (no Dock icon),
