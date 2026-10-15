@@ -174,15 +174,44 @@ pub fn record_process_exit(
     write_report(dir, &r)
 }
 
-/// Cracks a WER-style dump name (`<image>.<pid>.dmp`) into (exe, pid).
+/// Cracks a dump stem into (exe image, pid). Raw WER names are
+/// `<image>.<pid>`; canonicalized names are `<image>.<pid>.<mtime-ms>`.
 /// Falls back to the whole stem and pid 0.
 fn crack_dump_name(stem: &str) -> (String, u32) {
-    if let Some((img, pid)) = stem.rsplit_once('.') {
-        if let Ok(p) = pid.parse::<u32>() {
-            return (img.to_string(), p);
+    if let Some((head, tail)) = stem.rsplit_once('.') {
+        if tail.len() >= 12 && tail.parse::<u64>().is_ok() {
+            if let Some((img, pid)) = head.rsplit_once('.') {
+                if let Ok(p) = pid.parse::<u32>() {
+                    return (img.to_string(), p);
+                }
+            }
+        }
+        if let Ok(p) = tail.parse::<u32>() {
+            return (head.to_string(), p);
         }
     }
     (stem.to_string(), 0)
+}
+
+/// Renames a bare WER dump once to `<stem>.<mtime-ms>.dmp` so the dedupe
+/// ref lives in the filename itself — stable across retries, restarts and
+/// agent upgrades (no sidecar to lose, no format to migrate). Returns None
+/// while the file can't be renamed (WER still holds it open on Windows);
+/// the next collect pass retries.
+fn canonicalize_dump(dir: &Path, dmp: &Path) -> Option<PathBuf> {
+    let stem = dmp.file_stem()?.to_str()?;
+    let ms = dmp
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)?;
+    if stem.ends_with(&format!(".{ms}")) {
+        return Some(dmp.to_path_buf());
+    }
+    let to = dir.join(format!("{stem}.{ms}.dmp"));
+    std::fs::rename(dmp, &to).ok()?;
+    Some(to)
 }
 
 fn read_report(path: &Path) -> Option<Report> {
@@ -228,10 +257,14 @@ pub fn collect(dir: &Path) -> io::Result<Vec<Pending>> {
         }
     }
     for dmp in dumps {
-        let stem = dmp.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-        if json_stems.contains(stem) {
+        let raw_stem = dmp.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        if json_stems.contains(raw_stem) {
             continue; // attached to its report already
         }
+        let Some(dmp) = canonicalize_dump(dir, &dmp) else {
+            continue; // still being written; next pass picks it up
+        };
+        let stem = dmp.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
         let (exe, pid) = crack_dump_name(stem);
         let mut r = Report::new("dump", exe.trim_end_matches(".exe"), "");
         r.pid = pid;
@@ -446,6 +479,12 @@ mod tests {
         assert_eq!(all[0].report.exe, "varde-tray");
         assert_eq!(all[0].report.pid, 4321);
         assert!(all[0].json_path.is_none());
+        // canonicalized once: stem gains the dump mtime and stays put
+        let stem = all[0].stem.clone();
+        assert!(stem.starts_with("varde-tray.exe.4321."));
+        let again = collect(dir.path()).unwrap();
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].stem, stem);
     }
 
     #[test]
