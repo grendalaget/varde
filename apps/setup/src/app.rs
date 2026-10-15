@@ -82,7 +82,12 @@ fn system_accent() -> Option<String> {
         .open_subkey("Software\\Microsoft\\Windows\\DWM")
         .ok()?;
     let abgr: u32 = k.get_value("AccentColorMenu").ok()?;
-    Some(format!("#{:02x}{:02x}{:02x}", abgr & 0xff, (abgr >> 8) & 0xff, (abgr >> 16) & 0xff))
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        abgr & 0xff,
+        (abgr >> 8) & 0xff,
+        (abgr >> 16) & 0xff
+    ))
 }
 
 fn step_index(steps: &'static [&'static str], id: &str) -> (usize, usize) {

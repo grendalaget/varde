@@ -183,8 +183,8 @@ fn run_nsis_uninstall(uninstall: &str) -> Result<()> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             let done = match std::fs::read_dir(dir) {
-                Err(_) => true,             // dir gone
-                Ok(rd) => rd.count() == 0,  // or emptied
+                Err(_) => true,            // dir gone
+                Ok(rd) => rd.count() == 0, // or emptied
             };
             if done {
                 break;

@@ -247,9 +247,7 @@ pub fn remembered_components() -> Option<String> {
             .open_subkey_with_flags(COMPONENTS_KEY, KEY_READ | view)
         {
             if k.get_raw_value("Components").is_ok() {
-                return Some(
-                    k.get_value::<String, _>("Components").unwrap_or_default(),
-                );
+                return Some(k.get_value::<String, _>("Components").unwrap_or_default());
             }
         }
     }
