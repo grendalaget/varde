@@ -341,13 +341,13 @@ impl Default for Prefs {
 
 pub fn load_prefs(data_dir: &Path) -> Prefs {
     match std::fs::read(data_dir.join("prefs.json")) {
-        Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|_| {
+        Ok(b) => serde_json::from_slice(&b).unwrap_or(
             // an unreadable opt-out must not silently become an opt-in:
             // fail closed until the file is rewritten
             Prefs {
                 crash_reporting: false,
-            }
-        }),
+            },
+        ),
         Err(_) => Prefs::default(),
     }
 }
