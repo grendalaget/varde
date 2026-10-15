@@ -39,6 +39,10 @@ pub(crate) struct State {
     auto_link: std::sync::atomic::AtomicBool,
     /// Elevated `--relink` instance: link window only, no tray.
     relink: bool,
+    /// CP origin the dashboard webview was last pointed at — publish()
+    /// retargets only while it's still sitting there (an auth bounce off
+    /// to varde.games must not be yanked back mid-sign-in).
+    dashboard_origin: Mutex<Option<tauri::Url>>,
     /// Federated sign-in paused at "pick a group": the CP session waits here
     /// for `finish_varde_login`.
     fed: Mutex<Option<FedPending>>,
@@ -294,16 +298,29 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
     render(app, false);
     let _ = app.emit_to(MAIN_WINDOW, "status", ui);
     // a re-link to another control plane retargets an existing dashboard
-    // webview — but only once no link is pending: status carries the
-    // proposed address during a re-link, and navigating on it would move
-    // an open dashboard before (or despite) approval
+    // webview — but only once no link is pending, and only while the
+    // webview still sits on the previous CP origin: status carries the
+    // proposed address during a re-link, and mid-flight (a varde.games
+    // sign-in bounce) the webview is off-origin — yanking it back would
+    // lose the sign-in.
     if !link_pending {
         if let (Some(u), Some(w)) = (cp, app.get_webview_window(DASHBOARD_WINDOW)) {
             if let Ok(parsed) = tauri::Url::parse(&u) {
-                if w.url()
-                    .map(|cur| cur.origin() != parsed.origin())
-                    .unwrap_or(true)
+                let st = app.state::<State>();
+                let prev = st.dashboard_origin.lock().unwrap().clone();
+                let still_on_cp = w
+                    .url()
+                    .ok()
+                    .zip(prev.as_ref())
+                    .map(|(cur, p)| cur.origin() == p.origin())
+                    .unwrap_or(false);
+                if still_on_cp
+                    && prev
+                        .as_ref()
+                        .map(|p| p.origin() != parsed.origin())
+                        .unwrap_or(true)
                 {
+                    *st.dashboard_origin.lock().unwrap() = Some(parsed.clone());
                     let _ = w.navigate(parsed);
                 }
             }
@@ -607,12 +624,18 @@ fn stop_and_exit(app: AppHandle) {
     }
     // the elevated instance drains the service — up to minutes when a
     // save still has to replicate — so quit only once the service is
-    // actually gone (its own error box is the failure path)
+    // actually gone. Still up after the drain window: keep the app and
+    // say so — exiting anyway would leave a service running under a
+    // tray that just died.
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(240);
         loop {
-            if svcctl::running() == Some(false) || std::time::Instant::now() > deadline {
+            if svcctl::running() == Some(false) {
                 app.exit(0);
+                return;
+            }
+            if std::time::Instant::now() > deadline {
+                message_box("Varde's service is still stopping. Try Exit again in a moment.");
                 return;
             }
             std::thread::sleep(Duration::from_secs(1));
@@ -803,6 +826,7 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
             .map(|u| u.origin() != parsed.origin())
             .unwrap_or(true)
         {
+            *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
             w.navigate(parsed).map_err(|e| e.to_string())?;
         }
         let _ = w.unminimize();
@@ -810,6 +834,7 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
+    *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
     WebviewWindowBuilder::new(app, DASHBOARD_WINDOW, WebviewUrl::External(parsed))
         .title("Varde")
         .inner_size(1200.0, 800.0)
@@ -817,13 +842,27 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         .center()
         .theme(Some(tauri::Theme::Dark))
         .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
-        // keep the remote page off the app origin — the local frontend's
-        // command bridge is the one thing it must never reach. Any real
-        // https origin is fine inside the window: the dashboard's own
-        // pages, plus varde.games (hosted-CP sign-in bounces through
-        // /federate/cp, billing, account).
-        .on_navigation(|u| {
-            matches!(u.scheme(), "http" | "https") && u.host_str() != Some("tauri.localhost")
+        // inside the window: the control-plane origin itself, plus
+        // https://*.varde.games — the hosted-CP sign-in bounces through
+        // /federate/cp and account/billing live there. Anything else
+        // stays out of the app chrome (an off-origin page must never
+        // impersonate the dashboard, and the local frontend's command
+        // bridge is unreachable either way).
+        .on_navigation({
+            let ah = app.clone();
+            move |u| {
+                let st = ah.state::<State>();
+                let on_cp = st
+                    .dashboard_origin
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|d| d.origin() == u.origin());
+                on_cp
+                    || u.scheme() == "https"
+                        && u.domain()
+                            .is_some_and(|d| d == "varde.games" || d.ends_with(".varde.games"))
+            }
         })
         // window.open()/target=_blank (docs, community, a deep link into
         // varde.games account/billing) belongs in the user's browser,
