@@ -450,7 +450,13 @@ pub fn status_pb(state: &UpdateState) -> agent_ipc::pb::Update {
 /// macOS: mount the verified dmg and swap the binaries — inside
 /// `Varde.app/Contents/MacOS` for app installs, next to the running exe for
 /// flat installs (a launchd/supervisor restart picks it up).
-#[cfg(unix)]
+/// Android binaries ship inside the host app — updates are APK upgrades.
+#[cfg(target_os = "android")]
+pub async fn cli_update(_data_dir: &std::path::Path) -> Result<()> {
+    anyhow::bail!("updates are delivered by the Android app")
+}
+
+#[cfg(all(unix, not(target_os = "android")))]
 pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
     let cfg = crate::config::Config::load_opt(data_dir)?
         .map(|c| c.update)
@@ -515,14 +521,14 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn url_host(_data_dir: &std::path::Path) -> &'static str {
     "https://varde.games/download"
 }
 
 /// Artifact download policy: https everywhere; http only to loopback hosts
 /// (dev feeds). Anything else is a signed-but-wrong URL — never fetch it.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 fn artifact_url_ok(url: &str) -> bool {
     let u = url.to_ascii_lowercase();
     if u.starts_with("https://") {

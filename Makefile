@@ -3,7 +3,18 @@ BIN := bin
 
 export PATH := $(HOME)/go/bin:$(PATH)
 
-.PHONY: gen build test lint fmt check-gen clean
+.PHONY: gen build test lint fmt check-gen clean android
+
+# Android anchor binaries: the app execs them from its native library dir,
+# which only extracts files named lib*.so — hence the rename.
+android:
+	cross build --release --target aarch64-linux-android -p varde-agent
+	(cd apps/mesh && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o varde-mesh-android .)
+	@mkdir -p apps/android/app/src/main/jniLibs/arm64-v8a
+	cp target/aarch64-linux-android/release/varde-agent apps/android/app/src/main/jniLibs/arm64-v8a/libagent.so
+	cp apps/mesh/varde-mesh-android apps/android/app/src/main/jniLibs/arm64-v8a/libmesh.so
+	@rm apps/mesh/varde-mesh-android
+	@echo "binaries staged → apps/android/app/src/main/jniLibs/arm64-v8a/"
 
 gen:
 	buf generate
