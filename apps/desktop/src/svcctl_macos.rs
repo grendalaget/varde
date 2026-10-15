@@ -37,6 +37,19 @@ fn gui_domain() -> String {
     format!("gui/{}", unsafe { libc::getuid() })
 }
 
+/// A marker for "the user stopped the service", kept next to the plist:
+/// an unloaded agent is ambiguous (user stop vs never bootstrapped), and
+/// the plist alone can't say which. stop() plants it; start() lifts it;
+/// RunAtLoad ignores it — a stop is for this login session, like the
+/// Windows service's manual stop.
+fn disabled_marker() -> Result<PathBuf> {
+    Ok(plist_path()?.with_extension("disabled"))
+}
+
+fn user_stopped() -> bool {
+    disabled_marker().map(|p| p.exists()).unwrap_or(false)
+}
+
 fn launchctl(args: &[&str]) -> Result<()> {
     let out = std::process::Command::new("launchctl")
         .args(args)
@@ -164,7 +177,7 @@ pub fn ensure_started() -> Result<()> {
         }
         return Ok(());
     }
-    if plist.exists() && plist_targets_current(&plist)? {
+    if user_stopped() || (plist.exists() && plist_targets_current(&plist)?) {
         return Ok(());
     }
     start()
@@ -175,6 +188,7 @@ pub fn ensure_started() -> Result<()> {
 /// the binary may have moved since install — and bootstrap.
 pub fn start() -> Result<()> {
     let domain = gui_domain();
+    let _ = std::fs::remove_file(disabled_marker()?);
     if loaded() {
         if ipc_answers(IPC_DEAD) {
             return Ok(());
@@ -204,9 +218,12 @@ pub fn start() -> Result<()> {
 /// still draining — and the new one can't take the socket until it exits.
 pub fn restart_service() -> Result<()> {
     if !loaded() {
-        // The update wrote new binaries; leaving a stopped service down
-        // would strand the relaunched tray on an agent that never comes
-        // up. start() also repairs a stale plist while it's at it.
+        // The update wrote new binaries; leaving the service down would
+        // strand the relaunched tray on an agent that never comes up —
+        // unless the user asked for that stop, which wins.
+        if user_stopped() {
+            return Ok(());
+        }
         return start();
     }
     let domain = gui_domain();
@@ -256,5 +273,6 @@ pub fn stop() -> Result<()> {
         );
         std::thread::sleep(Duration::from_millis(500));
     }
+    let _ = std::fs::File::create(disabled_marker()?);
     Ok(())
 }
