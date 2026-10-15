@@ -270,6 +270,23 @@ pub struct ExecutionDirective {
     /// Latest committed snapshot of the server (display only).
     #[serde(default)]
     pub latest_safe_save_at_unix_ms: Option<i64>,
+    /// Nodes holding a ready copy of that save (display only).
+    #[serde(default, deserialize_with = "null_vec")]
+    pub latest_safe_save_on: Vec<SaveHolder>,
+}
+
+/// A node holding a ready copy of a save, as the control plane reports it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveHolder {
+    pub node_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub anchor: Option<bool>,
+    #[serde(default)]
+    pub online: Option<bool>,
+    #[serde(default)]
+    pub last_seen_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

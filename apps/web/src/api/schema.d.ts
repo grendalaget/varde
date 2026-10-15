@@ -986,21 +986,27 @@ export interface components {
                 snapshot_id: string;
                 /** Format: int64 */
                 created_at: number;
-                replicas?: {
-                    node_id: string;
-                    name: string;
-                    anchor: boolean;
-                }[];
+                replicas?: components["schemas"]["SaveHolder"][];
             } | null;
             latest_save?: {
                 snapshot_id: string;
                 /** Format: int64 */
                 created_at: number;
+                replicas?: components["schemas"]["SaveHolder"][];
             } | null;
             only_on_one_machine?: boolean;
             /** @example 127.77.12.34:25565 */
             address?: string;
             join_code?: string | null;
+        };
+        SaveHolder: {
+            node_id: string;
+            name: string;
+            anchor: boolean;
+            /** @description The node heartbeats regularly; offline means the copy exists but can't be served until the machine returns. */
+            online: boolean;
+            /** Format: int64 */
+            last_seen_at?: number | null;
         };
         Server: {
             id: string;
@@ -1243,6 +1249,8 @@ export interface components {
              * @description created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
              */
             latest_safe_save_at_unix_ms?: number | null;
+            /** @description Nodes holding a ready copy of the latest committed save; absent when the server has none. Display only. */
+            latest_safe_save_on?: components["schemas"]["SaveHolder"][];
         };
         AgentDirectives: {
             /** Format: int64 */

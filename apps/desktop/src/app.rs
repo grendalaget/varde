@@ -252,7 +252,7 @@ async fn tick(app: AppHandle) {
 }
 
 fn publish(app: &AppHandle, s: Option<pb::Status>) {
-    let ui = s.as_ref().map(UiStatus::from);
+    let ui = s.as_ref().map(|st| UiStatus::from_status(st, now_ms()));
     *app.state::<State>().status.lock().unwrap() = s;
     render(app, false);
     let _ = app.emit_to(MAIN_WINDOW, "status", ui);
@@ -650,7 +650,12 @@ fn elevate_self(arg: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn get_status(state: tauri::State<'_, State>) -> Option<UiStatus> {
-    state.status.lock().unwrap().as_ref().map(UiStatus::from)
+    state
+        .status
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|st| UiStatus::from_status(st, now_ms()))
 }
 
 #[derive(Serialize, Clone)]
@@ -691,7 +696,7 @@ async fn start_link(app: AppHandle, url: String) -> Result<UiStatus, String> {
     if let Some(l) = &s.link {
         let _ = app.opener().open_url(&l.link_url, None::<&str>);
     }
-    let ui = UiStatus::from(&s);
+    let ui = UiStatus::from_status(&s, now_ms());
     Ok(ui)
 }
 

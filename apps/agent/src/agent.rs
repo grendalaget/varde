@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use agent_ipc::pb;
 use ed25519_dalek::SigningKey;
 use game_driver_api::DriverRegistry;
 use snapshot_store::Store;
@@ -54,6 +55,8 @@ pub struct CpView {
     pub last_contact_unix_ms: i64,
     /// server_id -> latest committed snapshot created_at
     pub latest_safe_save: HashMap<String, i64>,
+    /// server_id -> machines holding a ready copy of that save
+    pub latest_safe_save_on: HashMap<String, Vec<pb::SaveHolder>>,
     /// control-plane clock minus this PC's, as of the last heartbeat
     pub cp_clock_offset_ms: i64,
 }

@@ -53,6 +53,15 @@ message Link {
   bool relink = 4;
 }
 
+// A machine holding a ready copy of the latest committed save.
+message SaveHolder {
+  string node_name = 1;
+  bool anchor = 2;
+  // Heartbeats flowing: the copy can be served right now; false means the
+  // machine has it but is offline.
+  bool online = 3;
+}
+
 message Hosting {
   string server_id = 1;
   string server_name = 2;
@@ -63,6 +72,8 @@ message Hosting {
   // Latest save this PC made in this execution, safe or not (it may not be
   // on enough PCs yet); 0 when there is none.
   int64 latest_save_at_unix_ms = 5;
+  // Machines holding the latest committed save, per the control plane.
+  repeated SaveHolder latest_safe_save_on = 6;
 }
 
 message Update {

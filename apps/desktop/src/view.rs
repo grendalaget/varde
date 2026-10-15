@@ -75,18 +75,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         _ => Icon::Warn,
     };
     let hosting = hosting_line(&s.hosting);
-    let safe_save = hosting_now.then(|| {
-        let latest = |f: fn(&pb::Hosting) -> i64| s.hosting.iter().map(f).max().unwrap_or(0);
-        let safe = latest(|h| h.latest_safe_save_at_unix_ms);
-        let any = latest(|h| h.latest_save_at_unix_ms);
-        if any > safe {
-            format!("Latest save: {} (not on enough PCs yet)", ago(now_ms - any))
-        } else if safe > 0 {
-            format!("Latest safe save: {}", ago(now_ms - safe))
-        } else {
-            "No safe save yet".to_string()
-        }
-    });
+    let safe_save = save_line(&s.hosting, now_ms);
     let linked = matches!(
         state,
         pb::State::Connecting | pb::State::Online | pb::State::Offline
@@ -120,6 +109,51 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             .filter(|u| !u.available_version.is_empty())
             .map(|u| format!("Update to {}", u.available_version)),
     }
+}
+
+/// "Latest safe save: 3 min ago on nas, gaming-pc (offline)" — the newest
+/// committed save and the machines holding it, or None when not hosting.
+pub fn save_line(hosting: &[pb::Hosting], now_ms: i64) -> Option<String> {
+    if hosting.is_empty() {
+        return None;
+    }
+    let latest = |f: fn(&pb::Hosting) -> i64| hosting.iter().map(f).max().unwrap_or(0);
+    let safe = latest(|h| h.latest_safe_save_at_unix_ms);
+    let any = latest(|h| h.latest_save_at_unix_ms);
+    // machines holding the latest safe save, per the control plane
+    let mut holders: Vec<(String, bool)> = hosting
+        .iter()
+        .flat_map(|h| {
+            h.latest_safe_save_on
+                .iter()
+                .map(|x| (x.node_name.clone(), x.online))
+        })
+        .collect();
+    holders.sort();
+    holders.dedup();
+    let on = if holders.is_empty() {
+        String::new()
+    } else {
+        let names = holders
+            .iter()
+            .map(|(n, online)| {
+                if *online {
+                    n.clone()
+                } else {
+                    format!("{n} (offline)")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(" on {names}")
+    };
+    Some(if any > safe {
+        format!("Latest save: {} (not on enough PCs yet)", ago(now_ms - any))
+    } else if safe > 0 {
+        format!("Latest safe save: {}{on}", ago(now_ms - safe))
+    } else {
+        "No safe save yet".to_string()
+    })
 }
 
 pub(crate) fn hosting_line(h: &[pb::Hosting]) -> Option<String> {
@@ -168,6 +202,16 @@ pub struct UiStatus {
     pub hosting: bool,
     /// The pending code is an administrator's re-link.
     pub relink: bool,
+    /// Where the newest save lives, while hosting (same line as the tray).
+    pub save_line: Option<String>,
+}
+
+impl UiStatus {
+    pub fn from_status(s: &pb::Status, now_ms: i64) -> Self {
+        let mut u = Self::from(s);
+        u.save_line = save_line(&s.hosting, now_ms);
+        u
+    }
 }
 
 impl From<&pb::Status> for UiStatus {
@@ -192,6 +236,7 @@ impl From<&pb::Status> for UiStatus {
             link_error_detail: s.link_error_detail.clone(),
             hosting: !s.hosting.is_empty(),
             relink: link.relink,
+            save_line: None,
         }
     }
 }
@@ -254,6 +299,7 @@ mod tests {
             phase: phase.into(),
             latest_safe_save_at_unix_ms: save,
             latest_save_at_unix_ms: 0,
+            latest_safe_save_on: vec![],
         }
     }
 
@@ -335,6 +381,30 @@ mod tests {
         assert_eq!(
             tray_view(Some(&s), now).safe_save.as_deref(),
             Some("Latest safe save: 10 s ago")
+        );
+    }
+
+    #[test]
+    fn safe_save_lists_holders_with_offline_marked() {
+        let now = 1_000_000;
+        let mut s = status(pb::State::Online);
+        let mut h = hosting("Mc", "running", now - 10_000);
+        h.latest_safe_save_on = vec![
+            pb::SaveHolder {
+                node_name: "nas".into(),
+                anchor: true,
+                online: true,
+            },
+            pb::SaveHolder {
+                node_name: "gaming-pc".into(),
+                anchor: false,
+                online: false,
+            },
+        ];
+        s.hosting = vec![h];
+        assert_eq!(
+            tray_view(Some(&s), now).safe_save.as_deref(),
+            Some("Latest safe save: 10 s ago on gaming-pc (offline), nas")
         );
     }
 

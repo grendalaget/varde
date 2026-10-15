@@ -16,6 +16,7 @@ export interface UiStatus {
   link_error_detail: string;
   hosting: boolean;
   relink: boolean;
+  save_line: string | null;
 }
 
 export interface LinkDefaults {
@@ -64,6 +65,9 @@ function linked(hosting: boolean): UiStatus {
     link_error_detail: "",
     hosting,
     relink: false,
+    save_line: hosting
+      ? "Latest safe save: 2 min ago on nas, gaming-pc (offline)"
+      : null,
   };
 }
 
@@ -80,6 +84,7 @@ const canned: Record<string, UiStatus | null> = {
     link_error_detail: "",
     hosting: false,
     relink: false,
+    save_line: null,
   },
   linking: {
     state: "linking",
@@ -93,6 +98,7 @@ const canned: Record<string, UiStatus | null> = {
     link_error_detail: "",
     hosting: false,
     relink: false,
+    save_line: null,
   },
   online: linked(false),
   hosting: linked(true),
