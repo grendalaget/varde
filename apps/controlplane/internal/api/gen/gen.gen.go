@@ -751,8 +751,11 @@ type CrashReportAck struct {
 
 // CrashReportBody defines model for CrashReportBody.
 type CrashReportBody struct {
-	Arch            *string `json:"arch,omitempty"`
-	Backtrace       *string `json:"backtrace,omitempty"`
+	Arch      *string `json:"arch,omitempty"`
+	Backtrace *string `json:"backtrace,omitempty"`
+
+	// ClientRef uploader's idempotency key; retries with the same ref do not duplicate the report
+	ClientRef       *string `json:"client_ref,omitempty"`
 	CreatedAtUnixMs int64   `json:"created_at_unix_ms"`
 
 	// Detail exit code

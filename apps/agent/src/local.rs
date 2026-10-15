@@ -542,7 +542,7 @@ impl pb::local_service_server::LocalService for Svc {
             return Err(Status::invalid_argument("missing report"));
         };
         crate::crash::submit_local(&self.0.data_dir, m)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::resource_exhausted(e.to_string()))?;
         Ok(Response::new(pb::SubmitCrashReportResponse {}))
     }
 
@@ -550,6 +550,18 @@ impl pb::local_service_server::LocalService for Svc {
         &self,
         req: Request<pb::SetCrashReportingRequest>,
     ) -> Result<Response<pb::SetCrashReportingResponse>, Status> {
+        // enabling uploads machine-wide crash data to this machine's control
+        // plane — gated like re-link; disabling is always allowed.
+        let peer = req
+            .extensions()
+            .get::<PeerInfo>()
+            .cloned()
+            .unwrap_or_default();
+        if req.get_ref().enabled && !peer.is_admin {
+            return Err(Status::permission_denied(
+                "enabling crash reporting needs an administrator",
+            ));
+        }
         let prefs = crash_report::Prefs {
             crash_reporting: req.into_inner().enabled,
         };

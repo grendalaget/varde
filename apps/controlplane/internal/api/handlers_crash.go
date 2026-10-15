@@ -66,12 +66,16 @@ func (s *Server) AgentSubmitCrashReport(ctx context.Context, req gen.AgentSubmit
 		Dump:        dump,
 		DumpName:    str(b.DumpName),
 		DumpOmitted: str(b.DumpOmitted),
+		ClientRef:   str(b.ClientRef),
 	}
-	if err := s.Store.InsertCrashReport(ctx, r); err != nil {
+	id, err := s.Store.InsertCrashReport(ctx, r)
+	if err != nil {
 		return nil, err
 	}
-	s.Log.Info("crash report", "node", node.ID, "kind", r.Kind, "exe", r.Exe, "msg", r.Message)
-	return gen.AgentSubmitCrashReport201JSONResponse{Id: r.ID}, nil
+	// deliberately no report content in the log: panic messages can carry
+	// user data; the report body itself is readable via the admin API.
+	s.Log.Info("crash report", "id", id, "node", node.ID, "kind", r.Kind, "exe", r.Exe)
+	return gen.AgentSubmitCrashReport201JSONResponse{Id: id}, nil
 }
 
 // ListCrashReports: group admins see what their machines reported.

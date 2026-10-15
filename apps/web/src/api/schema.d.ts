@@ -1343,6 +1343,11 @@ export interface components {
             /** Format: int64 */
             created_at_unix_ms: number;
             /**
+             * @description uploader's idempotency key; retries with the same ref do not duplicate the report
+             * @default
+             */
+            client_ref: string;
+            /**
              * @description base64 minidump
              * @default
              */

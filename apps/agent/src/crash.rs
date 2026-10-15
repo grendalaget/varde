@@ -19,10 +19,23 @@ pub fn dir(data_dir: &Path) -> PathBuf {
     data_dir.join("crash-reports")
 }
 
+/// Bound on pending reports the IPC accepts: local clients can't fill the
+/// service disk by spamming submissions.
+const MAX_PENDING: usize = 64;
+
 /// Persist a report handed to us by a local client (the tray) over IPC; it
 /// joins the same pending dir the upload loop drains.
 pub fn submit_local(data_dir: &Path, m: agent_ipc::pb::CrashReportMsg) -> Result<()> {
     let dir = dir(data_dir);
+    if m.dump.len() as u64 > crash_report::MAX_DUMP_BYTES {
+        anyhow::bail!(
+            "dump exceeds {}-byte cap",
+            crash_report::MAX_DUMP_BYTES
+        );
+    }
+    if crash_report::collect(&dir).map(|v| v.len()).unwrap_or(0) >= MAX_PENDING {
+        anyhow::bail!("crash report backlog full ({MAX_PENDING} pending)");
+    }
     let mut r = crash_report::Report {
         kind: m.kind,
         exe: m.exe,
@@ -59,6 +72,7 @@ fn body_of(r: &crash_report::Report) -> cp_api::CrashReportBody {
         backtrace: r.backtrace.clone(),
         detail: r.detail.clone(),
         created_at_unix_ms: r.created_at_unix_ms,
+        client_ref: String::new(),
         dump_b64: String::new(),
         dump_name: String::new(),
         dump_omitted: String::new(),
@@ -103,6 +117,9 @@ async fn drain(agent: &Arc<Agent>, dir: &Path) -> Result<()> {
     }
     for p in crash_report::collect(dir)? {
         let mut body = body_of(&p.report);
+        // the stem is this machine's idempotency key: a lost ack retries
+        // with the same ref instead of duplicating the report
+        body.client_ref = p.stem.clone();
         attach_dump(&mut body, &p);
         agent.cp.submit_crash_report(&body).await?;
         crash_report::mark_sent(dir, &p)?;

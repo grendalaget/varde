@@ -309,6 +309,7 @@ type CrashReport struct {
 	Dump        *[]byte `db:"dump"`
 	DumpName    string  `db:"dump_name"`
 	DumpOmitted string  `db:"dump_omitted"`
+	ClientRef   string  `db:"client_ref"`
 }
 
 // CrashReportMeta is CrashReport without the dump body (list views).

@@ -93,10 +93,25 @@ fn stem(exe: &str, kind: &str) -> String {
 /// Writes `report` as `<dir>/<stem>.json`. Returns the file's stem.
 pub fn write_report(dir: &Path, report: &Report) -> io::Result<String> {
     std::fs::create_dir_all(dir)?;
-    let stem = stem(&report.exe, &report.kind);
-    let path = dir.join(format!("{stem}.json"));
-    std::fs::write(&path, serde_json::to_vec_pretty(report)?)?;
-    Ok(stem)
+    let base = stem(&report.exe, &report.kind);
+    // two same-kind crashes inside one millisecond share a stem — suffix
+    // rather than overwrite the earlier report's evidence
+    for i in 0..100 {
+        let stem = if i == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{i}")
+        };
+        let path = dir.join(format!("{stem}.json"));
+        if !path.exists() {
+            std::fs::write(&path, serde_json::to_vec_pretty(report)?)?;
+            return Ok(stem);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "crash dir saturated with same-stem reports",
+    ))
 }
 
 /// Writes a report plus its minidump under the given stem.
@@ -194,8 +209,8 @@ pub fn collect(dir: &Path) -> io::Result<Vec<Pending>> {
         match p.extension().and_then(|x| x.to_str()) {
             Some("json") => {
                 if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                    json_stems.insert(stem.to_string());
                     if let Some(report) = read_report(&p) {
+                        json_stems.insert(stem.to_string());
                         let dmp = dir.join(format!("{stem}.dmp"));
                         out.push(Pending {
                             report,
@@ -204,6 +219,8 @@ pub fn collect(dir: &Path) -> io::Result<Vec<Pending>> {
                             dump_path: dmp.is_file().then_some(dmp),
                         });
                     }
+                    // an unparseable .json does not claim its stem: a
+                    // sibling .dmp is still collected as a bare dump below
                 }
             }
             Some("dmp") => dumps.push(p),
@@ -323,10 +340,16 @@ impl Default for Prefs {
 }
 
 pub fn load_prefs(data_dir: &Path) -> Prefs {
-    std::fs::read(data_dir.join("prefs.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    match std::fs::read(data_dir.join("prefs.json")) {
+        Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|_| {
+            // an unreadable opt-out must not silently become an opt-in:
+            // fail closed until the file is rewritten
+            Prefs {
+                crash_reporting: false,
+            }
+        }),
+        Err(_) => Prefs::default(),
+    }
 }
 
 pub fn save_prefs(data_dir: &Path, prefs: &Prefs) -> io::Result<()> {

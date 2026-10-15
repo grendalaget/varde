@@ -290,6 +290,10 @@ CREATE TABLE IF NOT EXISTS crash_reports (
     received_at    BIGINT NOT NULL,
     dump           BLOB,
     dump_name      TEXT NOT NULL DEFAULT '',
-    dump_omitted   TEXT NOT NULL DEFAULT ''
+    dump_omitted   TEXT NOT NULL DEFAULT '',
+    client_ref     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_crash_group ON crash_reports(group_id, created_at DESC);
+-- the uploader's idempotency key: a retried upload does not duplicate
+CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_node_ref
+    ON crash_reports(node_id, client_ref) WHERE client_ref != '';

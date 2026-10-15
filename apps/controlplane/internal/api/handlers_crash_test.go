@@ -31,13 +31,34 @@ func TestCrashReportUploadAndAdminRead(t *testing.T) {
 		t.Fatalf("no report id: %v", ack)
 	}
 
+	// a retried upload with the same client_ref dedupes instead of
+	// duplicating (lost-ack replay)
+	body2, _ := json.Marshal(map[string]any{
+		"kind": "panic", "exe": "varde-agent",
+		"created_at_unix_ms": e.clk.ms, "client_ref": "stem-1",
+	})
+	r = a.signedDo("POST", "/v1/agent/crash-reports", body2, 0, nil)
+	id2 := e.mustOK(r)["id"].(string)
+	r = a.signedDo("POST", "/v1/agent/crash-reports", body2, 0, nil)
+	if got := e.mustOK(r)["id"].(string); got != id2 {
+		t.Fatalf("replay created a second report: %s vs %s", got, id2)
+	}
+
 	l := e.mustOK(e.do("GET", "/v1/groups/"+e.group+"/crash-reports", nil, e.token))
 	reps, ok := l["reports"].([]any)
-	if !ok || len(reps) != 1 {
-		t.Fatalf("want 1 report, got %v", l)
+	if !ok || len(reps) != 2 {
+		t.Fatalf("want 2 reports (replay deduped), got %v", l)
 	}
-	m := reps[0].(map[string]any)
-	if m["kind"] != "panic" || m["exe"] != "varde-agent" || m["message"] != "index out of range" {
+	var m map[string]any
+	for _, x := range reps {
+		if x.(map[string]any)["message"] == "index out of range" {
+			m = x.(map[string]any)
+		}
+	}
+	if m == nil {
+		t.Fatalf("first report missing: %v", l)
+	}
+	if m["kind"] != "panic" || m["exe"] != "varde-agent" {
 		t.Fatalf("bad meta: %v", m)
 	}
 	if m["dump_size"].(float64) != float64(len("MINIDUMP")) {

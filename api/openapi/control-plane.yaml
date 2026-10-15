@@ -1911,6 +1911,7 @@ components:
         backtrace: { type: string, default: "" }
         detail: { type: string, default: "", description: exit code, stderr tail, why a dump is missing }
         created_at_unix_ms: { type: integer, format: int64 }
+        client_ref: { type: string, default: "", description: uploader's idempotency key; retries with the same ref do not duplicate the report }
         dump_b64: { type: string, default: "", description: base64 minidump, capped client-side }
         dump_name: { type: string, default: "" }
         dump_omitted: { type: string, default: "", description: why an existing dump was not sent }

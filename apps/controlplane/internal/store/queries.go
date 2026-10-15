@@ -943,15 +943,35 @@ func (s *Store) KVSetNX(ctx context.Context, key, value string) (bool, error) {
 
 // ---- crash reports ----
 
-func (s *Store) InsertCrashReport(ctx context.Context, r *CrashReport) error {
-	_, err := s.DB.ExecContext(ctx, s.Rebind(
-		`INSERT INTO crash_reports (id, group_id, node_id, kind, exe, version, os, arch, pid,
-			message, location, backtrace, detail, created_at, received_at, dump, dump_name, dump_omitted)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+// InsertCrashReport stores the report and returns its id. When the uploader
+// retries with the same (node_id, client_ref) the insert dedupes on the
+// unique index and the existing report's id comes back instead — a lost ack
+// does not create a second report.
+func (s *Store) InsertCrashReport(ctx context.Context, r *CrashReport) (string, error) {
+	q := `INSERT INTO crash_reports (id, group_id, node_id, kind, exe, version, os, arch, pid,
+			message, location, backtrace, detail, created_at, received_at, dump, dump_name, dump_omitted, client_ref)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	if s.Dialect == "sqlite" {
+		q = "INSERT OR IGNORE" + q[6:]
+	} else {
+		q += " ON CONFLICT (node_id, client_ref) WHERE client_ref != '' DO NOTHING"
+	}
+	if _, err := s.DB.ExecContext(ctx, s.Rebind(q),
 		r.ID, r.GroupID, r.NodeID, r.Kind, r.Exe, r.Version, r.Os, r.Arch, r.Pid,
 		r.Message, r.Location, r.Backtrace, r.Detail, r.CreatedAt, r.ReceivedAt,
-		r.Dump, r.DumpName, r.DumpOmitted)
-	return err
+		r.Dump, r.DumpName, r.DumpOmitted, r.ClientRef); err != nil {
+		return "", err
+	}
+	if r.ClientRef == "" {
+		return r.ID, nil
+	}
+	var id string
+	if err := s.DB.GetContext(ctx, &id, s.Rebind(
+		`SELECT id FROM crash_reports WHERE node_id = ? AND client_ref = ?`),
+		r.NodeID, r.ClientRef); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // ListCrashReports returns the newest `limit` reports for the group (no dumps),

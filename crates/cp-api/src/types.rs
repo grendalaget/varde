@@ -651,6 +651,10 @@ pub struct CrashReportBody {
     #[serde(default)]
     pub detail: String,
     pub created_at_unix_ms: i64,
+    /// uploader's idempotency key; a retried upload with the same ref does
+    /// not duplicate the report
+    #[serde(default)]
+    pub client_ref: String,
     /// base64 minidump, capped client-side
     #[serde(default)]
     pub dump_b64: String,
