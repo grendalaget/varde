@@ -35,9 +35,17 @@ jobs:
           go-version: stable
       - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
       - run: actionlint .github/workflows/build-release.yml .github/workflows/publish-release.yml .github/workflows/release.yml .github/workflows/nightly.yml .github/workflows/release-check.yml
+      - run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq appstream
       - name: Validate release helpers
         run: |
-          shellcheck packaging/release/*.sh
+          shellcheck packaging/release/*.sh packaging/linux/install.sh
+          shfmt -d packaging/linux/install.sh
+          # Old appstreamcli versions warn on tags/URL types that are valid in
+          # the modern spec (developer, vcs-browser); fail on errors only.
+          out=$(appstreamcli validate --no-net packaging/linux/*.metainfo.xml 2>&1) || true
+          echo "$out"
+          echo "$out" | grep -q '^E:' && exit 1
           python3 -m py_compile packaging/release/version.py
           python3 -m unittest discover -s packaging/release -p 'test_*.py'
 

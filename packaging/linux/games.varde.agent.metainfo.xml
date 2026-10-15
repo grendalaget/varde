@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>games.varde.agent</id>
+  <name>Varde</name>
+  <summary>Peer-hosted game servers for groups of friends</summary>
+  <developer>
+    <name>Arne Molland and varde contributors</name>
+  </developer>
+  <!-- developer_name is the pre-1.0 spelling; both are emitted so old
+       AppStream readers (distro validators) and new ones agree. -->
+  <developer_name>Arne Molland and varde contributors</developer_name>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      Varde lets a group of friends run their own game servers together: one
+      active host at a time, replicated snapshots, automatic failover, and a
+      peer-to-peer mesh — no router configuration required.
+    </p>
+    <p>
+      The agent runs in the background on this machine and enrolls it into a
+      group's control plane, so any member can take over hosting when the
+      current host goes offline.
+    </p>
+  </description>
+  <launchable type="desktop-id">varde.desktop</launchable>
+  <categories>
+    <category>Game</category>
+    <category>Network</category>
+  </categories>
+  <keywords>
+    <keyword>game server</keyword>
+    <keyword>hosting</keyword>
+    <keyword>p2p</keyword>
+  </keywords>
+  <url type="homepage">https://varde.games</url>
+  <url type="help">https://varde.games/docs</url>
+  <url type="bugtracker">https://github.com/grendalaget/varde/issues</url>
+  <url type="vcs-browser">https://github.com/grendalaget/varde</url>
+  <branding>
+    <color type="primary" scheme_preference="light">#FF5B1F</color>
+    <color type="primary" scheme_preference="dark">#FF5B1F</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <image type="source" width="1600" height="900">https://raw.githubusercontent.com/grendalaget/varde/main/packaging/linux/screenshots/dashboard.png</image>
+      <caption>The Varde dashboard in a group's control plane</caption>
+    </screenshot>
+  </screenshots>
+  <provides>
+    <binary>varde-agent</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+</component>

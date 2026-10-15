@@ -62,10 +62,10 @@ package contains `LICENSE`; the agent package always includes `varde-mesh`
 
 | Platform | Assets |
 | --- | --- |
-| Linux amd64, arm64 | `varde-<component>-<ver>-linux-<arch>.deb` and `.rpm` for each of agent, control-plane and relay; `varde-<component>-<ver>-linux-<arch>.snap` (strict confinement) for sideloading |
+| Linux amd64, arm64 | `varde-<component>-<ver>-linux-<arch>.deb` and `.rpm` for each of agent, control-plane and relay; `varde-<component>-<ver>-linux-<arch>.snap` (strict confinement) for sideloading; `varde-<component>-<ver>-linux-<arch>.tar.gz` (root filesystem, for non-deb/rpm distros) |
 | Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting) |
 | macOS arm64, amd64 | `varde-<component>-<ver>-darwin-<arch>.dmg` for each of agent (contains agent + mesh), control-plane and relay |
-| All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS**; `latest.json` + `latest.json.sig` update feed (below) |
+| All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS**; `latest.json` + `latest.json.sig` update feed (below); `install.sh` — the branded `curl \| sh` Linux installer (`packaging/linux/install.sh`, `packaging/linux/README.md`), which resolves and verifies every download against `SHA256SUMS` before installing |
 
 Linux packages retain the existing systemd units, configuration, icons and
 install/remove scripts. Packaged mesh lives in `/usr/lib/varde`, the agent's
