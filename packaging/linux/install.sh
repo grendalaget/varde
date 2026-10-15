@@ -53,28 +53,28 @@ fail() {
 # real mark geometry rasterized into the sparse glyph-field ramp
 # (" ·:-~=+*xoasce%@"), lit stone in Glød — at a lower density for the
 # terminal. Each stone band renders in its own rows so the gaps between
-# tiers stay visible at terminal resolution. Regenerate against
-# brand/svg/mark paths if the mark changes.
+# tiers stay visible at terminal resolution; band rows are proportional
+# to each stone's height so the mark keeps its original aspect ratio
+# (~square at 30 cols × 15 rows on ~2:1 monospace cells). Regenerate
+# against brand/svg/mark paths if the mark changes.
 banner() {
   cat <<EOF
 
-                 ${STONE}~+xx+oo
-                ${STONE}oxx+**ox+
-                ${STONE}+xx+*o=x+=
+                ${STONE}==+xx*x
+               ${STONE}xoxx+**o*
+                ${STONE}+xx+*x=x~
 
-              ${STONE}+ ==+x ${GLOD}+oox*++
-             ${STONE}x*ooxx+ ${GLOD}+ox+x+*         ${RESET}${BOLD}v a r d e${RESET}
-            ${STONE}*+o +xx+ ${GLOD}x+o** *o=       ${RESET}${DIM}Game servers built by many hands.${RESET}
-            ${STONE}*o+*++x+ ${GLOD}~x+=~~+*
+             ${STONE}** +=+ ${GLOD}x+ooo*~           ${RESET}${BOLD}v a r d e${RESET}
+            ${STONE}*o*ooxx ${GLOD}**ox+x+=          ${RESET}${DIM}Game servers built by many hands.${RESET}
+           ${STONE}~x+o =xx ${GLOD}+x=*++ =
 
-           ${STONE}*=x* +=+xx+oox*+*ox
-          ${STONE}=**o*ooxx+**ox+x+* o+
+           ${STONE}x=x* +=+xx+oox*+**
+          ${STONE}+**o*ooxx+**ox+x+* *
 
-         ${STONE}*+o+ox *+*ox*ooo*+*oo*+
-        ${STONE}+x***o*ooxx+**ox+x+* o+x
-        ${STONE}o+x*x+o +xx+xo+o** *ox+x=
-       ${STONE}-xoxxxo+***o**+o**++xo*ox=
-       ${STONE}~*+*xo+=xx+=+*=*x+*+=+++${RESET}
+         ${STONE}x+o+ox *+*ox*ooo*+*oo
+        ${STONE}xx***o*ooxx+**ox+x+* o~
+       ${STONE}+o+x*x+o +xx+xo+o** *ox=
+       ${STONE}~xox**x=*++x++=x++~~**=${RESET}
 
 EOF
 }
