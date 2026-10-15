@@ -297,7 +297,10 @@ jobs:
         # while the image carries them and self-heal when it rotates.
         run: |
           sdkmanager=$(find "$ANDROID_HOME"/cmdline-tools -name sdkmanager | sort -V | tail -1)
-          yes | "$sdkmanager" --licenses > /dev/null
+          # `yes` exits on SIGPIPE once sdkmanager has read every license —
+          # under pipefail that would fail the step; rejected licenses still
+          # fail loudly at the component install below.
+          yes | "$sdkmanager" --licenses > /dev/null || true
           "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - name: Build arm64 agent + mesh
         run: |
