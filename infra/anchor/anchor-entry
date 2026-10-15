@@ -12,6 +12,12 @@ set -eu
 : "${VARDE_BOOTSTRAP_URL:?missing VARDE_BOOTSTRAP_URL}"
 export VARDE_DATA_DIR="${VARDE_DATA_DIR:-/var/lib/varde}"
 
+# config.toml survives on the volume across restarts; re-enrolling the
+# existing public key is rejected by the CP, so only bootstrap once.
+if [ -f "$VARDE_DATA_DIR/config.toml" ]; then
+  exec varde-agent run
+fi
+
 resp=$(curl -fsS --retry 20 --retry-delay 3 --retry-all-errors \
   --connect-timeout 5 "$VARDE_BOOTSTRAP_URL")
 token=$(printf '%s' "$resp" | sed -n 's/.*"enroll_token" *: *"\([^"]*\)".*/\1/p')
