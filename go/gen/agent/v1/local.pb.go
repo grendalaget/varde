@@ -172,9 +172,11 @@ type SaveHolder struct {
 	Anchor   bool                   `protobuf:"varint,2,opt,name=anchor,proto3" json:"anchor,omitempty"`
 	// Heartbeats flowing: the copy can be served right now; false means the
 	// machine has it but is offline.
-	Online        bool `protobuf:"varint,3,opt,name=online,proto3" json:"online,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Online bool `protobuf:"varint,3,opt,name=online,proto3" json:"online,omitempty"`
+	// When the holder last heartbeat, per the control plane (0 = unknown).
+	LastSeenAtUnixMs int64 `protobuf:"varint,4,opt,name=last_seen_at_unix_ms,json=lastSeenAtUnixMs,proto3" json:"last_seen_at_unix_ms,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SaveHolder) Reset() {
@@ -226,6 +228,13 @@ func (x *SaveHolder) GetOnline() bool {
 		return x.Online
 	}
 	return false
+}
+
+func (x *SaveHolder) GetLastSeenAtUnixMs() int64 {
+	if x != nil {
+		return x.LastSeenAtUnixMs
+	}
+	return 0
 }
 
 type Hosting struct {
@@ -1288,12 +1297,13 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\tuser_code\x18\x01 \x01(\tR\buserCode\x12\x19\n" +
 	"\blink_url\x18\x02 \x01(\tR\alinkUrl\x12+\n" +
 	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\x12\x16\n" +
-	"\x06relink\x18\x04 \x01(\bR\x06relink\"Y\n" +
+	"\x06relink\x18\x04 \x01(\bR\x06relink\"\x89\x01\n" +
 	"\n" +
 	"SaveHolder\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x16\n" +
 	"\x06anchor\x18\x02 \x01(\bR\x06anchor\x12\x16\n" +
-	"\x06online\x18\x03 \x01(\bR\x06online\"\xdb\x02\n" +
+	"\x06online\x18\x03 \x01(\bR\x06online\x12.\n" +
+	"\x14last_seen_at_unix_ms\x18\x04 \x01(\x03R\x10lastSeenAtUnixMs\"\xdb\x02\n" +
 	"\aHosting\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1f\n" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +

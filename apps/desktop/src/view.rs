@@ -131,9 +131,9 @@ pub fn save_line(hosting: &[pb::Hosting], now_ms: i64) -> Option<String> {
     } else {
         &h.latest_safe_save_on
     };
-    let mut names: Vec<(String, bool)> = holders
+    let mut names: Vec<(String, bool, i64)> = holders
         .iter()
-        .map(|x| (x.node_name.clone(), x.online))
+        .map(|x| (x.node_name.clone(), x.online, x.last_seen_at_unix_ms))
         .collect();
     names.sort();
     names.dedup();
@@ -142,9 +142,11 @@ pub fn save_line(hosting: &[pb::Hosting], now_ms: i64) -> Option<String> {
     } else {
         let names = names
             .iter()
-            .map(|(n, online)| {
+            .map(|(n, online, seen)| {
                 if *online {
                     n.clone()
+                } else if *seen > 0 {
+                    format!("{n} (offline, seen {})", ago(now_ms - seen))
                 } else {
                     format!("{n} (offline)")
                 }
@@ -404,6 +406,7 @@ mod tests {
             node_name: "gaming-pc".into(),
             anchor: false,
             online: true,
+            last_seen_at_unix_ms: 0,
         }];
         s.hosting = vec![h];
         assert_eq!(
@@ -421,12 +424,14 @@ mod tests {
             node_name: "nas".into(),
             anchor: true,
             online: true,
+            last_seen_at_unix_ms: 0,
         }];
         let mut b = hosting("Mc", "running", now - 10_000);
         b.latest_safe_save_on = vec![pb::SaveHolder {
             node_name: "gaming-pc".into(),
             anchor: false,
             online: true,
+            last_seen_at_unix_ms: 0,
         }];
         s.hosting = vec![a, b];
         assert_eq!(
@@ -445,11 +450,13 @@ mod tests {
                 node_name: "nas".into(),
                 anchor: true,
                 online: true,
+                last_seen_at_unix_ms: 0,
             },
             pb::SaveHolder {
                 node_name: "gaming-pc".into(),
                 anchor: false,
                 online: false,
+                last_seen_at_unix_ms: 0,
             },
         ];
         s.hosting = vec![h];

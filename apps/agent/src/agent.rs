@@ -60,6 +60,8 @@ pub struct CpView {
     /// server_id -> machines holding a ready copy of the newest save of
     /// any state (it may still be replicating)
     pub latest_save_on: HashMap<String, Vec<pb::SaveHolder>>,
+    /// server_id -> created_at of the newest save of any state
+    pub latest_save: HashMap<String, i64>,
     /// control-plane clock minus this PC's, as of the last heartbeat
     pub cp_clock_offset_ms: i64,
 }

@@ -51,11 +51,14 @@ export default function SaveSafety({
     summary.latest_save.snapshot_id !== safe.snapshot_id;
   const replicas = safe?.replicas ?? summary.latest_save?.replicas ?? [];
   // Resume needs the newest save — evaluate its holders, not the older
-  // committed save's, so a blocked server can't look resumable.
+  // committed save's, so a blocked server can't look resumable. No ready
+  // holders at all is just as blocked as all-offline.
   const resumeReplicas =
     summary.latest_save?.replicas ?? safe?.replicas ?? [];
   const allOffline =
-    resumeReplicas.length > 0 && resumeReplicas.every((r) => !r.online);
+    summary.latest_save != null &&
+    (resumeReplicas.length === 0 ||
+      resumeReplicas.every((r) => !r.online));
   return (
     <div className="space-y-2">
       {replicas.length > 0 && (
@@ -63,8 +66,8 @@ export default function SaveSafety({
       )}
       {allOffline ? (
         <WarnNote>
-          No machine with the latest save is online. Nothing is lost, but the
-          server can't resume until one comes back.
+          No machine with the latest save is online. Nothing is lost, but
+          the newest save can't be restored until one comes back.
         </WarnNote>
       ) : (
         summary.only_on_one_machine && (

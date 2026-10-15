@@ -60,6 +60,8 @@ message SaveHolder {
   // Heartbeats flowing: the copy can be served right now; false means the
   // machine has it but is offline.
   bool online = 3;
+  // When the holder last heartbeat, per the control plane (0 = unknown).
+  int64 last_seen_at_unix_ms = 4;
 }
 
 message Hosting {

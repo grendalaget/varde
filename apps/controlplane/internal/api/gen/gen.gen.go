@@ -1001,6 +1001,9 @@ type ExecutionDirective struct {
 	// LatestSafeSaveOn Nodes holding a ready copy of the latest committed save; absent when the server has none. Display only.
 	LatestSafeSaveOn *[]SaveHolder `json:"latest_safe_save_on,omitempty"`
 
+	// LatestSaveAtUnixMs created_at of the server's newest snapshot of any state (which may still be replicating); absent when it has none. Display only.
+	LatestSaveAtUnixMs *int64 `json:"latest_save_at_unix_ms,omitempty"`
+
 	// LatestSaveOn Nodes holding a ready copy of the newest save of any state (which may still be replicating); absent when the server has none. Display only.
 	LatestSaveOn         *[]SaveHolder `json:"latest_save_on,omitempty"`
 	LeaseExpiresAtUnixMs int64         `json:"lease_expires_at_unix_ms"`

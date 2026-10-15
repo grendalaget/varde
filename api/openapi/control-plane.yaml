@@ -1815,6 +1815,14 @@ components:
             when the server has none. Display only.
           type: array
           items: { $ref: "#/components/schemas/SaveHolder" }
+        latest_save_at_unix_ms:
+          description: >-
+            created_at of the server's newest snapshot of any state (which
+            may still be replicating); absent when it has none. Display
+            only.
+          type: integer
+          format: int64
+          nullable: true
         latest_save_on:
           description: >-
             Nodes holding a ready copy of the newest save of any state

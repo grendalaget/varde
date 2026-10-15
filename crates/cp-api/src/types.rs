@@ -273,6 +273,10 @@ pub struct ExecutionDirective {
     /// Nodes holding a ready copy of that save (display only).
     #[serde(default, deserialize_with = "null_vec")]
     pub latest_safe_save_on: Vec<SaveHolder>,
+    /// Newest snapshot of any state — may still be replicating (display
+    /// only).
+    #[serde(default)]
+    pub latest_save_at_unix_ms: Option<i64>,
     /// Nodes holding a ready copy of the newest save of any state — may
     /// still be replicating (display only).
     #[serde(default, deserialize_with = "null_vec")]
