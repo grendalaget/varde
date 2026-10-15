@@ -236,9 +236,13 @@ jobs:
       - name: SHA256SUMS
         working-directory: release-assets
         run: sha256sum -- * > SHA256SUMS
+      # one attest step per subject: subject-path does not expand {} braces
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: release-assets/{SHA256SUMS,install.sh}
+          subject-path: release-assets/SHA256SUMS
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/install.sh
       - uses: sigstore/cosign-installer@v3
         with:
           cosign-release: v2.5.2
