@@ -215,9 +215,12 @@ export default function ShaderBg() {
     gl.uniform3fv(U("u_colPeak"), COL.peak);
     gl.uniform3fv(U("u_colGlod"), COL.glod);
 
-    let raf = 0;
+    // rAF can be starved in this embedded WebView2 (renderer treats the
+    // frameless window as non-animating), so drive the field off a timer.
+    let timer: ReturnType<typeof setInterval> | null = null;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     const t0 = performance.now();
+    let tick = 0;
 
     const frame = () => {
       const dpr =
@@ -233,21 +236,39 @@ export default function ShaderBg() {
         gl.uniform1f(U("u_cell"), Math.round(CELL * dpr));
       }
       if (w > 0 && h > 0) {
-        gl.uniform1f(U("u_time"), (performance.now() - t0) / 1000 + 8.5);
+        gl.uniform1f(U("u_time"), 8.5 + (performance.now() - t0) / 1000);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       }
-      if (!reduced.matches) raf = requestAnimationFrame(frame);
     };
-    frame();
 
+    const start = () => {
+      if (timer !== null) return;
+      tick = 0;
+      timer = setInterval(() => {
+        tick += 1;
+        frame();
+      }, 33);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    frame();
+    if (!reduced.matches) start();
     const onChange = () => {
-      cancelAnimationFrame(raf);
-      if (!reduced.matches) raf = requestAnimationFrame(frame);
-      else frame();
+      if (reduced.matches) {
+        stop();
+        frame();
+      } else {
+        start();
+      }
     };
     reduced.addEventListener("change", onChange);
     return () => {
-      cancelAnimationFrame(raf);
+      stop();
       reduced.removeEventListener("change", onChange);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
