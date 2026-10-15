@@ -66,7 +66,7 @@ banner() {
       ${STONE}~x=x* += ${GLOD}xx*ooo*==
      ${STONE}+***o*oox ${GLOD}~*+x*=*=+
 
-    ${STONE}+x=x=x* +=+xx+oox*+*x    ${RESET}${BOLD}v a r d e${RESET}
+    ${STONE}+x=x=x* +=+xx+oox*+*x     ${RESET}${BOLD}v a r d e${RESET}
     ${STONE}xx***o*ooxx+**ox+x+* o    ${RESET}${DIM}Game servers built by many hands.${RESET}
 
    ${STONE}xxo+o+ox *+*ox*ooo*+*oo*
