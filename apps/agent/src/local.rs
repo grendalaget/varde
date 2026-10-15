@@ -688,8 +688,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn not_linked_then_link_over_ipc() {
-        // the test serves the pipe from a user process, not the service
-        #[cfg(windows)]
+        // the test serves the pipe from a user process, not the service —
+        // both Windows' session-0 check and macOS' peer-path check reject it
+        #[cfg(any(windows, target_os = "macos"))]
         std::env::set_var("VARDE_DEV_ALLOW_USER_AGENT", "1");
         let tmp = tempfile::tempdir().unwrap();
         let hub = Hub::new(tmp.path().to_path_buf());

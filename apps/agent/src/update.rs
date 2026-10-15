@@ -606,15 +606,25 @@ fn apply_dmg(dmg: &[u8]) -> Result<()> {
             }
             std::fs::rename(&dst_tmp, exe_dir.join(name))?;
         }
-        // Replaced binaries invalidate the bundle's first-open check anyway,
-        // and our own signature check already vetted the payload — drop the
-        // quarantine flag so the next `open` doesn't re-gate the app (an
-        // unsigned dev build would read as damaged).
+        // Gatekeeper: a bundle that still verifies (--deep --strict covers
+        // the binaries we just swapped) keeps its quarantine flag so the
+        // next `open` re-checks it — tampered contents get flagged instead
+        // of silently running. Unsigned/ad-hoc builds and seals our swap
+        // invalidated have nothing left to verify: strip the flag so the
+        // app doesn't read as damaged.
         if let Some(app) = app_bundle() {
-            let _ = std::process::Command::new("xattr")
-                .args(["-dr", "com.apple.quarantine"])
+            let verified = std::process::Command::new("codesign")
+                .args(["--verify", "--deep", "--strict"])
                 .arg(&app)
-                .status();
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !verified {
+                let _ = std::process::Command::new("xattr")
+                    .args(["-dr", "com.apple.quarantine"])
+                    .arg(&app)
+                    .status();
+            }
         }
         Ok(())
     })();

@@ -62,23 +62,19 @@ fn loaded() -> bool {
         .unwrap_or(false)
 }
 
-/// Write (or refresh) the LaunchAgent plist: RunAtLoad starts the service at
-/// every login — the closest macOS analog to the Windows service's
-/// auto-start; KeepAlive on crash only, so a clean shutdown stays down.
-fn write_plist() -> Result<PathBuf> {
-    let path = plist_path()?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    }
+/// The LaunchAgent plist contents for the sibling varde-agent: RunAtLoad
+/// starts the service at every login — the closest macOS analog to the
+/// Windows service's auto-start; KeepAlive on crash only, so a clean
+/// shutdown stays down.
+fn plist_body() -> Result<String> {
     let agent = agent_bin()?;
     let logs = agent_ipc::default_data_dir().join("logs");
-    std::fs::create_dir_all(&logs).with_context(|| format!("create {}", logs.display()))?;
     let esc = |s: &str| {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
     };
-    let plist = format!(
+    Ok(format!(
         concat!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
             "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n",
@@ -90,6 +86,9 @@ fn write_plist() -> Result<PathBuf> {
             "\t<key>KeepAlive</key>\n\t<dict>\n",
             "\t\t<key>Crashed</key><true/>\n\t\t<key>SuccessfulExit</key><false/>\n",
             "\t</dict>\n",
+            // bootout sends SIGTERM; without this launchd SIGKILLs after 20 s,
+            // cutting a hosted server's drain (up to our 180 s budget) short.
+            "\t<key>ExitTimeout</key><integer>180</integer>\n",
             "\t<key>StandardOutPath</key><string>{}</string>\n",
             "\t<key>StandardErrorPath</key><string>{}</string>\n",
             "</dict>\n</plist>\n"
@@ -98,8 +97,18 @@ fn write_plist() -> Result<PathBuf> {
         esc(&agent.display().to_string()),
         esc(&logs.join("launchd.out.log").display().to_string()),
         esc(&logs.join("launchd.err.log").display().to_string()),
-    );
-    std::fs::write(&path, plist).with_context(|| format!("write {}", path.display()))?;
+    ))
+}
+
+/// Write (or refresh) the LaunchAgent plist on disk.
+fn write_plist() -> Result<PathBuf> {
+    let path = plist_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let logs = agent_ipc::default_data_dir().join("logs");
+    std::fs::create_dir_all(&logs).with_context(|| format!("create {}", logs.display()))?;
+    std::fs::write(&path, plist_body()?).with_context(|| format!("write {}", path.display()))?;
     Ok(path)
 }
 
@@ -131,11 +140,31 @@ fn ipc_answers(timeout: Duration) -> bool {
     })
 }
 
+/// A stale plist is anything that doesn't match what we'd write today:
+/// a moved Varde.app (dead binary path) or an older template (missing
+/// keys an upgrade added, like ExitTimeout).
+fn plist_targets_current(plist: &PathBuf) -> Result<bool> {
+    let body =
+        std::fs::read_to_string(plist).with_context(|| format!("read {}", plist.display()))?;
+    Ok(body == plist_body()?)
+}
+
 /// Installed but not started yet (fresh drag-install launch): register the
 /// LaunchAgent and let RunAtLoad start the service. A plist that exists but
-/// isn't loaded is the user's own stop — left alone until Start is chosen.
+/// isn't loaded is the user's own stop — left alone until Start is chosen,
+/// unless it points at a moved-away Varde.app, which start() repairs.
 pub fn ensure_started() -> Result<()> {
-    if loaded() || plist_path()?.exists() {
+    let plist = plist_path()?;
+    if loaded() {
+        // A move while running (or a deleted file) leaves launchd pointed
+        // at the old path; refresh it so the next login finds the new one.
+        let stale = !plist.exists() || !plist_targets_current(&plist).unwrap_or(false);
+        if stale {
+            let _ = write_plist();
+        }
+        return Ok(());
+    }
+    if plist.exists() && plist_targets_current(&plist)? {
         return Ok(());
     }
     start()
@@ -175,7 +204,10 @@ pub fn start() -> Result<()> {
 /// still draining — and the new one can't take the socket until it exits.
 pub fn restart_service() -> Result<()> {
     if !loaded() {
-        return Ok(());
+        // The update wrote new binaries; leaving a stopped service down
+        // would strand the relaunched tray on an agent that never comes
+        // up. start() also repairs a stale plist while it's at it.
+        return start();
     }
     let domain = gui_domain();
     launchctl(&["kill", "SIGTERM", &format!("{domain}/{LABEL}")])

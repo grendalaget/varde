@@ -162,10 +162,21 @@ mod imp {
         }
     }
 
+    /// A plist that exists AND still points at this exe — anything else
+    /// (missing, or stale after Varde.app moved) needs a rewrite.
+    fn current() -> bool {
+        let (Ok(p), Ok(exe)) = (plist_path(), std::env::current_exe()) else {
+            return false;
+        };
+        std::fs::read_to_string(p)
+            .map(|b| b.contains(&exe.display().to_string()))
+            .unwrap_or(false)
+    }
+
     /// First-launch install: the drag-install has no installer step, so the
     /// app itself lays down the login LaunchAgent unless the user opted out.
     pub fn ensure_installed() -> io::Result<()> {
-        if opted_out() || plist_path()?.exists() {
+        if opted_out() || current() {
             return Ok(());
         }
         install()

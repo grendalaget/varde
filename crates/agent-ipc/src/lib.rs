@@ -42,6 +42,13 @@ pub fn default_data_dir() -> std::path::PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
+        // Agents installed before Varde.app ran with the Unix default — an
+        // existing /var/lib/varde means an upgrade, and its config and node
+        // identity live there. Only fresh installs get the per-user dir.
+        let legacy = std::path::PathBuf::from("/var/lib/varde");
+        if legacy.is_dir() {
+            return legacy;
+        }
         std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from("/Users/Shared"))
@@ -109,7 +116,63 @@ async fn platform_connect(
     path: &str,
 ) -> io::Result<hyper_util::rt::TokioIo<tokio::net::UnixStream>> {
     let stream = tokio::net::UnixStream::connect(path).await?;
+    #[cfg(target_os = "macos")]
+    verify_peer_agent(&stream)?;
     Ok(hyper_util::rt::TokioIo::new(stream))
+}
+
+/// Reject an impostor agent: the socket lives under the user's own Library,
+/// so any same-user process could bind the path while the agent is down and
+/// feed the tray a fake dashboard or link URL. The Windows client gets the
+/// equivalent from the pipe's session-0 requirement. Best-effort — a
+/// determined same-user attacker can name a binary `varde-agent` too, but
+/// passive socket squatting is no longer enough.
+/// `VARDE_DEV_ALLOW_USER_AGENT=1` skips the check like on Windows.
+#[cfg(target_os = "macos")]
+fn verify_peer_agent(stream: &tokio::net::UnixStream) -> io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    // SOL_LOCAL/LOCAL_PEEREPID are stable Darwin ABI missing from libc.
+    const SOL_LOCAL: i32 = 0;
+    const LOCAL_PEEREPID: i32 = 0x002;
+    let mut pid: i32 = -1;
+    let mut len = std::mem::size_of::<i32>() as u32;
+    // SAFETY: live socket fd; out pointer sized exactly for LOCAL_PEEREPID.
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            SOL_LOCAL,
+            LOCAL_PEEREPID,
+            &mut pid as *mut i32 as *mut _,
+            &mut len,
+        )
+    };
+    if rc != 0 || pid <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // proc_pidpath is libproc, folded into libSystem on Darwin.
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut u8, buffersize: u32) -> i32;
+    }
+    let mut buf = [0u8; 4096]; // PROC_PIDPATHINFO_MAXSIZE
+                               // SAFETY: buf is a writable 4096-byte buffer; the return is the length.
+    let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr(), buf.len() as u32) };
+    if n <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "could not identify the agent peer process",
+        ));
+    }
+    let path = String::from_utf8_lossy(&buf[..n as usize]);
+    let is_agent = std::path::Path::new(path.as_ref())
+        .file_name()
+        .is_some_and(|f| f == "varde-agent");
+    if !is_agent && std::env::var_os("VARDE_DEV_ALLOW_USER_AGENT").is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("IPC peer is {path}, not varde-agent"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
