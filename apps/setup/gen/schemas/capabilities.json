@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Setup window: core events only; engine progress/confirm/done are emitted to it and commands are typed.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging"]}}

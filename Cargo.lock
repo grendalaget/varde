@@ -5528,6 +5528,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "varde-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "window-vibrancy",
+ "windows",
+ "winreg",
+ "zip",
+]
+
+[[package]]
 name = "varde-tray"
 version = "0.1.0"
 dependencies = [

@@ -15,35 +15,12 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": [
-      "nsis"
-    ],
     "licenseFile": "../../LICENSE",
     "publisher": "Varde contributors",
     "icon": [
       "icons/icon.ico",
       "icons/icon.icns",
       "icons/icon.png"
-    ],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "embedBootstrapper",
-        "silent": true
-      },
-      "nsis": {
-        "installMode": "perMachine",
-        "languages": [
-          "English"
-        ],
-        "displayLanguageSelector": false,
-        "installerIcon": "../../packaging/windows/varde.ico",
-        "sidebarImage": "../../packaging/windows/wizard/wizard.bmp",
-        "headerImage": "installer-hooks/header.bmp",
-        "template": "installer-hooks/installer.nsi",
-        "installerHooks": "installer-hooks/hooks.nsh",
-        "compression": "lzma"
-      }
-    }
+    ]
   }
 }

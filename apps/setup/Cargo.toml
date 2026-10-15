@@ -1,0 +1,46 @@
+[package]
+name = "varde-setup"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+build = "build.rs"
+default-run = "varde-setup"
+description = "Varde setup — the branded Windows installer/uninstaller"
+
+[features]
+# `payload` embeds the real payload zip staged into apps/setup/payload/.
+# CI builds the release binary with it; the lite build (no payload) is the
+# `uninstall.exe` copied into the install dir.
+default = ["payload"]
+payload = []
+
+[build-dependencies]
+tauri-build = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Windows-only crate: deps gated so the workspace still compiles on
+# Linux/macOS CI (tauri would pull glib/gtk system libraries).
+[target.'cfg(windows)'.dependencies]
+tauri = { version = "2", features = ["custom-protocol"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+winreg = "0.55"
+window-vibrancy = "0.8"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Environment",
+    "Win32_System_Threading",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -102,8 +102,8 @@ Clients poll the release asset, never the GitHub API:
 Apply paths per platform:
 
 - **Windows**: the tray downloads `VardeSetup-<ver>.exe`, verifies its
-  minisign signature and runs it `/S` — a silent NSIS install that drains
-  services, swaps binaries and relaunches the tray.
+  minisign signature and runs it `/S` — a silent varde-setup install that
+  drains services, swaps binaries and relaunches the tray.
 - **Linux deb/rpm**: `varde-agent update` stages the verified package in
   `/var/lib/varde/update/` and drops a `.pending` marker; the packaged
   `varde-update.path` unit fires `varde-update.service`, which runs
@@ -177,7 +177,7 @@ xattr -d com.apple.quarantine ./varde-agent ./varde-mesh
 
 `varde-agent.exe`, `varde-mesh.exe`, `varde-tray.exe`,
 `varde-control-plane.exe` and `varde-relay.exe` are signed **before**
-NSIS packaging (`tauri build --no-build --bundles nsis`), and the installer
+setup packaging (`packaging/windows/build-setup.ps1`), and the installer
 is signed **after** — all before checksum generation, Sigstore signing and
 publication. Signing uses Azure Artifact Signing; setup is documented in
 `packaging/windows/README.md`.

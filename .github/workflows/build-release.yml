@@ -222,18 +222,10 @@ jobs:
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
           rm /tmp/varde-AuthKey.p8
-      - name: Build Windows installer (Tauri NSIS)
+      - name: Build Windows installer (varde-setup)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force apps/desktop/payload | Out-Null
-          Copy-Item dist/varde-*.exe apps/desktop/payload/
-          Copy-Item packaging/windows/varde.ico apps/desktop/payload/
-          Copy-Item LICENSE apps/desktop/payload/
-          bunx tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
-          if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
-          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          Copy-Item $setup.FullName "release-assets/VardeSetup-$env:VERSION.exe"
+        run: packaging/windows/build-setup.ps1 -Version $env:VERSION
       - name: Sign Windows installer via Azure Artifact Signing
         if: runner.os == 'Windows' && steps.signing.outputs.provider == 'azure'
         uses: azure/artifact-signing-action@v2
