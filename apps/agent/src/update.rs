@@ -3,6 +3,8 @@
 //! (Status.update) and in the heartbeat (update_available). Applying an
 //! update is platform-specific and lives elsewhere — this only discovers it.
 
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
