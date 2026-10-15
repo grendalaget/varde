@@ -38,7 +38,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Enroll this node: device flow (default) or --token.
+    /// Enroll this node: device flow (default) or --token (`-` reads the
+    /// token from stdin — keeps it out of argv on Android).
     Enroll {
         /// Control-plane address; defaults to the installer's server.url,
         /// then the hosted Varde.
@@ -285,6 +286,13 @@ async fn enroll(
 
     let client = cp_api::CpClient::new(&server)?;
 
+    // `--token -` reads one line from stdin — keeps the invite secret out
+    // of argv, which is world-readable on Android devices (/proc cmdline).
+    let token = match token.as_deref() {
+        Some("-") => Some(read_stdin_token()?),
+        other => other.map(str::to_string),
+    };
+
     let result: cp_api::EnrollResult = if let Some(token) = token {
         client
             .json(
@@ -329,6 +337,22 @@ async fn enroll(
     cfg.save(&data_dir)?;
     info!(node_id = %result.node_id, group = %result.group_id, "enrolled; wrote config.toml");
     Ok(())
+}
+
+/// Reads a single line from stdin (trailing whitespace stripped) — the
+/// invite token when `--token -` is used.
+fn read_stdin_token() -> Result<String> {
+    use std::io::BufRead;
+    let line = std::io::stdin()
+        .lock()
+        .lines()
+        .next()
+        .context("no token on stdin")??;
+    let token = line.trim().to_string();
+    if token.is_empty() {
+        anyhow::bail!("empty token on stdin");
+    }
+    Ok(token)
 }
 
 fn status(data_dir: PathBuf) -> Result<()> {

@@ -403,11 +403,31 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
                 .get(&c.dir.server_id)
                 .cloned()
                 .unwrap_or_default(),
-            latest_save_on: cp
-                .latest_save_on
-                .get(&c.dir.server_id)
-                .cloned()
-                .unwrap_or_default(),
+            // When this exec just produced a save the CP hasn't heard about
+            // yet, the CP's holder list belongs to the previous save — this
+            // node is the only holder of the new one.
+            latest_save_on: if c.latest_save_ms()
+                > cp.latest_save.get(&c.dir.server_id).copied().unwrap_or(0)
+            {
+                vec![pb::SaveHolder {
+                    node_name: if cp.node_name.is_empty() {
+                        a.cfg.node_id.clone()
+                    } else {
+                        cp.node_name.clone()
+                    },
+                    anchor: a.cfg.anchor,
+                    online: true,
+                    last_seen_at_unix_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                }]
+            } else {
+                cp.latest_save_on
+                    .get(&c.dir.server_id)
+                    .cloned()
+                    .unwrap_or_default()
+            },
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));

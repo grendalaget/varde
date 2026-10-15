@@ -11,8 +11,10 @@ partial wake lock comfortably meets that.
 `apps/android` is a minimal Kotlin app (no AndroidX, no Compose) that:
 
 - enrolls the phone as an anchor (`varde-agent enroll --anchor --token`),
-- runs `varde-agent run` inside a `dataSync` foreground service with a
-  partial wake lock, restarting it with backoff if it dies,
+- runs `varde-agent run` inside a `specialUse` foreground service with a
+  partial wake lock, restarting it with backoff if it dies (Android 15+
+  caps `dataSync` services at ~6 h/day and won't start them from
+  BOOT_COMPLETED — `specialUse` is the exempt category),
 - starts on boot when the anchor was left enabled,
 - surfaces the agent's latest log line as the ongoing notification text,
 - nudges the user to exempt the app from battery optimization (Doze is the

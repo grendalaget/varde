@@ -144,14 +144,20 @@ class MainActivity : Activity() {
         if (server.isNotEmpty()) {
             args.addAll(listOf("--server", server))
         }
+        // `-` => the agent reads the token from stdin; keeps the invite
+        // secret out of argv, which is world-readable on Android.
         if (token.isNotEmpty()) {
-            args.addAll(listOf("--token", token))
+            args.addAll(listOf("--token", "-"))
         }
         ProcessBuilder(args).redirectErrorStream(true).start().let { p ->
-            val out = p.inputStream.bufferedReader().readText()
+            if (token.isNotEmpty()) {
+                p.outputStream.use { it.write((token + "\n").toByteArray()); it.flush() }
+            }
+            p.inputStream.bufferedReader().readText() // drain output
             p.waitFor()
             val ok = p.exitValue() == 0
-            if (!ok) android.util.Log.e("Enroll", out)
+            // never log stdout — server error bodies can echo secrets
+            if (!ok) android.util.Log.e("Enroll", "enroll failed rc=${p.exitValue()}")
             ok
         }
     } catch (e: Exception) {

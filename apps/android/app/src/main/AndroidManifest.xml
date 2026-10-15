@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -17,6 +17,13 @@
         android:label="@string/app_name"
         android:extractNativeLibs="true"
         tools:targetApi="35">
+
+        <!-- specialUse, not dataSync: Android 15+ caps dataSync services at
+             ~6h/day and blocks starting them from BOOT_COMPLETED. An
+             always-on save anchor has to run longer than that. -->
+        <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="Runs the Varde anchor agent continuously so saved-game replicas stay available to other machines in the group." />
 
         <activity
             android:name=".MainActivity"
@@ -30,7 +37,7 @@
         <service
             android:name=".AnchorService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse" />
 
         <receiver
             android:name=".BootReceiver"

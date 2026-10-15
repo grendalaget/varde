@@ -43,6 +43,7 @@ class AnchorService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var stopping = false
     private var watchdog: Thread? = null
+    private val procLock = Any()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -80,7 +81,7 @@ class AnchorService : Service() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(NOTIF_ID, n)
         }
@@ -91,14 +92,14 @@ class AnchorService : Service() {
         val agent = agentBin(this)
         val mesh = meshBin(this)
         if (!File(agent).canExecute() || !File(mesh).canExecute()) {
+            // unrecoverable until the APK is rebuilt — stop rather than sit
+            // enabled doing nothing
             broadcast("binaries missing — rebuild the app via `make android`")
+            stopSelf()
             return
         }
-        wakeLock = (getSystemService(PowerManager::class.java))
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "varde:anchor")
-            .apply { acquire() }
-        try {
-            proc = ProcessBuilder(
+        val p = try {
+            ProcessBuilder(
                 agent, "run",
                 "--data-dir", dir.absolutePath,
                 "--mesh-bin", mesh,
@@ -107,8 +108,21 @@ class AnchorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "spawn failed", e)
             broadcast("spawn failed: ${e.message}")
+            stopSelf()
             return
         }
+        synchronized(procLock) {
+            if (stopping) {
+                p.destroyForcibly()
+                return
+            }
+            proc = p
+        }
+        // only hold the wake lock once a child actually exists — an empty
+        // foreground service holding it would just drain the battery
+        wakeLock = (getSystemService(PowerManager::class.java))
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "varde:anchor")
+            .apply { acquire() }
         broadcast("running")
         Thread(::drainOutput, "agent-out").start()
         watchdog = Thread(::watch, "agent-watch").also { it.start() }
@@ -141,30 +155,43 @@ class AnchorService : Service() {
             broadcast("agent exited — restarting")
             Thread.sleep(backoff)
             if (stopping) return
-            try {
-                proc = ProcessBuilder(
+            val np = try {
+                ProcessBuilder(
                     agentBin(this), "run",
                     "--data-dir", dataDir(this).absolutePath,
                     "--mesh-bin", meshBin(this),
                     "--anchor",
                 ).redirectErrorStream(true).start()
-                broadcast("running")
-                Thread(::drainOutput, "agent-out").start()
-                backoff = 5_000L
             } catch (e: Exception) {
                 Log.e(TAG, "respawn failed", e)
                 backoff = (backoff * 2).coerceAtMost(60_000L)
+                continue
             }
+            // Stop can land between the pre-spawn check and the spawn:
+            // killProcessTree takes the same lock, so the child either
+            // exists before the kill sweep or is destroyed here.
+            synchronized(procLock) {
+                if (stopping) {
+                    np.destroyForcibly()
+                    return
+                }
+                proc = np
+            }
+            broadcast("running")
+            Thread(::drainOutput, "agent-out").start()
+            backoff = 5_000L
         }
     }
 
     private fun killProcessTree() {
-        try {
-            proc?.destroyForcibly()
-        } catch (e: Exception) {
-            Log.w(TAG, "kill failed", e)
+        synchronized(procLock) {
+            try {
+                proc?.destroyForcibly()
+            } catch (e: Exception) {
+                Log.w(TAG, "kill failed", e)
+            }
+            proc = null
         }
-        proc = null
         // Android has no ProcessHandle/descendants — sweep /proc for
         // grandchildren (e.g. the mesh child) by argv[0] instead.
         killByArg0(agentBin(this))
