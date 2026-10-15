@@ -52,26 +52,29 @@ fail() {
 # The cairn rendered the way varde.games draws it on the landing page: the
 # real mark geometry rasterized into the sparse glyph-field ramp
 # (" ·:-~=+*xoasce%@"), lit stone in Glød — at a lower density for the
-# terminal. Regenerate against brand/svg/mark paths if the mark changes.
+# terminal. Each stone band renders in its own rows so the gaps between
+# tiers stay visible at terminal resolution. Regenerate against
+# brand/svg/mark paths if the mark changes.
 banner() {
   cat <<EOF
 
-                      ${STONE}==
-                ${STONE}x o**+* o
-               ${STONE}*xo**o o+ **
+                 ${STONE}~+xx+oo
+                ${STONE}oxx+**ox+
+                ${STONE}+xx+*o=x+=
 
-            ${STONE}=++xx+x* ${GLOD}~ox +*oxx        ${RESET}${BOLD}v a r d e${RESET}
-            ${STONE}x+*oxx o  ${GLOD}*ox*+o++*       ${RESET}${DIM}Game servers built by many hands.${RESET}
-           ${STONE}o+*oxx**o   ${GLOD}*o +**xx
+              ${STONE}+ ==+x ${GLOD}+oox*++
+             ${STONE}x*ooxx+ ${GLOD}+ox+x+*         ${RESET}${BOLD}v a r d e${RESET}
+            ${STONE}*+o +xx+ ${GLOD}x+o** *o=       ${RESET}${DIM}Game servers built by many hands.${RESET}
+            ${STONE}*o+*++x+ ${GLOD}~x+=~~+*
 
-         ${STONE}~** ++*xxo *x**o  x+x*o
-         ${STONE}*oxooo xx  *o+***o** oxo
-         ${STONE}++~~+~ ~+ =+~~~--~+=~**+
-        ${STONE}+ *xx+x oxx++*x o + *  o*+
-       ${STONE}+o ox+ox +* +ox  ox*xo++oo*~
-      ${STONE}* x*o*+++*  o   *xx+***o+ oo
-     ${STONE}~o ooo*o  * x+o +* x++ *oox
-      ${STONE}+*--~${RESET}
+           ${STONE}*=x* +=+xx+oox*+*ox
+          ${STONE}=**o*ooxx+**ox+x+* o+
+
+         ${STONE}*+o+ox *+*ox*ooo*+*oo*+
+        ${STONE}+x***o*ooxx+**ox+x+* o+x
+        ${STONE}o+x*x+o +xx+xo+o** *ox+x=
+       ${STONE}-xoxxxo+***o**+o**++xo*ox=
+       ${STONE}~*+*xo+=xx+=+*=*x+*+=+++${RESET}
 
 EOF
 }
