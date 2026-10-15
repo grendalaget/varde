@@ -300,8 +300,11 @@ if truthy "$VARDE_UNINSTALL"; then
         $SUDO systemctl disable --now "$svc" >/dev/null 2>&1 || true
       done
     fi
-    # Deepest paths first so emptied directories can be removed.
+    # Deepest paths first so emptied directories can be removed. /etc
+    # entries are conffiles in the packages (noreplace) — never delete
+    # configuration the user may have edited.
     sort -r "$manifest" | while IFS= read -r path; do
+      case "$path" in /etc/*) continue ;; esac
       if [ -d "$path" ] && [ ! -L "$path" ]; then
         $SUDO rmdir "$path" 2>/dev/null || true
       else
@@ -357,7 +360,7 @@ ext=$FORMAT
 [ "$FORMAT" = "tarball" ] && ext=tar.gz
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT INT TERM
+trap '${SUDO:-rm} -rf "$WORK" 2>/dev/null || true' EXIT INT TERM
 
 # SHA256SUMS is the single source of truth: it carries both the exact asset
 # filename (with the embedded version, e.g. a nightly's +sha suffix) and the
@@ -365,6 +368,22 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 step "resolving $VARDE_VERSION release"
 fetch "$base/SHA256SUMS" "$WORK/SHA256SUMS" ||
   fail "SHA256SUMS not found under $base — the release may not exist or still be building"
+
+# A hash from the same URL as the payload guards integrity only: when
+# cosign is installed and the release carries its keyless bundle,
+# authenticate SHA256SUMS against the build workflow's identity too.
+if have cosign && fetch "$base/SHA256SUMS.sigstore.json" "$WORK/SHA256SUMS.sigstore.json" 2>/dev/null; then
+  if cosign verify-blob --bundle "$WORK/SHA256SUMS.sigstore.json" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp "^https://github\\.com/${VARDE_REPO}/\\.github/workflows/build-release\\.yml@" \
+    "$WORK/SHA256SUMS" >/dev/null 2>&1; then
+    ok "release signature verified against the build workflow (sigstore)"
+  else
+    fail "SHA256SUMS signature verification failed — refusing to install"
+  fi
+else
+  say "  ${DIM}cosign not installed — trusting SHA256SUMS checksum only${RESET}"
+fi
 
 # varde-<component>-<version>-linux-<arch>.<ext>; a pinned --version is
 # matched literally (a nightly's "+sha" would misread as a regex), while
@@ -453,19 +472,39 @@ tarball)
   step "extracting $file"
   stage="$WORK/root"
   mkdir -p "$stage"
+  # The checksum only proves the bytes match the release — members still
+  # can't be allowed to write outside staging: reject absolute paths,
+  # parent traversal, and links whose targets escape.
+  if tar -tzf "$WORK/$file" | grep -qE '^/|(^|/)[.][.](/|$)'; then
+    fail "$file contains absolute or parent-relative paths — refusing to extract"
+  fi
+  if ! tar -tvzf "$WORK/$file" | awk '
+      substr($1, 1, 1) ~ /[lh]/ {
+        for (i = 1; i <= NF; i++) if ($i == "->") {
+          t = $(i + 1)
+          if (t ~ /^\// || t ~ /(^|\/)\.\.(\/|$)/ || t == "..") bad = 1
+        }
+      }
+      END { exit bad }'; then
+    fail "$file contains links escaping the install root — refusing to extract"
+  fi
   # Extract as root so packaged modes survive into /; belt-and-suspenders
   # chown keeps root ownership even for tarballs built outside the pipeline.
   $SUDO tar -xzf "$WORK/$file" -C "$stage"
   $SUDO chown -R 0:0 "$stage"
   # /etc files are noreplace in the packages: keep an existing config.
+  # Staged files are root-owned, so pruning them needs sudo too.
   if [ -d "$stage/etc" ]; then
     (cd "$stage" && find ./etc -type f) | while IFS= read -r f; do
       rel=${f#./}
-      if [ -e "/$rel" ]; then rm -f "$stage/$rel"; fi
+      if [ -e "/$rel" ]; then $SUDO rm -f "$stage/$rel"; fi
     done
   fi
   (cd "$stage" && find . -mindepth 1 -print | sed 's|^\./|/|') >"$WORK/manifest"
-  tar -C "$stage" -cf - . | $SUDO tar -xf - -C /
+  # Read the staged tree back as root too — packaged env files are 0640
+  # and an unprivileged read would silently drop them.
+  $SUDO tar -C "$stage" -cf - . | $SUDO tar -xf - -C /
+  $SUDO mkdir -p /usr/lib/varde
   $SUDO cp "$WORK/manifest" "/usr/lib/varde/tarball-$VARDE_COMPONENT.manifest"
   if [ "$VARDE_COMPONENT" = "agent" ] && ! getent passwd varde >/dev/null 2>&1; then
     if have useradd; then
