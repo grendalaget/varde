@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Logo, Mark } from "./Logo";
+import ShaderBg from "./ShaderBg";
 import {
   invoke,
   listen,
@@ -92,6 +93,7 @@ export default function App() {
   const [err, setErr] = useState<ErrorEvent | null>(null);
   const [autostart, setAutostart] = useState(true);
   const [cp, setCp] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [deleteData, setDeleteData] = useState(false);
   const started = useRef(false);
 
@@ -100,6 +102,9 @@ export default function App() {
       setState(s);
       setAutostart(s.autostart);
       setCp(s.controlplane);
+      // A remembered control-plane tick (upgrade path) means the section
+      // was already opted into once; keep it visible then.
+      if (s.controlplane) setAdvanced(true);
       // Windows personalization: map the DWM accent onto the design
       // tokens so buttons/checkboxes/progress follow the user's theme
       if (s.system_accent) {
@@ -151,10 +156,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full select-none flex-col overflow-hidden bg-background text-foreground">
+      <ShaderBg />
       {/* title strip — frameless window, drag anywhere */}
       <div
         data-tauri-drag-region
-        className="flex h-10 shrink-0 items-center justify-between pl-4 pr-2"
+        className="relative flex h-10 shrink-0 items-center justify-between pl-4 pr-2"
       >
         <Logo className="h-4 opacity-80" />
         {screen !== "progress" && (
@@ -175,7 +181,7 @@ export default function App() {
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-8 pb-7">
+      <div className="relative flex min-h-0 flex-1 flex-col px-8 pb-7">
         {screen === "intro" && state && (
           <div className="vd-fade flex min-h-0 flex-1 flex-col">
             <div className="vd-pop mt-6">
@@ -205,12 +211,73 @@ export default function App() {
                     title="Start Varde at login"
                     desc="Recommended for hosts"
                   />
-                  <Option
-                    checked={cp}
-                    onChange={setCp}
-                    title="Control plane on this PC"
-                    desc="Run this group's Varde control plane here"
-                  />
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setAdvanced((v) => !v)}
+                      aria-expanded={advanced}
+                      className="group/adv flex items-center gap-1.5 px-1 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+                    >
+                      <svg
+                        viewBox="0 0 10 10"
+                        className={cx(
+                          "h-2.5 w-2.5 transition-transform duration-200 ease-vd-out",
+                          advanced && "rotate-90",
+                        )}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M3 1.5 6.5 5 3 8.5" />
+                      </svg>
+                      Advanced
+                    </button>
+                    {advanced && (
+                      <label className="group ml-3 mt-1 flex cursor-pointer items-start gap-3 rounded-card border border-border/60 bg-surface-secondary/50 px-3.5 py-2.5 transition-colors hover:border-accent/40">
+                        <input
+                          type="checkbox"
+                          className="peer sr-only"
+                          checked={cp}
+                          onChange={(e) => setCp(e.target.checked)}
+                        />
+                        <span
+                          aria-hidden
+                          className={cx(
+                            "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border transition-colors",
+                            cp
+                              ? "border-accent bg-accent"
+                              : "border-field-border bg-field group-hover:border-accent/60",
+                          )}
+                        >
+                          <svg
+                            viewBox="0 0 12 12"
+                            className={cx(
+                              "h-3 w-3 text-accent-foreground transition-opacity",
+                              cp ? "opacity-100" : "opacity-0",
+                            )}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M2.2 6.3 4.8 8.9 9.8 3.1" />
+                          </svg>
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-medium text-foreground">
+                            Host the Varde platform on this PC
+                          </span>
+                          <span className="mt-0.5 block text-xs text-muted">
+                            Runs your network's Varde here. Only needed if you
+                            run your own Varde instead of varde.games.
+                          </span>
+                        </span>
+                      </label>
+                    )}
+                  </div>
                 </>
               )}
               {isUninstall && (
@@ -344,7 +411,7 @@ export default function App() {
         )}
       </div>
 
-      <div className="flex h-8 shrink-0 items-center justify-between px-4 text-[11px] text-muted/60">
+      <div className="relative flex h-8 shrink-0 items-center justify-between px-4 text-[11px] text-muted/60">
         <span>Varde {state?.version ?? ""}</span>
         <span>varde.games</span>
       </div>
