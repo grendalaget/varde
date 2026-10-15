@@ -431,3 +431,11 @@ body {
 .vd-h1:not(.vd-unlit) {
   fill: var(--vd-ember);
 }
+
+/* Failed server: the cap stone has tumbled off the cairn. */
+.vd-fallen {
+  fill: var(--danger, #fb7185);
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  transform: translate(1px, 0.5px) rotate(22deg);
+}

@@ -179,3 +179,40 @@ export function ServerMark({
     />
   );
 }
+
+/**
+ * The cairn as a status mark inside a chip: lit while running, the ember hops
+ * while the server changes hands, all stones cold when stopped, and the cap
+ * stone tumbles off when failed.
+ */
+export function StateCairn({
+  state,
+  className = "h-3.5 w-3.5",
+}: {
+  state: string;
+  className?: string;
+}) {
+  if (state === "failed") {
+    return (
+      <svg
+        viewBox={FAVICON.viewBox}
+        className={cx("vd shrink-0 text-muted", className)}
+        aria-hidden
+      >
+        <path className="vd-s" d={FAVICON.base} />
+        <path className="vd-h vd-h2 vd-unlit" d={FAVICON.peer} />
+        <path className="vd-h vd-h1 vd-unlit" d={FAVICON.host} />
+        <path className="vd-h vd-h3 vd-fallen" d={FAVICON.cap} />
+      </svg>
+    );
+  }
+  const s: MarkState =
+    state === "running" ? "lit" : MOVING_STATES.has(state) ? "moving" : "idle";
+  return (
+    <Mark
+      state={s}
+      small
+      className={cx(s === "idle" ? "text-muted" : "text-foreground", className)}
+    />
+  );
+}

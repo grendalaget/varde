@@ -1,4 +1,5 @@
 import { Button as HButton } from "@heroui/react";
+import { StateCairn } from "./Logo";
 import {
   useEffect,
   useRef,
@@ -100,11 +101,14 @@ export function Badge({
   children,
   title,
   className,
+  slab = false,
 }: {
   tone?: Tone;
   children: ReactNode;
   title?: string;
   className?: string;
+  /** Stone-slab outline instead of a generic pill. */
+  slab?: boolean;
 }) {
   const t: Record<Tone, string> = {
     green: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
@@ -119,7 +123,8 @@ export function Badge({
     <span
       title={title}
       className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
+        "inline-flex items-center gap-1 whitespace-nowrap px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
+        slab ? "rounded-[9px_12px_8px_11px]" : "rounded-full",
         t[tone],
         className,
       )}
@@ -162,8 +167,8 @@ const SERVER_STATE: Record<string, { label: string; tone: Tone }> = {
 export function ServerStateBadge({ state }: { state: string }) {
   const s = SERVER_STATE[state] ?? { label: state, tone: "neutral" as Tone };
   return (
-    <Badge tone={s.tone}>
-      <Dot tone={s.tone} />
+    <Badge tone={s.tone} slab>
+      <StateCairn state={state} />
       {s.label}
     </Badge>
   );
