@@ -397,6 +397,11 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
                 .get(&c.dir.server_id)
                 .cloned()
                 .unwrap_or_default(),
+            latest_save_on: cp
+                .latest_save_on
+                .get(&c.dir.server_id)
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect();
     out.sort_by(|a, b| a.server_name.cmp(&b.server_name));

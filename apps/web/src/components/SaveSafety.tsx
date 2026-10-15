@@ -50,7 +50,12 @@ export default function SaveSafety({
     safe &&
     summary.latest_save.snapshot_id !== safe.snapshot_id;
   const replicas = safe?.replicas ?? summary.latest_save?.replicas ?? [];
-  const allOffline = replicas.length > 0 && replicas.every((r) => !r.online);
+  // Resume needs the newest save — evaluate its holders, not the older
+  // committed save's, so a blocked server can't look resumable.
+  const resumeReplicas =
+    summary.latest_save?.replicas ?? safe?.replicas ?? [];
+  const allOffline =
+    resumeReplicas.length > 0 && resumeReplicas.every((r) => !r.online);
   return (
     <div className="space-y-2">
       {replicas.length > 0 && (

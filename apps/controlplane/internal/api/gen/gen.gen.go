@@ -999,7 +999,10 @@ type ExecutionDirective struct {
 	LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms,omitempty"`
 
 	// LatestSafeSaveOn Nodes holding a ready copy of the latest committed save; absent when the server has none. Display only.
-	LatestSafeSaveOn     *[]SaveHolder `json:"latest_safe_save_on,omitempty"`
+	LatestSafeSaveOn *[]SaveHolder `json:"latest_safe_save_on,omitempty"`
+
+	// LatestSaveOn Nodes holding a ready copy of the newest save of any state (which may still be replicating); absent when the server has none. Display only.
+	LatestSaveOn         *[]SaveHolder `json:"latest_save_on,omitempty"`
 	LeaseExpiresAtUnixMs int64         `json:"lease_expires_at_unix_ms"`
 	Restore              *struct {
 		ManifestDigest string   `json:"manifest_digest"`

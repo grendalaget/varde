@@ -74,6 +74,9 @@ message Hosting {
   int64 latest_save_at_unix_ms = 5;
   // Machines holding the latest committed save, per the control plane.
   repeated SaveHolder latest_safe_save_on = 6;
+  // Machines holding the newest save of any state (it may still be
+  // replicating), per the control plane.
+  repeated SaveHolder latest_save_on = 7;
 }
 
 message Update {

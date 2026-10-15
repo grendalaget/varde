@@ -307,6 +307,10 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			holders := s.saveHolders(ctx, snap.ID)
 			ed.LatestSafeSaveOn = &holders
 		}
+		if snap, err := s.Store.LatestSnapshot(ctx, srv.ID); err == nil && snap != nil {
+			holders := s.saveHolders(ctx, snap.ID)
+			ed.LatestSaveOn = &holders
+		}
 		if frozenExecs[e.ID] {
 			ed.Freeze = ptr(true)
 		}

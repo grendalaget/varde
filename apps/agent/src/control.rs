@@ -136,23 +136,26 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
             .iter()
             .filter_map(|e| Some((e.server_id.clone(), e.latest_safe_save_at_unix_ms?)))
             .collect();
+        let to_holders = |hs: &[cp_api::SaveHolder]| -> Vec<pb::SaveHolder> {
+            hs.iter()
+                .map(|h| pb::SaveHolder {
+                    node_name: h.name.clone().unwrap_or_else(|| h.node_id.clone()),
+                    anchor: h.anchor.unwrap_or(false),
+                    online: h.online.unwrap_or(false),
+                })
+                .collect()
+        };
         v.latest_safe_save_on = d
             .executions
             .iter()
             .filter(|e| !e.latest_safe_save_on.is_empty())
-            .map(|e| {
-                (
-                    e.server_id.clone(),
-                    e.latest_safe_save_on
-                        .iter()
-                        .map(|h| pb::SaveHolder {
-                            node_name: h.name.clone().unwrap_or_else(|| h.node_id.clone()),
-                            anchor: h.anchor.unwrap_or(false),
-                            online: h.online.unwrap_or(false),
-                        })
-                        .collect(),
-                )
-            })
+            .map(|e| (e.server_id.clone(), to_holders(&e.latest_safe_save_on)))
+            .collect();
+        v.latest_save_on = d
+            .executions
+            .iter()
+            .filter(|e| !e.latest_save_on.is_empty())
+            .map(|e| (e.server_id.clone(), to_holders(&e.latest_save_on)))
             .collect();
     }
     // ---- mesh: configure + peers + routes ----

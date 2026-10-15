@@ -1251,6 +1251,8 @@ export interface components {
             latest_safe_save_at_unix_ms?: number | null;
             /** @description Nodes holding a ready copy of the latest committed save; absent when the server has none. Display only. */
             latest_safe_save_on?: components["schemas"]["SaveHolder"][];
+            /** @description Nodes holding a ready copy of the newest save of any state (which may still be replicating); absent when the server has none. Display only. */
+            latest_save_on?: components["schemas"]["SaveHolder"][];
         };
         AgentDirectives: {
             /** Format: int64 */

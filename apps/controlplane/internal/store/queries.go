@@ -757,6 +757,19 @@ func (s *Store) LatestCommittedSnapshotAt(ctx context.Context, serverID string) 
 	return &at.Int64, nil
 }
 
+// LatestSnapshot returns the server's newest snapshot of any non-invalid
+// state, or nil when it has none.
+func (s *Store) LatestSnapshot(ctx context.Context, serverID string) (*Snapshot, error) {
+	var snaps []Snapshot
+	err := s.q().SelectContext(ctx, &snaps, s.Rebind(
+		`SELECT * FROM snapshots WHERE server_id=? AND state!='invalid'
+		 ORDER BY created_at DESC LIMIT 1`), serverID)
+	if err != nil || len(snaps) == 0 {
+		return nil, err
+	}
+	return &snaps[0], nil
+}
+
 // LatestCommittedSnapshot returns the server's newest committed snapshot
 // ("Latest safe save"), or nil when it has none.
 func (s *Store) LatestCommittedSnapshot(ctx context.Context, serverID string) (*Snapshot, error) {

@@ -1815,6 +1815,13 @@ components:
             when the server has none. Display only.
           type: array
           items: { $ref: "#/components/schemas/SaveHolder" }
+        latest_save_on:
+          description: >-
+            Nodes holding a ready copy of the newest save of any state
+            (which may still be replicating); absent when the server has
+            none. Display only.
+          type: array
+          items: { $ref: "#/components/schemas/SaveHolder" }
     AgentDirectives:
       type: object
       required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]

@@ -1101,6 +1101,7 @@ mod ensure_live_tests {
             snapshot_requests: vec![],
             latest_safe_save_at_unix_ms: None,
             latest_safe_save_on: vec![],
+            latest_save_on: vec![],
             freeze: None,
         })
     }
@@ -1379,6 +1380,7 @@ mod requires_stop_tests {
             snapshot_requests: vec![],
             latest_safe_save_at_unix_ms: None,
             latest_safe_save_on: vec![],
+            latest_save_on: vec![],
             freeze: None,
         })
     }

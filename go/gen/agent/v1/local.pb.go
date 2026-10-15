@@ -241,8 +241,11 @@ type Hosting struct {
 	LatestSaveAtUnixMs int64 `protobuf:"varint,5,opt,name=latest_save_at_unix_ms,json=latestSaveAtUnixMs,proto3" json:"latest_save_at_unix_ms,omitempty"`
 	// Machines holding the latest committed save, per the control plane.
 	LatestSafeSaveOn []*SaveHolder `protobuf:"bytes,6,rep,name=latest_safe_save_on,json=latestSafeSaveOn,proto3" json:"latest_safe_save_on,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Machines holding the newest save of any state (it may still be
+	// replicating), per the control plane.
+	LatestSaveOn  []*SaveHolder `protobuf:"bytes,7,rep,name=latest_save_on,json=latestSaveOn,proto3" json:"latest_save_on,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hosting) Reset() {
@@ -313,6 +316,13 @@ func (x *Hosting) GetLatestSaveAtUnixMs() int64 {
 func (x *Hosting) GetLatestSafeSaveOn() []*SaveHolder {
 	if x != nil {
 		return x.LatestSafeSaveOn
+	}
+	return nil
+}
+
+func (x *Hosting) GetLatestSaveOn() []*SaveHolder {
+	if x != nil {
+		return x.LatestSaveOn
 	}
 	return nil
 }
@@ -1283,7 +1293,7 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"SaveHolder\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x16\n" +
 	"\x06anchor\x18\x02 \x01(\bR\x06anchor\x12\x16\n" +
-	"\x06online\x18\x03 \x01(\bR\x06online\"\x99\x02\n" +
+	"\x06online\x18\x03 \x01(\bR\x06online\"\xdb\x02\n" +
 	"\aHosting\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1f\n" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +
@@ -1291,7 +1301,8 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12;\n" +
 	"\x1blatest_safe_save_at_unix_ms\x18\x04 \x01(\x03R\x16latestSafeSaveAtUnixMs\x122\n" +
 	"\x16latest_save_at_unix_ms\x18\x05 \x01(\x03R\x12latestSaveAtUnixMs\x12I\n" +
-	"\x13latest_safe_save_on\x18\x06 \x03(\v2\x1a.varde.agent.v1.SaveHolderR\x10latestSafeSaveOn\"\xa8\x01\n" +
+	"\x13latest_safe_save_on\x18\x06 \x03(\v2\x1a.varde.agent.v1.SaveHolderR\x10latestSafeSaveOn\x12@\n" +
+	"\x0elatest_save_on\x18\a \x03(\v2\x1a.varde.agent.v1.SaveHolderR\flatestSaveOn\"\xa8\x01\n" +
 	"\x06Update\x12+\n" +
 	"\x12checked_at_unix_ms\x18\x01 \x01(\x03R\x0fcheckedAtUnixMs\x12+\n" +
 	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
@@ -1410,36 +1421,37 @@ var file_agent_v1_local_proto_goTypes = []any{
 }
 var file_agent_v1_local_proto_depIdxs = []int32{
 	2,  // 0: varde.agent.v1.Hosting.latest_safe_save_on:type_name -> varde.agent.v1.SaveHolder
-	0,  // 1: varde.agent.v1.Status.state:type_name -> varde.agent.v1.State
-	1,  // 2: varde.agent.v1.Status.link:type_name -> varde.agent.v1.Link
-	3,  // 3: varde.agent.v1.Status.hosting:type_name -> varde.agent.v1.Hosting
-	4,  // 4: varde.agent.v1.Status.update:type_name -> varde.agent.v1.Update
-	5,  // 5: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 6: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 7: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 8: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 9: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
-	16, // 10: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
-	5,  // 11: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
-	6,  // 12: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
-	8,  // 13: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
-	10, // 14: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
-	12, // 15: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
-	14, // 16: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
-	17, // 17: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
-	19, // 18: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
-	7,  // 19: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
-	9,  // 20: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
-	11, // 21: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
-	13, // 22: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
-	15, // 23: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
-	18, // 24: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
-	20, // 25: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
-	19, // [19:26] is the sub-list for method output_type
-	12, // [12:19] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	2,  // 1: varde.agent.v1.Hosting.latest_save_on:type_name -> varde.agent.v1.SaveHolder
+	0,  // 2: varde.agent.v1.Status.state:type_name -> varde.agent.v1.State
+	1,  // 3: varde.agent.v1.Status.link:type_name -> varde.agent.v1.Link
+	3,  // 4: varde.agent.v1.Status.hosting:type_name -> varde.agent.v1.Hosting
+	4,  // 5: varde.agent.v1.Status.update:type_name -> varde.agent.v1.Update
+	5,  // 6: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 7: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 8: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 9: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 10: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
+	16, // 11: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
+	5,  // 12: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
+	6,  // 13: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
+	8,  // 14: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
+	10, // 15: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
+	12, // 16: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
+	14, // 17: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
+	17, // 18: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
+	19, // 19: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
+	7,  // 20: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
+	9,  // 21: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
+	11, // 22: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
+	13, // 23: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
+	15, // 24: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
+	18, // 25: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
+	20, // 26: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
+	20, // [20:27] is the sub-list for method output_type
+	13, // [13:20] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_local_proto_init() }
