@@ -106,7 +106,8 @@ EOF
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # fetch URL DEST — file:// is a plain copy (local mirrors, testing);
-# otherwise curl or wget, with a progress bar only on a terminal.
+# otherwise curl or wget, quietly. The large payload goes through dl(),
+# which draws its own progress on terminals.
 fetch() {
   case "$1" in
   file://*)
@@ -115,19 +116,95 @@ fetch() {
     ;;
   esac
   if have curl; then
-    if [ -t 1 ]; then
-      curl -fL --progress-bar --retry 3 -o "$2" "$1"
-    else
-      curl -fsSL --retry 3 -o "$2" "$1"
-    fi
+    curl -fsSL --retry 3 -o "$2" "$1"
   elif have wget; then
-    if [ -t 1 ]; then
-      wget --show-progress -q -O "$2" "$1"
-    else
-      wget -q -O "$2" "$1"
-    fi
+    wget -q -O "$2" "$1"
   else
     fail "need curl or wget to download release assets"
+  fi
+}
+
+# _bar CUR TOTAL — one inline progress line in the landing-page ramp:
+# Tåke trail, Glød comet head, dim track. With TOTAL empty or zero the
+# head sweeps back and forth (size unknown).
+BAR_W=22
+_bar() {
+  cur=$1 tot=$2
+  if [ -n "$tot" ] && [ "$tot" -gt 0 ] 2>/dev/null && [ "$cur" -gt 0 ] 2>/dev/null; then
+    head=$((cur * BAR_W / tot))
+    [ "$head" -ge $BAR_W ] && head=$((BAR_W - 1))
+  else
+    span=$((BAR_W - 5))
+    head=$((_tick % (2 * span)))
+    [ "$head" -ge $span ] && head=$((2 * span - head - 1))
+    head=$((head + 4))
+  fi
+  s="      "
+  i=0
+  while [ "$i" -lt $BAR_W ]; do
+    d=$((head - i))
+    if [ "$d" -lt 0 ]; then
+      s="$s${DIM}·"
+    elif [ "$d" -eq 0 ]; then
+      s="$s${GLOD}x"
+    elif [ -n "$tot" ] && [ "$tot" -gt 0 ] 2>/dev/null; then
+      s="$s${STONE}*"
+    elif [ "$d" -le 2 ]; then
+      s="$s${STONE}*"
+    elif [ "$d" -le 5 ]; then
+      s="$s${STONE}="
+    else
+      s="$s${DIM}·"
+    fi
+    i=$((i + 1))
+  done
+  if [ -n "$tot" ] && [ "$tot" -gt 0 ] 2>/dev/null; then
+    pct=$((cur * 100 / tot))
+    [ "$pct" -gt 100 ] && pct=100
+    mb=$(awk -v b="$cur" 'BEGIN { printf "%.1f", b / 1048576 }')
+    printf '\r%s %s%s MB %3d%%%s' "$s" "$DIM" "$mb" "$pct" "$RESET"
+  else
+    printf '\r%s%s' "$s" "$RESET"
+  fi
+}
+
+# dl URL DEST — fetch with the inline bar on terminals; silent elsewhere.
+dl() {
+  case "$1" in
+  file://*)
+    cp -f "${1#file://}" "$2"
+    return
+    ;;
+  esac
+  if [ ! -t 1 ]; then
+    fetch "$1" "$2"
+    return
+  fi
+  tot=""
+  if have curl; then
+    tot=$(curl -fsSIl "$1" 2>/dev/null | sed -n 's/^[Cc]ontent-[Ll]ength: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+    curl -fsSL --retry 3 -o "$2" "$1" &
+    pid=$!
+  elif have wget; then
+    wget -q -O "$2" "$1" &
+    pid=$!
+  else
+    fail "need curl or wget to download release assets"
+  fi
+  _tick=0
+  while kill -0 "$pid" 2>/dev/null; do
+    cur=$(wc -c 2>/dev/null <"$2" || echo 0)
+    _bar "$cur" "$tot"
+    _tick=$((_tick + 1))
+    sleep 0.15 2>/dev/null || sleep 1
+  done
+  cur=$(wc -c 2>/dev/null <"$2" || echo 0)
+  printf '\r%-72s\r' ""
+  if wait "$pid"; then
+    mb=$(awk -v b="$cur" 'BEGIN { printf "%.1f", b / 1048576 }')
+    ok "downloaded $file (${mb} MB)"
+  else
+    return 1
   fi
 }
 
@@ -369,14 +446,22 @@ fetch "$base/SHA256SUMS" "$WORK/SHA256SUMS" ||
 # A hash from the same URL as the payload guards integrity only: when
 # cosign is installed and the release carries its keyless bundle,
 # authenticate SHA256SUMS against the build workflow's identity too.
-if have cosign && fetch "$base/SHA256SUMS.sigstore.json" "$WORK/SHA256SUMS.sigstore.json" 2>/dev/null; then
-  if cosign verify-blob --bundle "$WORK/SHA256SUMS.sigstore.json" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity-regexp "^https://github\\.com/${VARDE_REPO}/\\.github/workflows/build-release\\.yml@" \
-    "$WORK/SHA256SUMS" >/dev/null 2>&1; then
-    ok "release signature verified against the build workflow (sigstore)"
+if have cosign; then
+  if fetch "$base/SHA256SUMS.sigstore.json" "$WORK/SHA256SUMS.sigstore.json" 2>/dev/null; then
+    if cosign verify-blob --bundle "$WORK/SHA256SUMS.sigstore.json" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp "^https://github\\.com/${VARDE_REPO}/\\.github/workflows/build-release\\.yml@" \
+      "$WORK/SHA256SUMS" >/dev/null 2>&1; then
+      ok "release signature verified against the build workflow (sigstore)"
+    else
+      fail "SHA256SUMS signature verification failed — refusing to install"
+    fi
+  elif [ -z "$VARDE_RELEASE_URL" ]; then
+    # On the official channel a stripped bundle is a downgrade attack on
+    # release authentication; only an explicit mirror opt-out may skip it.
+    fail "SHA256SUMS.sigstore.json missing from the release — refusing to install"
   else
-    fail "SHA256SUMS signature verification failed — refusing to install"
+    say "  ${DIM}no signature bundle on this mirror — trusting SHA256SUMS checksum only${RESET}"
   fi
 else
   say "  ${DIM}cosign not installed — trusting SHA256SUMS checksum only${RESET}"
@@ -417,7 +502,7 @@ confirm "Install? [Y/n]" y || fail "aborted"
 # ------------------------------------------------------- download+verify
 
 step "downloading $file"
-fetch "$base/$file" "$WORK/$file" ||
+dl "$base/$file" "$WORK/$file" ||
   fail "asset $file failed to download from $base"
 
 actual=$(sha256_of "$WORK/$file")
