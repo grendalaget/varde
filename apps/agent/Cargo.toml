@@ -16,6 +16,7 @@ base64 = "0.22"
 clap.workspace = true
 agent-ipc = { path = "../../crates/agent-ipc", features = ["server"] }
 cp-api = { path = "../../crates/cp-api" }
+crash-report = { path = "../../crates/crash-report" }
 ed25519-dalek.workspace = true
 executor-api = { path = "../../crates/executor-api" }
 executor-native = { path = "../../crates/executor-native" }

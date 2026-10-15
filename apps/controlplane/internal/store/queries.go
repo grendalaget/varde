@@ -940,3 +940,43 @@ func (s *Store) KVSetNX(ctx context.Context, key, value string) (bool, error) {
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+// ---- crash reports ----
+
+func (s *Store) InsertCrashReport(ctx context.Context, r *CrashReport) error {
+	_, err := s.DB.ExecContext(ctx, s.Rebind(
+		`INSERT INTO crash_reports (id, group_id, node_id, kind, exe, version, os, arch, pid,
+			message, location, backtrace, detail, created_at, received_at, dump, dump_name, dump_omitted)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		r.ID, r.GroupID, r.NodeID, r.Kind, r.Exe, r.Version, r.Os, r.Arch, r.Pid,
+		r.Message, r.Location, r.Backtrace, r.Detail, r.CreatedAt, r.ReceivedAt,
+		r.Dump, r.DumpName, r.DumpOmitted)
+	return err
+}
+
+// ListCrashReports returns the newest `limit` reports for the group (no dumps),
+// with the node's display name joined in.
+func (s *Store) ListCrashReports(ctx context.Context, groupID string, limit int) ([]CrashReportMeta, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var out []CrashReportMeta
+	err := s.DB.SelectContext(ctx, &out, s.Rebind(
+		`SELECT c.id, c.node_id, COALESCE(n.name, '') AS node_name, c.kind, c.exe, c.version,
+			c.message, c.created_at, c.received_at,
+			COALESCE(LENGTH(c.dump), 0) AS dump_size, c.dump_omitted
+		 FROM crash_reports c LEFT JOIN nodes n ON n.id = c.node_id
+		 WHERE c.group_id = ? ORDER BY c.created_at DESC LIMIT ?`), groupID, limit)
+	return out, err
+}
+
+// GetCrashReport returns the full report including the dump, or nil.
+func (s *Store) GetCrashReport(ctx context.Context, groupID, id string) (*CrashReport, error) {
+	var r CrashReport
+	err := s.DB.GetContext(ctx, &r, s.Rebind(
+		`SELECT * FROM crash_reports WHERE group_id = ? AND id = ?`), groupID, id)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

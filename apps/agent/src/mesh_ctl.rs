@@ -61,6 +61,22 @@ impl MeshCtl {
             tokio::select! {
                 status = child.wait() => {
                     tracing::warn!(status = ?status, "mesh child died; restarting");
+                    // a non-clean exit is a crash: record it with the stderr
+                    // tail so the upload loop can report it.
+                    let status_s = status.map(|s| s.to_string()).unwrap_or_else(|| "unknown".into());
+                    let exe = mesh_bin
+                        .file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "varde-mesh".into());
+                    if let Err(e) = crash_report::record_process_exit(
+                        &crate::crash::dir(&data_dir),
+                        &exe,
+                        env!("CARGO_PKG_VERSION"),
+                        &status_s,
+                        &child.stderr_tail(),
+                    ) {
+                        tracing::warn!(error = %e, "could not record mesh crash");
+                    }
                     self.set_client(None);
                     tokio::select! {
                         _ = tokio::time::sleep(backoff) => {},

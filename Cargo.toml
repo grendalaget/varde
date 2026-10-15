@@ -10,6 +10,7 @@ members = [
     "apps/desktop",
     "crates/executor-native",
     "crates/cp-api",
+    "crates/crash-report",
     "crates/runtimes",
     "games/testgame",
     "games/minecraft",

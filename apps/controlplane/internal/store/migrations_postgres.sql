@@ -269,3 +269,27 @@ CREATE TABLE IF NOT EXISTS execution_logs (
     line         TEXT NOT NULL,
     PRIMARY KEY (execution_id, seq)
 );
+
+-- Crash reports uploaded by linked machines (desktop app, service, mesh child).
+-- dump is the raw minidump when the agent sent one.
+CREATE TABLE IF NOT EXISTS crash_reports (
+    id             TEXT PRIMARY KEY,
+    group_id       TEXT NOT NULL,
+    node_id        TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    exe            TEXT NOT NULL,
+    version        TEXT NOT NULL DEFAULT '',
+    os             TEXT NOT NULL DEFAULT '',
+    arch           TEXT NOT NULL DEFAULT '',
+    pid            BIGINT NOT NULL DEFAULT 0,
+    message        TEXT NOT NULL DEFAULT '',
+    location       TEXT NOT NULL DEFAULT '',
+    backtrace      TEXT NOT NULL DEFAULT '',
+    detail         TEXT NOT NULL DEFAULT '',
+    created_at     BIGINT NOT NULL,
+    received_at    BIGINT NOT NULL,
+    dump           BYTEA,
+    dump_name      TEXT NOT NULL DEFAULT '',
+    dump_omitted   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_crash_group ON crash_reports(group_id, created_at DESC);

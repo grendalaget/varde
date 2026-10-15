@@ -1,23 +1,35 @@
 //! Supervised mesh child process. The agent spawns varde-mesh with
 //! `--ipc <endpoint>` and restarts it with backoff when it exits.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::{error, info};
+
+/// Lines kept of the child's stderr for crash reports.
+const STDERR_TAIL: usize = 64;
 
 /// Handle to the supervised child. Awaiting it resolves with the child's
 /// exit status when the process dies.
 pub struct SupervisedChild {
     child: Child,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl SupervisedChild {
     /// Waits for the child to exit, returning its status.
     pub async fn wait(&mut self) -> Option<std::process::ExitStatus> {
         self.child.wait().await.ok()
+    }
+
+    /// Last stderr lines the child emitted (crash-report context).
+    pub fn stderr_tail(&self) -> Vec<String> {
+        self.stderr_tail.lock().unwrap().iter().cloned().collect()
     }
 
     pub fn kill(&mut self) {
@@ -49,10 +61,27 @@ pub fn respawn(spec: &ChildSpec) -> SupervisedChild {
 }
 
 fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
-    let child = match start(bin, ipc) {
-        Ok(child) => {
+    match start(bin, ipc) {
+        Ok(mut child) => {
             info!(pid = child.id(), mesh = %bin.display(), "mesh child started");
-            child
+            let tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL)));
+            if let Some(err) = child.stderr.take() {
+                let t = tail.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(err).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let mut q = t.lock().unwrap();
+                        if q.len() == STDERR_TAIL {
+                            q.pop_front();
+                        }
+                        q.push_back(line);
+                    }
+                });
+            }
+            SupervisedChild {
+                child,
+                stderr_tail: tail,
+            }
         }
         Err(e) => {
             // Without the mesh binary the agent is useless; exit and let the
@@ -60,13 +89,15 @@ fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
             error!(mesh = %bin.display(), error = %format!("{e:#}"), "cannot spawn mesh child");
             std::process::exit(1);
         }
-    };
-    SupervisedChild { child }
+    }
 }
 
 fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     let mut cmd = Command::new(bin);
-    cmd.arg("--ipc").arg(ipc).stdin(Stdio::null());
+    cmd.arg("--ipc")
+        .arg(ipc)
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped());
     #[cfg(target_os = "macos")]
     cmd.arg("--parent-pid").arg(std::process::id().to_string());
     if let Ok(lvl) = std::env::var("VARDE_MESH_LOG_LEVEL") {

@@ -288,3 +288,40 @@ type LogLineRow struct {
 
 // JSONText is a convenience for optional JSON payload columns.
 type JSONText = types.JSONText
+
+// CrashReport is one crash report uploaded by a linked machine.
+type CrashReport struct {
+	ID          string  `db:"id"`
+	GroupID     string  `db:"group_id"`
+	NodeID      string  `db:"node_id"`
+	Kind        string  `db:"kind"`
+	Exe         string  `db:"exe"`
+	Version     string  `db:"version"`
+	Os          string  `db:"os"`
+	Arch        string  `db:"arch"`
+	Pid         int64   `db:"pid"`
+	Message     string  `db:"message"`
+	Location    string  `db:"location"`
+	Backtrace   string  `db:"backtrace"`
+	Detail      string  `db:"detail"`
+	CreatedAt   int64   `db:"created_at"`
+	ReceivedAt  int64   `db:"received_at"`
+	Dump        *[]byte `db:"dump"`
+	DumpName    string  `db:"dump_name"`
+	DumpOmitted string  `db:"dump_omitted"`
+}
+
+// CrashReportMeta is CrashReport without the dump body (list views).
+type CrashReportMeta struct {
+	ID          string `db:"id"`
+	NodeID      string `db:"node_id"`
+	NodeName    string `db:"node_name"`
+	Kind        string `db:"kind"`
+	Exe         string `db:"exe"`
+	Version     string `db:"version"`
+	Message     string `db:"message"`
+	CreatedAt   int64  `db:"created_at"`
+	ReceivedAt  int64  `db:"received_at"`
+	DumpSize    int64  `db:"dump_size"`
+	DumpOmitted string `db:"dump_omitted"`
+}

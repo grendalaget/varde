@@ -27,11 +27,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LocalService_GetStatus_FullMethodName   = "/varde.agent.v1.LocalService/GetStatus"
-	LocalService_WatchStatus_FullMethodName = "/varde.agent.v1.LocalService/WatchStatus"
-	LocalService_StartLink_FullMethodName   = "/varde.agent.v1.LocalService/StartLink"
-	LocalService_CancelLink_FullMethodName  = "/varde.agent.v1.LocalService/CancelLink"
-	LocalService_CheckUpdate_FullMethodName = "/varde.agent.v1.LocalService/CheckUpdate"
+	LocalService_GetStatus_FullMethodName         = "/varde.agent.v1.LocalService/GetStatus"
+	LocalService_WatchStatus_FullMethodName       = "/varde.agent.v1.LocalService/WatchStatus"
+	LocalService_StartLink_FullMethodName         = "/varde.agent.v1.LocalService/StartLink"
+	LocalService_CancelLink_FullMethodName        = "/varde.agent.v1.LocalService/CancelLink"
+	LocalService_CheckUpdate_FullMethodName       = "/varde.agent.v1.LocalService/CheckUpdate"
+	LocalService_SubmitCrashReport_FullMethodName = "/varde.agent.v1.LocalService/SubmitCrashReport"
+	LocalService_SetCrashReporting_FullMethodName = "/varde.agent.v1.LocalService/SetCrashReporting"
 )
 
 // LocalServiceClient is the client API for LocalService service.
@@ -47,6 +49,12 @@ type LocalServiceClient interface {
 	CancelLink(ctx context.Context, in *CancelLinkRequest, opts ...grpc.CallOption) (*CancelLinkResponse, error)
 	// Re-runs the update check now instead of waiting for the interval.
 	CheckUpdate(ctx context.Context, in *CheckUpdateRequest, opts ...grpc.CallOption) (*CheckUpdateResponse, error)
+	// Hands a crash report captured by the client (e.g. the tray) to the
+	// agent, which stores and uploads it like its own. Any local user may
+	// submit; the agent is the only process that can write the crash dir.
+	SubmitCrashReport(ctx context.Context, in *SubmitCrashReportRequest, opts ...grpc.CallOption) (*SubmitCrashReportResponse, error)
+	// Turns crash-report upload on or off (persisted on the machine).
+	SetCrashReporting(ctx context.Context, in *SetCrashReportingRequest, opts ...grpc.CallOption) (*SetCrashReportingResponse, error)
 }
 
 type localServiceClient struct {
@@ -116,6 +124,26 @@ func (c *localServiceClient) CheckUpdate(ctx context.Context, in *CheckUpdateReq
 	return out, nil
 }
 
+func (c *localServiceClient) SubmitCrashReport(ctx context.Context, in *SubmitCrashReportRequest, opts ...grpc.CallOption) (*SubmitCrashReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitCrashReportResponse)
+	err := c.cc.Invoke(ctx, LocalService_SubmitCrashReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *localServiceClient) SetCrashReporting(ctx context.Context, in *SetCrashReportingRequest, opts ...grpc.CallOption) (*SetCrashReportingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetCrashReportingResponse)
+	err := c.cc.Invoke(ctx, LocalService_SetCrashReporting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LocalServiceServer is the server API for LocalService service.
 // All implementations must embed UnimplementedLocalServiceServer
 // for forward compatibility.
@@ -129,6 +157,12 @@ type LocalServiceServer interface {
 	CancelLink(context.Context, *CancelLinkRequest) (*CancelLinkResponse, error)
 	// Re-runs the update check now instead of waiting for the interval.
 	CheckUpdate(context.Context, *CheckUpdateRequest) (*CheckUpdateResponse, error)
+	// Hands a crash report captured by the client (e.g. the tray) to the
+	// agent, which stores and uploads it like its own. Any local user may
+	// submit; the agent is the only process that can write the crash dir.
+	SubmitCrashReport(context.Context, *SubmitCrashReportRequest) (*SubmitCrashReportResponse, error)
+	// Turns crash-report upload on or off (persisted on the machine).
+	SetCrashReporting(context.Context, *SetCrashReportingRequest) (*SetCrashReportingResponse, error)
 	mustEmbedUnimplementedLocalServiceServer()
 }
 
@@ -153,6 +187,12 @@ func (UnimplementedLocalServiceServer) CancelLink(context.Context, *CancelLinkRe
 }
 func (UnimplementedLocalServiceServer) CheckUpdate(context.Context, *CheckUpdateRequest) (*CheckUpdateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckUpdate not implemented")
+}
+func (UnimplementedLocalServiceServer) SubmitCrashReport(context.Context, *SubmitCrashReportRequest) (*SubmitCrashReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitCrashReport not implemented")
+}
+func (UnimplementedLocalServiceServer) SetCrashReporting(context.Context, *SetCrashReportingRequest) (*SetCrashReportingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetCrashReporting not implemented")
 }
 func (UnimplementedLocalServiceServer) mustEmbedUnimplementedLocalServiceServer() {}
 func (UnimplementedLocalServiceServer) testEmbeddedByValue()                      {}
@@ -258,6 +298,42 @@ func _LocalService_CheckUpdate_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LocalService_SubmitCrashReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitCrashReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalServiceServer).SubmitCrashReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalService_SubmitCrashReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalServiceServer).SubmitCrashReport(ctx, req.(*SubmitCrashReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LocalService_SetCrashReporting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetCrashReportingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalServiceServer).SetCrashReporting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalService_SetCrashReporting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalServiceServer).SetCrashReporting(ctx, req.(*SetCrashReportingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LocalService_ServiceDesc is the grpc.ServiceDesc for LocalService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -280,6 +356,14 @@ var LocalService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckUpdate",
 			Handler:    _LocalService_CheckUpdate_Handler,
+		},
+		{
+			MethodName: "SubmitCrashReport",
+			Handler:    _LocalService_SubmitCrashReport_Handler,
+		},
+		{
+			MethodName: "SetCrashReporting",
+			Handler:    _LocalService_SetCrashReporting_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

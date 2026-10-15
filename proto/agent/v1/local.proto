@@ -21,6 +21,12 @@ service LocalService {
   rpc CancelLink(CancelLinkRequest) returns (CancelLinkResponse);
   // Re-runs the update check now instead of waiting for the interval.
   rpc CheckUpdate(CheckUpdateRequest) returns (CheckUpdateResponse);
+  // Hands a crash report captured by the client (e.g. the tray) to the
+  // agent, which stores and uploads it like its own. Any local user may
+  // submit; the agent is the only process that can write the crash dir.
+  rpc SubmitCrashReport(SubmitCrashReportRequest) returns (SubmitCrashReportResponse);
+  // Turns crash-report upload on or off (persisted on the machine).
+  rpc SetCrashReporting(SetCrashReportingRequest) returns (SetCrashReportingResponse);
 }
 
 enum State {
@@ -91,6 +97,9 @@ message Status {
   // Technical form of link_error for the UI's "Additional information"
   // disclosure; empty when there's nothing beyond link_error.
   string link_error_detail = 13;
+  // Whether crash reports captured on this machine are uploaded to the
+  // control plane. Capture to disk happens either way.
+  bool crash_reporting = 14;
 }
 
 message GetStatusRequest {}
@@ -125,5 +134,39 @@ message CancelLinkResponse {
 message CheckUpdateRequest {}
 
 message CheckUpdateResponse {
+  Status status = 1;
+}
+
+// One crash on this machine. `dump` carries a minidump when present —
+// senders must cap it (crash_report::MAX_DUMP_BYTES); larger files stay
+// local and detail says why.
+message CrashReportMsg {
+  // panic | dump | process
+  string kind = 1;
+  // Image that crashed ("varde-tray").
+  string exe = 2;
+  string version = 3;
+  int32 pid = 4;
+  string message = 5;
+  string location = 6;
+  string backtrace = 7;
+  // Extra context: exit code, stderr tail, why a dump is missing.
+  string detail = 8;
+  int64 created_at_unix_ms = 9;
+  bytes dump = 10;
+  string dump_name = 11;
+}
+
+message SubmitCrashReportRequest {
+  CrashReportMsg report = 1;
+}
+
+message SubmitCrashReportResponse {}
+
+message SetCrashReportingRequest {
+  bool enabled = 1;
+}
+
+message SetCrashReportingResponse {
   Status status = 1;
 }

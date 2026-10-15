@@ -30,6 +30,9 @@ pub struct TrayView {
     pub service_running: bool,
     /// "Update to x.y.z" when the agent's checker found a newer release.
     pub update_label: Option<String>,
+    /// User pref (agent-side): upload captured crash reports to this
+    /// machine's control plane.
+    pub crash_reporting: bool,
 }
 
 pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
@@ -46,6 +49,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             dashboard_url: None,
             service_running: false,
             update_label: None,
+            crash_reporting: true,
         };
     };
     let state = s.state();
@@ -109,6 +113,7 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         relink: linked,
         dashboard_url: (!s.control_plane_url.is_empty()).then(|| s.control_plane_url.clone()),
         service_running: true,
+        crash_reporting: s.crash_reporting,
         update_label: s
             .update
             .as_ref()

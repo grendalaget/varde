@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::crash;
 use agent_ipc::pb;
 use serde::Serialize;
 use tauri::image::Image;
@@ -72,6 +73,7 @@ struct FedPending {
 }
 
 pub fn run() {
+    crash::install_hook();
     let launch = view::parse_launch(std::env::args().skip(1));
     // Point varde:// at this exe; the installer writes the same keys machine-
     // wide, this keeps portable/dev launches reachable too. Skipped in the
@@ -188,6 +190,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(tick(h.clone()));
             }
             tauri::async_runtime::spawn(watch(h.clone()));
+            tauri::async_runtime::spawn(crash::forward_loop());
             if relink || launch.open_link {
                 open_main_window(&h);
             }
@@ -347,6 +350,14 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         autostart::enabled(),
         none,
     )?)?;
+    m.append(&CheckMenuItem::with_id(
+        app,
+        "crashreports",
+        "Send crash reports",
+        true,
+        v.crash_reporting,
+        none,
+    )?)?;
     m.append(&PredefinedMenuItem::separator(app)?)?;
     m.append(&MenuItem::with_id(
         app,
@@ -385,6 +396,23 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
         "autostart" => {
             let _ = autostart::set(!autostart::enabled());
             render(app, true);
+        }
+        "crashreports" => {
+            let cur = app
+                .state::<State>()
+                .status
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|s| s.crash_reporting)
+                .unwrap_or(true);
+            tauri::async_runtime::spawn(async move {
+                if let Ok(mut c) = agent_ipc::connect(agent_ipc::PIPE_NAME).await {
+                    let _ = c
+                        .set_crash_reporting(pb::SetCrashReportingRequest { enabled: !cur })
+                        .await;
+                }
+            });
         }
         "update" => crate::update::offer(app),
         "checkupdate" => crate::update::recheck(app.clone()),

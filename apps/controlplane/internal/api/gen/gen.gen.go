@@ -63,6 +63,27 @@ func (e AgentSnapshotReason) Valid() bool {
 	}
 }
 
+// Defines values for CrashReportBodyKind.
+const (
+	Dump    CrashReportBodyKind = "dump"
+	Panic   CrashReportBodyKind = "panic"
+	Process CrashReportBodyKind = "process"
+)
+
+// Valid indicates whether the value is a known member of the CrashReportBodyKind enum.
+func (e CrashReportBodyKind) Valid() bool {
+	switch e {
+	case Dump:
+		return true
+	case Panic:
+		return true
+	case Process:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DesiredState.
 const (
 	DesiredStateRunning DesiredState = "running"
@@ -723,6 +744,80 @@ type Capabilities struct {
 	UserActive        *bool     `json:"user_active,omitempty"`
 }
 
+// CrashReportAck defines model for CrashReportAck.
+type CrashReportAck struct {
+	Id string `json:"id"`
+}
+
+// CrashReportBody defines model for CrashReportBody.
+type CrashReportBody struct {
+	Arch            *string `json:"arch,omitempty"`
+	Backtrace       *string `json:"backtrace,omitempty"`
+	CreatedAtUnixMs int64   `json:"created_at_unix_ms"`
+
+	// Detail exit code
+	Detail *string `json:"detail,omitempty"`
+
+	// DumpB64 base64 minidump
+	DumpB64  *string `json:"dump_b64,omitempty"`
+	DumpName *string `json:"dump_name,omitempty"`
+
+	// DumpOmitted why an existing dump was not sent
+	DumpOmitted *string `json:"dump_omitted,omitempty"`
+
+	// Exe image that crashed
+	Exe      string              `json:"exe"`
+	Kind     CrashReportBodyKind `json:"kind"`
+	Location *string             `json:"location,omitempty"`
+	Message  *string             `json:"message,omitempty"`
+	Os       *string             `json:"os,omitempty"`
+	Pid      *int                `json:"pid,omitempty"`
+	Version  *string             `json:"version,omitempty"`
+}
+
+// CrashReportBodyKind defines model for CrashReportBody.Kind.
+type CrashReportBodyKind string
+
+// CrashReportDetail defines model for CrashReportDetail.
+type CrashReportDetail struct {
+	Arch            *string `json:"arch,omitempty"`
+	Backtrace       *string `json:"backtrace,omitempty"`
+	CreatedAtUnixMs int64   `json:"created_at_unix_ms"`
+	Detail          *string `json:"detail,omitempty"`
+
+	// DumpB64 base64 minidump when stored
+	DumpB64          *string `json:"dump_b64,omitempty"`
+	DumpName         *string `json:"dump_name,omitempty"`
+	DumpOmitted      *string `json:"dump_omitted,omitempty"`
+	DumpSize         *int    `json:"dump_size,omitempty"`
+	Exe              string  `json:"exe"`
+	Id               string  `json:"id"`
+	Kind             string  `json:"kind"`
+	Location         *string `json:"location,omitempty"`
+	Message          *string `json:"message,omitempty"`
+	NodeId           string  `json:"node_id"`
+	NodeName         *string `json:"node_name,omitempty"`
+	Os               *string `json:"os,omitempty"`
+	Pid              *int    `json:"pid,omitempty"`
+	ReceivedAtUnixMs int64   `json:"received_at_unix_ms"`
+	Version          *string `json:"version,omitempty"`
+}
+
+// CrashReportMeta defines model for CrashReportMeta.
+type CrashReportMeta struct {
+	CreatedAtUnixMs  int64   `json:"created_at_unix_ms"`
+	DumpOmitted      *string `json:"dump_omitted,omitempty"`
+	DumpSize         *int    `json:"dump_size,omitempty"`
+	Exe              string  `json:"exe"`
+	Id               string  `json:"id"`
+	Kind             string  `json:"kind"`
+	Message          *string `json:"message,omitempty"`
+	NodeId           string  `json:"node_id"`
+	NodeName         *string `json:"node_name,omitempty"`
+	ReceivedAtUnixMs int64   `json:"received_at_unix_ms"`
+	Version          *string `json:"version,omitempty"`
+}
+
 // DesiredState defines model for DesiredState.
 type DesiredState string
 
@@ -1335,6 +1430,11 @@ type UpdateGroupJSONBody struct {
 	Settings *GroupSettings `json:"settings,omitempty"`
 }
 
+// ListCrashReportsParams defines parameters for ListCrashReports.
+type ListCrashReportsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CreateEnrollmentTokenJSONBody defines parameters for CreateEnrollmentToken.
 type CreateEnrollmentTokenJSONBody struct {
 	Anchor         *bool              `json:"anchor,omitempty"`
@@ -1422,6 +1522,9 @@ type UpdateSnapshotJSONBody struct {
 // AdminSetGroupLimitsJSONRequestBody defines body for AdminSetGroupLimits for application/json ContentType.
 type AdminSetGroupLimitsJSONRequestBody = GroupLimits
 
+// AgentSubmitCrashReportJSONRequestBody defines body for AgentSubmitCrashReport for application/json ContentType.
+type AgentSubmitCrashReportJSONRequestBody = CrashReportBody
+
 // AgentEnrollDeviceJSONRequestBody defines body for AgentEnrollDevice for application/json ContentType.
 type AgentEnrollDeviceJSONRequestBody = DeviceEnrollRequest
 
@@ -1505,6 +1608,9 @@ type ServerInterface interface {
 
 	// (PUT /v1/admin/groups/{groupId}/limits)
 	AdminSetGroupLimits(w http.ResponseWriter, r *http.Request, groupId GroupId)
+	// AgentSubmitCrashReport Upload one crash report captured on this machine.
+	// (POST /v1/agent/crash-reports)
+	AgentSubmitCrashReport(w http.ResponseWriter, r *http.Request)
 	// AgentEnrollDevice Start device-code enrollment (unsigned; no node yet).
 	// (POST /v1/agent/enroll/device)
 	AgentEnrollDevice(w http.ResponseWriter, r *http.Request)
@@ -1565,6 +1671,12 @@ type ServerInterface interface {
 
 	// (PATCH /v1/groups/{groupId})
 	UpdateGroup(w http.ResponseWriter, r *http.Request, groupId GroupId)
+	// ListCrashReports Crash reports uploaded by this group's machines (admin only).
+	// (GET /v1/groups/{groupId}/crash-reports)
+	ListCrashReports(w http.ResponseWriter, r *http.Request, groupId GroupId, params ListCrashReportsParams)
+	// GetCrashReport One crash report with backtrace, detail and minidump (admin only).
+	// (GET /v1/groups/{groupId}/crash-reports/{reportId})
+	GetCrashReport(w http.ResponseWriter, r *http.Request, groupId GroupId, reportId string)
 
 	// (GET /v1/groups/{groupId}/enrollment-tokens)
 	ListEnrollmentTokens(w http.ResponseWriter, r *http.Request, groupId GroupId)
@@ -1728,6 +1840,20 @@ func (siw *ServerInterfaceWrapper) AdminSetGroupLimits(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AdminSetGroupLimits(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AgentSubmitCrashReport operation middleware
+func (siw *ServerInterfaceWrapper) AgentSubmitCrashReport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AgentSubmitCrashReport(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2092,6 +2218,83 @@ func (siw *ServerInterfaceWrapper) UpdateGroup(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateGroup(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCrashReports operation middleware
+func (siw *ServerInterfaceWrapper) ListCrashReports(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCrashReportsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCrashReports(w, r, groupId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCrashReport operation middleware
+func (siw *ServerInterfaceWrapper) GetCrashReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "reportId" -------------
+	var reportId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "reportId", r.PathValue("reportId"), &reportId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "reportId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCrashReport(w, r, groupId, reportId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3108,6 +3311,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/servers/{serverId}/logs", wrapper.GetServerLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/events", wrapper.ListEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/events/stream", wrapper.StreamEvents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/crash-reports", wrapper.ListCrashReports)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/crash-reports/{reportId}", wrapper.GetCrashReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/groups", wrapper.AdminListGroups)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/admin/groups/{groupId}/limits", wrapper.AdminSetGroupLimits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/device", wrapper.AgentEnrollDevice)
@@ -3118,6 +3323,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/executions/{executionId}/logs", wrapper.AgentExecutionLogs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/snapshots", wrapper.AgentCreateSnapshot)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/snapshots/{snapshotId}/replicas", wrapper.AgentReplicaReady)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/crash-reports", wrapper.AgentSubmitCrashReport)
 
 	return m
 }
@@ -3278,6 +3484,70 @@ func (response AdminSetGroupLimits403JSONResponse) VisitAdminSetGroupLimitsRespo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentSubmitCrashReportRequestObject struct {
+	Body *AgentSubmitCrashReportJSONRequestBody
+}
+
+type AgentSubmitCrashReportResponseObject interface {
+	VisitAgentSubmitCrashReportResponse(w http.ResponseWriter) error
+}
+
+type AgentSubmitCrashReport201JSONResponse CrashReportAck
+
+func (response AgentSubmitCrashReport201JSONResponse) VisitAgentSubmitCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentSubmitCrashReport400JSONResponse struct{ ErrorJSONResponse }
+
+func (response AgentSubmitCrashReport400JSONResponse) VisitAgentSubmitCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentSubmitCrashReport401JSONResponse Error
+
+func (response AgentSubmitCrashReport401JSONResponse) VisitAgentSubmitCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentSubmitCrashReport413JSONResponse Error
+
+func (response AgentSubmitCrashReport413JSONResponse) VisitAgentSubmitCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4297,6 +4567,124 @@ func (response UpdateGroup403JSONResponse) VisitUpdateGroupResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCrashReportsRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+	Params  ListCrashReportsParams
+}
+
+type ListCrashReportsResponseObject interface {
+	VisitListCrashReportsResponse(w http.ResponseWriter) error
+}
+
+type ListCrashReports200JSONResponse struct {
+	Reports []CrashReportMeta `json:"reports"`
+}
+
+func (response ListCrashReports200JSONResponse) VisitListCrashReportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCrashReports401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListCrashReports401JSONResponse) VisitListCrashReportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCrashReports403JSONResponse Error
+
+func (response ListCrashReports403JSONResponse) VisitListCrashReportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCrashReportRequestObject struct {
+	GroupId  GroupId `json:"groupId"`
+	ReportId string  `json:"reportId"`
+}
+
+type GetCrashReportResponseObject interface {
+	VisitGetCrashReportResponse(w http.ResponseWriter) error
+}
+
+type GetCrashReport200JSONResponse CrashReportDetail
+
+func (response GetCrashReport200JSONResponse) VisitGetCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCrashReport401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetCrashReport401JSONResponse) VisitGetCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCrashReport403JSONResponse Error
+
+func (response GetCrashReport403JSONResponse) VisitGetCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCrashReport404JSONResponse Error
+
+func (response GetCrashReport404JSONResponse) VisitGetCrashReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5873,6 +6261,9 @@ type StrictServerInterface interface {
 
 	// (PUT /v1/admin/groups/{groupId}/limits)
 	AdminSetGroupLimits(ctx context.Context, request AdminSetGroupLimitsRequestObject) (AdminSetGroupLimitsResponseObject, error)
+	// AgentSubmitCrashReport Upload one crash report captured on this machine.
+	// (POST /v1/agent/crash-reports)
+	AgentSubmitCrashReport(ctx context.Context, request AgentSubmitCrashReportRequestObject) (AgentSubmitCrashReportResponseObject, error)
 	// AgentEnrollDevice Start device-code enrollment (unsigned; no node yet).
 	// (POST /v1/agent/enroll/device)
 	AgentEnrollDevice(ctx context.Context, request AgentEnrollDeviceRequestObject) (AgentEnrollDeviceResponseObject, error)
@@ -5933,6 +6324,12 @@ type StrictServerInterface interface {
 
 	// (PATCH /v1/groups/{groupId})
 	UpdateGroup(ctx context.Context, request UpdateGroupRequestObject) (UpdateGroupResponseObject, error)
+	// ListCrashReports Crash reports uploaded by this group's machines (admin only).
+	// (GET /v1/groups/{groupId}/crash-reports)
+	ListCrashReports(ctx context.Context, request ListCrashReportsRequestObject) (ListCrashReportsResponseObject, error)
+	// GetCrashReport One crash report with backtrace, detail and minidump (admin only).
+	// (GET /v1/groups/{groupId}/crash-reports/{reportId})
+	GetCrashReport(ctx context.Context, request GetCrashReportRequestObject) (GetCrashReportResponseObject, error)
 
 	// (GET /v1/groups/{groupId}/enrollment-tokens)
 	ListEnrollmentTokens(ctx context.Context, request ListEnrollmentTokensRequestObject) (ListEnrollmentTokensResponseObject, error)
@@ -6165,6 +6562,37 @@ func (sh *strictHandler) AdminSetGroupLimits(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AdminSetGroupLimitsResponseObject); ok {
 		if err := validResponse.VisitAdminSetGroupLimitsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AgentSubmitCrashReport operation middleware
+func (sh *strictHandler) AgentSubmitCrashReport(w http.ResponseWriter, r *http.Request) {
+	var request AgentSubmitCrashReportRequestObject
+
+	var body AgentSubmitCrashReportJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AgentSubmitCrashReport(ctx, request.(AgentSubmitCrashReportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AgentSubmitCrashReport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AgentSubmitCrashReportResponseObject); ok {
+		if err := validResponse.VisitAgentSubmitCrashReportResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6757,6 +7185,60 @@ func (sh *strictHandler) UpdateGroup(w http.ResponseWriter, r *http.Request, gro
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateGroupResponseObject); ok {
 		if err := validResponse.VisitUpdateGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCrashReports operation middleware
+func (sh *strictHandler) ListCrashReports(w http.ResponseWriter, r *http.Request, groupId GroupId, params ListCrashReportsParams) {
+	var request ListCrashReportsRequestObject
+
+	request.GroupId = groupId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCrashReports(ctx, request.(ListCrashReportsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCrashReports")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCrashReportsResponseObject); ok {
+		if err := validResponse.VisitListCrashReportsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCrashReport operation middleware
+func (sh *strictHandler) GetCrashReport(w http.ResponseWriter, r *http.Request, groupId GroupId, reportId string) {
+	var request GetCrashReportRequestObject
+
+	request.GroupId = groupId
+	request.ReportId = reportId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCrashReport(ctx, request.(GetCrashReportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCrashReport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCrashReportResponseObject); ok {
+		if err := validResponse.VisitGetCrashReportResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 agent-ipc = { path = "../../crates/agent-ipc" }
+crash-report = { path = "../../crates/crash-report" }
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -23,6 +24,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png", "custom-protocol"
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tokio = { workspace = true }
+tonic = { workspace = true }
 windows-service = "0.8"
 window-vibrancy = "0.8"
 winreg = "0.55"
