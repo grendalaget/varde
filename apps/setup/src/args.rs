@@ -5,8 +5,9 @@
 // GetOptions semantics — so /CPURL= survives the '/' inside a URL.
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Mode {
+    #[default]
     Install,
     Uninstall,
 }
@@ -40,22 +41,15 @@ pub struct Args {
     pub wait_pid: Option<u32>,
 }
 
-impl std::default::Default for Mode {
-    fn default() -> Self {
-        Mode::Install
-    }
-}
-
 fn raw_cmdline() -> String {
     // GetCommandLineW keeps quoting intact, which /CPURL= parsing needs.
-    let cmd = unsafe {
+    unsafe {
         let p = windows::Win32::System::Environment::GetCommandLineW();
         if p.is_null() {
             return String::new();
         }
         p.to_string().unwrap_or_default()
-    };
-    cmd
+    }
 }
 
 /// Whole raw command line minus argv[0], like NSIS's $CMDLINE.
@@ -112,17 +106,16 @@ pub fn parse_cp_url(t: &str) -> Option<String> {
     let low = t.to_lowercase();
     let idx = low.find("/cpurl=")?;
     let mut v = &t[idx + 7..];
-    let out: &str;
-    if v.starts_with('"') {
+    let out: &str = if v.starts_with('"') {
         v = &v[1..];
-        out = match v.find('"') {
+        match v.find('"') {
             Some(end) => &v[..end],
             None => v,
-        };
+        }
     } else {
         let end = v.find(|c: char| c.is_whitespace()).unwrap_or(v.len());
-        out = &v[..end];
-    }
+        &v[..end]
+    };
     let mut s = out.to_string();
     while s.ends_with('/') {
         s.pop();
@@ -149,17 +142,16 @@ fn parse_value(t: &str, key: &str) -> Option<String> {
         return Some(rest[..end].to_string());
     }
     let mut v = &t[idx + key.len()..];
-    let out: String;
-    if v.starts_with('"') {
+    let out: String = if v.starts_with('"') {
         v = &v[1..];
-        out = match v.find('"') {
+        match v.find('"') {
             Some(end) => v[..end].to_string(),
             None => v.to_string(),
-        };
+        }
     } else {
         let end = v.find(|c: char| c.is_whitespace()).unwrap_or(v.len());
-        out = v[..end].to_string();
-    }
+        v[..end].to_string()
+    };
     Some(out)
 }
 

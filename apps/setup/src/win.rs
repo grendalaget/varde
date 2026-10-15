@@ -394,9 +394,10 @@ pub fn create_shortcut(lnk: &Path, target: &Path) -> Result<()> {
                 anyhow::bail!("CoTaskMemAlloc failed");
             }
             std::ptr::copy_nonoverlapping(val.as_ptr() as *const u8, mem as *mut u8, bytes);
-            let mut inner =
-                windows::Win32::System::Com::StructuredStorage::PROPVARIANT_0_0::default();
-            inner.vt = VT_LPWSTR;
+            let mut inner = windows::Win32::System::Com::StructuredStorage::PROPVARIANT_0_0 {
+                vt: VT_LPWSTR,
+                ..Default::default()
+            };
             inner.Anonymous.pwszVal = PWSTR(mem as *mut u16);
             pv.Anonymous.Anonymous = std::mem::ManuallyDrop::new(inner);
             let _ = ps.SetValue(&PKEY_AUMID, &pv);
