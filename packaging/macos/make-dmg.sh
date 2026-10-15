@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Build the styled release DMG: Natt backdrop rendered at 2x from
-# dmg-background.svg, Varde.app + an /Applications symlink at fixed
-# positions, brand volume icon — via appdmg (npx).
+# Build the styled release DMG: backdrop rendered at 2x from
+# dmg-background.html (the varde.games ASCII-cloud hero via headless
+# Chrome; dmg-background.svg is the qlmanage fallback), Varde.app + an
+# /Applications symlink at fixed positions, brand volume icon — via
+# appdmg (npx).
 #
 #   make-dmg.sh <path-to-Varde.app> <output.dmg>
 set -euo pipefail
@@ -19,10 +21,13 @@ cp apps/desktop/icons/icon.icns "$WORK/volume.icns"
 # into one retina TIFF; Finder would draw a bare 2x PNG at 1:1 pixels) ---
 render_chrome() {
   local chrome="$1"
-  "$chrome" --headless=new --disable-gpu --hide-scrollbars \
+  # WebGL2 needs SwiftShader when there's no GPU (CI runners) — hence no
+  # --disable-gpu here. virtual-time lets the shader's one paint land.
+  "$chrome" --headless=new --enable-unsafe-swiftshader --hide-scrollbars \
     --window-size=540,360 --force-device-scale-factor=2 \
+    --virtual-time-budget=3000 \
     --screenshot="$WORK/dmg-background@2x.png" \
-    "file://$PWD/packaging/macos/dmg-background.svg" 2>/dev/null
+    "file://$PWD/packaging/macos/dmg-background.html" 2>/dev/null
 }
 render_qlmanage() {
   qlmanage -t -s 1080 -o "$WORK" "$PWD/packaging/macos/dmg-background.svg" \

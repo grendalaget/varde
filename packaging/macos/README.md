@@ -16,11 +16,15 @@ that installs it per-user is a possible follow-up.
 - `package-app.sh` — bundles `Varde.app` via `tauri bundle`
   (`apps/desktop/tauri.bundle.macos.conf.json`), then drops `dist/varde-agent`
   and `dist/varde-mesh` into `Contents/MacOS` and codesigns.
-- `make-dmg.sh` — renders `dmg-background.svg` into the retina background pair
-  `dmg-background.png`/`dmg-background@2x.png` that `appdmg` merges into a
-  TIFF, writes `dmg.json`, and runs `npx appdmg`.
-- `dmg-background.svg` — the DMG window artwork (Natt backdrop, mark +
-  wordmark, drag arrow). Window 540×360, authored at 1x and rendered at 2x.
+- `make-dmg.sh` — renders `dmg-background.html` into the retina background
+  pair `dmg-background.png`/`dmg-background@2x.png` that `appdmg` merges into
+  a TIFF, writes `dmg.json`, and runs `npx appdmg`.
+- `dmg-background.html` — the DMG window artwork: the varde.games hero's
+  ASCII-cloud glyph field (a WebGL2 port of `ascii-clouds.tsx` rendering one
+  fixed frame) with the white-variant cairn mark and the drag arrow on the
+  icon-row centerline. Window 540×360, rendered headless at 2x.
+- `dmg-background.svg` — the degraded fallback when Chrome isn't available
+  (rendered via `qlmanage`): same layout, flat Natt field, no glyph clouds.
 - `Info-overlay.plist` — merged into `Info.plist`: `LSUIElement` (no Dock icon),
   the `varde://` URL scheme, `VardeAgentLabel` (`games.varde.agent`).
 - `entitlements.plist` — hardened-runtime entitlements (`network.client`,
