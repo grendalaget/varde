@@ -67,7 +67,7 @@ func openServiceStore(dbURL string) (*store.Store, error) {
 func serviceTokenCreate(args []string) error {
 	fs, dbURL := serviceTokenFlags()
 	name := fs.String("name", "", "token name (appears in the audit log)")
-	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,nodes)")
+	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,nodes; * for all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
