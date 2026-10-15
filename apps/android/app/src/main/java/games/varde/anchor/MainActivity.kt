@@ -149,14 +149,15 @@ class MainActivity : Activity() {
         if (token.isNotEmpty()) {
             args.addAll(listOf("--token", "-"))
         }
-        ProcessBuilder(args).redirectErrorStream(true).start().let { p ->
+        AnchorService.procBuilder(this, *args.toTypedArray())
+            .redirectErrorStream(true).start().let { p ->
             if (token.isNotEmpty()) {
                 p.outputStream.use { it.write((token + "\n").toByteArray()); it.flush() }
             }
             p.inputStream.bufferedReader().readText() // drain output
             p.waitFor()
             val ok = p.exitValue() == 0
-            // never log stdout — server error bodies can echo secrets
+            // never log full output — server error bodies can echo secrets
             if (!ok) android.util.Log.e("Enroll", "enroll failed rc=${p.exitValue()}")
             ok
         }
