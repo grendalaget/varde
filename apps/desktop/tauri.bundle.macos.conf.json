@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "targets": [
+      "app"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": "../../packaging/macos/entitlements.plist",
+      "infoPlist": "../../packaging/macos/Info-overlay.plist"
+    }
+  },
+  "build": {
+    "frontendDist": "payload"
+  }
+}

@@ -3,7 +3,7 @@ name = "varde-tray"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Varde tray app for Windows: link this PC, show status"
+description = "Varde tray app for Windows and macOS: link this PC, show status"
 
 [[bin]]
 name = "varde-tray"
@@ -14,7 +14,7 @@ agent-ipc = { path = "../../crates/agent-ipc" }
 crash-report = { path = "../../crates/crash-report" }
 serde = { version = "1", features = ["derive"] }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 anyhow = { workspace = true }
 base64 = "0.22"
 cp-api = { path = "../../crates/cp-api" }
@@ -25,10 +25,16 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tokio = { workspace = true }
 tonic = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
 windows-service = "0.8"
 window-vibrancy = "0.8"
 winreg = "0.55"
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+rfd = "0.15"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

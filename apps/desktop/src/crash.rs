@@ -1,21 +1,30 @@
 //! Crash capture for the tray: panics land in
-//! %LOCALAPPDATA%\Varde\crash-reports (WER writes hard-crash minidumps to the
-//! same dir — see crash_report::wer::register at service install). The
-//! forward loop hands pending reports to the agent over IPC; the agent
-//! uploads them to this machine's own control plane when the user pref is on.
+//! %LOCALAPPDATA%\Varde\crash-reports on Windows (WER writes hard-crash
+//! minidumps to the same dir — see crash_report::wer::register at service
+//! install) and <data>/crash-reports on macOS. The forward loop hands
+//! pending reports to the agent over IPC; the agent uploads them to this
+//! machine's own control plane when the user pref is on.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use agent_ipc::pb;
 
-/// The WER LocalDumps key for varde-tray.exe points at this same dir.
+/// On Windows the WER LocalDumps key for varde-tray.exe points at this
+/// same dir; on macOS reports share the agent's data dir.
 pub fn dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\"))
-        .join("Varde")
-        .join("crash-reports")
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\"))
+            .join("Varde")
+            .join("crash-reports")
+    }
+    #[cfg(not(windows))]
+    {
+        agent_ipc::default_data_dir().join("crash-reports")
+    }
 }
 
 /// Records panics as `panic` reports; must run before any code that can panic.
@@ -30,7 +39,7 @@ pub async fn forward_loop() {
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
         tick.tick().await;
-        if let Ok(mut c) = agent_ipc::connect(agent_ipc::PIPE_NAME).await {
+        if let Ok(mut c) = agent_ipc::connect(&agent_ipc::default_endpoint()).await {
             forward_once(&mut c).await;
         }
     }

@@ -23,6 +23,8 @@ export interface LinkDefaults {
   url: string;
   auto: boolean;
   relink: boolean;
+  // "windows" | "macos" — a few service strings are platform-specific
+  os: string;
 }
 
 // "federated-auth" payloads from the tray ("Log in with Varde" progress).
@@ -144,6 +146,9 @@ function mock(): TauriGlobal {
               url: "https://cp.varde.games",
               auto: false,
               relink: false,
+              os:
+                new URLSearchParams(window.location.search).get("os") ??
+                "windows",
             } as T);
           case "begin_varde_login": {
             emit("federated-auth", { stage: "waiting_browser" });
