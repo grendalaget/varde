@@ -28,7 +28,7 @@ class AnchorService : Service() {
         private const val NOTIF_ID = 1
         private const val TAG = "AnchorService"
         private val MESSAGE_RE =
-            Regex("\"message\"\\s*:\\s*\"([^\"]{0,80})")
+            Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.){0,80})")
 
         @Volatile
         var lastStatus: String = "stopped"
