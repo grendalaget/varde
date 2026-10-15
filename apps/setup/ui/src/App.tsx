@@ -100,6 +100,13 @@ export default function App() {
       setState(s);
       setAutostart(s.autostart);
       setCp(s.controlplane);
+      // Windows personalization: map the DWM accent onto the design
+      // tokens so buttons/checkboxes/progress follow the user's theme
+      if (s.system_accent) {
+        const root = document.documentElement;
+        root.style.setProperty("--accent", s.system_accent);
+        root.style.setProperty("--focus", s.system_accent);
+      }
     });
     const un: Promise<() => void>[] = [
       listen<ProgressEvent>("setup-progress", (e) => {
@@ -150,20 +157,22 @@ export default function App() {
         className="flex h-10 shrink-0 items-center justify-between pl-4 pr-2"
       >
         <Logo className="h-4 opacity-80" />
-        <button
-          onClick={() => void invoke("exit_app")}
-          aria-label="Close"
-          className="grid h-7 w-9 place-items-center rounded-md text-muted transition-colors hover:bg-surface-tertiary hover:text-foreground"
-        >
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5">
-            <path
-              d="M1 1l8 8M9 1l-8 8"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
+        {screen !== "progress" && (
+          <button
+            onClick={() => void invoke("exit_app")}
+            aria-label="Close"
+            className="grid h-7 w-9 place-items-center rounded-md text-muted transition-colors hover:bg-surface-tertiary hover:text-foreground"
+          >
+            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5">
+              <path
+                d="M1 1l8 8M9 1l-8 8"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col px-8 pb-7">

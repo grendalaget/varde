@@ -35,6 +35,19 @@ pub const INSTALL_STEPS: &[&str] = &[
     "launch",
 ];
 
+/// Files the installer owns inside $INSTDIR — uninstall removes only
+/// these, never a whole dir that may hold foreign files.
+const KNOWN_INSTDIR_FILES: &[&str] = &[
+    "varde-agent.exe",
+    "varde-mesh.exe",
+    "varde-tray.exe",
+    "varde-control-plane.exe",
+    "uninstall.exe",
+    "varde.ico",
+    "LICENSE",
+    "MicrosoftEdgeWebview2Setup.exe",
+];
+
 pub type Progress<'a> = dyn FnMut(&str) + 'a;
 /// Return true to keep a plain-http server.url (the NSIS Yes/No prompt;
 /// silent installs never ask and treat it as No).
@@ -97,13 +110,35 @@ fn write_server_url(o: &InstallOpts, confirm: &mut Confirm) -> Result<()> {
     Ok(())
 }
 
+/// Split an ARP UninstallString into (exe, args) without a shell — the
+/// registry value is opaque input, so never route it through cmd /C.
+fn split_uninstall_string(s: &str) -> (PathBuf, Vec<String>) {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return (
+                PathBuf::from(&rest[..end]),
+                rest[end + 1..]
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect(),
+            );
+        }
+    }
+    let mut it = s.split_whitespace();
+    (
+        PathBuf::from(it.next().unwrap_or("")),
+        it.map(String::from).collect(),
+    )
+}
+
 fn run_uninstall_string(uninstall: &str, extra: &str) -> Result<()> {
-    // UninstallString already carries quotes around the path; append flags.
-    let cmd = format!("{uninstall} {extra}");
+    let (exe, mut args) = split_uninstall_string(uninstall);
+    args.extend(extra.split_whitespace().map(String::from));
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let st = std::process::Command::new("cmd.exe")
-        .args(["/C", &cmd])
+    let st = std::process::Command::new(&exe)
+        .args(&args)
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .context("run legacy uninstaller")?;
@@ -134,13 +169,34 @@ fn run_nsis_uninstall(uninstall: &str) -> Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         if win::read_hklm(win::UNINST_KEY, "UninstallString").is_none() || !exe_path.exists() {
-            return Ok(());
+            break;
         }
         if std::time::Instant::now() >= deadline {
             bail!("NSIS uninstaller did not finish within 120s");
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
+    // The detached copy deletes its own stub early — the dir going empty is
+    // the true end of its work; wait for that (or the dir gone) plus a beat
+    // before we start writing the new files on top of it.
+    if let Some(dir) = exe_path.parent() {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let done = match std::fs::read_dir(dir) {
+                Err(_) => true,             // dir gone
+                Ok(rd) => rd.count() == 0,  // or emptied
+            };
+            if done {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                break; // leftovers get drain-and-swapped by our own uninstall path anyway
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    Ok(())
 }
 
 pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> Result<()> {
@@ -148,9 +204,20 @@ pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> R
     // before the Varde section that drains services).
     step(prog, "webview2");
     if !win::webview2_present() {
-        let tmp = std::env::temp_dir().join("MicrosoftEdgeWebview2Setup.exe");
+        // unpredictable temp name: a shared %TEMP% path with a fixed name is
+        // replaceable between extract and launch
+        let tmp = std::env::temp_dir().join(format!(
+            "varde-webview2-setup-{}-{}.exe",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default()
+        ));
         extract_one("MicrosoftEdgeWebview2Setup.exe", &tmp)?;
-        win::run_bootstrapper(&tmp).context("WebView2 bootstrapper failed")?;
+        let r = win::run_bootstrapper(&tmp).context("WebView2 bootstrapper failed");
+        let _ = std::fs::remove_file(&tmp);
+        r?;
     }
 
     // Inno → bespoke migration: the Inno install isn't visible to our own
@@ -285,7 +352,7 @@ pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> R
     Ok(())
 }
 
-fn extract_one(name: &str, dest: &Path) -> Result<()> {
+pub(crate) fn extract_one(name: &str, dest: &Path) -> Result<()> {
     #[cfg(feature = "payload")]
     use std::io::Read;
     #[cfg(not(feature = "payload"))]
@@ -327,31 +394,20 @@ pub fn uninstall(
 
     step(prog, "files");
     if instdir.exists() {
-        // Service processes can lag a beat after `service uninstall`
-        // returns, and Windows keeps delete-pending locks until the last
-        // handle closes — remove_dir_all sees that as Access denied.
-        // Retry bounded; each pass also cleans whatever did delete.
+        // Only Varde-owned files: a custom /D= dir may hold unrelated
+        // content that must survive uninstall. Known payload names plus
+        // logs and the staged uninstaller pattern.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            // delete per entry: remove_dir_all aborts on the first denied
-            // file, and the parent-held uninstall.exe would mask everything
-            // still unlockable behind it.
             let mut left: Vec<String> = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(instdir) {
-                for e in rd.filter_map(|x| x.ok()) {
-                    let p = e.path();
-                    let r = if p.is_dir() {
-                        std::fs::remove_dir_all(&p)
-                    } else {
-                        std::fs::remove_file(&p)
-                    };
-                    if r.is_err() {
-                        left.push(e.file_name().to_string_lossy().to_string());
-                    }
+            for name in KNOWN_INSTDIR_FILES {
+                let p = instdir.join(name);
+                if p.is_file() && std::fs::remove_file(&p).is_err() {
+                    left.push(name.to_string());
                 }
             }
+            // anything we still own but couldn't delete? retry bounded
             if left.is_empty() {
-                let _ = std::fs::remove_dir(instdir);
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -362,6 +418,13 @@ pub fn uninstall(
                 );
             }
             std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+        // remove the dir only when Varde files were the last thing in it —
+        // foreign files keep their home; read_dir failing means it's gone
+        if let Ok(rd) = std::fs::read_dir(instdir) {
+            if rd.count() == 0 {
+                let _ = std::fs::remove_dir(instdir);
+            }
         }
     }
     if !update {

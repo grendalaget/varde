@@ -4,6 +4,7 @@
 // the web UI is a thin state machine on top.
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Mutex};
 use tauri::{AppHandle, Emitter, WebviewUrl, WebviewWindowBuilder};
 
@@ -41,6 +42,9 @@ struct UiState {
     /// will launch the tray --link when done (fresh/unlinked install)
     will_link: bool,
     already_linked: bool,
+    /// Windows personalization accent (DWM AccentColorMenu), #rrggbb — the
+    /// web UI maps it onto --accent so controls react to the user's theme
+    system_accent: Option<String>,
 }
 
 struct Shared {
@@ -67,7 +71,18 @@ fn get_state(state: tauri::State<Shared>) -> UiState {
         cp_url: state.args.cp_url.clone(),
         will_link: !already_linked,
         already_linked,
+        system_accent: system_accent(),
     }
+}
+
+/// HKCU\Software\Microsoft\Windows\DWM `AccentColorMenu` — the user's
+/// personalization accent as ABGR; converted to #rrggbb for CSS.
+fn system_accent() -> Option<String> {
+    let k = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\DWM")
+        .ok()?;
+    let abgr: u32 = k.get_value("AccentColorMenu").ok()?;
+    Some(format!("#{:02x}{:02x}{:02x}", abgr & 0xff, (abgr >> 8) & 0xff, (abgr >> 16) & 0xff))
 }
 
 fn step_index(steps: &'static [&'static str], id: &str) -> (usize, usize) {
@@ -103,6 +118,7 @@ fn start_install(app: AppHandle, state: tauri::State<Shared>, autostart: bool, c
     let app2 = app.clone();
     let tx_cell2 = state.confirm_tx.clone();
     std::thread::spawn(move || {
+        BUSY.store(true, Ordering::SeqCst);
         let mut prog = |id: &str| {
             let (index, total) = step_index(engine::INSTALL_STEPS, id);
             let _ = app2.emit(
@@ -132,6 +148,7 @@ fn start_install(app: AppHandle, state: tauri::State<Shared>, autostart: bool, c
             }
             Err(e) => emit_error(&app2, &e),
         }
+        BUSY.store(false, Ordering::SeqCst);
     });
 }
 
@@ -148,6 +165,7 @@ fn start_uninstall(app: AppHandle, state: tauri::State<Shared>, delete_data: boo
     let update = state.args.update;
     let app2 = app.clone();
     std::thread::spawn(move || {
+        BUSY.store(true, Ordering::SeqCst);
         let mut prog = |id: &str| {
             let (index, total) = step_index(engine::UNINSTALL_STEPS, id);
             let _ = app2.emit(
@@ -165,18 +183,27 @@ fn start_uninstall(app: AppHandle, state: tauri::State<Shared>, delete_data: boo
             }
             Err(e) => emit_error(&app2, &e),
         }
+        BUSY.store(false, Ordering::SeqCst);
     });
 }
 
+/// True while the engine thread owns the machine — closing mid-install
+/// would leave services/files half-applied, so exit requests are refused.
+static BUSY: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command]
 fn exit_app(app: AppHandle) {
-    app.exit(0);
+    if !BUSY.load(Ordering::SeqCst) {
+        app.exit(0);
+    }
 }
 
 pub fn run(args: Args, instdir: PathBuf, mode: Mode) {
-    // A dedicated webview profile dir: the shared EBWebView dir is owned by
-    // medium-IL clients (tray); an elevated webview needs its own.
-    let wv = std::env::temp_dir().join("VardeSetup\\EBWebView");
+    // A dedicated webview profile dir under ProgramData: the shared
+    // EBWebView dir is owned by medium-IL clients (tray), and a %TEMP%
+    // profile for an elevated webview would be writable by other users.
+    let wv = crate::win::data_dir().join("WebView2-Setup");
+    let _ = std::fs::create_dir_all(&wv);
     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &wv);
 
     let shared = Shared {

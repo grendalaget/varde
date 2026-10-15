@@ -83,15 +83,21 @@ pub fn resolve_instdir(cli: Option<PathBuf>) -> PathBuf {
 
 // ---- process plumbing -----------------------------------------------------
 
-/// Spawn a console tool without flashing a window (we're a GUI app) and wait.
-fn run_quiet(program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
+/// Spawn a console tool without flashing a window (we're a GUI app), wait,
+/// and bail on nonzero exit — a service command that fails must not read as
+/// a successful install step.
+fn run_quiet(program: &str, args: &[&str]) -> Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    Command::new(program)
+    let st = Command::new(program)
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .status()
-        .with_context(|| format!("spawn {program}"))
+        .with_context(|| format!("spawn {program}"))?;
+    if !st.success() {
+        anyhow::bail!("{program} {} exited with {st}", args.join(" "));
+    }
+    Ok(())
 }
 
 pub fn kill_tray() {
@@ -232,8 +238,22 @@ pub fn hkcu_del_key(key: &str) {
 }
 
 /// remembered component selections (present-but-empty = all off).
+/// !Components: presence is what matters — present-but-empty means the
+/// user unticked everything, which `read_hklm` (empty-string dropping)
+/// would conflate with absent. Check the raw value first.
 pub fn remembered_components() -> Option<String> {
-    read_hklm(COMPONENTS_KEY, "Components")
+    for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
+        if let Ok(k) = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(COMPONENTS_KEY, KEY_READ | view)
+        {
+            if k.get_raw_value("Components").is_ok() {
+                return Some(
+                    k.get_value::<String, _>("Components").unwrap_or_default(),
+                );
+            }
+        }
+    }
+    None
 }
 
 /// UninstallString of the Inno shim, if that install still exists.
@@ -328,11 +348,7 @@ pub fn webview2_present() -> bool {
 }
 
 pub fn run_bootstrapper(path: &Path) -> Result<()> {
-    let st = run_quiet(&path.to_string_lossy(), &["/silent", "/install"])?;
-    if !st.success() {
-        bail!("WebView2 bootstrapper exited with {st}");
-    }
-    Ok(())
+    run_quiet(&path.to_string_lossy(), &["/silent", "/install"])
 }
 
 // ---- shortcuts -------------------------------------------------------------

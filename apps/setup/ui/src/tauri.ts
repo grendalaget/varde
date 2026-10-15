@@ -13,6 +13,8 @@ export interface UiState {
   cp_url: string | null;
   will_link: boolean;
   already_linked: boolean;
+  /** Windows personalization accent (DWM), #rrggbb */
+  system_accent: string | null;
 }
 
 export interface ProgressEvent {

@@ -18,7 +18,9 @@ payload = []
 tauri-build = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-[dependencies]
+# Windows-only crate: deps gated so the workspace still compiles on
+# Linux/macOS CI (tauri would pull glib/gtk system libraries).
+[target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = ["custom-protocol"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

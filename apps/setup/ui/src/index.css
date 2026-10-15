@@ -27,8 +27,10 @@
   --color-skifer-900: #1a1513;
   --color-skifer-950: #110c0a;
 
-  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* Fluent 2 typeface first (bundled Inter stays the fallback): the setup
+     window should feel native to the desktop it lands on. */
+  --font-display: "Segoe UI Variable Text", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Segoe UI Variable Text", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
   /* Motion: fast expo-out for transitions, light spring for entrances. */
   --ease-vd-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -40,6 +42,12 @@
   --color-surface-200: var(--surface-secondary);
   --color-surface-300: var(--surface-tertiary);
   --color-surface-400: var(--border);
+
+  /* Radii: rounded-card / rounded-field map onto the design-system
+     --radius (1rem) / --field-radius (2rem) overrides below — without
+     these tokens the classes emit nothing and panels render square. */
+  --radius-card: var(--radius);
+  --radius-field: var(--field-radius);
 }
 
 /* Design system export (saved overrides on top of the mouve theme).
