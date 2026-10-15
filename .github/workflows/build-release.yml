@@ -229,12 +229,20 @@ jobs:
           pattern: bundles-*
           path: release-assets
           merge-multiple: true
+      - name: Stage the curl|sh installer
+        # install.sh is platform-independent; adding it here (once) puts it
+        # under SHA256SUMS, the minisign and cosign steps like any payload.
+        run: cp packaging/linux/install.sh release-assets/install.sh
       - name: SHA256SUMS
         working-directory: release-assets
         run: sha256sum -- * > SHA256SUMS
+      # one attest step per subject: subject-path does not expand {} braces
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/SHA256SUMS
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/install.sh
       - uses: sigstore/cosign-installer@v3
         with:
           cosign-release: v2.5.2

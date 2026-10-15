@@ -32,6 +32,14 @@ for component in agent control-plane relay; do
     nfpm package --config "$config" --packager "$format" \
       --target "release-assets/varde-$component-$VERSION-linux-$GOARCH.$format"
   done
+  # Distro-agnostic tarball for install.sh's fallback path: the deb's own
+  # payload, so the file set and modes stay identical across formats. Files
+  # must unpack root-owned regardless of the build user's uid.
+  staging=$(mktemp -d)
+  dpkg-deb -x "release-assets/varde-$component-$VERSION-linux-$GOARCH.deb" "$staging"
+  tar -C "$staging" --owner=root --group=root \
+    -czf "release-assets/varde-$component-$VERSION-linux-$GOARCH.tar.gz" .
+  rm -rf "$staging"
 done
 
 # Snap versions cap at 32 chars; nightly VERSION carries a long +sha suffix.

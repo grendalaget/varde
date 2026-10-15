@@ -28,6 +28,19 @@ and a P2P QUIC mesh with relay fallback — no router configuration required.
 | `api/openapi`        | OpenAPI    | Control-plane HTTP API contract                     |
 | `packaging/`         | -          | Linux (nfpm/systemd) and Windows packaging          |
 
+## Install
+
+On Linux, one line installs the agent (`--component control-plane|relay` for
+the others):
+
+```sh
+curl -fsSL https://github.com/grendalaget/varde/releases/latest/download/install.sh | sh
+```
+
+The script picks `.deb`/`.rpm` (or a systemd tarball), verifies the download
+against `SHA256SUMS`, and prints next steps. See
+[packaging/linux/README.md](packaging/linux/README.md).
+
 ## Development
 
 See [docs/development.md](docs/development.md) for toolchain setup, then:
