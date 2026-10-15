@@ -417,10 +417,9 @@ fn hosting(a: &Agent) -> Vec<pb::Hosting> {
                     },
                     anchor: a.cfg.anchor,
                     online: true,
-                    last_seen_at_unix_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0),
+                    // `now()` would flood WatchStatus with churn — the save's
+                    // own stamp is stable and is when this node last saw it
+                    last_seen_at_unix_ms: cp.to_local_ms(c.latest_save_ms()),
                 }]
             } else {
                 cp.latest_save_on
