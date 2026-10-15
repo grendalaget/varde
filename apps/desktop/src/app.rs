@@ -189,7 +189,9 @@ pub fn run() {
                     .menu(&build_menu(&h, &v)?)
                     .on_menu_event(on_menu)
                     .on_tray_icon_event(|tray, e| {
-                        // left click on the icon opens the app
+                        // left click on the icon opens the app (Windows; on
+                        // macOS the default menu_on_left_click shows the menu
+                        // and this never fires)
                         if let tauri::tray::TrayIconEvent::Click {
                             button: tauri::tray::MouseButton::Left,
                             button_state: tauri::tray::MouseButtonState::Up,
