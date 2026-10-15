@@ -182,26 +182,16 @@ jobs:
           cd ../..
           Copy-Item target/release/varde-agent.exe packaging/windows/dist/
           Copy-Item target/release/varde-tray.exe packaging/windows/dist/
-      - name: WebView2 bootstrapper
+      - name: build installer (varde-setup)
         shell: pwsh
         run: |
-          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
-            -OutFile packaging/windows/dist/MicrosoftEdgeWebview2Setup.exe
-      - name: build installer (Tauri NSIS)
-        shell: pwsh
-        run: |
-          $payload = 'apps/desktop/payload'
-          New-Item -ItemType Directory -Force $payload | Out-Null
-          Copy-Item packaging/windows/dist/varde-agent.exe, `
-            packaging/windows/dist/varde-mesh.exe, `
-            packaging/windows/dist/varde-control-plane.exe, `
-            packaging/windows/varde.ico, LICENSE $payload/
-          bunx tauri bundle --config apps/desktop/tauri.bundler.conf.json --bundles nsis
-          if ($LASTEXITCODE -ne 0) { throw 'tauri bundle failed' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item packaging/windows/dist/varde-*.exe dist/
+          bun run --filter "@varde/setup-ui" build
           # ref_name is e.g. "1/merge" on PRs; sanitize for the filename
           $ver = "${{ github.ref_name }}" -replace '[^0-9A-Za-z._-]','-'
-          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          Copy-Item $setup.FullName "packaging/windows/dist/VardeSetup-$ver.exe"
+          packaging/windows/build-setup.ps1 -Version $ver -SkipUiBuild
+          Copy-Item "release-assets/VardeSetup-$ver.exe" "packaging/windows/dist/VardeSetup-$ver.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: VardeSetup

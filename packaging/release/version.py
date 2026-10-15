@@ -14,7 +14,11 @@ if not re.fullmatch(
     raise SystemExit("VERSION must be a SemVer version without a v prefix")
 
 root = Path(__file__).resolve().parents[2]
-manifests = [root / "Cargo.toml", root / "apps/desktop/Cargo.toml"]
+manifests = [
+    root / "Cargo.toml",
+    root / "apps/desktop/Cargo.toml",
+    root / "apps/setup/Cargo.toml",
+]
 for path in manifests:
     source = path.read_text()
     source, count = re.subn(r'^version = "[^"]+"$', f'version = "{version}"', source, flags=re.M)
@@ -29,7 +33,8 @@ for i, block in enumerate(blocks[1:], 1):
         blocks[i] = re.sub(r'^version = "[^"]+"$', f'version = "{version}"', block, flags=re.M)
 path.write_text("[[package]]".join(blocks))
 
-path = root / "apps/desktop/tauri.conf.json"
-config = json.loads(path.read_text())
-config["version"] = version
-path.write_text(json.dumps(config, indent=2) + "\n")
+for name in ("desktop", "setup"):
+    path = root / f"apps/{name}/tauri.conf.json"
+    config = json.loads(path.read_text())
+    config["version"] = version
+    path.write_text(json.dumps(config, indent=2) + "\n")

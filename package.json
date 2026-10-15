@@ -8,6 +8,7 @@
   "workspaces": [
     "apps/web",
     "apps/desktop/ui",
+    "apps/setup/ui",
     "tests/minecraft-bot"
   ],
   "trustedDependencies": [
