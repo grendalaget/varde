@@ -105,6 +105,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 		{"migrations", "to_execution_id", "TEXT"},
 		{"migrations", "drain_until", "BIGINT"},
 		{"nodes", "update_available", "TEXT NOT NULL DEFAULT ''"},
+		{"crash_reports", "client_ref", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
 		if dialect == "postgres" {
@@ -130,6 +131,12 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	// so both dialects get it through the index (NULLs don't collide).
 	if _, err := db.Exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id)`); err != nil {
+		return err
+	}
+	// the uploader's idempotency key: a retried upload does not duplicate
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_crash_node_ref
+			ON crash_reports(node_id, client_ref) WHERE client_ref != ''`); err != nil {
 		return err
 	}
 	// one_active predates execution roles: rebuild it to exclude non-serving

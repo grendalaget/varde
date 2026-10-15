@@ -8,6 +8,8 @@ mod app;
 #[cfg(windows)]
 mod autostart;
 #[cfg(windows)]
+mod crash;
+#[cfg(windows)]
 mod svcctl;
 #[cfg(windows)]
 mod update;

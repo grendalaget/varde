@@ -848,6 +848,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crash-report"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "winreg",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5372,6 +5383,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "cp-api",
+ "crash-report",
  "ed25519-dalek",
  "executor-api",
  "executor-native",
@@ -5413,6 +5425,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cp-api",
+ "crash-report",
  "minisign-verify",
  "serde",
  "serde_json",
@@ -5421,6 +5434,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tokio",
+ "tonic",
  "window-vibrancy",
  "windows-service",
  "windows-sys 0.61.2",

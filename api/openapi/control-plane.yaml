@@ -875,6 +875,52 @@ paths:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/crash-reports:
+    get:
+      operationId: listCrashReports
+      tags: [groups]
+      summary: Crash reports uploaded by this group's machines (admin only).
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Newest first; metadata only (no dump bodies).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: "#/components/schemas/CrashReportMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/crash-reports/{reportId}:
+    get:
+      operationId: getCrashReport
+      tags: [groups]
+      summary: One crash report with backtrace, detail and minidump (admin only).
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CrashReportDetail" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /v1/admin/groups:
     get:
@@ -1086,6 +1132,26 @@ paths:
         "204": { description: Replica marked ready; commit policy re-evaluated. }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /v1/agent/crash-reports:
+    post:
+      operationId: agentSubmitCrashReport
+      tags: [agent]
+      summary: Upload one crash report captured on this machine.
+      security: [{ agentSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CrashReportBody" }
+      responses:
+        "201":
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CrashReportAck" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
 
 components:
   parameters:
@@ -1826,3 +1892,69 @@ components:
         file_count: { type: integer }
         chunk_count: { type: integer }
         request_id: { type: string }
+
+    # --- crash reports ---
+    CrashReportBody:
+      type: object
+      required: [kind, exe, created_at_unix_ms]
+      properties:
+        kind:
+          type: string
+          enum: [panic, dump, process]
+        exe: { type: string, description: image that crashed }
+        version: { type: string, default: "" }
+        os: { type: string, default: "" }
+        arch: { type: string, default: "" }
+        pid: { type: integer, default: 0 }
+        message: { type: string, default: "" }
+        location: { type: string, default: "" }
+        backtrace: { type: string, default: "" }
+        detail: { type: string, default: "", description: exit code, stderr tail, why a dump is missing }
+        created_at_unix_ms: { type: integer, format: int64 }
+        client_ref: { type: string, default: "", description: uploader's idempotency key; retries with the same ref do not duplicate the report }
+        dump_b64: { type: string, default: "", description: base64 minidump, capped client-side }
+        dump_name: { type: string, default: "" }
+        dump_omitted: { type: string, default: "", description: why an existing dump was not sent }
+    CrashReportAck:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+    CrashReportMeta:
+      type: object
+      required: [id, node_id, kind, exe, created_at_unix_ms, received_at_unix_ms]
+      properties:
+        id: { type: string }
+        node_id: { type: string }
+        node_name: { type: string, default: "" }
+        kind: { type: string }
+        exe: { type: string }
+        version: { type: string, default: "" }
+        message: { type: string, default: "" }
+        created_at_unix_ms: { type: integer, format: int64 }
+        received_at_unix_ms: { type: integer, format: int64 }
+        dump_size: { type: integer, default: 0 }
+        dump_omitted: { type: string, default: "" }
+    CrashReportDetail:
+      type: object
+      required: [id, node_id, kind, exe, created_at_unix_ms, received_at_unix_ms]
+      properties:
+        id: { type: string }
+        node_id: { type: string }
+        node_name: { type: string, default: "" }
+        kind: { type: string }
+        exe: { type: string }
+        version: { type: string, default: "" }
+        os: { type: string, default: "" }
+        arch: { type: string, default: "" }
+        pid: { type: integer, default: 0 }
+        message: { type: string, default: "" }
+        location: { type: string, default: "" }
+        backtrace: { type: string, default: "" }
+        detail: { type: string, default: "" }
+        created_at_unix_ms: { type: integer, format: int64 }
+        received_at_unix_ms: { type: integer, format: int64 }
+        dump_size: { type: integer, default: 0 }
+        dump_name: { type: string, default: "" }
+        dump_b64: { type: string, default: "", description: base64 minidump when stored }
+        dump_omitted: { type: string, default: "" }

@@ -67,7 +67,10 @@ pub async fn connect(endpoint: &str) -> io::Result<LocalServiceClient<Channel>> 
             }
             io::Error::new(io::ErrorKind::ConnectionRefused, msg)
         })?;
-    Ok(LocalServiceClient::new(channel))
+    // crash reports carry minidumps (~a few hundred KiB, capped at 8 MiB)
+    Ok(LocalServiceClient::new(channel)
+        .max_encoding_message_size(32 * 1024 * 1024)
+        .max_decoding_message_size(32 * 1024 * 1024))
 }
 
 #[cfg(unix)]

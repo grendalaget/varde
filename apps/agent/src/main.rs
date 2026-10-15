@@ -6,6 +6,7 @@ mod agent;
 mod chunks;
 mod config;
 mod control;
+mod crash;
 mod exec;
 mod identity;
 mod link;
@@ -369,6 +370,11 @@ async fn run(
 ) -> Result<()> {
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    crash_report::install_panic_hook(
+        crash::dir(&data_dir),
+        "varde-agent",
+        env!("CARGO_PKG_VERSION"),
+    );
     let hub = local::Hub::new(data_dir.clone());
     match local::serve(hub.clone()) {
         Ok(ep) => info!(endpoint = %ep, "local status IPC listening"),
@@ -539,6 +545,9 @@ async fn run_linked(
     let a = agent.clone();
     let s = stop_rx.clone();
     tokio::spawn(async move { update::update_loop(a, s).await });
+    let a = agent.clone();
+    let s = stop_rx.clone();
+    tokio::spawn(async move { crash::upload_loop(a, s).await });
 
     // GC loop
     {

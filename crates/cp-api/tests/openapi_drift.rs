@@ -106,6 +106,7 @@ fn request_schemas_in_sync() {
     check::<cp_api::TokenEnrollRequest>("TokenEnrollRequest");
     check::<cp_api::DeviceEnrollRequest>("DeviceEnrollRequest");
     check::<cp_api::AgentSnapshot>("AgentSnapshot");
+    check::<cp_api::CrashReportBody>("CrashReportBody");
 
     // The execution-status body is inline in the yaml (no named schema) —
     // check the Rust type against the declared field set by hand.

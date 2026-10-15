@@ -42,6 +42,11 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		p := r.URL.Path
 		switch {
 		case strings.HasPrefix(p, "/v1/agent/"):
+			// crash reports carry base64 minidumps; cap the request before
+			// the strict decoder reads it (the field-level cap runs later).
+			if p == "/v1/agent/crash-reports" {
+				r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
+			}
 			// enroll endpoints are unsigned; everything else needs the signature
 			if strings.HasPrefix(p, "/v1/agent/enroll/") {
 				genMux.ServeHTTP(w, r.WithContext(withRequestBase(r.Context(), r)))

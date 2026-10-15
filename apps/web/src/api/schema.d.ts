@@ -555,6 +555,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/groups/{groupId}/crash-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Crash reports uploaded by this group's machines (admin only). */
+        get: operations["listCrashReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/crash-reports/{reportId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One crash report with backtrace, detail and minidump (admin only). */
+        get: operations["getCrashReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/groups": {
         parameters: {
             query?: never;
@@ -710,6 +744,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["agentReplicaReady"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agent/crash-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload one crash report captured on this machine. */
+        post: operations["agentSubmitCrashReport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1264,6 +1315,112 @@ export interface components {
             file_count?: number;
             chunk_count?: number;
             request_id?: string;
+        };
+        CrashReportBody: {
+            /** @enum {string} */
+            kind: "panic" | "dump" | "process";
+            /** @description image that crashed */
+            exe: string;
+            /** @default  */
+            version: string;
+            /** @default  */
+            os: string;
+            /** @default  */
+            arch: string;
+            /** @default 0 */
+            pid: number;
+            /** @default  */
+            message: string;
+            /** @default  */
+            location: string;
+            /** @default  */
+            backtrace: string;
+            /**
+             * @description exit code
+             * @default
+             */
+            detail: string;
+            /** Format: int64 */
+            created_at_unix_ms: number;
+            /**
+             * @description uploader's idempotency key; retries with the same ref do not duplicate the report
+             * @default
+             */
+            client_ref: string;
+            /**
+             * @description base64 minidump
+             * @default
+             */
+            dump_b64: string;
+            /** @default  */
+            dump_name: string;
+            /**
+             * @description why an existing dump was not sent
+             * @default
+             */
+            dump_omitted: string;
+        };
+        CrashReportAck: {
+            id: string;
+        };
+        CrashReportMeta: {
+            id: string;
+            node_id: string;
+            /** @default  */
+            node_name: string;
+            kind: string;
+            exe: string;
+            /** @default  */
+            version: string;
+            /** @default  */
+            message: string;
+            /** Format: int64 */
+            created_at_unix_ms: number;
+            /** Format: int64 */
+            received_at_unix_ms: number;
+            /** @default 0 */
+            dump_size: number;
+            /** @default  */
+            dump_omitted: string;
+        };
+        CrashReportDetail: {
+            id: string;
+            node_id: string;
+            /** @default  */
+            node_name: string;
+            kind: string;
+            exe: string;
+            /** @default  */
+            version: string;
+            /** @default  */
+            os: string;
+            /** @default  */
+            arch: string;
+            /** @default 0 */
+            pid: number;
+            /** @default  */
+            message: string;
+            /** @default  */
+            location: string;
+            /** @default  */
+            backtrace: string;
+            /** @default  */
+            detail: string;
+            /** Format: int64 */
+            created_at_unix_ms: number;
+            /** Format: int64 */
+            received_at_unix_ms: number;
+            /** @default 0 */
+            dump_size: number;
+            /** @default  */
+            dump_name: string;
+            /**
+             * @description base64 minidump when stored
+             * @default
+             */
+            dump_b64: string;
+            /** @default  */
+            dump_omitted: string;
         };
     };
     responses: {
@@ -2495,6 +2652,60 @@ export interface operations {
             403: components["responses"]["Error"];
         };
     };
+    listCrashReports: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first; metadata only (no dump bodies). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reports: components["schemas"]["CrashReportMeta"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    getCrashReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                reportId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrashReportDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
     adminListGroups: {
         parameters: {
             query?: never;
@@ -2780,6 +2991,33 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    agentSubmitCrashReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrashReportBody"];
+            };
+        };
+        responses: {
+            /** @description Recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrashReportAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            413: components["responses"]["Error"];
         };
     };
 }

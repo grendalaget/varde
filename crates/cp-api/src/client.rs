@@ -313,6 +313,14 @@ impl CpClient {
         Ok(serde_json::from_slice(&out)?)
     }
 
+    /// POST one crash report captured on this machine.
+    pub async fn submit_crash_report(&self, r: &crate::CrashReportBody) -> Result<()> {
+        let _: crate::CrashReportAck = self
+            .json("POST", "/v1/agent/crash-reports", Some(r))
+            .await?;
+        Ok(())
+    }
+
     /// JSON call returning the raw status (endpoints with several 2xx codes).
     pub async fn json_status<B: serde::Serialize>(
         &self,

@@ -82,6 +82,7 @@ impl Hub {
     pub fn status(&self) -> pb::Status {
         let mut s = pb::Status {
             agent_version: env!("CARGO_PKG_VERSION").into(),
+            crash_reporting: crash_report::load_prefs(&self.data_dir).crash_reporting,
             ..Default::default()
         };
         {
@@ -532,13 +533,54 @@ impl pb::local_service_server::LocalService for Svc {
             status: Some(self.0.status()),
         }))
     }
+
+    async fn submit_crash_report(
+        &self,
+        req: Request<pb::SubmitCrashReportRequest>,
+    ) -> Result<Response<pb::SubmitCrashReportResponse>, Status> {
+        let Some(m) = req.into_inner().report else {
+            return Err(Status::invalid_argument("missing report"));
+        };
+        crate::crash::submit_local(&self.0.data_dir, m)
+            .map_err(|e| Status::resource_exhausted(e.to_string()))?;
+        Ok(Response::new(pb::SubmitCrashReportResponse {}))
+    }
+
+    async fn set_crash_reporting(
+        &self,
+        req: Request<pb::SetCrashReportingRequest>,
+    ) -> Result<Response<pb::SetCrashReportingResponse>, Status> {
+        // enabling uploads machine-wide crash data to this machine's control
+        // plane — gated like re-link; disabling is always allowed.
+        let peer = req
+            .extensions()
+            .get::<PeerInfo>()
+            .cloned()
+            .unwrap_or_default();
+        if req.get_ref().enabled && !peer.is_admin {
+            return Err(Status::permission_denied(
+                "enabling crash reporting needs an administrator",
+            ));
+        }
+        let prefs = crash_report::Prefs {
+            crash_reporting: req.into_inner().enabled,
+        };
+        crash_report::save_prefs(&self.0.data_dir, &prefs)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        self.0.bump();
+        Ok(Response::new(pb::SetCrashReportingResponse {
+            status: Some(self.0.status()),
+        }))
+    }
 }
 
 /// Serves the local IPC endpoint for `hub` until the process exits.
 pub fn serve(hub: Arc<Hub>) -> std::io::Result<String> {
     let ep = agent_ipc::endpoint(&hub.data_dir);
     let incoming = agent_ipc::server::incoming(&ep)?;
-    let svc = pb::local_service_server::LocalServiceServer::new(Svc(hub));
+    // crash reports carry minidumps (~a few hundred KiB, capped at 8 MiB)
+    let svc = pb::local_service_server::LocalServiceServer::new(Svc(hub))
+        .max_decoding_message_size(32 * 1024 * 1024);
     tokio::spawn(async move {
         if let Err(e) = tonic::transport::Server::builder()
             .add_service(svc)

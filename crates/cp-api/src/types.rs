@@ -625,3 +625,48 @@ pub struct Execution {
 pub struct RelayPublicKey {
     pub public_key: String,
 }
+
+/// One crash report captured on this machine, matching CrashReportBody in
+/// api/openapi/control-plane.yaml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrashReportBody {
+    /// panic | dump | process
+    pub kind: String,
+    /// image that crashed (e.g. varde-tray.exe)
+    pub exe: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub os: String,
+    #[serde(default)]
+    pub arch: String,
+    #[serde(default)]
+    pub pid: i32,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub backtrace: String,
+    #[serde(default)]
+    pub detail: String,
+    pub created_at_unix_ms: i64,
+    /// uploader's idempotency key; a retried upload with the same ref does
+    /// not duplicate the report
+    #[serde(default)]
+    pub client_ref: String,
+    /// base64 minidump, capped client-side
+    #[serde(default)]
+    pub dump_b64: String,
+    #[serde(default)]
+    pub dump_name: String,
+    /// why an existing dump was not sent
+    #[serde(default)]
+    pub dump_omitted: String,
+}
+
+/// Response of POST /v1/agent/crash-reports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrashReportAck {
+    pub id: String,
+}

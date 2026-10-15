@@ -346,8 +346,11 @@ type Status struct {
 	// Technical form of link_error for the UI's "Additional information"
 	// disclosure; empty when there's nothing beyond link_error.
 	LinkErrorDetail string `protobuf:"bytes,13,opt,name=link_error_detail,json=linkErrorDetail,proto3" json:"link_error_detail,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Whether crash reports captured on this machine are uploaded to the
+	// control plane. Capture to disk happens either way.
+	CrashReporting bool `protobuf:"varint,14,opt,name=crash_reporting,json=crashReporting,proto3" json:"crash_reporting,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Status) Reset() {
@@ -469,6 +472,13 @@ func (x *Status) GetLinkErrorDetail() string {
 		return x.LinkErrorDetail
 	}
 	return ""
+}
+
+func (x *Status) GetCrashReporting() bool {
+	if x != nil {
+		return x.CrashReporting
+	}
+	return false
 }
 
 type GetStatusRequest struct {
@@ -889,6 +899,304 @@ func (x *CheckUpdateResponse) GetStatus() *Status {
 	return nil
 }
 
+// One crash on this machine. `dump` carries a minidump when present —
+// senders must cap it (crash_report::MAX_DUMP_BYTES); larger files stay
+// local and detail says why.
+type CrashReportMsg struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// panic | dump | process
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// Image that crashed ("varde-tray").
+	Exe       string `protobuf:"bytes,2,opt,name=exe,proto3" json:"exe,omitempty"`
+	Version   string `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	Pid       int32  `protobuf:"varint,4,opt,name=pid,proto3" json:"pid,omitempty"`
+	Message   string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	Location  string `protobuf:"bytes,6,opt,name=location,proto3" json:"location,omitempty"`
+	Backtrace string `protobuf:"bytes,7,opt,name=backtrace,proto3" json:"backtrace,omitempty"`
+	// Extra context: exit code, stderr tail, why a dump is missing.
+	Detail          string `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
+	CreatedAtUnixMs int64  `protobuf:"varint,9,opt,name=created_at_unix_ms,json=createdAtUnixMs,proto3" json:"created_at_unix_ms,omitempty"`
+	Dump            []byte `protobuf:"bytes,10,opt,name=dump,proto3" json:"dump,omitempty"`
+	DumpName        string `protobuf:"bytes,11,opt,name=dump_name,json=dumpName,proto3" json:"dump_name,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CrashReportMsg) Reset() {
+	*x = CrashReportMsg{}
+	mi := &file_agent_v1_local_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CrashReportMsg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CrashReportMsg) ProtoMessage() {}
+
+func (x *CrashReportMsg) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CrashReportMsg.ProtoReflect.Descriptor instead.
+func (*CrashReportMsg) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CrashReportMsg) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetExe() string {
+	if x != nil {
+		return x.Exe
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *CrashReportMsg) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetLocation() string {
+	if x != nil {
+		return x.Location
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetBacktrace() string {
+	if x != nil {
+		return x.Backtrace
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *CrashReportMsg) GetCreatedAtUnixMs() int64 {
+	if x != nil {
+		return x.CreatedAtUnixMs
+	}
+	return 0
+}
+
+func (x *CrashReportMsg) GetDump() []byte {
+	if x != nil {
+		return x.Dump
+	}
+	return nil
+}
+
+func (x *CrashReportMsg) GetDumpName() string {
+	if x != nil {
+		return x.DumpName
+	}
+	return ""
+}
+
+type SubmitCrashReportRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Report        *CrashReportMsg        `protobuf:"bytes,1,opt,name=report,proto3" json:"report,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitCrashReportRequest) Reset() {
+	*x = SubmitCrashReportRequest{}
+	mi := &file_agent_v1_local_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitCrashReportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitCrashReportRequest) ProtoMessage() {}
+
+func (x *SubmitCrashReportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitCrashReportRequest.ProtoReflect.Descriptor instead.
+func (*SubmitCrashReportRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SubmitCrashReportRequest) GetReport() *CrashReportMsg {
+	if x != nil {
+		return x.Report
+	}
+	return nil
+}
+
+type SubmitCrashReportResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitCrashReportResponse) Reset() {
+	*x = SubmitCrashReportResponse{}
+	mi := &file_agent_v1_local_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitCrashReportResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitCrashReportResponse) ProtoMessage() {}
+
+func (x *SubmitCrashReportResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitCrashReportResponse.ProtoReflect.Descriptor instead.
+func (*SubmitCrashReportResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{16}
+}
+
+type SetCrashReportingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetCrashReportingRequest) Reset() {
+	*x = SetCrashReportingRequest{}
+	mi := &file_agent_v1_local_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetCrashReportingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetCrashReportingRequest) ProtoMessage() {}
+
+func (x *SetCrashReportingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetCrashReportingRequest.ProtoReflect.Descriptor instead.
+func (*SetCrashReportingRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SetCrashReportingRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type SetCrashReportingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        *Status                `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetCrashReportingResponse) Reset() {
+	*x = SetCrashReportingResponse{}
+	mi := &file_agent_v1_local_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetCrashReportingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetCrashReportingResponse) ProtoMessage() {}
+
+func (x *SetCrashReportingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetCrashReportingResponse.ProtoReflect.Descriptor instead.
+func (*SetCrashReportingResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SetCrashReportingResponse) GetStatus() *Status {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
 var File_agent_v1_local_proto protoreflect.FileDescriptor
 
 const file_agent_v1_local_proto_rawDesc = "" +
@@ -911,7 +1219,7 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\tR\tsignature\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xff\x03\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xa8\x04\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +
@@ -928,7 +1236,8 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	" \x01(\tR\tlinkError\x12#\n" +
 	"\ragent_version\x18\v \x01(\tR\fagentVersion\x12.\n" +
 	"\x06update\x18\f \x01(\v2\x16.varde.agent.v1.UpdateR\x06update\x12*\n" +
-	"\x11link_error_detail\x18\r \x01(\tR\x0flinkErrorDetail\"\x12\n" +
+	"\x11link_error_detail\x18\r \x01(\tR\x0flinkErrorDetail\x12'\n" +
+	"\x0fcrash_reporting\x18\x0e \x01(\bR\x0ecrashReporting\"\x12\n" +
 	"\x10GetStatusRequest\"C\n" +
 	"\x11GetStatusResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
@@ -945,6 +1254,26 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
 	"\x12CheckUpdateRequest\"E\n" +
 	"\x13CheckUpdateResponse\x12.\n" +
+	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\xac\x02\n" +
+	"\x0eCrashReportMsg\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
+	"\x03exe\x18\x02 \x01(\tR\x03exe\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12\x10\n" +
+	"\x03pid\x18\x04 \x01(\x05R\x03pid\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12\x1a\n" +
+	"\blocation\x18\x06 \x01(\tR\blocation\x12\x1c\n" +
+	"\tbacktrace\x18\a \x01(\tR\tbacktrace\x12\x16\n" +
+	"\x06detail\x18\b \x01(\tR\x06detail\x12+\n" +
+	"\x12created_at_unix_ms\x18\t \x01(\x03R\x0fcreatedAtUnixMs\x12\x12\n" +
+	"\x04dump\x18\n" +
+	" \x01(\fR\x04dump\x12\x1b\n" +
+	"\tdump_name\x18\v \x01(\tR\bdumpName\"R\n" +
+	"\x18SubmitCrashReportRequest\x126\n" +
+	"\x06report\x18\x01 \x01(\v2\x1e.varde.agent.v1.CrashReportMsgR\x06report\"\x1b\n" +
+	"\x19SubmitCrashReportResponse\"4\n" +
+	"\x18SetCrashReportingRequest\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\"K\n" +
+	"\x19SetCrashReportingResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status*\x9b\x01\n" +
 	"\x05State\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
@@ -953,14 +1282,16 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x10STATE_CONNECTING\x10\x03\x12\x10\n" +
 	"\fSTATE_ONLINE\x10\x04\x12\x11\n" +
 	"\rSTATE_OFFLINE\x10\x05\x12\x17\n" +
-	"\x13STATE_SHUTTING_DOWN\x10\x062\xb9\x03\n" +
+	"\x13STATE_SHUTTING_DOWN\x10\x062\x8d\x05\n" +
 	"\fLocalService\x12P\n" +
 	"\tGetStatus\x12 .varde.agent.v1.GetStatusRequest\x1a!.varde.agent.v1.GetStatusResponse\x12X\n" +
 	"\vWatchStatus\x12\".varde.agent.v1.WatchStatusRequest\x1a#.varde.agent.v1.WatchStatusResponse0\x01\x12P\n" +
 	"\tStartLink\x12 .varde.agent.v1.StartLinkRequest\x1a!.varde.agent.v1.StartLinkResponse\x12S\n" +
 	"\n" +
 	"CancelLink\x12!.varde.agent.v1.CancelLinkRequest\x1a\".varde.agent.v1.CancelLinkResponse\x12V\n" +
-	"\vCheckUpdate\x12\".varde.agent.v1.CheckUpdateRequest\x1a#.varde.agent.v1.CheckUpdateResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
+	"\vCheckUpdate\x12\".varde.agent.v1.CheckUpdateRequest\x1a#.varde.agent.v1.CheckUpdateResponse\x12h\n" +
+	"\x11SubmitCrashReport\x12(.varde.agent.v1.SubmitCrashReportRequest\x1a).varde.agent.v1.SubmitCrashReportResponse\x12h\n" +
+	"\x11SetCrashReporting\x12(.varde.agent.v1.SetCrashReportingRequest\x1a).varde.agent.v1.SetCrashReportingResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_v1_local_proto_rawDescOnce sync.Once
@@ -975,23 +1306,28 @@ func file_agent_v1_local_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_local_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_agent_v1_local_proto_goTypes = []any{
-	(State)(0),                  // 0: varde.agent.v1.State
-	(*Link)(nil),                // 1: varde.agent.v1.Link
-	(*Hosting)(nil),             // 2: varde.agent.v1.Hosting
-	(*Update)(nil),              // 3: varde.agent.v1.Update
-	(*Status)(nil),              // 4: varde.agent.v1.Status
-	(*GetStatusRequest)(nil),    // 5: varde.agent.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),   // 6: varde.agent.v1.GetStatusResponse
-	(*WatchStatusRequest)(nil),  // 7: varde.agent.v1.WatchStatusRequest
-	(*WatchStatusResponse)(nil), // 8: varde.agent.v1.WatchStatusResponse
-	(*StartLinkRequest)(nil),    // 9: varde.agent.v1.StartLinkRequest
-	(*StartLinkResponse)(nil),   // 10: varde.agent.v1.StartLinkResponse
-	(*CancelLinkRequest)(nil),   // 11: varde.agent.v1.CancelLinkRequest
-	(*CancelLinkResponse)(nil),  // 12: varde.agent.v1.CancelLinkResponse
-	(*CheckUpdateRequest)(nil),  // 13: varde.agent.v1.CheckUpdateRequest
-	(*CheckUpdateResponse)(nil), // 14: varde.agent.v1.CheckUpdateResponse
+	(State)(0),                        // 0: varde.agent.v1.State
+	(*Link)(nil),                      // 1: varde.agent.v1.Link
+	(*Hosting)(nil),                   // 2: varde.agent.v1.Hosting
+	(*Update)(nil),                    // 3: varde.agent.v1.Update
+	(*Status)(nil),                    // 4: varde.agent.v1.Status
+	(*GetStatusRequest)(nil),          // 5: varde.agent.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),         // 6: varde.agent.v1.GetStatusResponse
+	(*WatchStatusRequest)(nil),        // 7: varde.agent.v1.WatchStatusRequest
+	(*WatchStatusResponse)(nil),       // 8: varde.agent.v1.WatchStatusResponse
+	(*StartLinkRequest)(nil),          // 9: varde.agent.v1.StartLinkRequest
+	(*StartLinkResponse)(nil),         // 10: varde.agent.v1.StartLinkResponse
+	(*CancelLinkRequest)(nil),         // 11: varde.agent.v1.CancelLinkRequest
+	(*CancelLinkResponse)(nil),        // 12: varde.agent.v1.CancelLinkResponse
+	(*CheckUpdateRequest)(nil),        // 13: varde.agent.v1.CheckUpdateRequest
+	(*CheckUpdateResponse)(nil),       // 14: varde.agent.v1.CheckUpdateResponse
+	(*CrashReportMsg)(nil),            // 15: varde.agent.v1.CrashReportMsg
+	(*SubmitCrashReportRequest)(nil),  // 16: varde.agent.v1.SubmitCrashReportRequest
+	(*SubmitCrashReportResponse)(nil), // 17: varde.agent.v1.SubmitCrashReportResponse
+	(*SetCrashReportingRequest)(nil),  // 18: varde.agent.v1.SetCrashReportingRequest
+	(*SetCrashReportingResponse)(nil), // 19: varde.agent.v1.SetCrashReportingResponse
 }
 var file_agent_v1_local_proto_depIdxs = []int32{
 	0,  // 0: varde.agent.v1.Status.state:type_name -> varde.agent.v1.State
@@ -1003,21 +1339,27 @@ var file_agent_v1_local_proto_depIdxs = []int32{
 	4,  // 6: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
 	4,  // 7: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
 	4,  // 8: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 9: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
-	7,  // 10: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
-	9,  // 11: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
-	11, // 12: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
-	13, // 13: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
-	6,  // 14: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
-	8,  // 15: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
-	10, // 16: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
-	12, // 17: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
-	14, // 18: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	15, // 9: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
+	4,  // 10: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 11: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
+	7,  // 12: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
+	9,  // 13: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
+	11, // 14: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
+	13, // 15: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
+	16, // 16: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
+	18, // 17: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
+	6,  // 18: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
+	8,  // 19: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
+	10, // 20: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
+	12, // 21: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
+	14, // 22: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
+	17, // 23: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
+	19, // 24: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
+	18, // [18:25] is the sub-list for method output_type
+	11, // [11:18] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_local_proto_init() }
@@ -1031,7 +1373,7 @@ func file_agent_v1_local_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_local_proto_rawDesc), len(file_agent_v1_local_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
