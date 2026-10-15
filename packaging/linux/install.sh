@@ -49,19 +49,29 @@ fail() {
   exit 1
 }
 
+# The cairn rendered the way varde.games draws it on the landing page: the
+# real mark geometry rasterized into the sparse glyph-field ramp
+# (" ·:-~=+*xoasce%@"), lit stone in Glød — at a lower density for the
+# terminal. Regenerate against brand/svg/mark paths if the mark changes.
 banner() {
   cat <<EOF
 
-    ${STONE}       ▄▄▄▄▄▄▄
-    ${STONE}     ▄██████████▄
-    ${STONE}    ▀▀▀▀▀▀▀▀▀▀▀▀▀
-    ${STONE}    ▄███▌ ${GLOD}▄██████▄${RESET}    ${BOLD}v a r d e${RESET}
-    ${STONE}   ▐████▌${RESET}${GLOD}▐███████▌${RESET}   ${DIM}Game servers built by many hands.${RESET}
-    ${STONE}    ▀▀▀▀ ${RESET} ${GLOD}▀▀▀▀▀▀▀▀${RESET}
-    ${STONE}  ▄██████████████████▄
-    ${STONE}  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    ${STONE}▄████████████████████████▄
-    ${STONE}▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀${RESET}
+                      ${STONE}==
+                ${STONE}x o**+* o
+               ${STONE}*xo**o o+ **
+
+            ${STONE}=++xx+x* ${GLOD}~ox +*oxx        ${RESET}${BOLD}v a r d e${RESET}
+            ${STONE}x+*oxx o  ${GLOD}*ox*+o++*       ${RESET}${DIM}Game servers built by many hands.${RESET}
+           ${STONE}o+*oxx**o   ${GLOD}*o +**xx
+
+         ${STONE}~** ++*xxo *x**o  x+x*o
+         ${STONE}*oxooo xx  *o+***o** oxo
+         ${STONE}++~~+~ ~+ =+~~~--~+=~**+
+        ${STONE}+ *xx+x oxx++*x o + *  o*+
+       ${STONE}+o ox+ox +* +ox  ox*xo++oo*~
+      ${STONE}* x*o*+++*  o   *xx+***o+ oo
+     ${STONE}~o ooo*o  * x+o +* x++ *oox
+      ${STONE}+*--~${RESET}
 
 EOF
 }
