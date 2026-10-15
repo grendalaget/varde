@@ -52,10 +52,6 @@ mod imp {
         }
         Ok(())
     }
-
-    pub fn ensure_installed() -> io::Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -188,8 +184,9 @@ pub fn set(on: bool) -> io::Result<()> {
     imp::set(on)
 }
 
-/// First-run setup: install the login integration unless the user opted
-/// out (a no-op where the installer already handled it).
+/// First-run setup on a drag-installed .app: install the login integration
+/// unless the user opted out (Windows gets this from the installer instead).
+#[cfg(target_os = "macos")]
 pub fn ensure_installed() -> io::Result<()> {
     imp::ensure_installed()
 }

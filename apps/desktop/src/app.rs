@@ -218,11 +218,9 @@ pub fn run() {
         .expect("start the Varde tray");
     app.run(move |_app, event| {
         match event {
-            tauri::RunEvent::ExitRequested { api, code, .. } => {
-                // closing the window keeps the tray; only Quit (exit code) ends it
-                if code.is_none() && !relink {
-                    api.prevent_exit();
-                }
+            // closing the window keeps the tray; only Quit (exit code) ends it
+            tauri::RunEvent::ExitRequested { api, code, .. } if code.is_none() && !relink => {
+                api.prevent_exit();
             }
             // macOS delivers varde:// callbacks as open events (the
             // CFBundleURLTypes claim), not as argv.
