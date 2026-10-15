@@ -196,3 +196,14 @@ jobs:
         with:
           name: VardeSetup
           path: packaging/windows/dist/VardeSetup-*.exe
+
+  # keeps the aarch64-linux-android target compiling (apps/android anchor)
+  android-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cross
+        run: cargo install cross --locked
+      - name: cargo check (android)
+        run: cross check --target aarch64-linux-android -p varde-agent

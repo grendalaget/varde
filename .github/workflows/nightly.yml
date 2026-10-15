@@ -45,6 +45,7 @@ jobs:
           # Presence (not the value) feeds the signing marker below so adding
           # the update key on an unchanged main still republishes nightly.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           sha=$(git rev-parse HEAD)
           echo "ref=$sha" >> "$GITHUB_OUTPUT"
@@ -70,6 +71,10 @@ jobs:
           # once it exists, so it belongs to the marker too.
           if [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
             signing=$signing-upd
+          fi
+          # APK signature likewise changes the shipped bytes.
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" ]]; then
+            signing=$signing-apk
           fi
           echo "signing=$signing" >> "$GITHUB_OUTPUT"
           if [[ "$DRY_RUN" != true ]]; then

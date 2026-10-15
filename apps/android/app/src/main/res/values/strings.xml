@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Varde Anchor</string>
+    <string name="channel_name">Anchor</string>
+    <string name="notification_title">Varde anchor</string>
+</resources>
