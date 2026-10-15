@@ -264,9 +264,88 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android:
+    name: build (android, arm64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: '**/go.sum'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-android-arm64
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - name: Build arm64 agent + mesh
+        run: |
+          cargo install cross --locked
+          make android
+      - name: Assemble release APK
+        run: |
+          mkdir -p release-assets
+          # versionCode must strictly increase per installable build — epoch
+          # seconds stays monotonic across nightly/release rebuilds by
+          # construction (safe until ~2037). versionName carries the version.
+          (cd apps/android && ./gradlew --no-daemon assembleRelease \
+            -PvardeVersionName="$VERSION" -PvardeVersionCode="$(date -u +%s)")
+          "$ANDROID_HOME"/build-tools/35.0.0/zipalign -p -f 4 \
+            apps/android/app/build/outputs/apk/release/app-release-unsigned.apk \
+            "release-assets/Varde-$VERSION-android-unsigned.apk"
+      - name: Sign APK (ANDROID_KEYSTORE_* secrets)
+        if: inputs.channel != 'dry-run'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" ]]; then
+            echo 'ANDROID_KEYSTORE_* secrets not set — the APK ships unsigned and is not installable; see docs/android-anchor.md (CI signing).' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/anchor.jks
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner sign \
+            --ks /tmp/anchor.jks --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            --out "release-assets/Varde-$VERSION-android.apk" \
+            "release-assets/Varde-$VERSION-android-unsigned.apk"
+          rm /tmp/anchor.jks
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify \
+            --print-certs "release-assets/Varde-$VERSION-android.apk" | head -3
+          rm "release-assets/Varde-$VERSION-android-unsigned.apk"
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles-android-arm64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
   sign:
     name: checksums and keyless signatures
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

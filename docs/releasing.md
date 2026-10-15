@@ -65,6 +65,7 @@ package contains `LICENSE`; the agent package always includes `varde-mesh`
 | Linux amd64, arm64 | `varde-<component>-<ver>-linux-<arch>.deb` and `.rpm` for each of agent, control-plane and relay; `varde-<component>-<ver>-linux-<arch>.snap` (strict confinement) for sideloading; `varde-<component>-<ver>-linux-<arch>.tar.gz` (root filesystem, for non-deb/rpm distros) |
 | Windows amd64 | `VardeSetup-<ver>.exe` (agent, mesh, tray; optional control-plane component for self-hosting) |
 | macOS arm64, amd64 | `varde-<component>-<ver>-darwin-<arch>.dmg` for each of agent (contains agent + mesh), control-plane and relay |
+| Android arm64 | `Varde-<ver>-android.apk` — the anchor app with the arm64 agent + mesh bundled (signed once `ANDROID_KEYSTORE_*` secrets exist; otherwise `Varde-<ver>-android-unsigned.apk`, which is not installable) |
 | All platforms | `SHA256SUMS` over the payload assets; a `<filename>.sigstore.json` keyless signature bundle beside **every payload and SHA256SUMS**; `latest.json` + `latest.json.sig` update feed (below); `install.sh` — the branded `curl \| sh` Linux installer (`packaging/linux/install.sh`, `packaging/linux/README.md`), which resolves and verifies every download against `SHA256SUMS` before installing |
 
 Linux packages retain the existing systemd units, configuration, icons and
@@ -172,6 +173,18 @@ the specific extracted binaries you trust:
 xattr -d com.apple.quarantine ./varde-agent ./varde-mesh
 # Likewise for ./varde-control-plane and ./varde-relay when using them.
 ```
+
+### Android APK signing
+
+`Varde-<ver>-android.apk` is assembled unsigned, zipaligned, then
+`apksigner`-signed in the android build job when the `ANDROID_KEYSTORE_BASE64`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
+repository secrets are all set — before checksum generation, Sigstore signing
+and publication, same as the other platforms. Keystore generation and the
+exact secret names are in `docs/android-anchor.md`. Without the secrets the
+asset ships as `Varde-<ver>-android-unsigned.apk`, which cannot be installed
+(sign it locally with `apksigner` or configure the secrets). APK updates are
+the app's update path — the bundled agent does not self-update on Android.
 
 ### Windows code signing
 

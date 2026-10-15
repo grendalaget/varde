@@ -65,6 +65,31 @@ This is a development path, not a product one: modern Android kills the
 restriction), which is exactly the constraint the lib*.so packaging works
 around inside the real app.
 
+## Releases and CI signing
+
+The `android` job in `build-release.yml` cross-compiles the binaries,
+assembles `app-release-unsigned.apk`, zipaligns it, and signs it when the
+repository secrets are set:
+
+- `ANDROID_KEYSTORE_BASE64` — base64-encoded `.jks`/`.keystore`
+- `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+
+Generate a release keystore once and keep it safe — every installable update
+must be signed by the same certificate:
+
+```sh
+keytool -genkeypair -v -keystore anchor.jks -alias varde-anchor \
+  -keyalg RSA -keysize 3072 -validity 10000
+base64 -w0 anchor.jks   # -> ANDROID_KEYSTORE_BASE64
+```
+
+`versionName` is the release version; `versionCode` is the build's epoch
+seconds, which stays strictly increasing across nightly and release builds.
+The signed asset lands as `Varde-<ver>-android.apk`; without the secrets the
+pipeline still emits `Varde-<ver>-android-unsigned.apk` (not installable —
+sign it locally with `apksigner` or set the secrets).
+
 ## Limits
 
 - No self-update: `varde-agent update` on Android reports that updates are

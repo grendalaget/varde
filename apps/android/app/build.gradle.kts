@@ -11,8 +11,10 @@ android {
         applicationId = "games.varde.anchor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Release CI injects -PvardeVersionName/-PvardeVersionCode; the
+        // defaults only apply to local debug builds.
+        versionCode = providers.gradleProperty("vardeVersionCode").map(String::toInt).orElse(1).get()
+        versionName = providers.gradleProperty("vardeVersionName").orElse("0.1.0").get()
     }
 
     // The agent + mesh ship as lib*.so inside jniLibs so Android extracts
