@@ -43,6 +43,11 @@ pub(crate) struct State {
     /// retargets only while it's still sitting there (an auth bounce off
     /// to varde.games must not be yanked back mid-sign-in).
     dashboard_origin: Mutex<Option<tauri::Url>>,
+    /// Fresh varde.games federation JWT, kept briefly after a hosted
+    /// sign-in: the dashboard webview loads with it as #fed_token= and
+    /// exchanges it for its own session cookie, so the window opens
+    /// already signed in — the app and CP share one auth backend.
+    fed_handoff: Mutex<Option<(String, std::time::Instant)>>,
     /// Federated sign-in paused at "pick a group": the CP session waits here
     /// for `finish_varde_login`.
     fed: Mutex<Option<FedPending>>,
@@ -314,14 +319,24 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
                     .zip(prev.as_ref())
                     .map(|(cur, p)| cur.origin() == p.origin())
                     .unwrap_or(false);
+                let handoff_pending = st
+                    .fed_handoff
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|(_, at)| at.elapsed() < FED_HANDOFF_TTL);
                 if still_on_cp
-                    && prev
+                    && (prev
                         .as_ref()
                         .map(|p| p.origin() != parsed.origin())
                         .unwrap_or(true)
+                        || handoff_pending)
                 {
-                    *st.dashboard_origin.lock().unwrap() = Some(parsed.clone());
-                    let _ = w.navigate(parsed);
+                    // dashboard_load_url attaches a fresh sign-in token —
+                    // a re-link to the same CP re-auths the open window.
+                    let url = dashboard_load_url(app, &u).unwrap_or(parsed);
+                    *st.dashboard_origin.lock().unwrap() = Some(url.clone());
+                    let _ = w.navigate(url);
                 }
             }
         }
@@ -814,17 +829,46 @@ fn open_main_window(app: &AppHandle) {
     }
 }
 
+/// A federation JWT the site mints is replayable while unexpired — keep
+/// the margin tighter than its ~5-minute life.
+const FED_HANDOFF_TTL: Duration = Duration::from_secs(240);
+
+/// Take a still-fresh sign-in token: one shot only, used or not.
+fn fresh_handoff_token(app: &AppHandle) -> Option<String> {
+    let st = app.state::<State>();
+    let mut g = st.fed_handoff.lock().unwrap();
+    match g.as_ref() {
+        Some((_, at)) if at.elapsed() < FED_HANDOFF_TTL => g.take().map(|(t, _)| t),
+        _ => None,
+    }
+}
+
+/// URL to point the dashboard at — `cp`, plus #fed_token= when a fresh
+/// hosted sign-in is waiting: the CP web app exchanges the fragment for
+/// its own session cookie on load, so the window opens signed in as the
+/// same account the app just linked with.
+fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
+    let mut url = tauri::Url::parse(cp).ok()?;
+    if let Some(token) = fresh_handoff_token(app) {
+        url.set_fragment(Some(&format!("fed_token={token}")));
+    }
+    Some(url)
+}
+
 /// The dashboard lives in the app, not the browser: a plain external
 /// webview on the control-plane address (it can't reach app commands —
 /// remote IPC is off — and keeps its own cookies, so the sign-in sticks).
 fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
-    let parsed = tauri::Url::parse(url).map_err(|e| e.to_string())?;
+    let parsed =
+        dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
     if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
-        // a re-link may have moved the group to another control plane;
-        // same origin: keep the user's place in the dashboard
-        if w.url()
-            .map(|u| u.origin() != parsed.origin())
-            .unwrap_or(true)
+        // a re-link may have moved the group to another control plane or
+        // carried a fresh sign-in token — same origin otherwise keeps
+        // the user's place in the dashboard
+        if parsed.fragment().is_some()
+            || w.url()
+                .map(|u| u.origin() != parsed.origin())
+                .unwrap_or(true)
         {
             *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
             w.navigate(parsed).map_err(|e| e.to_string())?;
@@ -851,13 +895,31 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         .on_navigation({
             let ah = app.clone();
             move |u| {
+                // Tauri serves the bundled UI from http(s)://tauri.localhost
+                // — a control-plane URL pointing there would load the local
+                // app pages, privileged IPC bridge included, inside this
+                // webview. It's never a real dashboard.
+                if u.domain()
+                    .is_some_and(|h| h.eq_ignore_ascii_case("tauri.localhost"))
+                {
+                    return false;
+                }
                 let st = ah.state::<State>();
                 let on_cp = st
                     .dashboard_origin
                     .lock()
                     .unwrap()
                     .as_ref()
-                    .is_some_and(|d| d.origin() == u.origin());
+                    .is_some_and(|d| {
+                        u.origin() == d.origin()
+                            // a self-hosted CP may terminate TLS in front:
+                            // allow http→https on the same host only
+                            || (d.scheme() == "http"
+                                && u.scheme() == "https"
+                                && u.domain().zip(d.domain()).is_some_and(
+                                    |(a, b)| a.eq_ignore_ascii_case(b),
+                                ))
+                    });
                 on_cp
                     || u.scheme() == "https"
                         && u.domain()
@@ -1181,7 +1243,7 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
     let h = app.clone();
     tauri::async_runtime::spawn(async move {
         emit_fed(&h, FedEvent::Exchanging);
-        match fed_exchange(token).await {
+        match fed_exchange(token.clone()).await {
             // cancelled or superseded while the exchange was in flight —
             // stay silent rather than overwrite the newer flow
             _ if seq
@@ -1189,6 +1251,8 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
                     .fed_seq
                     .load(std::sync::atomic::Ordering::SeqCst) => {}
             Ok((session, cp_url, user)) => {
+                *h.state::<State>().fed_handoff.lock().unwrap() =
+                    Some((token, std::time::Instant::now()));
                 *h.state::<State>().fed.lock().unwrap() = Some(FedPending {
                     session,
                     cp_url,
