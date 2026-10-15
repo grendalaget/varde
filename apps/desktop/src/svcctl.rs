@@ -66,6 +66,15 @@ fn wait_for(svc: &Service, want: ServiceState, timeout: Duration) -> Result<()> 
     }
 }
 
+/// Whether SCM reports the service not-Stopped. Querying needs no admin,
+/// so Exit checks this before deciding to raise UAC at all.
+pub fn running() -> bool {
+    open(ServiceAccess::QUERY_STATUS)
+        .and_then(|svc| state(&svc))
+        .map(|s| s != ServiceState::Stopped)
+        .unwrap_or(false)
+}
+
 /// True while the service answers on its local IPC pipe — the tray's own
 /// definition of healthy. Probed before restarting: a brief pipe outage
 /// must not stop an agent that may be hosting a server right now.

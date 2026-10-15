@@ -214,10 +214,11 @@ function mock(): TauriGlobal {
           case "cancel_link":
             emit("status", canned.not_linked);
             return Promise.resolve(undefined as T);
-          case "open_dashboard":
+          case "open_varde":
           case "open_url":
           case "start_service":
           case "stop_service":
+          case "exit_varde":
           case "close_window":
             return Promise.resolve(undefined as T);
           default:

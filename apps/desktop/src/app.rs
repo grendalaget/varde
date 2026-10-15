@@ -1,4 +1,5 @@
-//! Tauri app: tray icon + menu, the link/status window, and the IPC watch.
+//! Tauri app: the Varde tray and the app's one window — the dashboard while
+//! linked, the local link/status UI otherwise — plus the agent-IPC watch.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -14,14 +15,14 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::autostart;
 use crate::svcctl;
-use crate::view::{self, Icon, TrayView, UiStatus};
+use crate::view::{self, Facet, Icon, TrayView, UiStatus};
 
 const TRAY_ID: &str = "varde";
-/// The app window (Fluent 2 UI in ui/): linking, this-PC status, service
-/// start/stop.
+/// One face of the Varde window (mouve UI in ui/): linking, this-PC status,
+/// service start when it's down.
 const MAIN_WINDOW: &str = "main";
-/// The dashboard running inside the app: an external webview on the
-/// control-plane address, not a browser tab.
+/// The other face: the control-plane dashboard as an external webview
+/// (remote — it gets no IPC bridge), not a browser tab.
 const DASHBOARD_WINDOW: &str = "dashboard";
 
 static ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
@@ -150,7 +151,7 @@ pub fn run() {
             // already open one re-reads its defaults (it may need to link)
             if !l.autostart {
                 let open = app.get_webview_window(MAIN_WINDOW).is_some();
-                open_main_window(app);
+                open_varde_window(app);
                 if open {
                     let _ = app.emit_to(MAIN_WINDOW, "link-defaults", defaults(app));
                 }
@@ -170,9 +171,10 @@ pub fn run() {
             cancel_link,
             start_service,
             stop_service,
-            open_dashboard,
+            open_varde,
             open_url,
             close_window,
+            exit_varde,
             begin_varde_login,
             confirm_varde_login,
             cancel_varde_login,
@@ -191,14 +193,16 @@ pub fn run() {
                     .on_tray_icon_event(|tray, e| {
                         // left click on the icon opens the app (Windows; on
                         // macOS the default menu_on_left_click shows the menu
-                        // and this never fires)
+                        // and this never fires). A double click is a click
+                        // followed by DoubleClick — the first already opened
+                        // the window, so both paths land here.
                         if let tauri::tray::TrayIconEvent::Click {
                             button: tauri::tray::MouseButton::Left,
                             button_state: tauri::tray::MouseButtonState::Up,
                             ..
                         } = e
                         {
-                            open_main_window(tray.app_handle());
+                            open_varde_window(tray.app_handle());
                         }
                     })
                     .build(app)?;
@@ -206,8 +210,13 @@ pub fn run() {
             }
             tauri::async_runtime::spawn(watch(h.clone()));
             tauri::async_runtime::spawn(crash::forward_loop());
-            if relink || launch.open_link {
+            if relink {
                 open_main_window(&h);
+            } else {
+                dock_sync(&h);
+                if launch.open_link {
+                    open_varde_window(&h);
+                }
             }
             if let Some(u) = &launch.deep_link {
                 handle_deep_link(&h, u);
@@ -279,9 +288,26 @@ async fn tick(app: AppHandle) {
 
 fn publish(app: &AppHandle, s: Option<pb::Status>) {
     let ui = s.as_ref().map(|st| UiStatus::from_status(st, now_ms()));
+    let cp = s
+        .as_ref()
+        .map(|s| s.control_plane_url.clone())
+        .filter(|u| !u.is_empty());
     *app.state::<State>().status.lock().unwrap() = s;
     render(app, false);
     let _ = app.emit_to(MAIN_WINDOW, "status", ui);
+    // a re-link to another control plane retargets an existing dashboard
+    // webview; the origin guard is re-armed before navigating
+    if let (Some(u), Some(w)) = (cp, app.get_webview_window(DASHBOARD_WINDOW)) {
+        if let Ok(parsed) = tauri::Url::parse(&u) {
+            if w.url()
+                .map(|cur| cur.origin() != parsed.origin())
+                .unwrap_or(true)
+            {
+                *app.state::<State>().dashboard_url.lock().unwrap() = Some(parsed.clone());
+                let _ = w.navigate(parsed);
+            }
+        }
+    }
 }
 
 fn render(app: &AppHandle, force: bool) {
@@ -319,34 +345,12 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
     if let Some(l) = &v.update_label {
         m.append(&MenuItem::with_id(app, "update", l, true, none)?)?;
     }
-    m.append(&MenuItem::with_id(
-        app,
-        "svcstart",
-        "Start Varde service…",
-        !v.service_running,
-        none,
-    )?)?;
-    m.append(&MenuItem::with_id(
-        app,
-        "svcstop",
-        "Stop Varde service…",
-        v.service_running && v.hosting.is_none(),
-        none,
-    )?)?;
     if let Some(h) = &v.hosting {
         m.append(&MenuItem::with_id(app, "hosting", h, false, none)?)?;
     }
     if let Some(s) = &v.safe_save {
         m.append(&MenuItem::with_id(app, "save", s, false, none)?)?;
     }
-    m.append(&PredefinedMenuItem::separator(app)?)?;
-    m.append(&MenuItem::with_id(
-        app,
-        "dashboard",
-        "Open dashboard",
-        v.dashboard_url.is_some(),
-        none,
-    )?)?;
     m.append(&MenuItem::with_id(
         app,
         "link",
@@ -385,45 +389,17 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         none,
     )?)?;
     m.append(&PredefinedMenuItem::separator(app)?)?;
-    m.append(&MenuItem::with_id(
-        app,
-        "quit",
-        "Quit tray (Varde keeps running)",
-        true,
-        none,
-    )?)?;
+    m.append(&MenuItem::with_id(app, "exit", "Exit Varde", true, none)?)?;
     Ok(m)
 }
 
 fn on_menu(app: &AppHandle, e: MenuEvent) {
     let v = app.state::<State>().view.lock().unwrap().clone();
     match e.id().as_ref() {
-        "open" => open_main_window(app),
-        "svcstart" => {
-            #[cfg(windows)]
-            let _ = elevate_self("--service-start");
-            // no elevation on macOS: the LaunchAgent is ours to control
-            #[cfg(target_os = "macos")]
-            std::thread::spawn(|| {
-                let _ = svcctl::start();
-            });
-        }
-        "svcstop" => {
-            #[cfg(windows)]
-            let _ = elevate_self("--service-stop");
-            #[cfg(target_os = "macos")]
-            std::thread::spawn(|| {
-                let _ = svcctl::stop();
-            });
-        }
-        "dashboard" => {
-            if let Some(url) = v.and_then(|v| v.dashboard_url) {
-                let _ = open_dashboard_window(app, &url);
-            }
-        }
+        "open" => open_varde_window(app),
         "link" => match v {
             Some(v) if v.relink => relink_window(app),
-            _ => open_main_window(app),
+            _ => open_varde_window(app),
         },
         "logs" => {
             let _ = app
@@ -453,9 +429,184 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
         }
         "update" => crate::update::offer(app),
         "checkupdate" => crate::update::recheck(app.clone()),
-        "quit" => app.exit(0),
+        "exit" => request_exit(app),
         _ => {}
     }
+}
+
+/// The control-plane address the service reports, when it has one. The UI
+/// never picks it — a swapped address would silently sign the user into
+/// someone else's server.
+fn cp_url(app: &AppHandle) -> Option<String> {
+    app.state::<State>()
+        .status
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.control_plane_url.clone())
+        .filter(|u| !u.is_empty())
+}
+
+/// Which face the one window shows right now.
+fn desired_facet(app: &AppHandle) -> Facet {
+    let st = app.state::<State>();
+    let status = st.status.lock().unwrap().clone();
+    view::facet(
+        status.as_ref(),
+        st.fed_active.load(std::sync::atomic::Ordering::SeqCst),
+        st.relink,
+    )
+}
+
+/// "Open Varde": raise the app's single window on the face that matches
+/// the PC's state — the dashboard while linked, the link/status UI
+/// otherwise — and hide the other webview. Only one is ever visible, so
+/// the app reads as one window whose content changes.
+fn open_varde_window(app: &AppHandle) {
+    let dashboard = desired_facet(app) == Facet::Dashboard
+        && cp_url(app)
+            .map(|u| open_dashboard_window(app, &u).is_ok())
+            .unwrap_or(false);
+    if dashboard {
+        if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
+            if main.is_visible().unwrap_or(false) {
+                // the app appears to morph: the dashboard takes the setup
+                // window's spot on first swap
+                if let (Ok(p), Some(d)) = (
+                    main.outer_position(),
+                    app.get_webview_window(DASHBOARD_WINDOW),
+                ) {
+                    let _ = d.set_position(p);
+                }
+            }
+            let _ = main.hide();
+        }
+    } else {
+        open_main_window(app);
+        if let Some(d) = app.get_webview_window(DASHBOARD_WINDOW) {
+            let _ = d.hide();
+        }
+    }
+    dock_sync(app);
+}
+
+/// Closing a window hides it to the tray instead of ending Varde — only
+/// Exit shuts the app down. The dashboard keeps its webview (and sign-in)
+/// across hides, so reopening is instant.
+fn hide_to_tray(w: &WebviewWindow) {
+    let w2 = w.clone();
+    w.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = w2.hide();
+            dock_sync(w2.app_handle());
+        }
+    });
+}
+
+/// macOS: the Dock icon exists only while a window is open — tray-only
+/// means Accessory, so Varde reads as one quiet background app. The
+/// re-link window keeps the Dock entry (it's a foreground tool, no tray).
+#[cfg(target_os = "macos")]
+fn dock_sync(app: &AppHandle) {
+    if app.state::<State>().relink {
+        return;
+    }
+    let visible = [MAIN_WINDOW, DASHBOARD_WINDOW]
+        .iter()
+        .filter_map(|l| app.get_webview_window(l))
+        .any(|w| w.is_visible().unwrap_or(false));
+    let policy = if visible {
+        tauri::ActivationPolicy::Regular
+    } else {
+        tauri::ActivationPolicy::Accessory
+    };
+    let _ = app.set_activation_policy(policy);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dock_sync(_app: &AppHandle) {}
+
+/// "Exit Varde": shut the whole thing down — the agent service (and the
+/// mesh it supervises) and then this app. Confirms first while this PC
+/// hosts a server: the drain is graceful but the game still moves.
+fn request_exit(app: &AppHandle) {
+    let hosting = app
+        .state::<State>()
+        .status
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| view::hosting_line(&s.hosting));
+    if let Some(h) = hosting {
+        if !confirm_exit(&h) {
+            return;
+        }
+    }
+    stop_and_exit(app.clone());
+}
+
+#[cfg(windows)]
+fn stop_and_exit(app: AppHandle) {
+    // no UAC prompt when the service is already down — just quit
+    if !svcctl::running() {
+        app.exit(0);
+        return;
+    }
+    match elevate_self("--service-stop") {
+        // the elevated instance drains and stops the service on its own;
+        // it shows the error box itself if that fails
+        Ok(()) => app.exit(0),
+        Err(e) => message_box(&format!(
+            "Varde couldn't stop its service, so it's still running.\n\n{e}"
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn stop_and_exit(app: AppHandle) {
+    // the drain can take a while — run it off the event loop and quit once
+    // the service is gone. A failure keeps the app up: a tray-less Varde
+    // still running is exactly the state the user tried to leave.
+    std::thread::spawn(move || match svcctl::stop() {
+        Ok(()) => app.exit(0),
+        Err(e) => message_box(&format!(
+            "Varde couldn't stop its service, so it's still running.\n\n{e:#}"
+        )),
+    });
+}
+
+#[cfg(windows)]
+fn confirm_exit(hosting: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_ICONWARNING, MB_YESNO,
+    };
+    let text = format!(
+        "{hosting}.\n\nExiting Varde drains and stops it — the server moves to another machine if your group's saves allow. Exit Varde anyway?"
+    );
+    let (t, c) = (wide(&text), wide("Exit Varde"));
+    // SAFETY: NUL-terminated UTF-16 strings that outlive the call.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            t.as_ptr(),
+            c.as_ptr(),
+            MB_YESNO | MB_ICONWARNING,
+        ) == IDYES
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn confirm_exit(hosting: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("Exit Varde")
+        .set_description(format!(
+            "{hosting}.\n\nExiting Varde drains and stops it — the server moves to another machine if your group's saves allow. Exit anyway?"
+        ))
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        == rfd::MessageDialogResult::Yes
 }
 
 /// Window background while the page loads. The UI is dark-only (mouve
@@ -542,6 +693,12 @@ fn open_main_window(app: &AppHandle) {
             .initialization_script(format!("window.__VARDE_GLASS__ = {};", glass))
             .build()
             .map(|w| {
+                // closing minimizes to the tray; only Exit ends the app.
+                // The elevated re-link window keeps real close semantics —
+                // it owns no tray to minimize to and must exit on close.
+                if !app.state::<State>().relink {
+                    hide_to_tray(&w);
+                }
                 #[cfg(windows)]
                 {
                     if glass {
@@ -616,7 +773,7 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
             }
         })
         .build()
-        .map(|_| ())
+        .map(|w| hide_to_tray(&w))
         .map_err(|e| e.to_string())
 }
 
@@ -1183,6 +1340,12 @@ async fn approve_link(
         )
         .await
         .map_err(ui_err)?;
+    // the sign-in completed: the pending link itself keeps the window on
+    // the setup face until approval clears it, then the facet flips to the
+    // dashboard — a stale true here would pin the window to setup forever
+    app.state::<State>()
+        .fed_active
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
@@ -1214,22 +1377,18 @@ fn stop_service() -> Result<(), String> {
     elevate_self("--service-stop")
 }
 
-/// The app's dashboard: the control-plane address comes from the service,
-/// never from the page, so it can't be swapped under the user.
+/// Raise the app's one window on the right face (same rule as the tray's
+/// "Open Varde"): the dashboard while linked, the setup/status UI otherwise.
 #[tauri::command]
-fn open_dashboard(app: AppHandle) -> Result<(), String> {
-    let url = app
-        .state::<State>()
-        .status
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|s| s.control_plane_url.clone())
-        .filter(|u| !u.is_empty());
-    match url {
-        Some(u) => open_dashboard_window(&app, &u),
-        None => Err("This PC isn't linked yet.".into()),
-    }
+fn open_varde(app: AppHandle) {
+    open_varde_window(&app);
+}
+
+/// The window's own "Exit Varde" — identical to the tray item: drains the
+/// service (confirms while hosting) and quits the app.
+#[tauri::command]
+fn exit_varde(app: AppHandle) {
+    request_exit(&app);
 }
 
 #[tauri::command]
