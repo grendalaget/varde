@@ -234,8 +234,16 @@ export default function App() {
                       </svg>
                       Advanced
                     </button>
-                    {advanced && (
-                      <label className="group ml-3 mt-1 flex cursor-pointer items-start gap-3 rounded-card border border-border/60 bg-surface-secondary/50 px-3.5 py-2.5 transition-colors hover:border-accent/40">
+                    <div
+                      className={cx(
+                        "grid transition-[grid-template-rows,opacity] duration-300 ease-vd-out motion-reduce:transition-none",
+                        advanced
+                          ? "grid-rows-[1fr] opacity-100"
+                          : "grid-rows-[0fr] opacity-0",
+                      )}
+                    >
+                      <div className="min-h-0 overflow-hidden">
+                        <label className="group ml-3 mt-1 flex cursor-pointer items-start gap-3 rounded-card border border-border/60 bg-surface-secondary/50 px-3.5 py-2.5 transition-colors hover:border-accent/40">
                         <input
                           type="checkbox"
                           className="peer sr-only"
@@ -275,8 +283,9 @@ export default function App() {
                             run your own Varde instead of varde.games.
                           </span>
                         </span>
-                      </label>
-                    )}
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
