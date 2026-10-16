@@ -15,7 +15,7 @@ import { canAdmin, useSession } from "../lib/session";
 export default function Members() {
   const { group, me } = useSession();
   const admin = canAdmin(group.role);
-  const [invite, setInvite] = useState<string | null>(null);
+  const [invite, setInvite] = useState<{ url: string; code: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const members = useLoad(
     () =>
@@ -48,7 +48,11 @@ export default function Members() {
                   },
                 );
                 if (error || !data) setErr(errorMessage(error));
-                else setInvite(`${window.location.origin}/invite/${data.code}`);
+                else
+                  setInvite({
+                    url: `${window.location.origin}/invite/${data.code}`,
+                    code: data.code,
+                  });
               }}
             >
               Invite friends
@@ -63,7 +67,16 @@ export default function Members() {
             subtitle="Valid for 7 days, up to 10 people."
           />
           <div className="p-4">
-            <CopyText text={invite} />
+            <CopyText text={invite.url} />
+            <p className="mt-3 text-sm text-muted">
+              On the Varde app?{" "}
+              <a
+                className="text-accent underline"
+                href={`varde://enroll?server=${encodeURIComponent(window.location.origin)}&code=${invite.code}`}
+              >
+                Open the app with this invite
+              </a>
+            </p>
           </div>
         </Card>
       )}

@@ -34,6 +34,22 @@ class AnchorService : Service() {
         var lastStatus: String = "stopped"
             private set
 
+        @Volatile
+        var startedAt: Long = 0L
+            private set
+
+        private const val LOG_MAX = 200
+        private val logTail = ArrayDeque<String>()
+
+        @Synchronized
+        fun addLog(s: String) {
+            while (logTail.size >= LOG_MAX) logTail.removeFirst()
+            logTail.addLast(s)
+        }
+
+        @Synchronized
+        fun logSnapshot(): List<String> = logTail.toList()
+
         fun dataDir(ctx: Context): File = File(ctx.filesDir, "varde")
         fun agentBin(ctx: Context): String =
             ctx.applicationInfo.nativeLibraryDir + "/libagent.so"
@@ -137,6 +153,7 @@ class AnchorService : Service() {
         wakeLock = (getSystemService(PowerManager::class.java))
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "varde:anchor")
             .apply { acquire() }
+        startedAt = System.currentTimeMillis()
         broadcast("running")
         Thread(::drainOutput, "agent-out").start()
         watchdog = Thread(::watch, "agent-watch").also { it.start() }
@@ -154,6 +171,7 @@ class AnchorService : Service() {
                     ?.replace("\\\\", "\\")
                     ?: line.take(80)
                 if (msg.isNotBlank()) {
+                    addLog(msg.take(120))
                     broadcast(msg.take(80))
                     startForegroundWithNotification(msg.take(80))
                 }
@@ -197,6 +215,7 @@ class AnchorService : Service() {
                 }
                 proc = np
             }
+            startedAt = System.currentTimeMillis()
             broadcast("running")
             Thread(::drainOutput, "agent-out").start()
             backoff = 5_000L
@@ -233,6 +252,7 @@ class AnchorService : Service() {
 
     private fun broadcast(status: String) {
         lastStatus = status
+        addLog(status)
         sendBroadcast(
             Intent(ACTION_STATUS)
                 .setPackage(packageName)

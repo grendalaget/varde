@@ -30,14 +30,20 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * Single screen: enroll (server + invite token) then start/stop the anchor.
+ * Two screens on one surface: the enroll form (server + invite token, plus a
+ * "Create invite token" button that hands off to the dashboard in the
+ * browser — the `varde://enroll?server&code` deeplink on the invite card
+ * carries the token back in) and, once enrolled, an anchor dashboard with
+ * live status, node stats, the agent log tail, and start/stop controls.
  * The ASCII-cloud glyph field (same WebGL shader as the varde.games landing
  * page and the Windows installer) renders behind the content and draws the
  * cairn into the mark slot; taps emit the same Glød shockwave.
  *
  * Widgets mirror the HeroUI/mouve-dark spec: pill buttons (rounded-3xl,
- * h-10, text-sm font-medium, accent on accent-foreground), pill fields
- * (rounded-field, field-background + field-border, focus → accent border).
+ * h-10, text-sm font-medium, accent on accent-foreground) with the web
+ * primary's shine — a 1px dark outer ring, an accent border inside it, a
+ * white top-inset gradient, and a real drop shadow. Fields are
+ * rounded-field, field-background + field-border, focus → accent border.
  * Typeface is bundled Inter at the same weights the site uses.
  */
 class MainActivity : Activity() {
@@ -45,7 +51,12 @@ class MainActivity : Activity() {
     private fun c(id: Int): Int = getColor(id)
 
     private val prefs by lazy { getSharedPreferences("varde", Context.MODE_PRIVATE) }
-    private lateinit var statusView: TextView
+    private var statusView: TextView? = null
+    private var statsView: LinearLayout? = null
+    private var logsView: TextView? = null
+    private var logScroll: ScrollView? = null
+    private var serverField: EditText? = null
+    private var tokenField: EditText? = null
     private lateinit var cloudView: CloudView
     private var fontRegular: Typeface? = null
     private var fontMedium: Typeface? = null
@@ -53,7 +64,8 @@ class MainActivity : Activity() {
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            statusView.text = intent.getStringExtra(AnchorService.EXTRA_STATUS)
+            statusView?.text = intent.getStringExtra(AnchorService.EXTRA_STATUS)
+            refreshLogs()
         }
     }
 
@@ -76,12 +88,38 @@ class MainActivity : Activity() {
             registerReceiver(statusReceiver, IntentFilter(AnchorService.ACTION_STATUS))
         }
         setContentView(buildView())
-        statusView.text = AnchorService.lastStatus
+        applyDeeplink(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        applyDeeplink(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        statusView?.text = AnchorService.lastStatus
+        refreshLogs()
+        loadStats()
     }
 
     override fun onDestroy() {
         unregisterReceiver(statusReceiver)
         super.onDestroy()
+    }
+
+    /** varde://enroll?server=<cp>&code=<invite> from the dashboard invite card. */
+    private fun applyDeeplink(intent: Intent?) {
+        val u = intent?.data ?: return
+        if (u.scheme != "varde" || u.host != "enroll") return
+        if (prefs.getBoolean("enrolled", false)) return
+        u.getQueryParameter("server")?.let { s ->
+            prefs.edit().putString("server", s).apply()
+            serverField?.setText(s)
+        }
+        (u.getQueryParameter("code") ?: u.getQueryParameter("token"))?.let {
+            tokenField?.setText(it)
+        }
     }
 
     /** Landing-page base gradient behind the translucent field. */
@@ -123,7 +161,7 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(pad, pad, pad, pad)
         }
         // keep content inside the status/nav bars and display cutouts
@@ -160,25 +198,27 @@ class MainActivity : Activity() {
             typeface = fontBold
             setTextColor(c(R.color.text))
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(18))
         }
         root.addView(title)
 
-        statusView = TextView(this).apply {
-            textSize = 14f
-            typeface = fontRegular
-            setTextColor(c(R.color.text_dim))
-            setPadding(0, dp(10), 0, dp(18))
-            gravity = Gravity.CENTER
-        }
-        root.addView(statusView)
-
+        val enrolled = prefs.getBoolean("enrolled", false)
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val child = if (!prefs.getBoolean("enrolled", false)) enrollForm() else controlButtons()
+        val child = if (!enrolled) enrollForm() else enrolledView()
         form.addView(child, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
         ))
-        root.addView(form, LinearLayout.LayoutParams(maxW, LinearLayout.LayoutParams.WRAP_CONTENT))
+        // the enroll form sits centered like the web sign-in card; the
+        // enrolled dashboard top-aligns so stats/logs stay visible
+        val params = LinearLayout.LayoutParams(maxW, LinearLayout.LayoutParams.WRAP_CONTENT)
+        if (!enrolled) {
+            root.gravity = Gravity.CENTER
+            params.gravity = Gravity.CENTER_HORIZONTAL
+        } else {
+            root.gravity = Gravity.CENTER_HORIZONTAL
+        }
+        root.addView(form, params)
 
         val scroll = ScrollView(this).apply {
             addView(root)
@@ -195,7 +235,31 @@ class MainActivity : Activity() {
             if (stroke != 0) setStroke(dp(1), stroke)
         }
 
-    private fun styledButton(label: String, bg: Int, fg: Int) = Button(this).apply {
+    /**
+     * The web primary button's shine: rgba(0,0,0,.4) 0 0 0 1px outer ring,
+     * a 1px accent border inside it, and stacked white insets brightest at
+     * the top edge (white .2 hard line, fading over ~8px). Elevation on the
+     * button itself carries the layered drop shadow.
+     */
+    private fun shinePill(fill: Int, border: Int): LayerDrawable {
+        val base = pill(fill, 0x66000000)
+        val inner = GradientDrawable().apply {
+            cornerRadius = dp(21).toFloat()
+            setColor(0x00000000)
+            setStroke(dp(1), border)
+        }
+        val shine = GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            orientation = GradientDrawable.Orientation.TOP_BOTTOM
+            setColors(intArrayOf(0x33FFFFFF, 0x14FFFFFF, 0x00FFFFFF))
+        }
+        return LayerDrawable(arrayOf(base, inner, shine)).apply {
+            setLayerInset(1, dp(1), dp(1), dp(1), dp(1))
+            setLayerInset(2, dp(2), dp(2), dp(2), dp(2))
+        }
+    }
+
+    private fun styledButton(label: String, bg: Int, fg: Int, border: Int) = Button(this).apply {
         text = label
         isAllCaps = false
         textSize = 14f
@@ -206,13 +270,17 @@ class MainActivity : Activity() {
             intArrayOf(c(R.color.text_dim), fg),
         ))
         val states = StateListDrawable().apply {
-            addState(intArrayOf(-android.R.attr.state_enabled), pill(c(R.color.field_bg), c(R.color.field_border)))
-            addState(intArrayOf(), pill(bg))
+            addState(
+                intArrayOf(-android.R.attr.state_enabled),
+                shinePill(c(R.color.field_bg), c(R.color.field_border)),
+            )
+            addState(intArrayOf(), shinePill(bg, border))
         }
         // opaque mask clips the ripple to the pill shape
         background = RippleDrawable(
             ColorStateList.valueOf(0x33ffffff), states, pill(-0x1000000),
         )
+        elevation = dp(6).toFloat()
         minimumHeight = 0
         minHeight = 0
         setPadding(0, 0, 0, 0)
@@ -230,9 +298,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun primaryButton(label: String) = styledButton(label, c(R.color.glod), c(R.color.accent_fg))
+    private fun primaryButton(label: String) =
+        styledButton(label, c(R.color.glod), c(R.color.accent_fg), c(R.color.glod))
 
-    private fun secondaryButton(label: String) = styledButton(label, c(R.color.surface_300), c(R.color.text))
+    private fun secondaryButton(label: String) =
+        styledButton(label, c(R.color.surface_300), c(R.color.text), c(R.color.field_border))
 
     /** HeroUI .input: rounded-field, field bg + border, accent border on focus. */
     private fun field(hintText: String) = EditText(this).apply {
@@ -259,17 +329,22 @@ class MainActivity : Activity() {
     private fun enrollForm(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val hint = TextView(this).apply {
-            text = "Create an invite in the Varde dashboard, then paste the token here. This phone will enroll as an always-on save anchor."
-            textSize = 13f
-            typeface = fontRegular
-            setTextColor(c(R.color.text_dim))
-            setPadding(0, 0, 0, dp(16))
-        }
         val server = field("Control plane URL").apply {
             setText(prefs.getString("server", "https://cp.varde.games"))
         }
+        serverField = server
         val token = field("Invite token")
+        tokenField = token
+
+        // hands off to the dashboard; the invite card links back via
+        // varde://enroll so the token lands in the field below directly
+        val create = secondaryButton("Create invite token")
+        create.setOnClickListener {
+            val s = server.text.toString().trim().removeSuffix("/")
+                .ifEmpty { "https://cp.varde.games" }
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$s/members")))
+        }
+
         val err = TextView(this).apply {
             setTextColor(c(R.color.warn))
             textSize = 12f
@@ -280,7 +355,8 @@ class MainActivity : Activity() {
 
         btn.setOnClickListener {
             val s = server.text.toString().trim()
-            val t = token.text.toString().trim()
+            // accept either the bare code or a pasted https://…/invite/<code>
+            val t = token.text.toString().trim().substringAfterLast('/')
             if (t.isEmpty()) {
                 err.text = "Paste an invite token — the device flow needs a browser."
                 return@setOnClickListener
@@ -298,7 +374,7 @@ class MainActivity : Activity() {
                             .putString("server", s)
                             .apply()
                         setContentView(buildView())
-                        statusView.text = AnchorService.lastStatus
+                        statusView?.text = AnchorService.lastStatus
                         startService(Intent(this, AnchorService::class.java))
                     } else {
                         err.text = "Enroll failed — check the token and server URL."
@@ -306,7 +382,9 @@ class MainActivity : Activity() {
                 }
             }.start()
         }
-        col.addView(hint)
+        col.addView(create, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(40),
+        ).apply { bottomMargin = dp(14) })
         col.addView(server, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { bottomMargin = dp(10) })
@@ -351,11 +429,129 @@ class MainActivity : Activity() {
         false
     }
 
-    private fun controlButtons(): View {
-        val col = LinearLayout(this).apply {
+    /** Surface bg card with a dim caps header, like the dashboard sections. */
+    private fun card(label: String): LinearLayout {
+        val v = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            background = pill(c(R.color.surface), c(R.color.surface_300), radius = 14)
+            setPadding(dp(14), dp(10), dp(14), dp(12))
         }
+        v.addView(TextView(this).apply {
+            text = label.uppercase()
+            textSize = 11f
+            typeface = fontMedium
+            setTextColor(c(R.color.text_dim))
+            letterSpacing = 0.08f
+            setPadding(0, 0, 0, dp(6))
+        })
+        return v
+    }
+
+    private fun statRow(k: String, v: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(TextView(context).apply {
+            text = k
+            textSize = 12f
+            typeface = fontRegular
+            setTextColor(c(R.color.text_dim))
+        }, LinearLayout.LayoutParams(dp(80), LinearLayout.LayoutParams.WRAP_CONTENT))
+        addView(TextView(context).apply {
+            text = v
+            textSize = 12f
+            typeface = fontRegular
+            setTextColor(c(R.color.text))
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    }
+
+    private fun enrolledView(): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val statusCard = card("Status")
+        statusView = TextView(this).apply {
+            text = AnchorService.lastStatus
+            textSize = 14f
+            typeface = fontMedium
+            setTextColor(c(R.color.text))
+        }
+        statusCard.addView(statusView)
+        col.addView(statusCard, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(12) })
+
+        val statsCard = card("Node")
+        statsView = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        statsCard.addView(statsView)
+        col.addView(statsCard, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(12) })
+
+        val logsCard = card("Logs")
+        logScroll = ScrollView(this)
+        logsView = TextView(this).apply {
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextColor(c(R.color.text_dim))
+        }
+        logScroll?.addView(logsView)
+        logsCard.addView(logScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(160),
+        ))
+        col.addView(logsCard, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(12) })
+
+        col.addView(controlButtons())
+        refreshLogs()
+        loadStats()
+        return col
+    }
+
+    private fun refreshLogs() {
+        logsView?.text = AnchorService.logSnapshot().joinToString("\n")
+        logScroll?.post { logScroll?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** `varde-agent status` + service uptime, refreshed on resume. */
+    private fun loadStats() {
+        val sv = statsView ?: return
+        Thread {
+            val rows = mutableListOf<Pair<String, String>>()
+            val started = AnchorService.startedAt
+            if (started > 0) {
+                val s = (System.currentTimeMillis() - started) / 1000
+                rows += "uptime" to if (s >= 3600) "${s / 3600}h ${s % 3600 / 60}m" else "${s / 60}m ${s % 60}s"
+            }
+            try {
+                val p = AnchorService.procBuilder(
+                    this, AnchorService.agentBin(this), "status",
+                    "--data-dir", AnchorService.dataDir(this).absolutePath,
+                ).redirectErrorStream(true).start()
+                val out = p.inputStream.bufferedReader().readText()
+                p.waitFor()
+                val labels = mapOf(
+                    "node_id" to "node",
+                    "group_id" to "group",
+                    "control_plane" to "server",
+                    "anchor" to "anchor",
+                )
+                out.lines().filter { ':' in it }.forEach { l ->
+                    val k = l.substringBefore(':')
+                    val v = l.substringAfter(':').trim()
+                    rows += (labels[k] ?: k) to v
+                }
+            } catch (_: Exception) {
+            }
+            runOnUiThread {
+                sv.removeAllViews()
+                rows.forEach { (k, v) -> sv.addView(statRow(k, v)) }
+                // uptime ticks while this view is attached; dies with it
+                sv.postDelayed({ loadStats() }, 10_000)
+            }
+        }.start()
+    }
+
+    private fun controlButtons(): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val enabled = prefs.getBoolean("enabled", false)
         val toggle = primaryButton(if (enabled) "Stop anchor" else "Start anchor")
         toggle.setOnClickListener {

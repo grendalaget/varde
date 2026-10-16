@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark platform theme so the cold-start preview window matches the
-         brand (the real window background — gradient + shader — is applied
-         in MainActivity.onCreate). -->
+    <!-- The cold-start preview window shows a baked still of the glyph
+         field's seeded first frame (field + cairn), so the app appears
+         already-rendered while the real shader initializes. -->
     <style name="VardeTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:windowBackground">@drawable/splash_frame</item>
     </style>
 </resources>
