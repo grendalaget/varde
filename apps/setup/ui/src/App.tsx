@@ -244,45 +244,45 @@ export default function App() {
                     >
                       <div className="min-h-0 overflow-hidden">
                         <label className="group ml-3 mt-1 flex cursor-pointer items-start gap-3 rounded-card border border-border/60 bg-surface-secondary/50 px-3.5 py-2.5 transition-colors hover:border-accent/40">
-                        <input
-                          type="checkbox"
-                          className="peer sr-only"
-                          checked={cp}
-                          onChange={(e) => setCp(e.target.checked)}
-                        />
-                        <span
-                          aria-hidden
-                          className={cx(
-                            "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border transition-colors",
-                            cp
-                              ? "border-accent bg-accent"
-                              : "border-field-border bg-field group-hover:border-accent/60",
-                          )}
-                        >
-                          <svg
-                            viewBox="0 0 12 12"
+                          <input
+                            type="checkbox"
+                            className="peer sr-only"
+                            checked={cp}
+                            onChange={(e) => setCp(e.target.checked)}
+                          />
+                          <span
+                            aria-hidden
                             className={cx(
-                              "h-3 w-3 text-accent-foreground transition-opacity",
-                              cp ? "opacity-100" : "opacity-0",
+                              "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border transition-colors",
+                              cp
+                                ? "border-accent bg-accent"
+                                : "border-field-border bg-field group-hover:border-accent/60",
                             )}
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
                           >
-                            <path d="M2.2 6.3 4.8 8.9 9.8 3.1" />
-                          </svg>
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-[13px] font-medium text-foreground">
-                            Host the Varde platform on this PC
+                            <svg
+                              viewBox="0 0 12 12"
+                              className={cx(
+                                "h-3 w-3 text-accent-foreground transition-opacity",
+                                cp ? "opacity-100" : "opacity-0",
+                              )}
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M2.2 6.3 4.8 8.9 9.8 3.1" />
+                            </svg>
                           </span>
-                          <span className="mt-0.5 block text-xs text-muted">
-                            Runs your network's Varde here. Only needed if you
-                            run your own Varde instead of varde.games.
+                          <span className="min-w-0">
+                            <span className="block text-[13px] font-medium text-foreground">
+                              Host the Varde platform on this PC
+                            </span>
+                            <span className="mt-0.5 block text-xs text-muted">
+                              Runs your network's Varde here. Only needed if you
+                              run your own Varde instead of varde.games.
+                            </span>
                           </span>
-                        </span>
                         </label>
                       </div>
                     </div>
@@ -294,7 +294,7 @@ export default function App() {
                   checked={deleteData}
                   onChange={setDeleteData}
                   title="Also delete Varde's data"
-                  desc="Saves and this machine's identity, in %ProgramData%\Varde"
+                  desc="Saves, this machine's identity, and the local platform's data — %ProgramData%\Varde and %ProgramData%\VardeCP"
                 />
               )}
             </div>
@@ -305,11 +305,7 @@ export default function App() {
                 className="w-full"
                 onClick={begin}
               >
-                {isUninstall
-                  ? "Uninstall"
-                  : upgrading
-                    ? "Update"
-                    : "Install"}
+                {isUninstall ? "Uninstall" : upgrading ? "Update" : "Install"}
               </Button>
               <p className="mt-3 text-center text-xs text-muted">
                 {isUninstall
@@ -359,8 +355,8 @@ export default function App() {
             </h1>
             <WarnNote>
               {confirmUrl} isn't encrypted (http://). Anyone on the network
-              between this PC and Varde could read or change what it sends.
-              Use it only for a Varde on your own network.
+              between this PC and Varde could read or change what it sends. Use
+              it only for a Varde on your own network.
             </WarnNote>
             <div className="mt-5 flex gap-2">
               <Button variant="primary" onClick={() => answer(true)}>

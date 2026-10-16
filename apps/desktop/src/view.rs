@@ -198,6 +198,41 @@ pub fn ago(ms: i64) -> String {
     }
 }
 
+/// Which face the one Varde window shows. The two webviews stay isolated
+/// (the remote dashboard gets no IPC bridge) but only one is ever visible,
+/// so the user sees a single window whose content follows the PC's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facet {
+    /// Local UI: linking, federated sign-in, this-PC status, service-down.
+    Setup,
+    /// The control-plane dashboard — the app's real surface once linked.
+    Dashboard,
+}
+
+/// The face "Open Varde" brings up. `flow_active` = a federated sign-in is
+/// mid-flight (its confirm/group cards live in the local UI), `relink` =
+/// the elevated re-link window, which is link UI only and never swaps.
+pub fn facet(status: Option<&pb::Status>, flow_active: bool, relink: bool) -> Facet {
+    if relink || flow_active {
+        return Facet::Setup;
+    }
+    let Some(s) = status else {
+        // service unreachable: the setup face offers "Start Varde"
+        return Facet::Setup;
+    };
+    if s.link.is_some() {
+        // an approval code is on screen — even during a re-link, where the
+        // old link still reports a linked state
+        return Facet::Setup;
+    }
+    match s.state() {
+        pb::State::Connecting | pb::State::Online if !s.control_plane_url.is_empty() => {
+            Facet::Dashboard
+        }
+        _ => Facet::Setup,
+    }
+}
+
 /// Status as the link window sees it.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct UiStatus {
@@ -491,6 +526,52 @@ mod tests {
             l.deep_link.as_deref(),
             Some("varde://auth/callback?token=t.jwt")
         );
+    }
+
+    #[test]
+    fn facet_picks_the_one_window() {
+        // service down and every unlinked/offline state -> the setup face
+        assert_eq!(facet(None, false, false), Facet::Setup);
+        for st in [
+            pb::State::NotLinked,
+            pb::State::Linking,
+            pb::State::Offline,
+            pb::State::ShuttingDown,
+        ] {
+            assert_eq!(facet(Some(&status(st)), false, false), Facet::Setup);
+        }
+        // linked and reachable -> the dashboard is the window's content
+        assert_eq!(
+            facet(Some(&status(pb::State::Online)), false, false),
+            Facet::Dashboard
+        );
+        assert_eq!(
+            facet(Some(&status(pb::State::Connecting)), false, false),
+            Facet::Dashboard
+        );
+        // a pending approval code keeps the setup face — also mid re-link,
+        // where the old link still reads online
+        let mut s = status(pb::State::Online);
+        s.link = Some(pb::Link {
+            user_code: "WXYZ-1234".into(),
+            ..Default::default()
+        });
+        assert_eq!(facet(Some(&s), false, false), Facet::Setup);
+        // a federated sign-in on its confirm/group card, and the elevated
+        // re-link window, never swap to the dashboard
+        assert_eq!(
+            facet(Some(&status(pb::State::Online)), true, false),
+            Facet::Setup
+        );
+        assert_eq!(
+            facet(Some(&status(pb::State::Online)), false, true),
+            Facet::Setup
+        );
+        // a linked state with no control-plane address can't show the
+        // dashboard
+        let mut s2 = status(pb::State::Connecting);
+        s2.control_plane_url = String::new();
+        assert_eq!(facet(Some(&s2), false, false), Facet::Setup);
     }
 
     #[test]

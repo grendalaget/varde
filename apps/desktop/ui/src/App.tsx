@@ -272,9 +272,9 @@ export default function App() {
     return "noagent";
   }, [status, seen, graceDone, started, forceForm, formState, fed]);
 
-  // auto-close the "Linked" view on the transition INTO online - status
+  // when the link lands, the window morphs into the dashboard - status
   // still says "online" while a re-link is being set up (and after Cancel),
-  // so arming on any done+online render would self-close under a pending
+  // so arming on any done+online render would swap under a pending
   // link; keying on a code->done view transition misses because approval
   // emits connecting (LINKED) before online
   const prevState = useRef<string | undefined>(undefined);
@@ -288,8 +288,8 @@ export default function App() {
         closeTimer.current === undefined
       ) {
         closeTimer.current = window.setTimeout(
-          () => void invoke("close_window"),
-          4000,
+          () => void invoke("open_varde"),
+          1500,
         );
       }
     } else if (closeTimer.current !== undefined) {
@@ -753,12 +753,12 @@ export default function App() {
                 variant="primary"
                 onClick={() => {
                   setLinkedError(null);
-                  void invoke("open_dashboard").catch((e) =>
+                  void invoke("open_varde").catch((e) =>
                     setLinkedError(errorParts(e)),
                   );
                 }}
               >
-                <DashboardIcon /> Open dashboard
+                <DashboardIcon /> Open Varde
               </Button>
               <Button
                 variant="ghost"
@@ -768,18 +768,11 @@ export default function App() {
               >
                 <OpenIcon /> Open in browser
               </Button>
-              {/* stopping while hosting would leave the game running unmanaged */}
-              {!status.hosting && (
-                <Button
-                  busy={busy["svc-stop"]}
-                  onClick={() =>
-                    void service("stop_service", "svc-stop", setLinkedError)
-                  }
-                >
-                  <PowerIcon />{" "}
-                  {busy["svc-stop"] ? "Stopping..." : "Stop Varde"}
-                </Button>
-              )}
+              {/* same as the tray's Exit: drains the service and quits the
+                  app; the app side confirms first while this PC is hosting */}
+              <Button onClick={() => void invoke("exit_varde")}>
+                <PowerIcon /> Exit Varde…
+              </Button>
               <Button
                 variant="ghost"
                 onClick={() => void invoke("close_window")}
