@@ -835,8 +835,10 @@ fn fresh_handoff_token(app: &AppHandle) -> Option<String> {
 /// URL to point the dashboard at — `cp`, plus #fed_token= when a fresh
 /// hosted sign-in is waiting: the CP web app exchanges the fragment for
 /// its own session cookie on load, so the window opens signed in as the
-/// same account the app just linked with.
-fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
+/// same account the app just linked with. The bool says whether that
+/// handoff was attached — the only reason to ever re-navigate an
+/// already-open dashboard.
+fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
     let mut url = tauri::Url::parse(cp).ok()?;
     // The token only ever goes to the hosted control plane — its audience
     // is that CP, and anywhere else a web app could be made to POST it
@@ -844,15 +846,17 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
     // fragments in the configured address never propagate either: only
     // the handoff carries one.
     url.set_fragment(None);
+    let mut handoff = false;
     if tauri::Url::parse(agent_ipc::DEFAULT_CP_URL)
         .map(|hosted| hosted.origin() == url.origin())
         .unwrap_or(false)
     {
         if let Some(token) = fresh_handoff_token(app) {
             url.set_fragment(Some(&format!("fed_token={token}")));
+            handoff = true;
         }
     }
-    Some(url)
+    Some((url, handoff))
 }
 
 /// The dashboard lives in the app, not the browser: a plain external
@@ -866,13 +870,13 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
             let _ = m.hide();
         }
     };
-    let parsed =
+    let (parsed, handoff) =
         dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
     if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
         // a re-link may have moved the group to another control plane or
         // carried a fresh sign-in token — same origin otherwise keeps
         // the user's place in the dashboard
-        if parsed.fragment().is_some()
+        if handoff
             || w.url()
                 .map(|u| u.origin() != parsed.origin())
                 .unwrap_or(true)
