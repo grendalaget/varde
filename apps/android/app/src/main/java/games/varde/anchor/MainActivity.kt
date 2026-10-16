@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -24,8 +25,11 @@ import android.widget.TextView
 /**
  * Single screen: enroll (server + invite token) then start/stop the anchor.
  * Deliberately plain — this is a set-and-forget box-in-a-drawer app.
+ * Styled with the mouve-dark palette (see res/values/colors.xml).
  */
 class MainActivity : Activity() {
+
+    private fun c(id: Int): Int = getColor(id)
 
     private val prefs by lazy { getSharedPreferences("varde", Context.MODE_PRIVATE) }
     private lateinit var statusView: TextView
@@ -38,6 +42,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // drop the platform ActionBar — it overlays the content in this
+        // theme and we draw our own branded header
+        requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
@@ -61,15 +68,35 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
+            setBackgroundColor(c(R.color.bg))
         }
 
+        val mark = ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            val s = (32 * resources.displayMetrics.density).toInt()
+            layoutParams = LinearLayout.LayoutParams(s, s)
+        }
         val title = TextView(this).apply {
             text = "Varde Anchor"
             textSize = 24f
+            setTextColor(c(R.color.text))
+            gravity = Gravity.CENTER_VERTICAL
         }
-        root.addView(title)
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(mark)
+            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = (12 * resources.displayMetrics.density).toInt()
+            })
+        }
+        root.addView(header)
 
-        statusView = TextView(this).apply { textSize = 14f; setPadding(0, pad / 2, 0, pad / 2) }
+        statusView = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, pad / 2, 0, pad / 2)
+            setTextColor(c(R.color.text_dim))
+        }
         root.addView(statusView)
 
         if (!prefs.getBoolean("enrolled", false)) {
@@ -77,27 +104,46 @@ class MainActivity : Activity() {
         } else {
             root.addView(controlButtons())
         }
-        return ScrollView(this).apply { addView(root) }
+        return ScrollView(this).apply {
+            addView(root)
+            setBackgroundColor(c(R.color.bg))
+        }
+    }
+
+    private fun primaryButton(label: String) = Button(this).apply {
+        text = label
+        setTextColor(c(R.color.bg))
+        backgroundTintList = ColorStateList.valueOf(c(R.color.glod))
+    }
+
+    private fun secondaryButton(label: String) = Button(this).apply {
+        text = label
+        setTextColor(c(R.color.text))
+        backgroundTintList = ColorStateList.valueOf(c(R.color.surface))
+    }
+
+    private fun field(hintText: String) = EditText(this).apply {
+        hint = hintText
+        setSingleLine()
+        setTextColor(c(R.color.text))
+        setHintTextColor(c(R.color.text_dim))
+        backgroundTintList = ColorStateList.valueOf(c(R.color.glod))
     }
 
     private fun enrollForm(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val server = EditText(this).apply {
-            hint = "Control plane URL"
+        val server = field("Control plane URL").apply {
             setText(prefs.getString("server", "https://cp.varde.games"))
-            setSingleLine()
         }
-        val token = EditText(this).apply {
-            hint = "Invite token"
-            setSingleLine()
-        }
+        val token = field("Invite token")
         val hint = TextView(this).apply {
             text = "Create an invite in the Varde dashboard, then paste the token here. This phone will enroll as an always-on save anchor."
             setPadding(0, 8, 0, 8)
+            setTextColor(c(R.color.text_dim))
         }
-        val err = TextView(this).apply { setTextColor(Color.RED); textSize = 12f }
-        val btn = Button(this).apply { text = "Enroll as anchor" }
+        val err = TextView(this).apply { setTextColor(c(R.color.warn)); textSize = 12f }
+        val btn = primaryButton("Enroll as anchor")
 
         btn.setOnClickListener {
             val s = server.text.toString().trim()
@@ -172,9 +218,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
         val enabled = prefs.getBoolean("enabled", false)
-        val toggle = Button(this).apply {
-            text = if (enabled) "Stop anchor" else "Start anchor"
-        }
+        val toggle = primaryButton(if (enabled) "Stop anchor" else "Start anchor")
         toggle.setOnClickListener {
             val now = !prefs.getBoolean("enabled", false)
             prefs.edit().putBoolean("enabled", now).apply()
@@ -191,7 +235,7 @@ class MainActivity : Activity() {
         // Doze is the real anchor-killer; nudge the user to exempt the app.
         val pm = getSystemService(PowerManager::class.java)
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            val bat = Button(this).apply { text = "Disable battery optimization" }
+            val bat = secondaryButton("Disable battery optimization")
             bat.setOnClickListener {
                 startActivity(
                     Intent(

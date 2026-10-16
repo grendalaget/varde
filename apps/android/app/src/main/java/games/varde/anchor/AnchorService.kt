@@ -90,7 +90,7 @@ class AnchorService : Service() {
         val n = Notification.Builder(this, CHANNEL)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(status)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_stat_anchor)
             .setContentIntent(open)
             .setOngoing(true)
             .build()

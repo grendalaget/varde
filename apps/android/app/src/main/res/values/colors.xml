@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mouve-dark palette, matching apps/web (index.css): warm-tinted dark
+     surfaces, Glød accent only for the active/primary elements. -->
+<resources>
+    <color name="bg">#110C0A</color>
+    <color name="surface">#231E1C</color>
+    <color name="text">#FCFCFC</color>
+    <color name="text_dim">#958D8B</color>
+    <color name="glod">#FF5B1F</color>
+    <color name="warn">#F7B750</color>
+</resources>
