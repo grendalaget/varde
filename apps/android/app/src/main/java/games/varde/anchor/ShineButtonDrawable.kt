@@ -11,12 +11,12 @@ import android.graphics.Shader
 import android.graphics.drawable.Drawable
 
 /**
- * The web primary button's border shine, ported edge-for-edge: a 1px
- * rgba(0,0,0,.4) ring on the outer edge, a 1px accent border inside it,
- * then white insets that hug the TOP edge only — a hard 1px line at
- * white .2, a ~3px soft sliver at white .14, and a faint ~12px glow at
- * white .1 (the measured inset stack on varde.games). No face gradient:
- * the fill below the border stays flat.
+ * The web primary button's border shine, ported from measured pixels:
+ * a ~1dp rgba(0,0,0,.4) ring on the outer edge, a ~1dp accent border
+ * flush inside it, then white insets hugging the TOP edge only — a hard
+ * ~1dp line at white .34 over the accent, a ~9dp soft fade white
+ * .24→0 (measured 255,147,108 → 255,102,46 over ~9 CSS px on
+ * varde.games). No face gradient: the fill below stays flat.
  */
 class ShineButtonDrawable(
     private val fill: Int,
@@ -48,49 +48,44 @@ class ShineButtonDrawable(
         val h = bounds.height().toFloat()
         if (w <= 0f || h <= 0f) return
 
-        // 1) dark outer ring at the very edge
+        // 1) dark outer ring, ~1dp on the outer edge (web: rgba(0,0,0,.4) 1px)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dpPx(1f)
         paint.color = 0x66000000
         canvas.drawPath(pillPath(ring(dpPx(0.5f))), paint)
 
-        // 2) accent border inside the ring
-        paint.color = border
-        canvas.drawPath(pillPath(ring(dpPx(1.5f))), paint)
-
-        // 3) flat fill inside the border
+        // 2) flat fill pulled slightly INTO the border's inner edge — the
+        // stroke drawn over it next blends flush, with no dark seam
+        // between border and fill (the web layers them border-box)
         paint.style = Paint.Style.FILL
         paint.color = fill
-        canvas.drawPath(pillPath(ring(dpPx(2.5f))), paint)
+        canvas.drawPath(pillPath(ring(dpPx(1.5f) - 1f)), paint)
 
-        // 4) white insets, top edge only — each clipped band stroked along
-        // the pill's top arc so the highlight follows the rounded corners
+        // 3) accent border on top — centered at 1dp inset, spans 0.5–1.5dp,
+        // inner half antialiases onto the fill
         paint.style = Paint.Style.STROKE
-        val inner = ring(dpPx(2.5f))
-        val et = inner.top // the border's inner edge — the shine hugs it
+        paint.color = border
+        canvas.drawPath(pillPath(ring(dpPx(1f))), paint)
+
+        // 4) hard top line, ~1dp at measured white .34 over the accent
+        val inner = ring(dpPx(1.5f) - 1f)
+        val et = inner.top // the fill's top edge — the shine hugs it
         canvas.save()
         canvas.clipRect(bounds.left.toFloat(), et, bounds.right.toFloat(), et + dpPx(1f))
         paint.strokeWidth = dpPx(1f)
-        paint.color = 0x33FFFFFF
+        paint.color = 0x57FFFFFF
         canvas.drawPath(pillPath(inner), paint)
         canvas.restore()
 
-        canvas.save()
-        canvas.clipRect(bounds.left.toFloat(), et + dpPx(1f), bounds.right.toFloat(), et + dpPx(4.5f))
-        paint.strokeWidth = dpPx(3f)
-        paint.color = 0x24FFFFFF
-        canvas.drawPath(pillPath(inner), paint)
-        canvas.restore()
-
-        // 5) faint top glow confined to ~12dp under the edge
+        // 5) soft top fade, ~9dp at measured white .24→0
         canvas.save()
         canvas.clipPath(pillPath(inner))
         paint.style = Paint.Style.FILL
         paint.shader = LinearGradient(
-            0f, et, 0f, et + dpPx(12f),
-            0x1AFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP,
+            0f, et, 0f, et + dpPx(9f),
+            0x40FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP,
         )
-        canvas.drawRect(bounds.left.toFloat(), et, bounds.right.toFloat(), et + dpPx(12f), paint)
+        canvas.drawRect(bounds.left.toFloat(), et, bounds.right.toFloat(), et + dpPx(9f), paint)
         paint.shader = null
         canvas.restore()
     }
