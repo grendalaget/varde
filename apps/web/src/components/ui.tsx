@@ -1,4 +1,5 @@
 import { Button as HButton } from "@heroui/react";
+import { StateCairn } from "./Logo";
 import {
   useEffect,
   useRef,
@@ -100,18 +101,21 @@ export function Badge({
   children,
   title,
   className,
+  slab = false,
 }: {
   tone?: Tone;
   children: ReactNode;
   title?: string;
   className?: string;
+  /** Stone-slab outline instead of a generic pill. */
+  slab?: boolean;
 }) {
   const t: Record<Tone, string> = {
-    green: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
-    warn: "bg-warn/10 text-warn ring-warn/30",
-    red: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
-    blue: "bg-sky-500/10 text-sky-300 ring-sky-500/30",
-    violet: "bg-violet-500/10 text-violet-300 ring-violet-500/30",
+    green: "bg-success/10 text-success ring-success/30",
+    warn: "bg-warning/10 text-warning ring-warning/30",
+    red: "bg-danger/10 text-danger ring-danger/30",
+    blue: "bg-info/10 text-info ring-info/30",
+    violet: "bg-violet/10 text-violet ring-violet/30",
     neutral: "bg-default/60 text-muted ring-border",
     host: "bg-glod/10 text-foreground ring-glod/40",
   };
@@ -119,7 +123,8 @@ export function Badge({
     <span
       title={title}
       className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
+        "inline-flex items-center gap-1 whitespace-nowrap px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
+        slab ? "rounded-[9px_12px_8px_11px]" : "rounded-full",
         t[tone],
         className,
       )}
@@ -131,11 +136,11 @@ export function Badge({
 
 export function Dot({ tone }: { tone: Tone }) {
   const t: Record<Tone, string> = {
-    green: "bg-emerald-400",
-    warn: "bg-warn",
-    red: "bg-rose-400",
-    blue: "bg-sky-400",
-    violet: "bg-violet-400",
+    green: "bg-success",
+    warn: "bg-warning",
+    red: "bg-danger",
+    blue: "bg-info",
+    violet: "bg-violet",
     neutral: "bg-muted",
     host: "bg-glod",
   };
@@ -162,8 +167,8 @@ const SERVER_STATE: Record<string, { label: string; tone: Tone }> = {
 export function ServerStateBadge({ state }: { state: string }) {
   const s = SERVER_STATE[state] ?? { label: state, tone: "neutral" as Tone };
   return (
-    <Badge tone={s.tone}>
-      <Dot tone={s.tone} />
+    <Badge tone={s.tone} slab>
+      <StateCairn state={state} />
       {s.label}
     </Badge>
   );
