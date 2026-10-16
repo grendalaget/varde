@@ -8,6 +8,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -65,10 +69,23 @@ class MainActivity : Activity() {
 
     private fun buildView(): View {
         val pad = (24 * resources.displayMetrics.density).toInt()
+        val maxW = (360 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
             setPadding(pad, pad, pad, pad)
             setBackgroundColor(c(R.color.bg))
+        }
+        // push content inside the display cutouts — status bar, nav bar,
+        // and edge notches. Base padding stays on top of the insets.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            v.setPadding(
+                pad + insets.systemWindowInsetLeft,
+                pad + insets.systemWindowInsetTop,
+                pad + insets.systemWindowInsetRight,
+                pad + insets.systemWindowInsetBottom,
+            )
+            insets
         }
 
         val mark = ImageView(this).apply {
@@ -86,41 +103,69 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(mark)
-            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            addView(title, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
                 marginStart = (12 * resources.displayMetrics.density).toInt()
             })
         }
-        root.addView(header)
+        root.addView(header, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
 
         statusView = TextView(this).apply {
             textSize = 14f
             setPadding(0, pad / 2, 0, pad / 2)
             setTextColor(c(R.color.text_dim))
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
         }
         root.addView(statusView)
 
-        if (!prefs.getBoolean("enrolled", false)) {
-            root.addView(enrollForm())
-        } else {
-            root.addView(controlButtons())
-        }
+        // keep the form at web-form width and centred, like the dashboard's
+        // narrow cards, instead of spanning an edge-to-edge column
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val child = if (!prefs.getBoolean("enrolled", false)) enrollForm() else controlButtons()
+        form.addView(child, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
+        root.addView(form, LinearLayout.LayoutParams(maxW, LinearLayout.LayoutParams.WRAP_CONTENT))
+
         return ScrollView(this).apply {
             addView(root)
+            isFillViewport = true
             setBackgroundColor(c(R.color.bg))
         }
     }
 
-    private fun primaryButton(label: String) = Button(this).apply {
-        text = label
-        setTextColor(c(R.color.bg))
-        backgroundTintList = ColorStateList.valueOf(c(R.color.glod))
+    private fun pill(color: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = 32 * resources.displayMetrics.density
     }
 
-    private fun secondaryButton(label: String) = Button(this).apply {
+    private fun styledButton(label: String, bg: Int, fg: Int) = Button(this).apply {
         text = label
-        setTextColor(c(R.color.text))
-        backgroundTintList = ColorStateList.valueOf(c(R.color.surface))
+        isAllCaps = false
+        textSize = 15f
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        // disabled state: muted surface + dim text so it visibly deactivates
+        setTextColor(ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(c(R.color.text_dim), fg),
+        ))
+        val states = StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), pill(c(R.color.surface)))
+            addState(intArrayOf(), pill(bg))
+        }
+        background = RippleDrawable(ColorStateList.valueOf(0x33ffffff), states, null)
+        minHeight = (48 * resources.displayMetrics.density).toInt()
     }
+
+    private fun primaryButton(label: String) = styledButton(label, c(R.color.glod), c(R.color.bg))
+
+    private fun secondaryButton(label: String) = styledButton(label, c(R.color.surface), c(R.color.text))
 
     private fun field(hintText: String) = EditText(this).apply {
         hint = hintText
@@ -128,6 +173,10 @@ class MainActivity : Activity() {
         setTextColor(c(R.color.text))
         setHintTextColor(c(R.color.text_dim))
         backgroundTintList = ColorStateList.valueOf(c(R.color.glod))
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        )
     }
 
     private fun enrollForm(): View {
@@ -176,7 +225,10 @@ class MainActivity : Activity() {
         col.addView(hint)
         col.addView(server)
         col.addView(token)
-        col.addView(btn)
+        col.addView(btn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
         col.addView(err)
         return col
     }
@@ -230,7 +282,10 @@ class MainActivity : Activity() {
                 toggle.text = "Start anchor"
             }
         }
-        col.addView(toggle)
+        col.addView(toggle, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
 
         // Doze is the real anchor-killer; nudge the user to exempt the app.
         val pm = getSystemService(PowerManager::class.java)
@@ -244,7 +299,10 @@ class MainActivity : Activity() {
                     )
                 )
             }
-            col.addView(bat)
+            col.addView(bat, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ))
         }
         return col
     }
