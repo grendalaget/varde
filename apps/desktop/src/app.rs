@@ -849,8 +849,19 @@ fn fresh_handoff_token(app: &AppHandle) -> Option<String> {
 /// same account the app just linked with.
 fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
     let mut url = tauri::Url::parse(cp).ok()?;
-    if let Some(token) = fresh_handoff_token(app) {
-        url.set_fragment(Some(&format!("fed_token={token}")));
+    // The token only ever goes to the hosted control plane — its audience
+    // is that CP, and anywhere else a web app could be made to POST it
+    // back to a server that replays it against the real one. Stray
+    // fragments in the configured address never propagate either: only
+    // the handoff carries one.
+    url.set_fragment(None);
+    if tauri::Url::parse(agent_ipc::DEFAULT_CP_URL)
+        .map(|hosted| hosted.origin() == url.origin())
+        .unwrap_or(false)
+    {
+        if let Some(token) = fresh_handoff_token(app) {
+            url.set_fragment(Some(&format!("fed_token={token}")));
+        }
     }
     Some(url)
 }
@@ -1361,6 +1372,9 @@ async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
     app.state::<State>()
         .fed_seq
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // and any token still waiting to authenticate the dashboard: a new
+    // sign-in must not land on the previous account's session
+    *app.state::<State>().fed_handoff.lock().unwrap() = None;
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
@@ -1405,6 +1419,8 @@ async fn cancel_varde_login(app: AppHandle) -> Result<(), String> {
         .store(false, std::sync::atomic::Ordering::SeqCst);
     *app.state::<State>().fed.lock().unwrap() = None;
     *app.state::<State>().fed_last.lock().unwrap() = None;
+    // a cancelled sign-in must not authenticate the dashboard either
+    *app.state::<State>().fed_handoff.lock().unwrap() = None;
     // invalidate any exchange still in flight so it can't reappear
     app.state::<State>()
         .fed_seq
