@@ -255,6 +255,10 @@ func (s *Server) ApproveDeviceLink(ctx context.Context, req gen.ApproveDeviceLin
 	if err := s.checkNodeLimit(ctx, req.Body.GroupId); err != nil {
 		return nil, err
 	}
+	var anchor int64
+	if req.Body.Anchor != nil && *req.Body.Anchor {
+		anchor = 1
+	}
 	nodeID := ids.Must(ids.Node)
 	d.State = "approved"
 	d.GroupID = &req.Body.GroupId
@@ -267,7 +271,7 @@ func (s *Server) ApproveDeviceLink(ctx context.Context, req gen.ApproveDeviceLin
 	n := &store.Node{
 		ID: nodeID, GroupID: req.Body.GroupId, Name: req.Body.Name,
 		PublicKey: d.PublicKey, OS: d.OS, Arch: d.Arch, AgentVersion: d.AgentVersion,
-		HostingEnabled: 1, AdminState: "active", CreatedAt: now,
+		HostingEnabled: 1 - anchor, Anchor: anchor, AdminState: "active", CreatedAt: now,
 		OwnerUserID: d.ApprovedBy,
 	}
 	if err := s.Store.CreateNode(ctx, n); err != nil {

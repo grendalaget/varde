@@ -28,21 +28,33 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
 
 /**
- * Two screens on one surface: the enroll form (server + invite token, plus a
- * "Create invite token" button that hands off to the dashboard in the
- * browser — the `varde://enroll?server&code` deeplink on the invite card
- * carries the token back in) and, once enrolled, an anchor dashboard with
- * live status, node stats, the agent log tail, and start/stop controls.
+ * Two screens on one surface: enrollment and, once enrolled, an anchor
+ * dashboard with live status, node stats, the agent log tail, and
+ * start/stop controls.
+ *
+ * Enrollment mirrors the Windows desktop flow: "Sign in with Varde" spawns
+ * the agent's device-link enroll (it registers a pending link and polls for
+ * approval) and opens varde.games/auth/desktop in the browser; the site
+ * signs the user in and bounces back through `varde://auth/callback?token`.
+ * We exchange that token for a CP session (POST /v1/auth/external), let the
+ * user confirm the identity, pick or create their group, then approve the
+ * device link (POST /v1/device-links/approve, anchor=true) — the agent's
+ * poll completes and writes config.toml. A "Custom server or invite token"
+ * toggle reveals the manual server+token form for self-hosted control
+ * planes (the sub-1% path; `varde://enroll?server&code` still prefills it).
  * The ASCII-cloud glyph field (same WebGL shader as the varde.games landing
  * page and the Windows installer) renders behind the content and draws the
  * cairn into the mark slot; taps emit the same Glød shockwave.
  *
  * Widgets mirror the HeroUI/mouve-dark spec: pill buttons (rounded-3xl,
  * h-10, text-sm font-medium, accent on accent-foreground) with the web
- * primary's shine — a 1px dark outer ring, an accent border inside it, a
- * white top-inset gradient, and a real drop shadow. Fields are
+ * primary's shine — a 1px dark outer ring, an accent border inside it, and
+ * white insets hugging the top edge only, plus a real drop shadow. Fields are
  * rounded-field, field-background + field-border, focus → accent border.
  * Typeface is bundled Inter at the same weights the site uses.
  */
@@ -57,6 +69,18 @@ class MainActivity : Activity() {
     private var logScroll: ScrollView? = null
     private var serverField: EditText? = null
     private var tokenField: EditText? = null
+    private var formCol: LinearLayout? = null
+    // federated sign-in state machine (idle → waiting → busy → confirm|pick → enrolled)
+    private var stage = "idle"
+    private var stageDetail = ""
+    private var errMsg = ""
+    private var advanced = false
+    private var enrollProc: Process? = null
+    private var deviceCode: String? = null
+    private var fedSession = ""
+    private var fedName = ""
+    private var fedEmail = ""
+    private var fedGroups: List<Pair<String, String>> = emptyList()
     private lateinit var cloudView: CloudView
     private var fontRegular: Typeface? = null
     private var fontMedium: Typeface? = null
@@ -108,17 +132,28 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    /** varde://enroll?server=<cp>&code=<invite> from the dashboard invite card. */
+    /** Routes varde:// deeplinks: enroll-token prefill and the auth callback. */
     private fun applyDeeplink(intent: Intent?) {
         val u = intent?.data ?: return
-        if (u.scheme != "varde" || u.host != "enroll") return
-        if (prefs.getBoolean("enrolled", false)) return
-        u.getQueryParameter("server")?.let { s ->
-            prefs.edit().putString("server", s).apply()
-            serverField?.setText(s)
-        }
-        (u.getQueryParameter("code") ?: u.getQueryParameter("token"))?.let {
-            tokenField?.setText(it)
+        if (u.scheme != "varde" || prefs.getBoolean("enrolled", false)) return
+        when (u.host) {
+            // varde://enroll?server=<cp>&code=<invite> — prefill the manual form
+            "enroll" -> {
+                advanced = true
+                u.getQueryParameter("server")?.let { s ->
+                    prefs.edit().putString("server", s).apply()
+                    serverField?.setText(s)
+                }
+                (u.getQueryParameter("code") ?: u.getQueryParameter("token"))?.let {
+                    tokenField?.setText(it)
+                }
+                renderStage()
+            }
+            // varde://auth/callback?token=<federation jwt> — the site's
+            // sign-in page sends users back here, like the desktop app
+            "auth" -> if (u.path == "/callback") {
+                u.getQueryParameter("token")?.let { fedExchange(it) }
+            }
         }
     }
 
@@ -204,7 +239,8 @@ class MainActivity : Activity() {
 
         val enrolled = prefs.getBoolean("enrolled", false)
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val child = if (!enrolled) enrollForm() else enrolledView()
+        formCol = form
+        val child = if (!enrolled) stageView() else enrolledView()
         form.addView(child, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -235,29 +271,8 @@ class MainActivity : Activity() {
             if (stroke != 0) setStroke(dp(1), stroke)
         }
 
-    /**
-     * The web primary button's shine: rgba(0,0,0,.4) 0 0 0 1px outer ring,
-     * a 1px accent border inside it, and stacked white insets brightest at
-     * the top edge (white .2 hard line, fading over ~8px). Elevation on the
-     * button itself carries the layered drop shadow.
-     */
-    private fun shinePill(fill: Int, border: Int): LayerDrawable {
-        val base = pill(fill, 0x66000000)
-        val inner = GradientDrawable().apply {
-            cornerRadius = dp(21).toFloat()
-            setColor(0x00000000)
-            setStroke(dp(1), border)
-        }
-        val shine = GradientDrawable().apply {
-            cornerRadius = dp(20).toFloat()
-            orientation = GradientDrawable.Orientation.TOP_BOTTOM
-            setColors(intArrayOf(0x33FFFFFF, 0x14FFFFFF, 0x00FFFFFF))
-        }
-        return LayerDrawable(arrayOf(base, inner, shine)).apply {
-            setLayerInset(1, dp(1), dp(1), dp(1), dp(1))
-            setLayerInset(2, dp(2), dp(2), dp(2), dp(2))
-        }
-    }
+    private fun shinePill(fill: Int, border: Int) =
+        ShineButtonDrawable(fill, border, dp(22).toFloat(), resources.displayMetrics.density)
 
     private fun styledButton(label: String, bg: Int, fg: Int, border: Int) = Button(this).apply {
         text = label
@@ -326,8 +341,75 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun enrollForm(): View {
+    // ---------- federated enroll (mirrors the desktop app flow) ----------
+
+    private val hostedCp = "https://cp.varde.games"
+    private val signInUrl = "https://varde.games/auth/desktop"
+
+    private fun renderStage() {
+        val col = formCol ?: return
+        col.removeAllViews()
+        col.addView(stageView(), LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
+    }
+
+    private fun stageView(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        when (stage) {
+            "waiting" -> {
+                val btn = primaryButton("Sign in with Varde")
+                btn.setOnClickListener { startFedSignIn() }
+                col.addView(btn, btnLp(dp(12)))
+                col.addView(statusLine("Finish signing in in your browser — we'll pick back up here."))
+                col.addView(cancelLink())
+            }
+            "busy" -> {
+                col.addView(statusLine(stageDetail))
+                col.addView(cancelLink())
+            }
+            "confirm" -> {
+                col.addView(heading("Link this device to your Varde account?"))
+                val who = listOf(fedName, fedEmail).filter { it.isNotEmpty() }.joinToString(" · ")
+                if (who.isNotEmpty()) col.addView(subLine(who))
+                val btn = primaryButton("Continue")
+                btn.setOnClickListener { fedGroups() }
+                col.addView(btn, btnLp(dp(8)))
+                col.addView(cancelLink())
+            }
+            "pick" -> {
+                col.addView(heading("Choose a group"))
+                for ((id, name) in fedGroups) {
+                    val b = secondaryButton(name)
+                    b.setOnClickListener { fedApprove(id) }
+                    col.addView(b, btnLp(dp(10)))
+                }
+                col.addView(cancelLink())
+            }
+            else -> buildEnrollForm(col)
+        }
+        return col
+    }
+
+    private fun buildEnrollForm(col: LinearLayout) {
+        val signIn = primaryButton("Sign in with Varde")
+        signIn.setOnClickListener { startFedSignIn() }
+        col.addView(signIn, btnLp(0))
+        if (errMsg.isNotEmpty()) col.addView(errLine())
+
+        // sub-1% path: self-hosted CP or a manually minted invite token —
+        // kept small so the hosted flow is the obvious choice
+        col.addView(TextView(this).apply {
+            text = if (advanced) "Hide custom server options" else "Custom server or invite token"
+            textSize = 12f
+            typeface = fontRegular
+            setTextColor(c(R.color.text_dim))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+            setOnClickListener { advanced = !advanced; renderStage() }
+        })
+        if (!advanced) return
 
         val server = field("Control plane URL").apply {
             setText(prefs.getString("server", "https://cp.varde.games"))
@@ -335,67 +417,328 @@ class MainActivity : Activity() {
         serverField = server
         val token = field("Invite token")
         tokenField = token
-
-        // hands off to the dashboard; the invite card links back via
-        // varde://enroll so the token lands in the field below directly
-        val create = secondaryButton("Create invite token")
-        create.setOnClickListener {
-            val s = server.text.toString().trim().removeSuffix("/")
-                .ifEmpty { "https://cp.varde.games" }
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$s/machines/add")))
-        }
-
-        val err = TextView(this).apply {
-            setTextColor(c(R.color.warn))
-            textSize = 12f
-            typeface = fontRegular
-            setPadding(0, dp(8), 0, 0)
-        }
-        val btn = primaryButton("Enroll as anchor")
-
+        val btn = secondaryButton("Enroll with invite token")
         btn.setOnClickListener {
             val s = server.text.toString().trim()
             // accept either the bare code or a pasted https://…/invite/<code>
             val t = token.text.toString().trim().substringAfterLast('/')
             if (t.isEmpty()) {
-                err.text = "Paste an invite token — the device flow needs a browser."
+                errMsg = "Paste an invite token."
+                renderStage()
                 return@setOnClickListener
             }
             btn.isEnabled = false
-            err.text = ""
             Thread {
                 val ok = enroll(s, t)
                 runOnUiThread {
                     btn.isEnabled = true
                     if (ok) {
-                        prefs.edit()
-                            .putBoolean("enrolled", true)
-                            .putBoolean("enabled", true)
-                            .putString("server", s)
-                            .apply()
-                        setContentView(buildView())
-                        statusView?.text = AnchorService.lastStatus
-                        startService(Intent(this, AnchorService::class.java))
+                        onEnrolled(s.ifEmpty { hostedCp })
                     } else {
-                        err.text = "Enroll failed — check the token and server URL."
+                        errMsg = "Enroll failed — check the token and server URL."
+                        renderStage()
                     }
                 }
             }.start()
         }
-        col.addView(create, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(40),
-        ).apply { bottomMargin = dp(14) })
-        col.addView(server, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(10) })
-        col.addView(token, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(16) })
-        col.addView(btn, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(40),
-        ))
-        col.addView(err)
-        return col
+        col.addView(server, wrapLp(dp(14)))
+        col.addView(token, wrapLp(dp(16)))
+        col.addView(btn, btnLp(0))
+    }
+
+    private fun btnLp(bottom: Int) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, dp(40),
+    ).apply { bottomMargin = bottom }
+
+    private fun wrapLp(bottom: Int) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+    ).apply { bottomMargin = bottom }
+
+    private fun heading(t: String) = TextView(this).apply {
+        text = t
+        textSize = 16f
+        typeface = fontMedium
+        setTextColor(c(R.color.text))
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, dp(6))
+    }
+
+    private fun subLine(t: String) = TextView(this).apply {
+        text = t
+        textSize = 13f
+        typeface = fontRegular
+        setTextColor(c(R.color.text_dim))
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, dp(14))
+    }
+
+    private fun statusLine(t: String) = TextView(this).apply {
+        text = t
+        textSize = 13f
+        typeface = fontRegular
+        setTextColor(c(R.color.text_dim))
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, dp(4))
+    }
+
+    private fun errLine() = TextView(this).apply {
+        text = errMsg
+        textSize = 12f
+        typeface = fontRegular
+        setTextColor(c(R.color.warn))
+        gravity = Gravity.CENTER
+        setPadding(0, dp(8), 0, 0)
+    }
+
+    private fun cancelLink() = TextView(this).apply {
+        text = "Cancel"
+        textSize = 12f
+        typeface = fontRegular
+        setTextColor(c(R.color.text_dim))
+        gravity = Gravity.CENTER
+        setPadding(0, dp(12), 0, 0)
+        setOnClickListener { cancelFed() }
+    }
+
+    /** Open the site's sign-in page; the device link starts polling meanwhile. */
+    private fun startFedSignIn() {
+        stage = "waiting"
+        errMsg = ""
+        renderStage()
+        startDeviceEnroll()
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(signInUrl)))
+        } catch (e: Exception) {
+            stage = "idle"
+            errMsg = "No browser found to open varde.games."
+            renderStage()
+        }
+    }
+
+    /**
+     * `varde-agent enroll` (no token) registers a device link and polls until
+     * it's approved; stdout carries "enter code: <user_code>". We grab the
+     * code so the federated session can approve it. On success the agent
+     * writes config.toml — the same artifact the token path produces.
+     */
+    private fun startDeviceEnroll() {
+        enrollProc?.destroy()
+        deviceCode = null
+        val p = try {
+            AnchorService.procBuilder(
+                this,
+                AnchorService.agentBin(this), "enroll",
+                "--data-dir", AnchorService.dataDir(this).absolutePath,
+                "--anchor",
+            ).redirectErrorStream(true).start()
+        } catch (e: Exception) {
+            android.util.Log.e("Enroll", "device enroll spawn failed", e)
+            stage = "idle"
+            errMsg = "Couldn't start the agent."
+            renderStage()
+            return
+        }
+        enrollProc = p
+        Thread {
+            var ok = false
+            try {
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    // "Visit <url> and enter code: ABCD-EFGH"
+                    Regex("enter code:\\s*(\\S+)").find(line)?.let {
+                        deviceCode = it.groupValues[1]
+                    }
+                }
+                val rc = p.waitFor()
+                ok = rc == 0 &&
+                    java.io.File(AnchorService.dataDir(this), "config.toml").exists()
+            } catch (_: Exception) {}
+            val succeeded = ok
+            runOnUiThread {
+                if (p !== enrollProc) return@runOnUiThread // superseded/cancelled
+                if (succeeded) {
+                    onEnrolled(hostedCp)
+                } else if (stage != "idle") {
+                    stage = "idle"
+                    errMsg = "Sign-in didn't finish — the link may have expired. Try again."
+                    renderStage()
+                }
+            }
+        }.start()
+    }
+
+    /** Site JWT → hosted-CP session, exactly like the desktop's fed_exchange. */
+    private fun fedExchange(token: String) {
+        // a fresh process may have lost its device link — restart it so an
+        // approval always has something pending to land on
+        if (enrollProc == null) startDeviceEnroll()
+        stage = "busy"
+        stageDetail = "Signing you in…"
+        renderStage()
+        Thread {
+            try {
+                val r = httpJson(
+                    "POST", "$hostedCp/v1/auth/external",
+                    "{\"token\":${JSONObject.quote(token)}}", null,
+                )
+                fedSession = r.getString("token")
+                val u = r.getJSONObject("user")
+                fedName = u.optString("display_name").ifEmpty { u.optString("email") }
+                fedEmail = u.optString("email")
+                runOnUiThread {
+                    stage = "confirm"
+                    renderStage()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("Enroll", "fed exchange failed", e)
+                runOnUiThread { failFed("Sign-in failed — the link may have expired. Try again.") }
+            }
+        }.start()
+    }
+
+    /** Resolve the group like the desktop: none → create, one → use, many → pick. */
+    private fun fedGroups() {
+        stage = "busy"
+        stageDetail = "Looking up your groups…"
+        renderStage()
+        Thread {
+            try {
+                val gl = httpJson("GET", "$hostedCp/v1/groups", null, fedSession)
+                val arr = gl.optJSONArray("groups")
+                when {
+                    arr == null || arr.length() == 0 -> {
+                        val g = httpJson(
+                            "POST", "$hostedCp/v1/groups",
+                            "{\"name\":${JSONObject.quote("$fedName's group")}}", fedSession,
+                        )
+                        fedApprove(g.getString("id"))
+                    }
+                    arr.length() == 1 -> fedApprove(arr.getJSONObject(0).getString("id"))
+                    else -> {
+                        fedGroups = (0 until arr.length()).map {
+                            arr.getJSONObject(it).let { o ->
+                                o.getString("id") to o.optString("name").ifEmpty { "group" }
+                            }
+                        }
+                        runOnUiThread {
+                            stage = "pick"
+                            renderStage()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("Enroll", "group fetch failed", e)
+                runOnUiThread { failFed("Couldn't fetch your groups.") }
+            }
+        }.start()
+    }
+
+    /** Approve our pending device link as an anchor node in the group. */
+    private fun fedApprove(groupId: String) {
+        runOnUiThread {
+            stage = "busy"
+            stageDetail = "Approving this device…"
+            renderStage()
+        }
+        Thread {
+            try {
+                // the enroll proc may still be printing its code — wait for it
+                var code = deviceCode
+                var waited = 0
+                while (code == null && waited < 120) {
+                    Thread.sleep(100)
+                    code = deviceCode
+                    waited++
+                }
+                if (code == null) throw IllegalStateException("no device link pending")
+                val dl = httpJson("GET", "$hostedCp/v1/device-links/$code", null, fedSession)
+                val name = dl.optString("hostname").ifEmpty { "Android anchor" }
+                httpJson(
+                    "POST", "$hostedCp/v1/device-links/approve",
+                    "{\"user_code\":${JSONObject.quote(code)}," +
+                        "\"group_id\":${JSONObject.quote(groupId)}," +
+                        "\"name\":${JSONObject.quote(name)},\"anchor\":true}",
+                    fedSession,
+                )
+                runOnUiThread {
+                    stage = "busy"
+                    stageDetail = "Finishing the link — the agent is picking it up…"
+                    renderStage()
+                }
+                // the agent's poll sees the approval and writes config.toml;
+                // the watcher thread in startDeviceEnroll calls onEnrolled
+            } catch (e: Exception) {
+                android.util.Log.e("Enroll", "link approve failed", e)
+                runOnUiThread { failFed("Couldn't approve the device link.") }
+            }
+        }.start()
+    }
+
+    private fun cancelFed() {
+        enrollProc?.let {
+            enrollProc = null
+            it.destroy()
+        }
+        deviceCode = null
+        fedSession = ""
+        fedGroups = emptyList()
+        stage = "idle"
+        stageDetail = ""
+        errMsg = ""
+        renderStage()
+    }
+
+    private fun failFed(msg: String) {
+        enrollProc?.let {
+            enrollProc = null
+            it.destroy()
+        }
+        errMsg = msg
+        stage = "idle"
+        renderStage()
+    }
+
+    private fun onEnrolled(server: String) {
+        prefs.edit()
+            .putBoolean("enrolled", true)
+            .putBoolean("enabled", true)
+            .putString("server", server)
+            .apply()
+        stage = "idle"
+        stageDetail = ""
+        errMsg = ""
+        deviceCode = null
+        fedSession = ""
+        setContentView(buildView())
+        statusView?.text = AnchorService.lastStatus
+        startService(Intent(this, AnchorService::class.java))
+    }
+
+    /** Minimal JSON HTTP call — the app ships no dependencies. */
+    private fun httpJson(
+        method: String,
+        url: String,
+        body: String?,
+        bearer: String?,
+    ): JSONObject {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = method
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.setRequestProperty("Content-Type", "application/json")
+            bearer?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+            if (body != null) {
+                conn.doOutput = true
+                conn.outputStream.use { it.write(body.toByteArray()) }
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader()?.readText() ?: ""
+            if (code !in 200..299) throw java.io.IOException("$method $url → $code")
+            return if (text.isEmpty()) JSONObject() else JSONObject(text)
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun enroll(server: String, token: String): Boolean = try {

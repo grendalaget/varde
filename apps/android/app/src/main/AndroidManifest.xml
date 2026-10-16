@@ -42,7 +42,11 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <!-- varde://enroll?server&code — dashboard token prefill -->
                 <data android:scheme="varde" android:host="enroll" />
+                <!-- varde://auth/callback?token — varde.games sign-in bounce
+                     (same callback the desktop app registers) -->
+                <data android:scheme="varde" android:host="auth" android:pathPrefix="/callback" />
             </intent-filter>
         </activity>
 

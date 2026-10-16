@@ -55,8 +55,13 @@ class CloudView @JvmOverloads constructor(
     fun addRipple(x: Float, yBottom: Float) {
         queueEvent { renderer.pushRipple(x, yBottom) }
         // reduced-motion renders on demand only — without this a tap's
-        // shockwave never gets a frame to appear in
-        if (renderMode == RENDERMODE_WHEN_DIRTY) requestRender()
+        // shockwave never gets a frame to appear in. The wave's intensity
+        // fades in over ~50ms and out over ~1s, so tick for its lifetime
+        // rather than one frame that may land before it's visible.
+        if (renderMode == RENDERMODE_WHEN_DIRTY) {
+            requestRender()
+            for (i in 1..20) postDelayed({ requestRender() }, 60L * i)
+        }
     }
 
     private class CloudRenderer(private val context: Context) : Renderer {

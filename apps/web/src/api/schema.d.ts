@@ -2091,6 +2091,8 @@ export interface operations {
                     user_code: string;
                     group_id: string;
                     name: string;
+                    /** @description Enroll as an always-on save anchor instead of a game host. */
+                    anchor?: boolean;
                 };
             };
         };

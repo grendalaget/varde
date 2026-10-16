@@ -1434,6 +1434,8 @@ type AgentReplicaReadyJSONBodyState string
 
 // ApproveDeviceLinkJSONBody defines parameters for ApproveDeviceLink.
 type ApproveDeviceLinkJSONBody struct {
+	// Anchor Enroll as an always-on save anchor instead of a game host.
+	Anchor   *bool  `json:"anchor,omitempty"`
 	GroupId  string `json:"group_id"`
 	Name     string `json:"name"`
 	UserCode string `json:"user_code"`
