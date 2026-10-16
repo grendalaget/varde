@@ -12,4 +12,5 @@
     <color name="glod">#FF5B1F</color>          <!-- accent -->
     <color name="accent_fg">#160703</color>     <!-- accent-foreground -->
     <color name="warn">#F7B750</color>          <!-- warning -->
+    <color name="ic_launcher_background">#121A20</color> <!-- icon tile dark -->
 </resources>

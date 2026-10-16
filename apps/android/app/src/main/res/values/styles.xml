@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark platform theme so the cold-start preview window matches the
+         brand (the real window background — gradient + shader — is applied
+         in MainActivity.onCreate). -->
+    <style name="VardeTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+</resources>
