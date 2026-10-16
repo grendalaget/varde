@@ -755,6 +755,11 @@ fn logs_dir() -> std::path::PathBuf {
 }
 
 fn open_main_window(app: &AppHandle) {
+    // one window ever: a varde:// callback or sign-in must morph an open
+    // dashboard away, not stack on top of it
+    if let Some(d) = app.get_webview_window(DASHBOARD_WINDOW) {
+        let _ = d.hide();
+    }
     if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
         let _ = w.unminimize();
         let _ = w.show();
@@ -870,6 +875,10 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
 /// webview on the control-plane address (it can't reach app commands —
 /// remote IPC is off — and keeps its own cookies, so the sign-in sticks).
 fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
+    // one window ever: opening the dashboard morphs the setup window away
+    if let Some(m) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = m.hide();
+    }
     let parsed =
         dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
     if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
@@ -1242,10 +1251,12 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
     let Some(token) = deep_link_token(url) else {
         return;
     };
-    open_main_window(app);
+    // mark the flow before the window morph: a status tick between the
+    // two would otherwise pull the just-shown setup back to the dashboard
     app.state::<State>()
         .fed_active
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    open_main_window(app);
     let seq = app
         .state::<State>()
         .fed_seq
