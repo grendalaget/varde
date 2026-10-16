@@ -46,6 +46,31 @@
         mingwLinker = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
           pkgs.pkgsCross.mingwW64.buildPackages.gcc
         ];
+
+        # bun is pinned to the project's release-asset version rather than
+        # floating with nixpkgs (upstream assets, same fetch scheme as the
+        # nixpkgs package).
+        bunVersion = "1.4.1";
+        bunAsset = {
+          x86_64-linux = "bun-linux-x64-baseline";
+          aarch64-linux = "bun-linux-aarch64";
+          aarch64-darwin = "bun-darwin-aarch64";
+          x86_64-darwin = "bun-darwin-x64-baseline";
+        }.${system} or (throw "bun: unsupported system ${system}");
+        bunHash = {
+          x86_64-linux = "sha256-qMnGc4IC4vztVV3YYKlTxWwM0Fn3UEHnAQroGjKAJkY=";
+          aarch64-linux = "sha256-WAzndTMQjcaxC+wXITl+T1qkTpCXJtokUdSD38XlgdY=";
+          aarch64-darwin = "sha256-2Jc86DX6eGflzHmv7m/G8a4BF6pL1fwlRv0AxRL3E4Y=";
+          x86_64-darwin = "sha256-SY521hu+h9Iwb2X+1groa2sMjuLacJ+DICgI2xoJ5Ac=";
+        }.${system};
+        bunPinned = pkgs.bun.overrideAttrs (old: {
+          version = bunVersion;
+          src = pkgs.fetchurl {
+            url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/${bunAsset}.zip";
+            hash = bunHash;
+          };
+          sourceRoot = bunAsset;
+        });
       in
       {
         devShells.default = pkgs.mkShell {
@@ -66,7 +91,7 @@
             oapi-codegen
 
             # apps/web, apps/desktop/ui, apps/setup/ui, tests/minecraft-bot
-            bun
+            bunPinned
             nodejs_22
 
             # `make package` -> .deb/.rpm
