@@ -360,19 +360,17 @@ fn sync_visible_facet(app: &AppHandle) {
     }
     match desired_facet(app) {
         Facet::Dashboard if main => {
+            // the dashboard lands where setup was — read the position
+            // before the morph, a hidden window may not report it
+            let at = app
+                .get_webview_window(MAIN_WINDOW)
+                .and_then(|w| w.outer_position().ok());
             let swapped = cp_url(app)
                 .map(|u| open_dashboard_window(app, &u).is_ok())
                 .unwrap_or(false);
             if swapped {
-                if let (Some(p), Some(d)) = (
-                    app.get_webview_window(MAIN_WINDOW)
-                        .and_then(|w| w.outer_position().ok()),
-                    app.get_webview_window(DASHBOARD_WINDOW),
-                ) {
+                if let (Some(p), Some(d)) = (at, app.get_webview_window(DASHBOARD_WINDOW)) {
                     let _ = d.set_position(p);
-                }
-                if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
-                    let _ = w.hide();
                 }
             }
         }
@@ -875,10 +873,13 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<tauri::Url> {
 /// webview on the control-plane address (it can't reach app commands —
 /// remote IPC is off — and keeps its own cookies, so the sign-in sticks).
 fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
-    // one window ever: opening the dashboard morphs the setup window away
-    if let Some(m) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = m.hide();
-    }
+    // one window ever — but only take the setup window down once the
+    // dashboard is really up: a failed open leaves it where it was
+    let hide_main = |app: &AppHandle| {
+        if let Some(m) = app.get_webview_window(MAIN_WINDOW) {
+            let _ = m.hide();
+        }
+    };
     let parsed =
         dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
     if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
@@ -896,6 +897,7 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+        hide_main(app);
         return Ok(());
     }
     *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
@@ -957,7 +959,10 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
             }
         })
         .build()
-        .map(|w| hide_to_tray(&w))
+        .map(|w| {
+            hide_to_tray(&w);
+            hide_main(app);
+        })
         .map_err(|e| e.to_string())
 }
 
