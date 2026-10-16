@@ -15,6 +15,10 @@
   --color-papir: #f4efed;
   --color-glod: #ff5b1f;
   --color-warn: #f7b750;
+  /* Muted counterparts of the semantic hues, for states the mouve palette
+     has no token for: steel blue (starting), dusty violet (migrating). */
+  --color-info: oklch(70% 0.065 240);
+  --color-violet: oklch(70% 0.08 293);
   --color-skifer-50: #fcfcfc;
   --color-skifer-100: #ebe5e3;
   --color-skifer-200: #c9c1be;

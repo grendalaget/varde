@@ -196,7 +196,7 @@ export function StateCairn({
     return (
       <svg
         viewBox={FAVICON.viewBox}
-        className={cx("vd shrink-0 text-muted", className)}
+        className={cx("vd shrink-0 text-foreground", className)}
         aria-hidden
       >
         <path className="vd-s" d={FAVICON.base} />
@@ -208,11 +208,5 @@ export function StateCairn({
   }
   const s: MarkState =
     state === "running" ? "lit" : MOVING_STATES.has(state) ? "moving" : "idle";
-  return (
-    <Mark
-      state={s}
-      small
-      className={cx(s === "idle" ? "text-muted" : "text-foreground", className)}
-    />
-  );
+  return <Mark state={s} small className={cx("text-foreground", className)} />;
 }

@@ -111,11 +111,11 @@ export function Badge({
   slab?: boolean;
 }) {
   const t: Record<Tone, string> = {
-    green: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
-    warn: "bg-warn/10 text-warn ring-warn/30",
-    red: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
-    blue: "bg-sky-500/10 text-sky-300 ring-sky-500/30",
-    violet: "bg-violet-500/10 text-violet-300 ring-violet-500/30",
+    green: "bg-success/10 text-success ring-success/30",
+    warn: "bg-warning/10 text-warning ring-warning/30",
+    red: "bg-danger/10 text-danger ring-danger/30",
+    blue: "bg-info/10 text-info ring-info/30",
+    violet: "bg-violet/10 text-violet ring-violet/30",
     neutral: "bg-default/60 text-muted ring-border",
     host: "bg-glod/10 text-foreground ring-glod/40",
   };
@@ -136,11 +136,11 @@ export function Badge({
 
 export function Dot({ tone }: { tone: Tone }) {
   const t: Record<Tone, string> = {
-    green: "bg-emerald-400",
-    warn: "bg-warn",
-    red: "bg-rose-400",
-    blue: "bg-sky-400",
-    violet: "bg-violet-400",
+    green: "bg-success",
+    warn: "bg-warning",
+    red: "bg-danger",
+    blue: "bg-info",
+    violet: "bg-violet",
     neutral: "bg-muted",
     host: "bg-glod",
   };
