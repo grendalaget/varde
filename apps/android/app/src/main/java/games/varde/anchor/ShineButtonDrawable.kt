@@ -1,22 +1,35 @@
 package games.varde.anchor
 
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 
 /**
- * The web primary button's border shine, ported from measured pixels:
- * a ~1dp rgba(0,0,0,.4) ring on the outer edge, a ~1dp accent border
- * flush inside it, then white insets hugging the TOP edge only — a hard
- * ~1dp line at white .34 over the accent, a ~9dp soft fade white
- * .24→0 (measured 255,147,108 → 255,102,46 over ~9 CSS px on
- * varde.games). No face gradient: the fill below stays flat.
+ * Pixel port of the web primary button's `mouve-raised-shadow` + ::before
+ * wash (HeroUI mouve-dark):
+ *
+ *   inset 0 1px 0 0   #fff3       hard top line, wraps the corner arcs
+ *   inset 0 1px 2px -.5px #ffffff24  soft line + faint all-around halo
+ *   inset 0 8px 24px -4px #ffffff1a  broad glow hugging the whole edge
+ *   0 0 0 1px #0006               dark ring outside the border
+ *   ::before linear-gradient(#fff → #ffffff80) @ .05  faint face wash
+ *
+ * A CSS inset shadow `inset ox oy blur spread` renders the area of the
+ * element NOT covered by its own shape when contracted by `spread`,
+ * shifted by (ox,oy) and blurred — so on a capsule each band hugs the
+ * perimeter: deepest at top, wrapping around the corner arcs and fading
+ * toward the lower corners. We reproduce exactly that: fill the inner
+ * pill, then subtract the same pill inset by `spread` and offset by
+ * `dy`, blurring the subtraction edge.
  */
 class ShineButtonDrawable(
     private val fill: Int,
@@ -25,72 +38,106 @@ class ShineButtonDrawable(
     private val px: Float,
 ) : Drawable() {
 
-    private val path = Path()
+    private val ePath = Path()
+    private val sPath = Path()
     private val rect = RectF()
+    private val sRect = RectF()
+    private val layerRect = RectF()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var userAlpha = 255
+    private val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+    }
 
     private fun ring(d: Float): RectF = rect.apply {
         set(bounds)
         inset(d, d)
     }
 
-    private fun pillPath(r: RectF): Path {
-        path.reset()
+    private fun pill(p: Path, r: RectF): Path {
+        p.reset()
         val rad = (radiusPx - (r.left - bounds.left)).coerceAtLeast(0f)
-        path.addRoundRect(r, rad, rad, Path.Direction.CW)
-        return path
+        p.addRoundRect(r, rad, rad, Path.Direction.CW)
+        return p
     }
 
     private fun dpPx(v: Float) = v * px
+
+    /** band = inner pill minus the pill inset by `shrink` and offset
+     *  down `dy`; `blur` feathers the band's inner edge. CSS alphas pass
+     *  straight through as color alpha. */
+    private fun insetBand(canvas: Canvas, dy: Float, shrink: Float, blur: Float, color: Int) {
+        val inner = ring(dpPx(1.5f) - 1f)
+        val save = canvas.saveLayer(
+            bounds.left.toFloat(), bounds.top.toFloat(),
+            bounds.right.toFloat(), bounds.bottom.toFloat(), null,
+        )
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.color = color
+        paint.alpha = paint.alpha * userAlpha / 255
+        canvas.drawPath(pill(ePath, inner), paint)
+
+        sRect.set(inner)
+        sRect.inset(shrink, shrink)
+        sRect.offset(0f, dy)
+        clearPaint.reset()
+        clearPaint.isAntiAlias = true
+        clearPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+        if (blur > 0f) {
+            clearPaint.maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
+        }
+        canvas.drawPath(pill(sPath, sRect), clearPaint)
+        canvas.restoreToCount(save)
+    }
 
     override fun draw(canvas: Canvas) {
         val w = bounds.width().toFloat()
         val h = bounds.height().toFloat()
         if (w <= 0f || h <= 0f) return
 
-        // 1) dark outer ring, ~1dp on the outer edge (web: rgba(0,0,0,.4) 1px)
+        // 1) ring outside the border: 0 0 0 1px #0006
+        paint.reset()
+        paint.isAntiAlias = true
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dpPx(1f)
         paint.color = 0x66000000
-        canvas.drawPath(pillPath(ring(dpPx(0.5f))), paint)
+        canvas.drawPath(pill(ePath, ring(dpPx(0.5f))), paint)
 
-        // 2) flat fill pulled slightly INTO the border's inner edge — the
-        // stroke drawn over it next blends flush, with no dark seam
-        // between border and fill (the web layers them border-box)
+        // 2) fill pulled slightly INTO the border's inner edge so the
+        // border stroke blends flush with no seam (border-box layering)
         paint.style = Paint.Style.FILL
         paint.color = fill
-        canvas.drawPath(pillPath(ring(dpPx(1.5f) - 1f)), paint)
+        canvas.drawPath(pill(ePath, ring(dpPx(1.5f) - 1f)), paint)
 
-        // 3) accent border on top — centered at 1dp inset, spans 0.5–1.5dp,
-        // inner half antialiases onto the fill
+        // 3) accent border, 1dp centered at the 1dp inset
         paint.style = Paint.Style.STROKE
-        paint.color = border
-        canvas.drawPath(pillPath(ring(dpPx(1f))), paint)
-
-        // 4) hard top line, ~1dp at measured white .34 over the accent
-        val inner = ring(dpPx(1.5f) - 1f)
-        val et = inner.top // the fill's top edge — the shine hugs it
-        canvas.save()
-        canvas.clipRect(bounds.left.toFloat(), et, bounds.right.toFloat(), et + dpPx(1f))
         paint.strokeWidth = dpPx(1f)
-        paint.color = 0x57FFFFFF
-        canvas.drawPath(pillPath(inner), paint)
-        canvas.restore()
+        paint.color = border
+        canvas.drawPath(pill(ePath, ring(dpPx(1f))), paint)
 
-        // 5) soft top fade, ~9dp at measured white .24→0
-        canvas.save()
-        canvas.clipPath(pillPath(inner))
+        // 4) ::before wash: white → 50% white, 5% opacity, full face
+        val inner = ring(dpPx(1.5f) - 1f)
+        val saveClip = canvas.save()
+        canvas.clipPath(pill(ePath, inner))
         paint.style = Paint.Style.FILL
         paint.shader = LinearGradient(
-            0f, et, 0f, et + dpPx(9f),
-            0x40FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP,
+            0f, inner.top, 0f, inner.bottom,
+            0x0DFFFFFF, 0x06FFFFFF, Shader.TileMode.CLAMP,
         )
-        canvas.drawRect(bounds.left.toFloat(), et, bounds.right.toFloat(), et + dpPx(9f), paint)
+        canvas.drawRect(inner.left, inner.top, inner.right, inner.bottom, paint)
         paint.shader = null
-        canvas.restore()
+        canvas.restoreToCount(saveClip)
+
+        // 5) inset bands, broad glow first so the sharp lines sit on top
+        insetBand(canvas, dy = dpPx(8f), shrink = dpPx(4f), blur = dpPx(6f), color = 0x1AFFFFFF)
+        insetBand(canvas, dy = dpPx(1f), shrink = dpPx(0.5f), blur = dpPx(1f), color = 0x24FFFFFF)
+        insetBand(canvas, dy = dpPx(1f), shrink = 0f, blur = 0f, color = 0x33FFFFFF)
     }
 
     override fun setAlpha(alpha: Int) {
+        userAlpha = alpha
         paint.alpha = alpha
     }
 
