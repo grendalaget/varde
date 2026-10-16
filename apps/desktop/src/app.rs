@@ -360,25 +360,10 @@ fn sync_visible_facet(app: &AppHandle) {
     }
     match desired_facet(app) {
         Facet::Dashboard if main => {
-            // the dashboard lands where setup was — read the position
-            // before the morph, a hidden window may not report it
-            let at = app
-                .get_webview_window(MAIN_WINDOW)
-                .and_then(|w| w.outer_position().ok());
-            let swapped = cp_url(app)
-                .map(|u| open_dashboard_window(app, &u).is_ok())
-                .unwrap_or(false);
-            if swapped {
-                if let (Some(p), Some(d)) = (at, app.get_webview_window(DASHBOARD_WINDOW)) {
-                    let _ = d.set_position(p);
-                }
-            }
+            let _ = swap_to_dashboard(app);
         }
         Facet::Setup if dashboard => {
             open_main_window(app);
-            if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
-                let _ = w.hide();
-            }
         }
         _ => {}
     }
@@ -537,30 +522,31 @@ fn desired_facet(app: &AppHandle) -> Facet {
 /// the PC's state — the dashboard while linked, the link/status UI
 /// otherwise — and hide the other webview. Only one is ever visible, so
 /// the app reads as one window whose content changes.
+/// Morph the visible setup window into the dashboard, taking its spot
+/// on screen. Setup goes down only once the dashboard is really up, so
+/// a failed open leaves it in place.
+fn swap_to_dashboard(app: &AppHandle) -> bool {
+    // read setup's position while it's still visible — a hidden window
+    // may not report it
+    let at = app
+        .get_webview_window(MAIN_WINDOW)
+        .filter(|w| w.is_visible().unwrap_or(false))
+        .and_then(|w| w.outer_position().ok());
+    let swapped = cp_url(app)
+        .map(|u| open_dashboard_window(app, &u).is_ok())
+        .unwrap_or(false);
+    if swapped {
+        if let (Some(p), Some(d)) = (at, app.get_webview_window(DASHBOARD_WINDOW)) {
+            let _ = d.set_position(p);
+        }
+    }
+    swapped
+}
+
 fn open_varde_window(app: &AppHandle) {
-    let dashboard = desired_facet(app) == Facet::Dashboard
-        && cp_url(app)
-            .map(|u| open_dashboard_window(app, &u).is_ok())
-            .unwrap_or(false);
-    if dashboard {
-        if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
-            if main.is_visible().unwrap_or(false) {
-                // the app appears to morph: the dashboard takes the setup
-                // window's spot on first swap
-                if let (Ok(p), Some(d)) = (
-                    main.outer_position(),
-                    app.get_webview_window(DASHBOARD_WINDOW),
-                ) {
-                    let _ = d.set_position(p);
-                }
-            }
-            let _ = main.hide();
-        }
-    } else {
+    let dashboard = desired_facet(app) == Facet::Dashboard && swap_to_dashboard(app);
+    if !dashboard {
         open_main_window(app);
-        if let Some(d) = app.get_webview_window(DASHBOARD_WINDOW) {
-            let _ = d.hide();
-        }
     }
     dock_sync(app);
 }
