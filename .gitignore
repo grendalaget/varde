@@ -20,6 +20,7 @@ node_modules/
 # Local env
 .env
 .env.local
+.direnv/
 
 # Go binaries produced by plain `go build`
 apps/controlplane/control-plane
