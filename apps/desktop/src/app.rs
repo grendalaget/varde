@@ -334,7 +334,9 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
                 {
                     // dashboard_load_url attaches a fresh sign-in token —
                     // a re-link to the same CP re-auths the open window.
-                    let url = dashboard_load_url(app, &u).unwrap_or(parsed);
+                    let url = dashboard_load_url(app, &u)
+                        .map(|(u, _)| u)
+                        .unwrap_or(parsed);
                     *st.dashboard_origin.lock().unwrap() = Some(url.clone());
                     let _ = w.navigate(url);
                 }
