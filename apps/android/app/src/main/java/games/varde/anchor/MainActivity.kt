@@ -81,6 +81,12 @@ class MainActivity : Activity() {
     private var fedName = ""
     private var fedEmail = ""
     private var fedGroups: List<Pair<String, String>> = emptyList()
+    // bumped on every new sign-in and on cancel/fail so workers from a
+    // stale attempt bail instead of mutating the new flow's state
+    @Volatile private var fedGen = 0
+    // deeplink token kept across renderStage() — the form fields are
+    // rebuilt on every stage change, so a value set on a field is lost
+    private var pendingToken: String? = null
     private lateinit var cloudView: CloudView
     private var fontRegular: Typeface? = null
     private var fontMedium: Typeface? = null
@@ -127,7 +133,15 @@ class MainActivity : Activity() {
         loadStats()
     }
 
+    override fun onPause() {
+        // stop the 10s stats ticker while backgrounded — its posted
+        // callback survives on the still-attached stats view otherwise
+        statsView?.removeCallbacks(statsTick)
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        statsView?.removeCallbacks(statsTick)
         unregisterReceiver(statusReceiver)
         super.onDestroy()
     }
@@ -145,13 +159,16 @@ class MainActivity : Activity() {
                     serverField?.setText(s)
                 }
                 (u.getQueryParameter("code") ?: u.getQueryParameter("token"))?.let {
+                    pendingToken = it
                     tokenField?.setText(it)
                 }
                 renderStage()
             }
             // varde://auth/callback?token=<federation jwt> — the site's
-            // sign-in page sends users back here, like the desktop app
-            "auth" -> if (u.path == "/callback") {
+            // sign-in page sends users back here, like the desktop app.
+            // Only while a sign-in we started is pending: an unsolicited
+            // callback could otherwise enroll into a foreign account.
+            "auth" -> if (u.path == "/callback" && stage == "waiting") {
                 u.getQueryParameter("token")?.let { fedExchange(it) }
             }
         }
@@ -415,7 +432,9 @@ class MainActivity : Activity() {
             setText(prefs.getString("server", "https://cp.varde.games"))
         }
         serverField = server
-        val token = field("Invite token")
+        val token = field("Invite token").apply {
+            pendingToken?.let { setText(it) }
+        }
         tokenField = token
         val btn = secondaryButton("Enroll with invite token")
         btn.setOnClickListener {
@@ -502,6 +521,7 @@ class MainActivity : Activity() {
 
     /** Open the site's sign-in page; the device link starts polling meanwhile. */
     private fun startFedSignIn() {
+        fedGen++ // invalidate stragglers from any previous attempt
         stage = "waiting"
         errMsg = ""
         renderStage()
@@ -574,6 +594,7 @@ class MainActivity : Activity() {
         stage = "busy"
         stageDetail = "Signing you in…"
         renderStage()
+        val gen = fedGen
         Thread {
             try {
                 val r = httpJson(
@@ -585,12 +606,18 @@ class MainActivity : Activity() {
                 fedName = u.optString("display_name").ifEmpty { u.optString("email") }
                 fedEmail = u.optString("email")
                 runOnUiThread {
-                    stage = "confirm"
-                    renderStage()
+                    if (gen == fedGen) {
+                        stage = "confirm"
+                        renderStage()
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("Enroll", "fed exchange failed", e)
-                runOnUiThread { failFed("Sign-in failed — the link may have expired. Try again.") }
+                runOnUiThread {
+                    if (gen == fedGen) {
+                        failFed("Sign-in failed — the link may have expired. Try again.")
+                    }
+                }
             }
         }.start()
     }
@@ -600,40 +627,47 @@ class MainActivity : Activity() {
         stage = "busy"
         stageDetail = "Looking up your groups…"
         renderStage()
+        val gen = fedGen
         Thread {
             try {
                 val gl = httpJson("GET", "$hostedCp/v1/groups", null, fedSession)
                 val arr = gl.optJSONArray("groups")
                 when {
                     arr == null || arr.length() == 0 -> {
+                        if (gen != fedGen) return@Thread
                         val g = httpJson(
                             "POST", "$hostedCp/v1/groups",
                             "{\"name\":${JSONObject.quote("$fedName's group")}}", fedSession,
                         )
-                        fedApprove(g.getString("id"))
+                        fedApprove(g.getString("id"), gen)
                     }
-                    arr.length() == 1 -> fedApprove(arr.getJSONObject(0).getString("id"))
+                    arr.length() == 1 -> fedApprove(arr.getJSONObject(0).getString("id"), gen)
                     else -> {
+                        if (gen != fedGen) return@Thread
                         fedGroups = (0 until arr.length()).map {
                             arr.getJSONObject(it).let { o ->
                                 o.getString("id") to o.optString("name").ifEmpty { "group" }
                             }
                         }
                         runOnUiThread {
-                            stage = "pick"
-                            renderStage()
+                            if (gen == fedGen) {
+                                stage = "pick"
+                                renderStage()
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("Enroll", "group fetch failed", e)
-                runOnUiThread { failFed("Couldn't fetch your groups.") }
+                runOnUiThread {
+                    if (gen == fedGen) failFed("Couldn't fetch your groups.")
+                }
             }
         }.start()
     }
 
     /** Approve our pending device link as an anchor node in the group. */
-    private fun fedApprove(groupId: String) {
+    private fun fedApprove(groupId: String, gen: Int = fedGen) {
         runOnUiThread {
             stage = "busy"
             stageDetail = "Approving this device…"
@@ -644,11 +678,14 @@ class MainActivity : Activity() {
                 // the enroll proc may still be printing its code — wait for it
                 var code = deviceCode
                 var waited = 0
-                while (code == null && waited < 120) {
+                while (code == null && waited < 120 && gen == fedGen) {
                     Thread.sleep(100)
                     code = deviceCode
                     waited++
                 }
+                // a cancelled sign-in must not post an approval — the CP
+                // would create a node that can never finish enrolling
+                if (gen != fedGen) return@Thread
                 if (code == null) throw IllegalStateException("no device link pending")
                 val dl = httpJson("GET", "$hostedCp/v1/device-links/$code", null, fedSession)
                 val name = dl.optString("hostname").ifEmpty { "Android anchor" }
@@ -660,20 +697,25 @@ class MainActivity : Activity() {
                     fedSession,
                 )
                 runOnUiThread {
-                    stage = "busy"
-                    stageDetail = "Finishing the link — the agent is picking it up…"
-                    renderStage()
+                    if (gen == fedGen) {
+                        stage = "busy"
+                        stageDetail = "Finishing the link — the agent is picking it up…"
+                        renderStage()
+                    }
                 }
                 // the agent's poll sees the approval and writes config.toml;
                 // the watcher thread in startDeviceEnroll calls onEnrolled
             } catch (e: Exception) {
                 android.util.Log.e("Enroll", "link approve failed", e)
-                runOnUiThread { failFed("Couldn't approve the device link.") }
+                runOnUiThread {
+                    if (gen == fedGen) failFed("Couldn't approve the device link.")
+                }
             }
         }.start()
     }
 
     private fun cancelFed() {
+        fedGen++
         enrollProc?.let {
             enrollProc = null
             it.destroy()
@@ -688,6 +730,7 @@ class MainActivity : Activity() {
     }
 
     private fun failFed(msg: String) {
+        fedGen++
         enrollProc?.let {
             enrollProc = null
             it.destroy()

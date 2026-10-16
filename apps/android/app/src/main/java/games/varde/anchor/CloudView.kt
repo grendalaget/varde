@@ -49,8 +49,10 @@ class CloudView @JvmOverloads constructor(
     }
 
     /** Mark rectangle in surface pixels, y measured from the BOTTOM. */
-    fun setMarkRect(x: Float, yBottom: Float, w: Float, h: Float) =
+    fun setMarkRect(x: Float, yBottom: Float, w: Float, h: Float) {
         queueEvent { renderer.setMark(x, yBottom, w, h) }
+        if (renderMode == RENDERMODE_WHEN_DIRTY) requestRender()
+    }
 
     fun addRipple(x: Float, yBottom: Float) {
         queueEvent { renderer.pushRipple(x, yBottom) }
