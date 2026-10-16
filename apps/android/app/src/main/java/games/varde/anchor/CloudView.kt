@@ -52,8 +52,12 @@ class CloudView @JvmOverloads constructor(
     fun setMarkRect(x: Float, yBottom: Float, w: Float, h: Float) =
         queueEvent { renderer.setMark(x, yBottom, w, h) }
 
-    fun addRipple(x: Float, yBottom: Float) =
+    fun addRipple(x: Float, yBottom: Float) {
         queueEvent { renderer.pushRipple(x, yBottom) }
+        // reduced-motion renders on demand only — without this a tap's
+        // shockwave never gets a frame to appear in
+        if (renderMode == RENDERMODE_WHEN_DIRTY) requestRender()
+    }
 
     private class CloudRenderer(private val context: Context) : Renderer {
 

@@ -342,7 +342,7 @@ class MainActivity : Activity() {
         create.setOnClickListener {
             val s = server.text.toString().trim().removeSuffix("/")
                 .ifEmpty { "https://cp.varde.games" }
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$s/members")))
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$s/machines/add")))
         }
 
         val err = TextView(this).apply {
@@ -511,6 +511,10 @@ class MainActivity : Activity() {
         logScroll?.post { logScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
+    // one shared ticker — each post replaces the last, so pause/resume
+    // cycles never accumulate parallel exec loops
+    private val statsTick = Runnable { loadStats() }
+
     /** `varde-agent status` + service uptime, refreshed on resume. */
     private fun loadStats() {
         val sv = statsView ?: return
@@ -542,10 +546,12 @@ class MainActivity : Activity() {
             } catch (_: Exception) {
             }
             runOnUiThread {
+                if (sv !== statsView) return@runOnUiThread
                 sv.removeAllViews()
                 rows.forEach { (k, v) -> sv.addView(statRow(k, v)) }
                 // uptime ticks while this view is attached; dies with it
-                sv.postDelayed({ loadStats() }, 10_000)
+                sv.removeCallbacks(statsTick)
+                sv.postDelayed(statsTick, 10_000)
             }
         }.start()
     }
