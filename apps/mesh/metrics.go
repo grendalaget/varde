@@ -57,6 +57,9 @@ func newMetrics(reg *prometheus.Registry, n *Node) *metrics {
 // collect snapshots node counters into the registry (called by /metrics via a
 // collector would be fancier; pull-based refresh is fine).
 func (m *metrics) collect(n *Node) {
+	// serializes scrapes: the delete+set pairs below must stay atomic
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	peers := map[string]struct{}{}
@@ -82,8 +85,6 @@ func (m *metrics) collect(n *Node) {
 		}
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	for id := range m.seenPeers {
 		if _, ok := peers[id]; ok {
 			continue
