@@ -84,9 +84,11 @@ class MainActivity : Activity() {
     // bumped on every new sign-in and on cancel/fail so workers from a
     // stale attempt bail instead of mutating the new flow's state
     @Volatile private var fedGen = 0
-    // deeplink token kept across renderStage() — the form fields are
-    // rebuilt on every stage change, so a value set on a field is lost
+    // field values kept across renderStage() — the form fields are
+    // rebuilt on every stage change; synced back from the live fields
+    // before each rebuild so user edits survive too
     private var pendingToken: String? = null
+    private var pendingServer: String? = null
     private lateinit var cloudView: CloudView
     private var fontRegular: Typeface? = null
     private var fontMedium: Typeface? = null
@@ -156,6 +158,7 @@ class MainActivity : Activity() {
                 advanced = true
                 u.getQueryParameter("server")?.let { s ->
                     prefs.edit().putString("server", s).apply()
+                    pendingServer = s
                     serverField?.setText(s)
                 }
                 (u.getQueryParameter("code") ?: u.getQueryParameter("token"))?.let {
@@ -364,6 +367,10 @@ class MainActivity : Activity() {
     private val signInUrl = "https://varde.games/auth/desktop"
 
     private fun renderStage() {
+        // keep the latest field text — the rebuild below recreates the
+        // EditTexts and would otherwise discard what the user typed
+        tokenField?.text?.toString()?.let { pendingToken = it }
+        serverField?.text?.toString()?.let { pendingServer = it }
         val col = formCol ?: return
         col.removeAllViews()
         col.addView(stageView(), LinearLayout.LayoutParams(
@@ -429,7 +436,7 @@ class MainActivity : Activity() {
         if (!advanced) return
 
         val server = field("Control plane URL").apply {
-            setText(prefs.getString("server", "https://cp.varde.games"))
+            setText(pendingServer ?: prefs.getString("server", "https://cp.varde.games"))
         }
         serverField = server
         val token = field("Invite token").apply {
@@ -601,6 +608,9 @@ class MainActivity : Activity() {
                     "POST", "$hostedCp/v1/auth/external",
                     "{\"token\":${JSONObject.quote(token)}}", null,
                 )
+                // check BEFORE touching fedSession — a stale attempt must
+                // not overwrite the session of a sign-in started after it
+                if (gen != fedGen) return@Thread
                 fedSession = r.getString("token")
                 val u = r.getJSONObject("user")
                 fedName = u.optString("display_name").ifEmpty { u.optString("email") }
@@ -689,6 +699,9 @@ class MainActivity : Activity() {
                 if (code == null) throw IllegalStateException("no device link pending")
                 val dl = httpJson("GET", "$hostedCp/v1/device-links/$code", null, fedSession)
                 val name = dl.optString("hostname").ifEmpty { "Android anchor" }
+                // final gate right before the POST — a cancel landing
+                // between the code wait and here must not create a node
+                if (gen != fedGen) return@Thread
                 httpJson(
                     "POST", "$hostedCp/v1/device-links/approve",
                     "{\"user_code\":${JSONObject.quote(code)}," +
