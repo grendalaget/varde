@@ -39,24 +39,30 @@ pub struct ServeTracker {
     inner: Mutex<HashMap<String, Served>>, // snap_id → serving state
 }
 
+/// A peer's hints could otherwise grow the map without bound.
+const MAX_TRACKED_SNAPSHOTS: usize = 1024;
+
 impl ServeTracker {
+    /// Entry for `id`, or None when the map is full of other snapshots.
+    fn entry<'a>(g: &'a mut HashMap<String, Served>, id: &str) -> Option<&'a mut Served> {
+        if !g.contains_key(id) && g.len() >= MAX_TRACKED_SNAPSHOTS {
+            return None;
+        }
+        Some(g.entry(id.to_string()).or_default())
+    }
     fn record_manifest(&self, id: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .entry(id.to_string())
-            .or_default()
-            .manifest = true;
+        let mut g = self.inner.lock().unwrap();
+        if let Some(s) = Self::entry(&mut g, id) {
+            s.manifest = true;
+        }
     }
     /// A fetcher reports replica-ready after POSTing to the CP; with dedup a
     /// peer may need zero chunks, so served-count alone can't prove readiness.
     fn record_ready(&self, id: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .entry(id.to_string())
-            .or_default()
-            .peer_ready = true;
+        let mut g = self.inner.lock().unwrap();
+        if let Some(s) = Self::entry(&mut g, id) {
+            s.peer_ready = true;
+        }
     }
     pub fn peer_ready(&self, snap_id: &str) -> bool {
         self.inner
@@ -69,10 +75,9 @@ impl ServeTracker {
     fn record_chunk(&self, snap_hints: &[String], chunk: &str) {
         let mut g = self.inner.lock().unwrap();
         for h in snap_hints {
-            g.entry(h.clone())
-                .or_default()
-                .chunks
-                .insert(chunk.to_string());
+            if let Some(s) = Self::entry(&mut g, h) {
+                s.chunks.insert(chunk.to_string());
+            }
         }
     }
     /// True once some peer fetched the manifest and every chunk of `m`.
@@ -140,34 +145,38 @@ async fn handle(
 ) -> Result<()> {
     let (rd, mut wr) = tokio::io::split(stream);
     let mut rd = tokio::io::BufReader::new(rd);
-    let mut line = String::new();
     loop {
-        line.clear();
-        let mut head_bytes = rd.read_line(&mut line).await?;
-        if head_bytes == 0 {
-            return Ok(());
+        // bounded head read: stop consuming input the moment it is too big
+        let mut head = Vec::with_capacity(256);
+        while !head.ends_with(b"\r\n\r\n") {
+            let avail = rd.fill_buf().await?;
+            if avail.is_empty() {
+                return Ok(());
+            }
+            // stop at the terminator so a following body stays in the buffer
+            let take = avail
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(avail.len())
+                .min(16 * 1024 - head.len());
+            head.extend_from_slice(&avail[..take]);
+            rd.consume(take);
+            if head.len() >= 16 * 1024 && !head.ends_with(b"\r\n\r\n") {
+                bail!("head too large");
+            }
         }
-        let mut req_line = line.split_whitespace();
+        let head = String::from_utf8_lossy(&head);
+        let mut lines = head.lines();
+        let mut req_line = lines.next().unwrap_or("").split_whitespace();
         let (method, target) = (
             req_line.next().unwrap_or("").to_string(),
             req_line.next().unwrap_or("").to_string(),
         );
         let mut content_len = 0usize;
         let mut close = false;
-        loop {
-            line.clear();
-            let n = rd.read_line(&mut line).await?;
-            head_bytes += n;
-            if head_bytes > 16 * 1024 {
-                bail!("head too large");
-            }
-            if n == 0 {
-                return Ok(());
-            }
-            let l = line.trim().to_ascii_lowercase();
-            if l.is_empty() {
-                break;
-            }
+        for l in lines {
+            let l = l.trim().to_ascii_lowercase();
             if let Some(v) = l.strip_prefix("content-length:") {
                 content_len = v.trim().parse().unwrap_or(0);
             }
@@ -230,10 +239,11 @@ fn route(
                     Ok(v) => {
                         let mut frames = Vec::new();
                         let mut missing = Vec::new();
+                        // only well-formed snapshot ids are tracked
                         let snap_hints: Vec<String> = v
                             .get("snapshot_id")
                             .and_then(|s| s.as_str())
-                            .map(|s| vec![s.to_string()])
+                            .and_then(|s| SnapshotId::parse(s).map(|id| vec![id.0]))
                             .unwrap_or_default();
                         for h in v
                             .get("hashes")
@@ -271,8 +281,12 @@ fn route(
                 }
             }
             ("POST", ["", "v1", "replicas", id]) => {
-                tracker.record_ready(id);
-                ("200 OK", "text/plain", b"ok".to_vec())
+                if let Some(id) = SnapshotId::parse(id) {
+                    tracker.record_ready(&id.0);
+                    ("200 OK", "text/plain", b"ok".to_vec())
+                } else {
+                    ("400 Bad Request", "text/plain", b"bad id".to_vec())
+                }
             }
             _ => ("404 Not Found", "text/plain", b"not found".to_vec()),
         };
@@ -308,7 +322,15 @@ pub async fn fetch_snapshot(
         for src in source_node_ids {
             match http_get(mesh, src, &format!("/v1/manifests/{snapshot_id}")).await {
                 Ok(bytes) => {
-                    let id = store.put_manifest_bytes(&bytes)?;
+                    // a malformed or hostile manifest must not stop the
+                    // remaining sources from providing a valid one
+                    let id = match store.put_manifest_bytes(&bytes) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(src, error = %e, "bad manifest");
+                            continue;
+                        }
+                    };
                     if id != *snapshot_id {
                         store.delete_snapshot(&id).ok();
                         continue;
