@@ -462,6 +462,9 @@ paths:
                 user_code: { type: string }
                 group_id: { type: string }
                 name: { type: string }
+                anchor:
+                  type: boolean
+                  description: Enroll as an always-on save anchor instead of a game host.
       responses:
         "200":
           description: Approved; the polling agent receives its node id.

@@ -15,6 +15,9 @@
          directly out of nativeLibraryDir. -->
     <application
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/VardeTheme"
         android:extractNativeLibs="true"
         tools:targetApi="35">
 
@@ -27,10 +30,24 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- varde://enroll?server=<cp>&code=<invite> — emitted by the
+                 dashboard next to new invite links; pre-fills enrollment. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- varde://enroll?server&code — dashboard token prefill -->
+                <data android:scheme="varde" android:host="enroll" />
+                <!-- varde://auth/callback?token — varde.games sign-in bounce
+                     (same callback the desktop app registers) -->
+                <data android:scheme="varde" android:host="auth" android:pathPrefix="/callback" />
             </intent-filter>
         </activity>
 

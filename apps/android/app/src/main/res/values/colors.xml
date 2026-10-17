@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mouve-dark tokens (apps/web index.css oklch values converted to sRGB).
+     The shader behind the content provides the gradient + glyph field. -->
+<resources>
+    <color name="bg">#110C0A</color>            <!-- background -->
+    <color name="surface">#1A1513</color>       <!-- surface -->
+    <color name="surface_300">#2B2523</color>   <!-- surface-tertiary / default -->
+    <color name="field_bg">#1E1918</color>      <!-- field-background -->
+    <color name="field_border">#38312F</color>  <!-- field-border -->
+    <color name="text">#FCFCFC</color>          <!-- foreground (Taake) -->
+    <color name="text_dim">#958D8B</color>      <!-- muted -->
+    <color name="glod">#FF5B1F</color>          <!-- accent -->
+    <color name="accent_fg">#160703</color>     <!-- accent-foreground -->
+    <color name="warn">#F7B750</color>          <!-- warning -->
+    <color name="ic_launcher_background">#121A20</color> <!-- icon tile dark -->
+</resources>

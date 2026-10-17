@@ -115,6 +115,15 @@ export default function AddMachine() {
                     text={`sudo varde-agent enroll --server ${window.location.origin} --token ${token}`}
                   />
                 </Field>
+                <p className="mt-3 text-sm text-muted">
+                  On the Varde app?{" "}
+                  <a
+                    className="text-accent underline"
+                    href={`varde://enroll?server=${encodeURIComponent(window.location.origin)}&code=${token}`}
+                  >
+                    Open the app with this token
+                  </a>
+                </p>
               </div>
             )}
             {(tokens.data?.tokens.length ?? 0) > 0 && (
