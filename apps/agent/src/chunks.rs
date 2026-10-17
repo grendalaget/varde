@@ -3,7 +3,7 @@
 //! mesh as internal service `agent.chunks`. Also implements the pull side:
 //! fetch a manifest + missing chunks from `source_node_ids`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::io::Write as _;
 use std::net::SocketAddr;
@@ -35,24 +35,33 @@ struct Served {
 }
 
 #[derive(Default)]
+struct Tracked {
+    map: HashMap<String, Served>, // snap_id → serving state
+    order: VecDeque<String>,      // insertion order, for FIFO eviction
+}
+
+#[derive(Default)]
 pub struct ServeTracker {
-    inner: Mutex<HashMap<String, Served>>, // snap_id → serving state
+    inner: Mutex<Tracked>,
 }
 
 /// A peer's hints could otherwise grow the map without bound.
 const MAX_TRACKED_SNAPSHOTS: usize = 1024;
 
 impl ServeTracker {
-    /// Entry for `id`; when the map is full an arbitrary older entry is
-    /// evicted — in-flight replications are the freshest ids, so evicting is
+    /// Entry for `id`; when the map is full the oldest entry is evicted
+    /// (FIFO) — in-flight replications are the freshest ids, so evicting is
     /// strictly better than refusing to track.
-    fn entry<'a>(g: &'a mut HashMap<String, Served>, id: &str) -> &'a mut Served {
-        if !g.contains_key(id) && g.len() >= MAX_TRACKED_SNAPSHOTS {
-            if let Some(victim) = g.keys().next().cloned() {
-                g.remove(&victim);
+    fn entry<'a>(g: &'a mut Tracked, id: &str) -> &'a mut Served {
+        if !g.map.contains_key(id) {
+            if g.map.len() >= MAX_TRACKED_SNAPSHOTS {
+                if let Some(victim) = g.order.pop_front() {
+                    g.map.remove(&victim);
+                }
             }
+            g.order.push_back(id.to_string());
         }
-        g.entry(id.to_string()).or_default()
+        g.map.entry(id.to_string()).or_default()
     }
     fn record_manifest(&self, id: &str) {
         Self::entry(&mut self.inner.lock().unwrap(), id).manifest = true;
@@ -66,6 +75,7 @@ impl ServeTracker {
         self.inner
             .lock()
             .unwrap()
+            .map
             .get(snap_id)
             .map(|s| s.peer_ready)
             .unwrap_or(false)
@@ -79,7 +89,7 @@ impl ServeTracker {
     /// True once some peer fetched the manifest and every chunk of `m`.
     pub fn fully_served(&self, snap_id: &str, m: &Manifest) -> bool {
         let g = self.inner.lock().unwrap();
-        let Some(s) = g.get(snap_id) else {
+        let Some(s) = g.map.get(snap_id) else {
             return false;
         };
         if !s.manifest {
@@ -95,6 +105,7 @@ impl ServeTracker {
         self.inner
             .lock()
             .unwrap()
+            .map
             .get(snap_id)
             .map(|s| s.chunks.len())
             .unwrap_or(0)
@@ -134,6 +145,19 @@ pub async fn serve(
     Ok(ChunkServer { addr, tracker })
 }
 
+/// Bytes of `avail` to consume so `head` ends exactly at the head terminator.
+/// The terminator may straddle the head|avail boundary; returns None when it
+/// does not complete within `avail`.
+fn terminator_in(head: &[u8], avail: &[u8]) -> Option<usize> {
+    const T: &[u8; 4] = b"\r\n\r\n";
+    for k in 1..=3usize.min(avail.len()) {
+        if head.ends_with(&T[..4 - k]) && avail[..k] == T[4 - k..] {
+            return Some(k);
+        }
+    }
+    avail.windows(4).position(|w| w == T).map(|p| p + 4)
+}
+
 async fn handle(
     stream: tokio::net::TcpStream,
     store: Arc<Store>,
@@ -142,27 +166,24 @@ async fn handle(
     let (rd, mut wr) = tokio::io::split(stream);
     let mut rd = tokio::io::BufReader::new(rd);
     loop {
-        // bounded head read: grow `head` until it contains the terminator
-        // (which may straddle fill_buf boundaries); bytes past it are body
+        // bounded head read: never consume past the \r\n\r\n terminator,
+        // which may straddle a fill_buf boundary — pipelined request bytes
+        // must stay in the buffer
         let mut head = Vec::with_capacity(256);
-        let mut scanned = 0usize;
-        let spill = loop {
-            let resume = scanned.saturating_sub(3);
-            if let Some(rel) = head[resume..].windows(4).position(|w| w == b"\r\n\r\n") {
-                break head.split_off(resume + rel + 4);
-            }
+        while !head.ends_with(b"\r\n\r\n") {
             if head.len() >= 16 * 1024 {
                 bail!("head too large");
             }
-            scanned = head.len();
             let avail = rd.fill_buf().await?;
             if avail.is_empty() {
                 return Ok(());
             }
-            let take = avail.len().min(16 * 1024 - head.len());
+            let take = terminator_in(&head, avail)
+                .unwrap_or(avail.len())
+                .min(16 * 1024 - head.len());
             head.extend_from_slice(&avail[..take]);
             rd.consume(take);
-        };
+        }
         let head = String::from_utf8_lossy(&head);
         let mut lines = head.lines();
         let mut req_line = lines.next().unwrap_or("").split_whitespace();
@@ -188,12 +209,8 @@ async fn handle(
             .await?;
             return Ok(());
         }
-        // `spill` holds any body bytes already consumed past the terminator
-        let mut body = spill;
-        body.truncate(content_len);
-        let buffered = body.len();
-        body.resize(content_len, 0);
-        rd.read_exact(&mut body[buffered..]).await?;
+        let mut body = vec![0u8; content_len];
+        rd.read_exact(&mut body).await?;
         // route touches the filesystem — keep it off the async executor
         let store2 = store.clone();
         let tracker2 = tracker.clone();
@@ -588,6 +605,7 @@ mod body_limit_tests {
         )
         .await
         .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await; // force two reads
         s.write_all(format!("\n{body}").as_bytes()).await.unwrap();
         let mut buf = Vec::new();
         s.read_to_end(&mut buf).await.unwrap();
