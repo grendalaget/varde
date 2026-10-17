@@ -324,40 +324,6 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
-    use crate::agent::CpView;
-    use std::collections::BTreeSet;
-    use std::sync::Mutex;
-    use std::time::Duration;
-
-    #[test]
-    fn cp_timestamps_move_to_this_pcs_clock() {
-        // CP 30 s ahead; heartbeat sent at PC 1_000_000, answered 200 ms later
-        let offset = cp_clock_offset_ms(1_030_100, 1_000_200, Duration::from_millis(200));
-        assert_eq!(offset, 30_000);
-        let v = CpView {
-            cp_clock_offset_ms: offset,
-            ..Default::default()
-        };
-        assert_eq!(v.to_local_ms(1_025_000), 995_000);
-        assert_eq!(v.to_local_ms(0), 0);
-    }
-
-    #[test]
-    fn delete_acknowledgement_removes_only_sent_ids() {
-        let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
-        let sent = pending_delete_ack_ids(&pending);
-        assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
-
-        pending.lock().unwrap().insert("snap_c".into());
-        acknowledge_delete_acks(&pending, &sent);
-
-        assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
-    }
-}
-
 fn proto_for(s: &str) -> i32 {
     match s {
         "tcp" => mesh_ipc::pb::Protocol::Tcp as i32,
@@ -474,5 +440,39 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
                 a.sync_hosted_services().await;
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
+    use crate::agent::CpView;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    #[test]
+    fn cp_timestamps_move_to_this_pcs_clock() {
+        // CP 30 s ahead; heartbeat sent at PC 1_000_000, answered 200 ms later
+        let offset = cp_clock_offset_ms(1_030_100, 1_000_200, Duration::from_millis(200));
+        assert_eq!(offset, 30_000);
+        let v = CpView {
+            cp_clock_offset_ms: offset,
+            ..Default::default()
+        };
+        assert_eq!(v.to_local_ms(1_025_000), 995_000);
+        assert_eq!(v.to_local_ms(0), 0);
+    }
+
+    #[test]
+    fn delete_acknowledgement_removes_only_sent_ids() {
+        let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
+        let sent = pending_delete_ack_ids(&pending);
+        assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
+
+        pending.lock().unwrap().insert("snap_c".into());
+        acknowledge_delete_acks(&pending, &sent);
+
+        assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
     }
 }

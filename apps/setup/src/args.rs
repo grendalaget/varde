@@ -44,6 +44,8 @@ pub struct Args {
 fn raw_cmdline() -> String {
     // GetCommandLineW keeps quoting intact, which /CPURL= parsing needs.
     unsafe {
+        // SAFETY: the returned pointer is a process-lifetime static,
+        // null-checked before converting.
         let p = windows::Win32::System::Environment::GetCommandLineW();
         if p.is_null() {
             return String::new();

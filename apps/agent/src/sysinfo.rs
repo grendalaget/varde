@@ -54,6 +54,7 @@ fn mem_avail_kb() -> Option<u64> {
 fn mem_status() -> Option<windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     unsafe {
+        // SAFETY: st is a valid POD out-param with dwLength set.
         let mut st: MEMORYSTATUSEX = std::mem::zeroed();
         st.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
         (GlobalMemoryStatusEx(&mut st) != 0).then_some(st)
@@ -80,6 +81,8 @@ fn mem_avail_kb() -> Option<u64> {
 fn disk_free(dir: &std::path::Path) -> Option<u64> {
     let path = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).ok()?;
     unsafe {
+        // SAFETY: path is a valid NUL-terminated CString; st is a valid
+        // out-param for statvfs(3).
         let mut st: libc::statvfs = std::mem::zeroed();
         if libc::statvfs(path.as_ptr(), &mut st) != 0 {
             return None;
@@ -93,6 +96,8 @@ fn disk_free(dir: &std::path::Path) -> Option<u64> {
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut avail = 0u64;
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path; `avail` is a valid
+    // out-param.
     let ok = unsafe {
         GetDiskFreeSpaceExW(
             wide.as_ptr(),
@@ -110,6 +115,7 @@ fn disk_free(_dir: &std::path::Path) -> Option<u64> {
 
 #[cfg(windows)]
 fn uptime() -> i64 {
+    // SAFETY: parameterless Win32 call.
     (unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() } / 1000) as i64
 }
 

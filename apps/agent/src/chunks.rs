@@ -8,12 +8,17 @@ use std::future::Future;
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use snapshot_store::{ChunkId, Manifest, SnapshotId, Store};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 pub const SERVICE_NAME: &str = "agent.chunks";
 const BATCH_INFLIGHT: usize = 4;
+/// Deadline for a whole request/response exchange with a peer — a stalled
+/// connection must not park the replication worker forever.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Largest request body the chunk server will allocate — far above the
 /// biggest real request (a batch of BATCH_INFLIGHT hashes ≈ a few hundred
@@ -133,28 +138,36 @@ async fn handle(
     store: Arc<Store>,
     tracker: Arc<ServeTracker>,
 ) -> Result<()> {
-    let (mut rd, mut wr) = tokio::io::split(stream);
+    let (rd, mut wr) = tokio::io::split(stream);
+    let mut rd = tokio::io::BufReader::new(rd);
+    let mut line = String::new();
     loop {
-        let mut head = Vec::new();
-        let mut byte = [0u8; 1];
-        while !head.ends_with(b"\r\n\r\n") {
-            let n = tokio::io::AsyncReadExt::read(&mut rd, &mut byte).await?;
+        line.clear();
+        let mut head_bytes = rd.read_line(&mut line).await?;
+        if head_bytes == 0 {
+            return Ok(());
+        }
+        let mut req_line = line.split_whitespace();
+        let (method, target) = (
+            req_line.next().unwrap_or("").to_string(),
+            req_line.next().unwrap_or("").to_string(),
+        );
+        let mut content_len = 0usize;
+        let mut close = false;
+        loop {
+            line.clear();
+            let n = rd.read_line(&mut line).await?;
+            head_bytes += n;
+            if head_bytes > 16 * 1024 {
+                bail!("head too large");
+            }
             if n == 0 {
                 return Ok(());
             }
-            head.push(byte[0]);
-            if head.len() > 16 * 1024 {
-                bail!("head too large");
+            let l = line.trim().to_ascii_lowercase();
+            if l.is_empty() {
+                break;
             }
-        }
-        let head = String::from_utf8_lossy(&head).to_string();
-        let mut lines = head.lines();
-        let mut req_line = lines.next().unwrap_or("").split_whitespace();
-        let (method, target) = (req_line.next().unwrap_or(""), req_line.next().unwrap_or(""));
-        let mut content_len = 0usize;
-        let mut close = false;
-        for l in lines {
-            let l = l.to_ascii_lowercase();
             if let Some(v) = l.strip_prefix("content-length:") {
                 content_len = v.trim().parse().unwrap_or(0);
             }
@@ -163,17 +176,21 @@ async fn handle(
             }
         }
         if content_len > MAX_REQUEST_BODY {
-            tokio::io::AsyncWriteExt::write_all(
-                &mut wr,
+            wr.write_all(
                 b"HTTP/1.1 413 Payload Too Large\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
             )
             .await?;
             return Ok(());
         }
         let mut body = vec![0u8; content_len];
-        tokio::io::AsyncReadExt::read_exact(&mut rd, &mut body).await?;
-        let resp = route(method, target, &body, &store, &tracker);
-        tokio::io::AsyncWriteExt::write_all(&mut wr, &resp).await?;
+        rd.read_exact(&mut body).await?;
+        // route touches the filesystem — keep it off the async executor
+        let store2 = store.clone();
+        let tracker2 = tracker.clone();
+        let resp =
+            tokio::task::spawn_blocking(move || route(&method, &target, &body, &store2, &tracker2))
+                .await?;
+        wr.write_all(&resp).await?;
         if close {
             return Ok(());
         }
@@ -228,11 +245,9 @@ fn route(
                             match store.read_chunk_compressed(&h.to_string()) {
                                 Ok(z) => {
                                     frames.extend_from_slice(&(z.len() as u32).to_le_bytes());
-                                    // chunk id is 64 lowercase hex chars = 32 bytes
+                                    // success implies a valid 64-hex id = 32 bytes
                                     if let Ok(raw) = hex::decode(h) {
-                                        frames.extend_from_slice(&raw[..32.min(raw.len())]);
-                                    } else {
-                                        frames.extend_from_slice(&[0u8; 32]);
+                                        frames.extend_from_slice(&raw);
                                     }
                                     frames.extend_from_slice(&z);
                                     tracker.record_chunk(&snap_hints, h);
@@ -382,22 +397,29 @@ where
     Ok(())
 }
 
+/// One request/response round trip with `EXCHANGE_TIMEOUT` covering
+/// connect + send + full-body read.
+async fn exchange(addr: &str, request: String) -> Result<Vec<u8>> {
+    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
+        let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+        stream.write_all(request.as_bytes()).await?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await?;
+        anyhow::Ok(buf)
+    })
+    .await
+    .context("chunk request timed out")?
+}
+
 async fn http_get(mesh: &crate::mesh_ctl::MeshCtl, peer: &str, path: &str) -> Result<Vec<u8>> {
     let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
         bail!("mesh not connected");
     };
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!(
-                "GET {path} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-            )
-            .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!("GET {path} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
+    )
+    .await?;
     let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("GET {path} → {status}");
@@ -415,16 +437,11 @@ pub async fn notify_ready(
     let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
         bail!("mesh not connected");
     };
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!("POST /v1/replicas/{snap_id} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-                .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!("POST /v1/replicas/{snap_id} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
+    )
+    .await?;
     let (status, _) = parse_http(&buf)?;
     if status != 200 {
         bail!("ready notify → {status}");
@@ -442,20 +459,15 @@ async fn batch_get(
         bail!("mesh not connected");
     };
     let body = serde_json::json!({"snapshot_id": snap_id.0, "hashes": hashes}).to_string();
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!(
-                "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!(
+            "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ),
+    )
+    .await?;
     let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("batch status {status}");

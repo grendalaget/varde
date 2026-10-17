@@ -230,6 +230,8 @@ fn exit_signal(_st: &std::process::ExitStatus) -> Option<i32> {
 fn platform_configure(cmd: &mut Command) {
     // tokio exposes pre_exec inherently on unix
     unsafe {
+        // SAFETY: runs in the child between fork and exec; setsid is
+        // async-signal-safe and touches no shared memory.
         cmd.pre_exec(|| {
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
@@ -242,6 +244,7 @@ fn platform_configure(cmd: &mut Command) {
 #[cfg(unix)]
 fn platform_terminate(h: &NativeHandle) -> Result<()> {
     // negative pid ⇒ the whole process group (child is group leader)
+    // SAFETY: kill(2) takes scalar args; no aliasing or memory concerns.
     if unsafe { libc::kill(-(h.pid as i32), libc::SIGTERM) } == -1 {
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ESRCH) {
@@ -253,6 +256,7 @@ fn platform_terminate(h: &NativeHandle) -> Result<()> {
 
 #[cfg(unix)]
 fn platform_interrupt(h: &NativeHandle) -> Result<()> {
+    // SAFETY: kill(2) takes scalar args; no aliasing or memory concerns.
     if unsafe { libc::kill(-(h.pid as i32), libc::SIGINT) } == -1 {
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ESRCH) {
@@ -264,6 +268,7 @@ fn platform_interrupt(h: &NativeHandle) -> Result<()> {
 
 #[cfg(unix)]
 fn platform_kill(h: &NativeHandle) -> Result<()> {
+    // SAFETY: kill(2) takes scalar args; no aliasing or memory concerns.
     if unsafe { libc::kill(-(h.pid as i32), libc::SIGKILL) } == -1 {
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ESRCH) {
@@ -333,6 +338,7 @@ fn ensure_console() {
     }
 
     static ONCE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: plain Win32 console calls; the hwnd is null-checked before use.
     ONCE.call_once(|| unsafe {
         // Fails (ERROR_ACCESS_DENIED) when the process already has a console.
         if AllocConsole() == 0 {
@@ -348,6 +354,8 @@ fn ensure_console() {
 
 #[cfg(windows)]
 struct Job(windows_sys::Win32::Foundation::HANDLE);
+// SAFETY: HANDLE names a process-wide kernel object — sending or sharing it
+// across threads is safe; the OS serializes job-object calls.
 #[cfg(windows)]
 unsafe impl Send for Job {}
 #[cfg(windows)]
@@ -358,6 +366,8 @@ impl Job {
     fn new() -> Result<Job> {
         use windows_sys::Win32::System::JobObjects::*;
         unsafe {
+            // SAFETY: null security attributes and name are valid; the
+            // returned handle is null-checked before use.
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
                 return Err(io::Error::last_os_error().into());
@@ -382,6 +392,8 @@ impl Job {
         use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
         use windows_sys::Win32::System::Threading::*;
         unsafe {
+            // SAFETY: the process handle is opened for a live child and
+            // closed on every path before returning.
             let proc = OpenProcess(PROCESS_ALL_ACCESS, 0, child.id().unwrap_or(0));
             if proc.is_null() {
                 return Err(io::Error::last_os_error().into());
@@ -397,6 +409,7 @@ impl Job {
 
     fn terminate_job(&self) -> Result<()> {
         unsafe {
+            // SAFETY: self.0 is a live job-object handle we own.
             if windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) == 0 {
                 return Err(io::Error::last_os_error().into());
             }
@@ -408,6 +421,7 @@ impl Job {
 #[cfg(windows)]
 impl Drop for Job {
     fn drop(&mut self) {
+        // SAFETY: closing an owned handle exactly once.
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0);
         }
@@ -421,6 +435,7 @@ fn platform_terminate(h: &NativeHandle) -> Result<()> {
     // has no console attached.
     use windows_sys::Win32::System::Console::*;
     unsafe {
+        // SAFETY: plain Win32 call with a scalar pid; failure is surfaced.
         if GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, h.pid) == 0 {
             let e = io::Error::last_os_error();
             // ERROR_INVALID_HANDLE = no console; kill the job instead

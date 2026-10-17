@@ -365,6 +365,8 @@ impl GameDriver for ValheimDriver {
 async fn linux_preflight(binary: &Path, server_dir: &Path) -> Result<()> {
     #[cfg(target_env = "gnu")]
     {
+        // SAFETY: gnu_get_libc_version returns a non-null static string
+        // owned by glibc, valid for the process lifetime.
         let version = unsafe { CStr::from_ptr(libc::gnu_get_libc_version()) }
             .to_string_lossy()
             .into_owned();

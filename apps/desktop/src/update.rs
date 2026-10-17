@@ -86,6 +86,8 @@ fn info_box(title: &str, text: &str) {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
     let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
+    // SAFETY: `wide` produces NUL-terminated UTF-16 strings; MessageBoxW
+    // takes no ownership.
     unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
@@ -117,6 +119,8 @@ fn ask_hosting(version: &str, hosting: &str) -> Choice {
         "Update Varde to {version} now?\r\n\r\n{hosting} — updating drains the server, swaps Varde and restarts it. Players see a short break.\r\n\r\nYes = update now\r\nNo = update when the server stops\r\nCancel = later"
     );
     let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
+    // SAFETY: `wide` produces NUL-terminated UTF-16 strings; MessageBoxW
+    // takes no ownership.
     let r = unsafe {
         MessageBoxW(
             std::ptr::null_mut(),

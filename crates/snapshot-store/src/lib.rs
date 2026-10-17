@@ -47,6 +47,8 @@ pub enum Error {
     IdMismatch(String),
     #[error("{0} changed while the snapshot was being taken")]
     ChangedDuringSnapshot(String),
+    #[error("invalid chunk id {0:?}")]
+    InvalidChunkId(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -113,7 +115,7 @@ impl Store {
             let rel = f.rel.clone();
             match f.kind {
                 WalkKind::Symlink | WalkKind::Special => {
-                    tracing_warn_skip(&rel);
+                    tracing::warn!(path = rel, "skipping special file");
                     continue;
                 }
                 WalkKind::Dir => {
@@ -215,10 +217,12 @@ impl Store {
             validate_rel_path(&e.path).map_err(|e2| Error::Path(e.path.clone(), e2))?;
         }
         let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+        static RESTORE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let staging = parent.join(format!(
-            ".{}.staging-{}",
+            ".{}.staging-{}-{}",
             dest.file_name().unwrap_or_default().to_string_lossy(),
-            std::process::id()
+            std::process::id(),
+            RESTORE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
@@ -311,8 +315,8 @@ impl Store {
             let tmp = abs.with_extension("part");
             let mut out = fs::File::create(&tmp)?;
             use std::io::Write;
-            for cid in e.chunks.clone().unwrap_or_default() {
-                let data = self.read_chunk_plaintext(&cid)?;
+            for cid in e.chunks.iter().flatten() {
+                let data = self.read_chunk_plaintext(cid)?;
                 out.write_all(&data)?;
             }
             drop(out);
@@ -333,8 +337,15 @@ impl Store {
         Ok(m)
     }
 
+    fn snapshot_path(&self, id: &SnapshotId) -> Result<PathBuf> {
+        if !valid_snapshot_id(&id.0) {
+            return Err(Error::Manifest(format!("invalid snapshot id {:?}", id.0)));
+        }
+        Ok(self.root.join("snapshots").join(format!("{}.json", id.0)))
+    }
+
     pub fn manifest_bytes(&self, id: &SnapshotId) -> Result<Vec<u8>> {
-        let p = self.root.join("snapshots").join(format!("{}.json", id.0));
+        let p = self.snapshot_path(id)?;
         let bytes =
             fs::read(&p).map_err(|e| not_found(e, || Error::SnapshotNotFound(id.0.clone())))?;
         if Manifest::digest_id(&bytes) != *id {
@@ -356,8 +367,13 @@ impl Store {
         }
         for e in &m.files {
             validate_rel_path(&e.path).map_err(|x| Error::Path(e.path.clone(), x))?;
+            for c in e.chunks.iter().flatten() {
+                if !valid_chunk_id(c) {
+                    return Err(Error::Manifest(format!("invalid chunk id {c:?}")));
+                }
+            }
         }
-        let p = self.root.join("snapshots").join(format!("{}.json", id.0));
+        let p = self.snapshot_path(&id)?;
         write_atomic(&p, bytes)?;
         Ok(id)
     }
@@ -414,19 +430,20 @@ impl Store {
     }
 
     pub fn has_chunk(&self, id: &ChunkId) -> bool {
-        self.chunk_path(id).exists()
+        valid_chunk_id(id) && self.chunk_path(id).exists()
     }
 
+    /// Caller must have checked `valid_chunk_id` — the id lands in a path.
     fn chunk_path(&self, id: &str) -> PathBuf {
-        self.root
-            .join("chunks")
-            .join(&id[..2.min(id.len())])
-            .join(id)
+        self.root.join("chunks").join(&id[..2]).join(id)
     }
 
     /// Compressed bytes for transfer — verifies plaintext hash on every read;
     /// a mismatch moves the file to quarantine and errors (I6).
     pub fn read_chunk_compressed(&self, id: &ChunkId) -> Result<Vec<u8>> {
+        if !valid_chunk_id(id) {
+            return Err(Error::InvalidChunkId(id.clone()));
+        }
         let p = self.chunk_path(id);
         let z = fs::read(&p).map_err(|e| not_found(e, || Error::ChunkMissing(id.clone())))?;
         match verify_compressed(id, &z) {
@@ -448,6 +465,9 @@ impl Store {
 
     /// Store a received chunk: decompress + verify hash first (I6).
     pub fn put_chunk_compressed(&self, id: &ChunkId, z: &[u8]) -> Result<()> {
+        if !valid_chunk_id(id) {
+            return Err(Error::InvalidChunkId(id.clone()));
+        }
         verify_compressed(id, z)?;
         self.write_chunk_atomic(id, z)
     }
@@ -491,7 +511,7 @@ impl Store {
     }
 
     pub fn delete_snapshot(&self, id: &SnapshotId) -> Result<bool> {
-        let p = self.root.join("snapshots").join(format!("{}.json", id.0));
+        let p = self.snapshot_path(id)?;
         match fs::remove_file(&p) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -570,12 +590,8 @@ fn chunk_ranges(data: &[u8]) -> Vec<(usize, usize)> {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp_dir = if path.starts_with("") {
-        path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    } else {
-        PathBuf::from(".")
-    };
-    fs::create_dir_all(&tmp_dir)?;
+    let tmp_dir = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(tmp_dir)?;
     let tmp = tmp_dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().unwrap_or_default().to_string_lossy(),
@@ -725,6 +741,75 @@ fn verify_unchanged(
     Ok(())
 }
 
+fn record_ancestors(rel: &str, base: &Path, dirs: &mut HashMap<String, u32>) -> Result<()> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    for i in 1..parts.len() {
+        let d = parts[..i].join("/");
+        if dirs.contains_key(&d) {
+            continue;
+        }
+        let md = fs::metadata(base.join(&d))?;
+        dirs.insert(d, unix_mode(&md));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn unix_mode(md: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    md.mode() & 0o7777
+}
+#[cfg(not(unix))]
+fn unix_mode(_md: &fs::Metadata) -> u32 {
+    0o644
+}
+
+#[cfg(unix)]
+fn apply_mode(path: &Path, mode: Option<u32>) {
+    if let Some(m) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(m));
+    }
+}
+#[cfg(not(unix))]
+fn apply_mode(_path: &Path, _mode: Option<u32>) {}
+
+/// Ids are trusted into filesystem paths — a chunk id is the lowercase hex
+/// BLAKE3 of its plaintext, nothing else.
+fn valid_chunk_id(id: &str) -> bool {
+    id.len() == CHUNK_ID_LEN
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// `snap_` + 26 base32 chars — same shape `Manifest::digest_id` produces.
+fn valid_snapshot_id(s: &str) -> bool {
+    SnapshotId::parse(s).is_some_and(|id| id.0 == s)
+}
+
+// Read a whole small file helper used by the HTTP chunk server.
+pub fn read_file(p: &Path) -> Result<Vec<u8>> {
+    Ok(fs::read(p)?)
+}
+
+/// Concatenate plaintext of `chunks` (for tests/tools).
+pub fn cat_chunks(store: &Store, ids: &[ChunkId]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for c in ids {
+        let z = store.read_chunk_compressed(c)?;
+        let mut d = zstd::bulk::decompress(&z, CHUNK_MAX)?;
+        out.append(&mut d);
+    }
+    Ok(out)
+}
+
+/// Read all bytes of an open file into memory (helper for callers).
+pub fn slurp(mut r: impl Read) -> Result<Vec<u8>> {
+    let mut v = Vec::new();
+    r.read_to_end(&mut v)?;
+    Ok(v)
+}
 #[cfg(test)]
 mod snapshot_consistency_tests {
     use super::*;
@@ -824,64 +909,4 @@ mod snapshot_consistency_tests {
 
         assert!(verify_unchanged(&base, &include, &before).is_ok());
     }
-}
-
-fn record_ancestors(rel: &str, base: &Path, dirs: &mut HashMap<String, u32>) -> Result<()> {
-    let parts: Vec<&str> = rel.split('/').collect();
-    for i in 1..parts.len() {
-        let d = parts[..i].join("/");
-        if dirs.contains_key(&d) {
-            continue;
-        }
-        let md = fs::metadata(base.join(&d))?;
-        dirs.insert(d, unix_mode(&md));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn unix_mode(md: &fs::Metadata) -> u32 {
-    use std::os::unix::fs::MetadataExt;
-    md.mode() & 0o7777
-}
-#[cfg(not(unix))]
-fn unix_mode(_md: &fs::Metadata) -> u32 {
-    0o644
-}
-
-#[cfg(unix)]
-fn apply_mode(path: &Path, mode: Option<u32>) {
-    if let Some(m) = mode {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(m));
-    }
-}
-#[cfg(not(unix))]
-fn apply_mode(_path: &Path, _mode: Option<u32>) {}
-
-fn tracing_warn_skip(rel: &str) {
-    eprintln!("snapshot-store: skipping special file {rel}");
-}
-
-// Read a whole small file helper used by the HTTP chunk server.
-pub fn read_file(p: &Path) -> Result<Vec<u8>> {
-    Ok(fs::read(p)?)
-}
-
-/// Concatenate plaintext of `chunks` (for tests/tools).
-pub fn cat_chunks(store: &Store, ids: &[ChunkId]) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    for c in ids {
-        let z = store.read_chunk_compressed(c)?;
-        let mut d = zstd::bulk::decompress(&z, CHUNK_MAX)?;
-        out.append(&mut d);
-    }
-    Ok(out)
-}
-
-/// Read all bytes of an open file into memory (helper for callers).
-pub fn slurp(mut r: impl Read) -> Result<Vec<u8>> {
-    let mut v = Vec::new();
-    r.read_to_end(&mut v)?;
-    Ok(v)
 }

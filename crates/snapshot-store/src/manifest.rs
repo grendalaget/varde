@@ -18,12 +18,15 @@ impl std::fmt::Display for SnapshotId {
 }
 
 impl SnapshotId {
+    /// `snap_` + 26 lowercase base32 chars — exactly what `digest_id` emits.
+    /// Strict because ids are joined into filesystem paths.
     pub fn parse(s: &str) -> Option<SnapshotId> {
-        if s.starts_with("snap_") && s.len() > 5 {
-            Some(SnapshotId(s.to_string()))
-        } else {
-            None
-        }
+        let rest = s.strip_prefix("snap_")?;
+        let ok = rest.len() == 26
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b));
+        ok.then(|| SnapshotId(s.to_string()))
     }
 }
 
