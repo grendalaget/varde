@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,15 +24,14 @@ type routeState struct {
 	serviceID string
 	ip        string
 
-	mu      sync.Mutex
-	host    string // current host_node_id; "" = stopped
-	epoch   uint64
-	ports   []*meshv1.PortSpec
-	tcpLns  map[uint32]net.Listener
-	udpLn   map[uint32]*net.UDPConn
-	flows   map[string]*udpFlow // "port|srcaddr" → flow
-	flowSeq atomic.Uint64
-	closed  bool
+	mu     sync.Mutex
+	host   string // current host_node_id; "" = stopped
+	epoch  uint64
+	ports  []*meshv1.PortSpec
+	tcpLns map[uint32]net.Listener
+	udpLn  map[uint32]*net.UDPConn
+	flows  map[udpFlowKey]*udpFlow
+	closed bool
 	// drainDeadline/drainHost/drainEpoch: while set, UDP flows opened under
 	// the previous host/epoch keep draining (TCP splices always drain
 	// naturally). A warm migration's route flip sets it so the old host can
@@ -61,7 +62,7 @@ func (n *Node) SetRoutes(req *meshv1.SetRoutesRequest) []*meshv1.RouteBindError 
 			rt = &routeState{
 				n: n, serviceID: r.GetServiceId(), ip: r.GetLoopbackIp(),
 				tcpLns: map[uint32]net.Listener{}, udpLn: map[uint32]*net.UDPConn{},
-				flows: map[string]*udpFlow{},
+				flows: map[udpFlowKey]*udpFlow{},
 			}
 			n.routes[r.GetServiceId()] = rt
 		}
@@ -86,22 +87,22 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 	rt.host = r.GetHostNodeId()
 	rt.epoch = r.GetEpoch()
 
-	wantTCP, wantUDP := map[uint32]bool{}, map[uint32]bool{}
+	wantTCP, wantUDP := map[uint32]struct{}{}, map[uint32]struct{}{}
 	for _, p := range r.GetPorts() {
 		if p.GetProtocol() == meshv1.Protocol_PROTOCOL_UDP {
-			wantUDP[p.GetPort()] = true
+			wantUDP[p.GetPort()] = struct{}{}
 		} else {
-			wantTCP[p.GetPort()] = true
+			wantTCP[p.GetPort()] = struct{}{}
 		}
 	}
 	for port, ln := range rt.tcpLns {
-		if !wantTCP[port] {
+		if _, ok := wantTCP[port]; !ok {
 			_ = ln.Close()
 			delete(rt.tcpLns, port)
 		}
 	}
 	for port, ln := range rt.udpLn {
-		if !wantUDP[port] {
+		if _, ok := wantUDP[port]; !ok {
 			_ = ln.Close()
 			delete(rt.udpLn, port)
 		}
@@ -156,7 +157,7 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			for _, f := range rt.flows {
 				f.close()
 			}
-			rt.flows = map[string]*udpFlow{}
+			rt.flows = map[udpFlowKey]*udpFlow{}
 		}
 	} else if len(rt.flows) > 0 && !rt.drainDeadline.IsZero() && r.GetDrainHostNodeId() == "" {
 		// Same host re-asserted without drain fields: the drain is over.
@@ -288,33 +289,11 @@ func (rt *routeState) serveTCP(c net.Conn, port uint32) {
 func spliceTCP(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() {
-		buf := make([]byte, 64*1024)
-		for {
-			nr, err := a.Read(buf)
-			if nr > 0 {
-				if _, werr := b.Write(buf[:nr]); werr != nil {
-					break
-				}
-			}
-			if err != nil {
-				break
-			}
-		}
+		_, _ = io.Copy(b, a)
 		done <- struct{}{}
 	}()
 	go func() {
-		buf := make([]byte, 64*1024)
-		for {
-			nr, err := b.Read(buf)
-			if nr > 0 {
-				if _, werr := a.Write(buf[:nr]); werr != nil {
-					break
-				}
-			}
-			if err != nil {
-				break
-			}
-		}
+		_, _ = io.Copy(a, b)
 		done <- struct{}{}
 	}()
 	<-done
@@ -388,6 +367,13 @@ func rtMetricDrop(n *Node) {
 	}
 }
 
+// udpFlowKey identifies a client UDP flow: the loopback port and the
+// client's source address. Comparable, so no per-packet allocation.
+type udpFlowKey struct {
+	port uint32
+	src  netip.AddrPort
+}
+
 func (rt *routeState) udpReadLoop(c *net.UDPConn, port uint32) {
 	buf := make([]byte, 64*1024)
 	for {
@@ -397,7 +383,7 @@ func (rt *routeState) udpReadLoop(c *net.UDPConn, port uint32) {
 		}
 		payload := append([]byte(nil), buf[:nr]...)
 		rt.mu.Lock()
-		key := fmt.Sprintf("%d|%s", port, src)
+		key := udpFlowKey{port, src.AddrPort()}
 		f := rt.flows[key]
 		rt.mu.Unlock()
 		if f == nil {
@@ -410,7 +396,7 @@ func (rt *routeState) udpReadLoop(c *net.UDPConn, port uint32) {
 	}
 }
 
-func (rt *routeState) openFlow(key string, c *net.UDPConn, src *net.UDPAddr, port uint32) *udpFlow {
+func (rt *routeState) openFlow(key udpFlowKey, c *net.UDPConn, src *net.UDPAddr, port uint32) *udpFlow {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if f := rt.flows[key]; f != nil {
@@ -421,7 +407,7 @@ func (rt *routeState) openFlow(key string, c *net.UDPConn, src *net.UDPAddr, por
 		return nil
 	}
 	f := &udpFlow{
-		id: rt.flowSeq.Add(1), src: src, port: port, rt: rt,
+		id: rt.n.flowSeq.Add(1), src: src, port: port, rt: rt,
 		hostNodeID: host, epoch: epoch,
 		done: make(chan struct{}),
 	}
@@ -431,7 +417,7 @@ func (rt *routeState) openFlow(key string, c *net.UDPConn, src *net.UDPAddr, por
 		if !ok {
 			return nil
 		}
-		lc, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: tp})
+		lc, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: tp})
 		if err != nil {
 			return nil
 		}
@@ -490,7 +476,7 @@ func (rt *routeState) localFlowRead(f *udpFlow, listen *net.UDPConn, lc *net.UDP
 }
 
 // reapFlow closes flows idle past the timeout.
-func (rt *routeState) reapFlow(key string, f *udpFlow) {
+func (rt *routeState) reapFlow(key udpFlowKey, f *udpFlow) {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {

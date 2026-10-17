@@ -28,7 +28,8 @@ type peerState struct {
 	relayIDs        []string
 	conn            *quic.Conn // active connection
 	connInstalledAt time.Time
-	outboundFlows   map[uint64]*udpFlow // flow_id → client-side flow on this peer
+	outboundFlows   map[uint64]*udpFlow     // flow_id → client-side flow on this peer
+	inboundFlows    map[uint64]*inboundFlow // flow_id → host-side flow this peer opened
 	kind            meshv1.PathKind
 	relayID         string // set when kind==RELAYED
 	rttUS           int64  // EWMA
@@ -36,13 +37,15 @@ type peerState struct {
 	bytesRx         atomic.Uint64
 	lastSeen        atomic.Int64
 
-	stopCh  chan struct{}
-	stopped atomic.Bool
-	wg      sync.WaitGroup
-	dialing atomic.Bool
+	stopCtx    context.Context
+	stopCancel context.CancelFunc
+	stopped    atomic.Bool
+	wg         sync.WaitGroup
+	dialing    atomic.Bool
 }
 
 func newPeerState(n *Node, p *meshv1.Peer) *peerState {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &peerState{
 		n: n, id: p.GetNodeId(),
 		pub:           p.GetPublicKey(),
@@ -50,8 +53,10 @@ func newPeerState(n *Node, p *meshv1.Peer) *peerState {
 		endpoints:     p.GetEndpoints(),
 		relayIDs:      p.GetRelayIds(),
 		kind:          meshv1.PathKind_PATH_KIND_NONE,
-		stopCh:        make(chan struct{}),
+		stopCtx:       ctx,
+		stopCancel:    cancel,
 		outboundFlows: map[uint64]*udpFlow{},
+		inboundFlows:  map[uint64]*inboundFlow{},
 	}
 }
 
@@ -65,7 +70,7 @@ func (p *peerState) update(p2 *meshv1.Peer) {
 func (p *peerState) stop() {
 	p.mu.Lock()
 	if p.stopped.CompareAndSwap(false, true) {
-		close(p.stopCh)
+		p.stopCancel()
 	}
 	c := p.conn
 	p.conn = nil
@@ -172,14 +177,14 @@ func (p *peerState) manage() {
 	defer p.wg.Done()
 	for {
 		select {
-		case <-p.stopCh:
+		case <-p.stopCtx.Done():
 			return
 		default:
 		}
 		if c := p.current(); c != nil {
 			// wait until it dies
 			select {
-			case <-p.stopCh:
+			case <-p.stopCtx.Done():
 				return
 			case <-c.Context().Done():
 			}
@@ -206,7 +211,7 @@ func (p *peerState) manage() {
 			}()
 		}
 		select {
-		case <-p.stopCh:
+		case <-p.stopCtx.Done():
 			return
 		case <-time.After(200 * time.Millisecond):
 		}
@@ -239,7 +244,7 @@ func (p *peerState) getEndpoints() []*net.UDPAddr {
 	defer p.mu.Unlock()
 	var out []*net.UDPAddr
 	for _, e := range p.endpoints {
-		if a, err := resolveUDP(e); err == nil {
+		if a, err := net.ResolveUDPAddr("udp", e); err == nil {
 			out = append(out, a)
 		}
 	}
@@ -256,7 +261,7 @@ func (p *peerState) dialDirectOnce() bool {
 		return false
 	}
 	budget := p.n.timings.DirectDialInterval * time.Duration(p.n.timings.DirectDialRounds)
-	ctx, cancel := context.WithTimeout(p.stopChCtx(), budget)
+	ctx, cancel := context.WithTimeout(p.stopCtx, budget)
 	defer cancel()
 	var wg sync.WaitGroup
 	var won atomic.Bool
@@ -295,7 +300,7 @@ func (p *peerState) dialRelayed() bool {
 		p.n.log.Debug("no shared registered relay", "peer", p.id)
 		return false
 	}
-	conn, err := rc.dial(p.stopChCtx(), p.id, p.n.tlsConfigFor(p.id))
+	conn, err := rc.dial(p.stopCtx, p.id, p.n.tlsConfigFor(p.id))
 	if err != nil {
 		p.n.log.Debug("relayed dial failed", "peer", p.id, "relay", rc.id, "error", err)
 		return false
@@ -309,9 +314,9 @@ func (p *peerState) dialRelayed() bool {
 
 func (p *peerState) pickRelay() *relayClient {
 	p.mu.Lock()
-	shared := map[string]bool{}
+	shared := map[string]struct{}{}
 	for _, id := range p.relayIDs {
-		shared[id] = true
+		shared[id] = struct{}{}
 	}
 	p.mu.Unlock()
 	p.n.mu.RLock()
@@ -319,7 +324,7 @@ func (p *peerState) pickRelay() *relayClient {
 	var best *relayClient
 	var bestRTT int64
 	for id, rc := range p.n.relays {
-		if !shared[id] || !rc.registered() {
+		if _, ok := shared[id]; !ok || !rc.registered() {
 			continue
 		}
 		rtt := rc.rtt()
@@ -345,7 +350,7 @@ func (p *peerState) retryDirectLoop() {
 	defer t.Stop()
 	for {
 		select {
-		case <-p.stopCh:
+		case <-p.stopCtx.Done():
 			return
 		case <-c.Context().Done():
 			return
@@ -358,18 +363,6 @@ func (p *peerState) retryDirectLoop() {
 			}
 		}
 	}
-}
-
-func (p *peerState) stopChCtx() context.Context {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		select {
-		case <-p.stopCh:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	return ctx
 }
 
 func (p *peerState) state() *meshv1.PeerState {
@@ -389,7 +382,7 @@ func (p *peerState) state() *meshv1.PeerState {
 // serveConn runs accept loops for streams + datagrams and the control stream.
 func (p *peerState) serveConn(conn *quic.Conn, kind meshv1.PathKind) {
 	defer p.wg.Done()
-	p.wg.Add(2)
+	p.wg.Add(3)
 	go p.streamAcceptLoop(conn)
 	go p.datagramLoop(conn)
 	go p.controlLoop(conn)

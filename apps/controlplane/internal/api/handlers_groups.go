@@ -3,12 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/grendalaget/varde/go/ids"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
-	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
@@ -276,6 +274,3 @@ func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
-
-var _ = fmt.Sprint
-var _ = enroll.UserCode

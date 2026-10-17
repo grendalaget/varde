@@ -287,11 +287,11 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	if err != nil {
 		return nil, err
 	}
-	used := map[string]bool{}
+	used := map[string]struct{}{}
 	for _, e := range existing {
-		used[e.LoopbackIP] = true
+		used[e.LoopbackIP] = struct{}{}
 	}
-	ip, err := services.Allocate(svcID, func(ip string) bool { return used[ip] })
+	ip, err := services.Allocate(svcID, func(ip string) bool { _, ok := used[ip]; return ok })
 	if err != nil {
 		return nil, err
 	}

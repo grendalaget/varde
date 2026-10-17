@@ -4,8 +4,10 @@
 package scheduler
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 )
 
 // ServerView is what Place needs to know about the server.
@@ -71,21 +73,12 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("unschedulable: %v", e.Reasons) }
 
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
 // Place picks the node for a server. recovery=false means normal start.
 // Deterministic: candidates sorted by node_id, equal scores keep node_id
 // order, so ties always resolve to the lexicographically smaller node_id.
 func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Decision, error) {
 	sorted := append([]NodeView(nil), nodes...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	slices.SortFunc(sorted, func(a, b NodeView) int { return strings.Compare(a.ID, b.ID) })
 
 	var reasons []string
 	var best *Decision
@@ -107,15 +100,15 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 			reasons = append(reasons, n.ID+": hosting disabled")
 			continue
 		}
-		if !contains(n.Drivers, game.ID) {
+		if !slices.Contains(n.Drivers, game.ID) {
 			reasons = append(reasons, n.ID+": missing driver "+game.ID)
 			continue
 		}
-		if len(game.OS) > 0 && !contains(game.OS, n.OS) {
+		if len(game.OS) > 0 && !slices.Contains(game.OS, n.OS) {
 			reasons = append(reasons, n.ID+": unsupported os "+n.OS)
 			continue
 		}
-		if len(game.Arch) > 0 && !contains(game.Arch, n.Arch) {
+		if len(game.Arch) > 0 && !slices.Contains(game.Arch, n.Arch) {
 			reasons = append(reasons, n.ID+": unsupported arch "+n.Arch)
 			continue
 		}
@@ -136,7 +129,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 		if len(game.Runtimes) > 0 {
 			ok := false
 			for _, rt := range game.Runtimes {
-				if contains(n.Runtimes, rt) {
+				if slices.Contains(n.Runtimes, rt) {
 					ok = true
 					break
 				}
@@ -154,7 +147,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 		if n.HasRestoreLocal {
 			add(100, "restore snapshot already local")
 		}
-		if n.NeededDeployment != "" && contains(n.CachedDeployments, n.NeededDeployment) {
+		if n.NeededDeployment != "" && slices.Contains(n.CachedDeployments, n.NeededDeployment) {
 			add(30, "deployment cached")
 		}
 		if n.Anchor {
@@ -215,7 +208,7 @@ type ReplCandidate struct {
 // (the producer's local copy counts as one), anchors first.
 func SelectReplicationTargets(producerID string, replicationFactor int, candidates []ReplCandidate) []string {
 	sorted := append([]ReplCandidate(nil), candidates...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].NodeID < sorted[j].NodeID })
+	slices.SortFunc(sorted, func(a, b ReplCandidate) int { return strings.Compare(a.NodeID, b.NodeID) })
 
 	remaining := replicationFactor - 1
 	var out []string
@@ -253,11 +246,11 @@ func SelectReplicationTargets(producerID string, replicationFactor int, candidat
 		rest = append(rest, scored{n.NodeID, sc})
 	}
 	// deterministic: score desc, node_id asc
-	sort.Slice(rest, func(i, j int) bool {
-		if rest[i].score != rest[j].score {
-			return rest[i].score > rest[j].score
+	slices.SortFunc(rest, func(a, b scored) int {
+		if a.score != b.score {
+			return cmp.Compare(b.score, a.score)
 		}
-		return rest[i].id < rest[j].id
+		return strings.Compare(a.id, b.id)
 	})
 	for _, r := range rest {
 		if remaining <= 0 {

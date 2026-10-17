@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/quic-go/quic-go"
 
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
@@ -48,14 +48,15 @@ type sharedSock struct {
 	udp *net.UDPConn
 
 	relayMu     sync.RWMutex
-	relayAddrs  map[string]bool // "ip:port"
+	relayAddrs  map[string]struct{} // "ip:port"
 	blockDirect atomic.Bool
 }
 
 func (s *sharedSock) isRelay(addr net.Addr) bool {
 	s.relayMu.RLock()
 	defer s.relayMu.RUnlock()
-	return s.relayAddrs[addr.String()]
+	_, ok := s.relayAddrs[addr.String()]
+	return ok
 }
 
 func (s *sharedSock) WriteTo(p []byte, addr net.Addr) (int, error) {
@@ -73,7 +74,7 @@ func (s *sharedSock) setRelay(addr string, on bool) {
 	s.relayMu.Lock()
 	defer s.relayMu.Unlock()
 	if on {
-		s.relayAddrs[addr] = true
+		s.relayAddrs[addr] = struct{}{}
 	} else {
 		delete(s.relayAddrs, addr)
 	}
@@ -114,10 +115,11 @@ type Node struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	metrics     *metrics
-	connInbound sync.Map // *quic.Conn → bool (was inbound)
+	connInbound sync.Map      // *quic.Conn → bool (was inbound)
+	flowSeq     atomic.Uint64 // node-wide UDP flow ids (peer-side maps key on them)
 }
 
-func NewNode(log *slog.Logger, timings Timings, reg *promReg) *Node {
+func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node {
 	n := &Node{
 		log:        log,
 		timings:    timings,
@@ -139,17 +141,27 @@ func NewNode(log *slog.Logger, timings Timings, reg *promReg) *Node {
 // calls update node_id-independent settings (relays, force_relay) without
 // dropping peer connections.
 func (n *Node) Configure(req *meshv1.ConfigureRequest) error {
+	removed, err := n.applyConfig(req)
+	// Stop removed relays outside the lock: rc.stop waits on goroutines that
+	// take n.mu.
+	for _, rc := range removed {
+		rc.stop()
+	}
+	return err
+}
+
+func (n *Node) applyConfig(req *meshv1.ConfigureRequest) (removed []*relayClient, err error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if !n.configured {
 		priv, err := identity.LoadPrivateKey(req.GetIdentityKeyPath())
 		if err != nil {
-			return fmt.Errorf("load identity: %w", err)
+			return nil, fmt.Errorf("load identity: %w", err)
 		}
 		cert, err := selfSignedCert(priv)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		port := int(req.GetListenPort())
 		addr := &net.UDPAddr{IP: net.IPv6unspecified, Port: port}
@@ -160,18 +172,17 @@ func (n *Node) Configure(req *meshv1.ConfigureRequest) error {
 			udp, err = net.ListenUDP("udp", addr)
 		}
 		if err != nil {
-			return fmt.Errorf("udp listen: %w", err)
+			return nil, fmt.Errorf("udp listen: %w", err)
 		}
 		n.priv = priv
 		n.cert = cert
-		n.nodeID = req.GetNodeId()
 		n.udp = udp
-		n.sock = &sharedSock{udp: udp, relayAddrs: map[string]bool{}}
+		n.sock = &sharedSock{udp: udp, relayAddrs: map[string]struct{}{}}
 		n.ctx, n.cancel = context.WithCancel(context.Background())
 		n.tr = &quic.Transport{Conn: n.sock}
 		ln, err := n.tr.Listen(n.tlsConfigFor(""), quicConfig())
 		if err != nil {
-			return fmt.Errorf("quic listen: %w", err)
+			return nil, fmt.Errorf("quic listen: %w", err)
 		}
 		n.listener = ln
 		n.configured = true
@@ -186,7 +197,6 @@ func (n *Node) Configure(req *meshv1.ConfigureRequest) error {
 	for _, r := range req.GetRelays() {
 		want[r.GetRelayId()] = r
 	}
-	var removed []*relayClient
 	for id, rc := range n.relays {
 		if w, ok := want[id]; ok && w.GetAddr() == rc.addr.String() {
 			rc.setToken(w.GetToken())
@@ -206,12 +216,7 @@ func (n *Node) Configure(req *meshv1.ConfigureRequest) error {
 		n.relays[id] = rc
 		n.sock.setRelay(rc.addr.String(), true)
 	}
-	n.mu.Unlock()
-	for _, rc := range removed {
-		rc.stop()
-	}
-	n.mu.Lock()
-	return nil
+	return removed, nil
 }
 
 func quicConfig() *quic.Config {
@@ -276,7 +281,7 @@ func (n *Node) Close() {
 // skipping loopback and link-local v6.
 func (n *Node) localEndpoints() []string {
 	port := n.udp.LocalAddr().(*net.UDPAddr).Port
-	out := []string{}
+	var out []string
 	ifs, err := net.InterfaceAddrs()
 	if err != nil {
 		return out
@@ -329,11 +334,11 @@ func (n *Node) status() *meshv1.MeshStatus {
 }
 
 func dedupe(in []string) []string {
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	var out []string
 	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
 			out = append(out, s)
 		}
 	}
@@ -404,11 +409,6 @@ func (n *Node) handleRelayFrame(addr net.Addr, data []byte) {
 	rc.handleFrame(data)
 }
 
-// resolveUDP resolves "ip:port"; tolerates bare loopback strings.
-func resolveUDP(s string) (*net.UDPAddr, error) {
-	return net.ResolveUDPAddr("udp", s)
-}
-
 func (n *Node) emitRouteRejected(serviceID, peerID, reason string) {
 	n.events.emit(&meshv1.MeshEvent{
 		AtUnixMs: time.Now().UnixMilli(),
@@ -417,5 +417,3 @@ func (n *Node) emitRouteRejected(serviceID, peerID, reason string) {
 		}},
 	})
 }
-
-var _ = strings.TrimSpace // keep import for helpers

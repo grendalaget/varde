@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -816,7 +815,7 @@ func TestWatchEventsEmitsPathChanges(t *testing.T) {
 func TestRetryDirectLoopWithoutConn(t *testing.T) {
 	n := NewNode(testLog(), testTimings, nil)
 	t.Cleanup(func() { n.Close() })
-	p := &peerState{n: n, id: "node_b", stopCh: make(chan struct{})}
+	p := newPeerState(n, &meshv1.Peer{NodeId: "node_b"})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -828,8 +827,6 @@ func TestRetryDirectLoopWithoutConn(t *testing.T) {
 		t.Fatal("retryDirectLoop did not return within 1s")
 	}
 }
-
-var _ = atomic.Bool{}
 
 // Warm migration drain: flipping a route with drain fields keeps the old
 // host's UDP flows alive inside the window; without drain fields they close.
@@ -941,7 +938,8 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	rt.mu.Lock()
 	stale := &udpFlow{src: &net.UDPAddr{IP: net.ParseIP("127.0.0.9"), Port: 9},
 		hostNodeID: "node_b", epoch: 1, rt: rt, done: make(chan struct{})}
-	rt.flows["27002|stale"] = stale
+	staleKey := udpFlowKey{port: testUDP, src: stale.src.AddrPort()}
+	rt.flows[staleKey] = stale
 	rt.mu.Unlock()
 	flip2 := routeFor(testSvcID, testIP, testTCP, "node_b", 3, testUDP)
 	flip2.DrainHostNodeId = "node_c"
@@ -952,7 +950,7 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	}); err != nil || len(rr.GetErrors()) > 0 {
 		t.Fatalf("routes4: %v", rr.GetErrors())
 	}
-	if _, ok := rt.flows["27002|stale"]; ok {
+	if _, ok := rt.flows[staleKey]; ok {
 		t.Fatal("stale pre-prevHost flow survived consecutive flip")
 	}
 	if !stale.closed.Load() {
@@ -961,4 +959,137 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	if got := flowCount(); got != 1 {
 		t.Fatalf("prevHost flow lost on consecutive flip: %d", got)
 	}
+}
+
+// Two clients of the same host each allocate flow id 1 (node-wide seq
+// starts at 1 for every client). The host must keep them in separate
+// per-peer inbound maps and route each reply to the peer that opened
+// the flow — before per-peer isolation the second insert overwrote the
+// first and one client's echo went to the other peer's socket.
+func TestMultiClientUDPIsolation(t *testing.T) {
+	h := newTestNode(t, "node_h")
+	a := newTestNode(t, "node_a")
+	b := newTestNode(t, "node_b")
+	for _, tn := range []*testNode{h, a, b} {
+		tn.configure(t, nil, false)
+	}
+	h.setPeers(t, peerOf(a), peerOf(b))
+	a.setPeers(t, peerOf(h))
+	b.setPeers(t, peerOf(h))
+	waitFor(t, "direct", 10*time.Second, func() bool {
+		return pathOf(t, a, "node_h") == meshv1.PathKind_PATH_KIND_DIRECT &&
+			pathOf(t, b, "node_h") == meshv1.PathKind_PATH_KIND_DIRECT
+	})
+
+	echo := startUDPEcho(t)
+	if _, err := h.cli.SetHostedServices(context.Background(), &meshv1.SetHostedServicesRequest{
+		Services: []*meshv1.HostedService{hostedFor(testSvcID, 1, testTCP, 0, testUDP, uint32(echo))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// distinct loopback IPs (same process shares the loopback space), same port
+	for tn, ip := range map[*testNode]string{a: "127.77.0.43", b: "127.77.0.44"} {
+		if rr, err := tn.cli.SetRoutes(context.Background(), &meshv1.SetRoutesRequest{
+			Routes: []*meshv1.ServiceRoute{routeFor(testSvcID, ip, testTCP, "node_h", 1, testUDP)},
+		}); err != nil || len(rr.GetErrors()) > 0 {
+			t.Fatalf("routes: %v", rr.GetErrors())
+		}
+	}
+
+	udpEcho := func(ip, msg string) {
+		uc, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP(ip), Port: testUDP})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = uc.Close() }()
+		for attempt := 0; attempt < 20; attempt++ {
+			if _, err := uc.Write([]byte(msg)); err != nil {
+				t.Fatalf("write %s: %v", ip, err)
+			}
+			_ = uc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			buf := make([]byte, 2048)
+			nr, err := uc.Read(buf)
+			if err == nil && string(buf[:nr]) == msg {
+				return
+			}
+		}
+		t.Fatalf("no echo via %s", ip)
+	}
+	udpEcho("127.77.0.43", "from-a")
+	udpEcho("127.77.0.44", "from-b")
+
+	// host sees exactly one flow on each peer, both under flow id 1
+	h.n.mu.RLock()
+	pa, pb := h.n.peers["node_a"], h.n.peers["node_b"]
+	h.n.mu.RUnlock()
+	for p, want := range map[*peerState]int{pa: 1, pb: 1} {
+		p.mu.Lock()
+		got := len(p.inboundFlows)
+		p.mu.Unlock()
+		if got != want {
+			t.Fatalf("peer %s: inboundFlows=%d, want %d", p.id, got, want)
+		}
+	}
+}
+
+// A and B are each other's client AND host: both allocate flow id 1 over
+// the same peer pair. Host replies carry flowReplyBit so the receiver
+// hands them to its client-side outbound flow; without the bit a reply
+// would land in inboundFlows and be written to the hosted target —
+// the client's socket would never see its echo.
+func TestBidirectionalUDPFlows(t *testing.T) {
+	a := newTestNode(t, "node_a")
+	b := newTestNode(t, "node_b")
+	a.configure(t, nil, false)
+	b.configure(t, nil, false)
+	a.setPeers(t, peerOf(b))
+	b.setPeers(t, peerOf(a))
+	waitFor(t, "direct", 10*time.Second, func() bool {
+		return pathOf(t, a, "node_b") == meshv1.PathKind_PATH_KIND_DIRECT
+	})
+
+	echoA, echoB := startUDPEcho(t), startUDPEcho(t)
+	if _, err := a.cli.SetHostedServices(context.Background(), &meshv1.SetHostedServicesRequest{
+		Services: []*meshv1.HostedService{hostedFor("svc_a", 1, testTCP, 0, testUDP, uint32(echoA))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.cli.SetHostedServices(context.Background(), &meshv1.SetHostedServicesRequest{
+		Services: []*meshv1.HostedService{hostedFor("svc_b", 1, testTCP, 0, testUDP, uint32(echoB))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rr, err := a.cli.SetRoutes(context.Background(), &meshv1.SetRoutesRequest{
+		Routes: []*meshv1.ServiceRoute{routeFor("svc_b", "127.77.0.45", testTCP, "node_b", 1, testUDP)},
+	}); err != nil || len(rr.GetErrors()) > 0 {
+		t.Fatalf("routes a: %v", rr.GetErrors())
+	}
+	if rr, err := b.cli.SetRoutes(context.Background(), &meshv1.SetRoutesRequest{
+		Routes: []*meshv1.ServiceRoute{routeFor("svc_a", "127.77.0.46", testTCP, "node_a", 1, testUDP)},
+	}); err != nil || len(rr.GetErrors()) > 0 {
+		t.Fatalf("routes b: %v", rr.GetErrors())
+	}
+
+	udpEcho := func(ip, msg string) {
+		uc, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP(ip), Port: testUDP})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = uc.Close() }()
+		for attempt := 0; attempt < 20; attempt++ {
+			if _, err := uc.Write([]byte(msg)); err != nil {
+				t.Fatalf("write %s: %v", ip, err)
+			}
+			_ = uc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			buf := make([]byte, 2048)
+			nr, err := uc.Read(buf)
+			if err == nil && string(buf[:nr]) == msg {
+				return
+			}
+		}
+		t.Fatalf("no echo via %s", ip)
+	}
+	// flow id 1 on both peers, both directions
+	udpEcho("127.77.0.45", "a-to-b")
+	udpEcho("127.77.0.46", "b-to-a")
 }

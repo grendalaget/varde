@@ -51,18 +51,17 @@ func (p *peerState) streamAcceptLoop(conn *quic.Conn) {
 		if err != nil {
 			return
 		}
-		go p.handleStream(conn, st)
+		go p.handleStream(st)
 	}
 }
 
-func (p *peerState) handleStream(conn *quic.Conn, st *quic.Stream) {
+func (p *peerState) handleStream(st *quic.Stream) {
 	var open meshv1.StreamOpen
 	if err := meshproto.ReadFrame(st, &open); err != nil {
 		p.n.log.Debug("read stream open failed", "peer", p.id, "error", err)
 		_ = st.Close()
 		return
 	}
-	_ = conn
 	switch k := open.GetKind().(type) {
 	case *meshv1.StreamOpen_Service:
 		p.handleServiceStream(st, k.Service)
@@ -108,6 +107,7 @@ func (p *peerState) serveControl(st *quic.Stream) {
 
 // controlLoop maintains one ControlStream per conn for RTT measurement.
 func (p *peerState) controlLoop(conn *quic.Conn) {
+	defer p.wg.Done()
 	ctx := conn.Context()
 	for {
 		st, err := conn.OpenStreamSync(ctx)
@@ -160,7 +160,7 @@ func (p *peerState) controlPingLoop(st *quic.Stream) {
 		}
 		timer := time.NewTimer(p.n.timings.ControlPingEvery)
 		select {
-		case <-p.stopCh:
+		case <-p.stopCtx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:

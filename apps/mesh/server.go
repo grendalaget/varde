@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -133,5 +132,3 @@ func (n *Node) SetPeers(req *meshv1.SetPeersRequest) {
 		p.start()
 	}
 }
-
-var _ = time.Second // reserved

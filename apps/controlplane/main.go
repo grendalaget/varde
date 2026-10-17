@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -214,7 +213,11 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	}
 
 	if cfg.embeddedRelay != "" {
-		rconn, err := net.ListenUDP("udp", mustResolveUDPAddr(cfg.embeddedRelay))
+		uaddr, err := net.ResolveUDPAddr("udp", cfg.embeddedRelay)
+		if err != nil {
+			return fmt.Errorf("embedded relay addr %q: %w", cfg.embeddedRelay, err)
+		}
+		rconn, err := net.ListenUDP("udp", uaddr)
 		if err != nil {
 			return fmt.Errorf("embedded relay listen %s: %w", cfg.embeddedRelay, err)
 		}
@@ -311,15 +314,6 @@ func envInt(key string, def int64) int64 {
 	return def
 }
 
-func mustResolveUDPAddr(addr string) *net.UDPAddr {
-	ua, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		slog.Error("invalid addr", "addr", addr, "error", err)
-		os.Exit(2)
-	}
-	return ua
-}
-
 const relayKeyKV = "relay_signing_key_pkcs8"
 
 func loadOrCreateRelayKey(ctx context.Context, st *store.Store) (ed25519.PrivateKey, error) {
@@ -349,6 +343,3 @@ func loadOrCreateRelayKey(ctx context.Context, st *store.Store) (ed25519.Private
 	}
 	return priv, nil
 }
-
-// Unused references kept for clarity of wiring.
-var _ = base64.StdEncoding

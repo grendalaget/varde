@@ -8,19 +8,16 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/grendalaget/varde/go/identity"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
-	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
 	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
@@ -278,10 +275,3 @@ func abs64(v int64) int64 {
 	}
 	return v
 }
-
-// ---------- plumbing ----------
-
-var _ = json.Marshal
-var _ = time.Now
-var _ = errors.Is
-var _ = catalog.All
