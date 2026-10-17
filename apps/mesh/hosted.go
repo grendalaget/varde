@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -170,6 +171,12 @@ func (p *peerState) handleUDPFlowStream(st *quic.Stream, uf *meshv1.UdpFlow) {
 				return
 			}
 			if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(uf.GetFlowId()|flowReplyBit, buf[:nr])); err != nil {
+				// same policy as udpFlow.send: oversized datagrams are
+				// dropped and counted, the flow stays alive
+				if errors.Is(err, &quic.DatagramTooLargeError{}) {
+					rtMetricDrop(p.n)
+					continue
+				}
 				return
 			}
 			p.bytesTx.Add(uint64(nr))
