@@ -20,6 +20,11 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
     // capture send instant BEFORE the request — fencing math depends on it
     let sent = Instant::now();
     let deleted_snapshots = pending_delete_ack_ids(&agent.pending_delete_acks);
+    // recursive walk of the store — keep it off the async executor
+    let stored_bytes = {
+        let a = agent.clone();
+        tokio::task::spawn_blocking(move || a.snapshots_stored_bytes()).await?
+    };
     let hb = cp_api::AgentHeartbeat {
         agent_version: Some(env!("CARGO_PKG_VERSION").into()),
         capabilities: Some(crate::sysinfo::capabilities(
@@ -32,7 +37,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
-        snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
+        snapshots_stored_bytes: Some(stored_bytes),
         deleted_snapshots: Some(deleted_snapshots.clone()),
         // Send "" once checked so the CP clears a stale badge after upgrade;
         // None (field omitted) before the first check so old nodes stay nil.
