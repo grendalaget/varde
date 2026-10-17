@@ -43,26 +43,24 @@ pub struct ServeTracker {
 const MAX_TRACKED_SNAPSHOTS: usize = 1024;
 
 impl ServeTracker {
-    /// Entry for `id`, or None when the map is full of other snapshots.
-    fn entry<'a>(g: &'a mut HashMap<String, Served>, id: &str) -> Option<&'a mut Served> {
+    /// Entry for `id`; when the map is full an arbitrary older entry is
+    /// evicted — in-flight replications are the freshest ids, so evicting is
+    /// strictly better than refusing to track.
+    fn entry<'a>(g: &'a mut HashMap<String, Served>, id: &str) -> &'a mut Served {
         if !g.contains_key(id) && g.len() >= MAX_TRACKED_SNAPSHOTS {
-            return None;
+            if let Some(victim) = g.keys().next().cloned() {
+                g.remove(&victim);
+            }
         }
-        Some(g.entry(id.to_string()).or_default())
+        g.entry(id.to_string()).or_default()
     }
     fn record_manifest(&self, id: &str) {
-        let mut g = self.inner.lock().unwrap();
-        if let Some(s) = Self::entry(&mut g, id) {
-            s.manifest = true;
-        }
+        Self::entry(&mut self.inner.lock().unwrap(), id).manifest = true;
     }
     /// A fetcher reports replica-ready after POSTing to the CP; with dedup a
     /// peer may need zero chunks, so served-count alone can't prove readiness.
     fn record_ready(&self, id: &str) {
-        let mut g = self.inner.lock().unwrap();
-        if let Some(s) = Self::entry(&mut g, id) {
-            s.peer_ready = true;
-        }
+        Self::entry(&mut self.inner.lock().unwrap(), id).peer_ready = true;
     }
     pub fn peer_ready(&self, snap_id: &str) -> bool {
         self.inner
@@ -75,9 +73,7 @@ impl ServeTracker {
     fn record_chunk(&self, snap_hints: &[String], chunk: &str) {
         let mut g = self.inner.lock().unwrap();
         for h in snap_hints {
-            if let Some(s) = Self::entry(&mut g, h) {
-                s.chunks.insert(chunk.to_string());
-            }
+            Self::entry(&mut g, h).chunks.insert(chunk.to_string());
         }
     }
     /// True once some peer fetched the manifest and every chunk of `m`.
@@ -146,26 +142,27 @@ async fn handle(
     let (rd, mut wr) = tokio::io::split(stream);
     let mut rd = tokio::io::BufReader::new(rd);
     loop {
-        // bounded head read: stop consuming input the moment it is too big
+        // bounded head read: grow `head` until it contains the terminator
+        // (which may straddle fill_buf boundaries); bytes past it are body
         let mut head = Vec::with_capacity(256);
-        while !head.ends_with(b"\r\n\r\n") {
+        let mut scanned = 0usize;
+        let spill = loop {
+            let resume = scanned.saturating_sub(3);
+            if let Some(rel) = head[resume..].windows(4).position(|w| w == b"\r\n\r\n") {
+                break head.split_off(resume + rel + 4);
+            }
+            if head.len() >= 16 * 1024 {
+                bail!("head too large");
+            }
+            scanned = head.len();
             let avail = rd.fill_buf().await?;
             if avail.is_empty() {
                 return Ok(());
             }
-            // stop at the terminator so a following body stays in the buffer
-            let take = avail
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .map(|i| i + 4)
-                .unwrap_or(avail.len())
-                .min(16 * 1024 - head.len());
+            let take = avail.len().min(16 * 1024 - head.len());
             head.extend_from_slice(&avail[..take]);
             rd.consume(take);
-            if head.len() >= 16 * 1024 && !head.ends_with(b"\r\n\r\n") {
-                bail!("head too large");
-            }
-        }
+        };
         let head = String::from_utf8_lossy(&head);
         let mut lines = head.lines();
         let mut req_line = lines.next().unwrap_or("").split_whitespace();
@@ -191,8 +188,12 @@ async fn handle(
             .await?;
             return Ok(());
         }
-        let mut body = vec![0u8; content_len];
-        rd.read_exact(&mut body).await?;
+        // `spill` holds any body bytes already consumed past the terminator
+        let mut body = spill;
+        body.truncate(content_len);
+        let buffered = body.len();
+        body.resize(content_len, 0);
+        rd.read_exact(&mut body[buffered..]).await?;
         // route touches the filesystem — keep it off the async executor
         let store2 = store.clone();
         let tracker2 = tracker.clone();
@@ -565,6 +566,33 @@ mod body_limit_tests {
         assert!(head.starts_with("HTTP/1.1 413"), "resp: {head}");
         // no allocation happened for the promised body — connection closed
         // without reading it
+    }
+
+    #[tokio::test]
+    async fn head_split_across_writes_still_serves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(tmp.path().join("store")).unwrap());
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let srv = serve(store, Arc::new(ServeTracker::default()), rx)
+            .await
+            .unwrap();
+        let body = r#"{"snapshot_id":"snap_x","hashes":[]}"#;
+        let mut s = tokio::net::TcpStream::connect(srv.addr).await.unwrap();
+        // terminator straddles the two writes: head ends "\r\n\r", then "\n"
+        s.write_all(
+            format!(
+                "POST /v1/chunks/batch HTTP/1.1\r\ncontent-length: {}\r\nconnection: close\r\n\r",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        s.write_all(format!("\n{body}").as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        let head = String::from_utf8_lossy(&buf);
+        assert!(head.starts_with("HTTP/1.1 200"), "resp: {head}");
     }
 
     #[tokio::test]
