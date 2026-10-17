@@ -278,147 +278,6 @@ pub async fn update_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiv
 /// Shared state slot, cloned into `Agent`.
 pub type Shared = Mutex<UpdateState>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const MANIFEST: &str = r#"{
-        "version": "1.4.0",
-        "platforms": {
-            "windows-x86_64": {"url": "https://x/VardeSetup-1.4.0.exe", "signature": "SIG-W"},
-            "linux-x86_64-agent-deb": {"url": "https://x/varde-agent-1.4.0-linux-amd64.deb", "signature": "SIG-D"}
-        }
-    }"#;
-
-    #[test]
-    fn newer_version_offers_signed_entry() {
-        let a = pick(
-            MANIFEST.as_bytes(),
-            "1.3.0",
-            Some("linux-x86_64-agent-deb"),
-            Channel::Stable,
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(a.version, "1.4.0");
-        assert_eq!(
-            a.url.as_deref().unwrap().rsplit('/').next().unwrap(),
-            "varde-agent-1.4.0-linux-amd64.deb"
-        );
-        assert_eq!(a.signature.as_deref(), Some("SIG-D"));
-    }
-
-    #[test]
-    fn same_or_older_offers_nothing() {
-        assert!(pick(
-            MANIFEST.as_bytes(),
-            "1.4.0",
-            Some("windows-x86_64"),
-            Channel::Stable
-        )
-        .unwrap()
-        .is_none());
-        assert!(pick(
-            MANIFEST.as_bytes(),
-            "9.9.9",
-            Some("windows-x86_64"),
-            Channel::Stable
-        )
-        .unwrap()
-        .is_none());
-    }
-
-    #[test]
-    fn unknown_platform_key_is_notify_only() {
-        let a = pick(
-            MANIFEST.as_bytes(),
-            "1.0.0",
-            Some("linux-x86_64-agent-snap"),
-            Channel::Stable,
-        )
-        .unwrap()
-        .unwrap();
-        assert!(a.url.is_none());
-        // and with no key at all (manual install)
-        assert!(pick(MANIFEST.as_bytes(), "1.0.0", None, Channel::Stable)
-            .unwrap()
-            .unwrap()
-            .url
-            .is_none());
-    }
-
-    #[test]
-    fn leading_v_is_tolerated() {
-        let m = MANIFEST.replace("\"1.4.0\"", "\"v1.4.0\"");
-        assert_eq!(
-            pick(m.as_bytes(), "1.3.0", None, Channel::Stable)
-                .unwrap()
-                .unwrap()
-                .version,
-            "v1.4.0"
-        );
-    }
-
-    #[test]
-    fn nightly_offers_on_difference_not_order() {
-        let m = r#"{"version": "0.0.0-nightly.20261012+def456", "platforms": {}}"#;
-        // stable install opted into nightly: semver-lower still counts
-        assert!(pick(m.as_bytes(), "1.4.0", None, Channel::Nightly)
-            .unwrap()
-            .is_some());
-        // same nightly rebuilt on a new sha: semver-equal still counts
-        assert!(pick(
-            m.as_bytes(),
-            "0.0.0-nightly.20261012+abc123",
-            None,
-            Channel::Nightly
-        )
-        .unwrap()
-        .is_some());
-        // identical build: no update
-        assert!(pick(
-            m.as_bytes(),
-            "0.0.0-nightly.20261012+def456",
-            None,
-            Channel::Nightly
-        )
-        .unwrap()
-        .is_none());
-        // an older dated nightly is a downgrade, not an offer
-        let older = r#"{"version":"0.0.0-nightly.20261001+abc123","platforms":{}}"#;
-        assert!(pick(
-            older.as_bytes(),
-            "0.0.0-nightly.20261012+def456",
-            None,
-            Channel::Nightly
-        )
-        .unwrap()
-        .is_none());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn apply_staged_noops_without_pending() {
-        let d = std::env::temp_dir().join(format!("varde-upd-{}", std::process::id()));
-        std::fs::create_dir_all(d.join("update")).unwrap();
-        assert!(apply_staged(&d).is_ok());
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn apply_staged_errors_on_missing_pkg() {
-        let d = std::env::temp_dir().join(format!("varde-upd2-{}", std::process::id()));
-        let dir = d.join("update");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(".pending"), b"").unwrap();
-        let r = apply_staged(&d);
-        assert!(r.is_err());
-        assert!(dir.join(".pending").exists(), "trigger kept for retry");
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-}
-
 /// pb view of the shared state (called on every status build — keep cheap).
 pub fn status_pb(state: &UpdateState) -> agent_ipc::pb::Update {
     agent_ipc::pb::Update {
@@ -691,4 +550,145 @@ pub fn apply_staged(data_dir: &std::path::Path) -> Result<()> {
     let _ = std::fs::remove_file(dir.join("pkg.sig"));
     println!("applied update");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MANIFEST: &str = r#"{
+        "version": "1.4.0",
+        "platforms": {
+            "windows-x86_64": {"url": "https://x/VardeSetup-1.4.0.exe", "signature": "SIG-W"},
+            "linux-x86_64-agent-deb": {"url": "https://x/varde-agent-1.4.0-linux-amd64.deb", "signature": "SIG-D"}
+        }
+    }"#;
+
+    #[test]
+    fn newer_version_offers_signed_entry() {
+        let a = pick(
+            MANIFEST.as_bytes(),
+            "1.3.0",
+            Some("linux-x86_64-agent-deb"),
+            Channel::Stable,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(a.version, "1.4.0");
+        assert_eq!(
+            a.url.as_deref().unwrap().rsplit('/').next().unwrap(),
+            "varde-agent-1.4.0-linux-amd64.deb"
+        );
+        assert_eq!(a.signature.as_deref(), Some("SIG-D"));
+    }
+
+    #[test]
+    fn same_or_older_offers_nothing() {
+        assert!(pick(
+            MANIFEST.as_bytes(),
+            "1.4.0",
+            Some("windows-x86_64"),
+            Channel::Stable
+        )
+        .unwrap()
+        .is_none());
+        assert!(pick(
+            MANIFEST.as_bytes(),
+            "9.9.9",
+            Some("windows-x86_64"),
+            Channel::Stable
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
+    fn unknown_platform_key_is_notify_only() {
+        let a = pick(
+            MANIFEST.as_bytes(),
+            "1.0.0",
+            Some("linux-x86_64-agent-snap"),
+            Channel::Stable,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(a.url.is_none());
+        // and with no key at all (manual install)
+        assert!(pick(MANIFEST.as_bytes(), "1.0.0", None, Channel::Stable)
+            .unwrap()
+            .unwrap()
+            .url
+            .is_none());
+    }
+
+    #[test]
+    fn leading_v_is_tolerated() {
+        let m = MANIFEST.replace("\"1.4.0\"", "\"v1.4.0\"");
+        assert_eq!(
+            pick(m.as_bytes(), "1.3.0", None, Channel::Stable)
+                .unwrap()
+                .unwrap()
+                .version,
+            "v1.4.0"
+        );
+    }
+
+    #[test]
+    fn nightly_offers_on_difference_not_order() {
+        let m = r#"{"version": "0.0.0-nightly.20261012+def456", "platforms": {}}"#;
+        // stable install opted into nightly: semver-lower still counts
+        assert!(pick(m.as_bytes(), "1.4.0", None, Channel::Nightly)
+            .unwrap()
+            .is_some());
+        // same nightly rebuilt on a new sha: semver-equal still counts
+        assert!(pick(
+            m.as_bytes(),
+            "0.0.0-nightly.20261012+abc123",
+            None,
+            Channel::Nightly
+        )
+        .unwrap()
+        .is_some());
+        // identical build: no update
+        assert!(pick(
+            m.as_bytes(),
+            "0.0.0-nightly.20261012+def456",
+            None,
+            Channel::Nightly
+        )
+        .unwrap()
+        .is_none());
+        // an older dated nightly is a downgrade, not an offer
+        let older = r#"{"version":"0.0.0-nightly.20261001+abc123","platforms":{}}"#;
+        assert!(pick(
+            older.as_bytes(),
+            "0.0.0-nightly.20261012+def456",
+            None,
+            Channel::Nightly
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn apply_staged_noops_without_pending() {
+        let d = std::env::temp_dir().join(format!("varde-upd-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("update")).unwrap();
+        assert!(apply_staged(&d).is_ok());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn apply_staged_errors_on_missing_pkg() {
+        let d = std::env::temp_dir().join(format!("varde-upd2-{}", std::process::id()));
+        let dir = d.join("update");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".pending"), b"").unwrap();
+        let r = apply_staged(&d);
+        assert!(r.is_err());
+        assert!(dir.join(".pending").exists(), "trigger kept for retry");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 }

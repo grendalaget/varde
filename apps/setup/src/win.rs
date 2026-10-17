@@ -370,6 +370,8 @@ pub fn create_shortcut(lnk: &Path, target: &Path) -> Result<()> {
     };
 
     unsafe {
+        // SAFETY: standard COM setup on this thread; interface pointers are
+        // used per contract and `wp` produces NUL-terminated UTF-16 strings.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let link: IShellLinkW = CoCreateInstance(&CLSID_SHELL_LINK, None, CLSCTX_INPROC_SERVER)
             .context("CoCreateInstance ShellLink")?;
@@ -416,6 +418,9 @@ pub fn create_shortcut(lnk: &Path, target: &Path) -> Result<()> {
 
 /// A primary token for the user on the active console session: WTS query
 /// first, explorer.exe fallback (what RunAsUser did under the hood).
+///
+/// # Safety
+/// Returns an owned HANDLE — the caller must close it (CloseHandle) once.
 unsafe fn console_user_token() -> Result<windows::Win32::Foundation::HANDLE> {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{
@@ -502,6 +507,8 @@ pub fn launch_as_user(exe: &Path, args: &str) -> Result<()> {
     };
 
     unsafe {
+        // SAFETY: all out-params are zeroed POD structs; `w()` produces
+        // NUL-terminated UTF-16; PROCESS_INFORMATION handles are closed.
         let tok = console_user_token()?;
         let mut si: STARTUPINFOW = std::mem::zeroed();
         si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
@@ -548,6 +555,7 @@ pub fn delete_on_reboot(path: &Path) -> Result<()> {
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
     unsafe {
+        // SAFETY: PCWSTR args are NUL-terminated (`wp`); no ownership moves.
         MoveFileExW(
             PCWSTR(wp(path).as_ptr()),
             PCWSTR::null(),
@@ -564,6 +572,8 @@ pub fn wait_for_process_exit(pid: u32) {
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
     unsafe {
+        // SAFETY: the opened handle is validity-checked and closed before
+        // returning.
         if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
             if !h.is_invalid() {
                 let _ = WaitForSingleObject(h, 30_000);
@@ -581,6 +591,8 @@ pub fn is_admin() -> bool {
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     unsafe {
+        // SAFETY: out-params are valid POD structs; the token handle is
+        // closed on every path.
         let mut t = windows::Win32::Foundation::HANDLE::default();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut t).is_err() {
             return false;
@@ -604,6 +616,7 @@ pub fn is_admin() -> bool {
 pub fn attach_parent_console() {
     use windows::Win32::System::Console::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
     unsafe {
+        // SAFETY: parameterless console attach/detach calls.
         let _ = FreeConsole();
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }

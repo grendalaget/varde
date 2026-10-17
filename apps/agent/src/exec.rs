@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
@@ -179,7 +179,7 @@ impl ExecCtl {
     pub fn request_stop(&self, kind: StopKind) {
         // send_replace stores even with no receivers yet — a stop requested
         // before run() subscribes must not be lost
-        let _ = self.stop.send_replace(Some(kind));
+        self.stop.send_replace(Some(kind));
     }
     fn stop_rx(&self) -> watch::Receiver<Option<StopKind>> {
         self.stop.subscribe()
@@ -213,13 +213,6 @@ impl ExecCtl {
 /// executor/driver APIs return Box<dyn Error>; anyhow can't `?` them.
 fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// Report an immediate state transition to the CP (best effort — heartbeat
@@ -743,7 +736,7 @@ async fn snapshot_files(
         .map(|d| d.id.clone())
         .unwrap_or_else(|| game_id(ctx));
     let node_id = agent.cfg.node_id.clone();
-    let created_at = unix_ms();
+    let created_at = crate::now_ms();
     let info = tokio::task::spawn_blocking(move || {
         store.snapshot(
             &server_dir,
@@ -844,6 +837,10 @@ pub fn alloc_port_block(service_ports: &[PortSpec]) -> Result<Vec<PortBinding>> 
     let lo = service_ports.iter().map(|p| p.port).min().unwrap();
     let hi = service_ports.iter().map(|p| p.port).max().unwrap();
     let span = (hi - lo) as usize + 1;
+    // valid bases are 20000..=60000-span — a wider span has none
+    if span > 40_000 {
+        bail!("service ports span {span} ports; cannot allocate a contiguous block");
+    }
     let mut rng = rand::thread_rng();
     for _ in 0..50 {
         let base = rng.gen_range(20000u32..=59999u32.saturating_sub(span as u32 - 1));
@@ -885,13 +882,16 @@ async fn hold_for_replication(agent: &Agent, id: &SnapshotId) -> Result<()> {
     let timeout = Duration::from_secs(agent.cfg.shutdown_replication_timeout_s.max(1) as u64);
     let deadline = Instant::now() + timeout;
     let m = agent.store.manifest(id)?;
+    agent.chunk_tracker.pin(&id.0);
     while Instant::now() < deadline {
         if agent.chunk_tracker.fully_served(&id.0, &m) || agent.chunk_tracker.peer_ready(&id.0) {
+            agent.chunk_tracker.unpin(&id.0);
             tracing::info!(snap = %id, "final snapshot fully fetched by a peer");
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    agent.chunk_tracker.unpin(&id.0);
     tracing::warn!(snap = %id, "replication hold timed out; save remains local for now");
     Ok(())
 }
@@ -922,7 +922,12 @@ fn spawn_log_pump(agent: &Arc<Agent>, ctl: &Arc<ExecCtl>, proc: Arc<dyn ProcessH
                                 flush_logs(&a, &exec_id, &mut batch).await;
                             }
                         }
-                        Err(_) => {
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            // dropped lines are lost, but the pump must live
+                            // on — exiting here would silence the rest
+                            tracing::warn!(skipped = n, "log pump lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             flush_logs(&a, &exec_id, &mut batch).await;
                             return;
                         }
@@ -948,7 +953,12 @@ fn spawn_join_code_watcher(
     let agent = agent.clone();
     let ctl = ctl.clone();
     tokio::spawn(async move {
-        while let Ok(line) = rx.recv().await {
+        loop {
+            let line = match rx.recv().await {
+                Ok(line) => line,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            };
             let code = agent
                 .drivers
                 .get(&game_id)

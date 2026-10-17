@@ -20,6 +20,11 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
     // capture send instant BEFORE the request — fencing math depends on it
     let sent = Instant::now();
     let deleted_snapshots = pending_delete_ack_ids(&agent.pending_delete_acks);
+    // recursive walk of the store — keep it off the async executor
+    let stored_bytes = {
+        let a = agent.clone();
+        tokio::task::spawn_blocking(move || a.snapshots_stored_bytes()).await?
+    };
     let hb = cp_api::AgentHeartbeat {
         agent_version: Some(env!("CARGO_PKG_VERSION").into()),
         capabilities: Some(crate::sysinfo::capabilities(
@@ -32,7 +37,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
-        snapshots_stored_bytes: Some(agent.snapshots_stored_bytes()),
+        snapshots_stored_bytes: Some(stored_bytes),
         deleted_snapshots: Some(deleted_snapshots.clone()),
         // Send "" once checked so the CP clears a stale badge after upgrade;
         // None (field omitted) before the first check so old nodes stay nil.
@@ -324,40 +329,6 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
-    use crate::agent::CpView;
-    use std::collections::BTreeSet;
-    use std::sync::Mutex;
-    use std::time::Duration;
-
-    #[test]
-    fn cp_timestamps_move_to_this_pcs_clock() {
-        // CP 30 s ahead; heartbeat sent at PC 1_000_000, answered 200 ms later
-        let offset = cp_clock_offset_ms(1_030_100, 1_000_200, Duration::from_millis(200));
-        assert_eq!(offset, 30_000);
-        let v = CpView {
-            cp_clock_offset_ms: offset,
-            ..Default::default()
-        };
-        assert_eq!(v.to_local_ms(1_025_000), 995_000);
-        assert_eq!(v.to_local_ms(0), 0);
-    }
-
-    #[test]
-    fn delete_acknowledgement_removes_only_sent_ids() {
-        let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
-        let sent = pending_delete_ack_ids(&pending);
-        assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
-
-        pending.lock().unwrap().insert("snap_c".into());
-        acknowledge_delete_acks(&pending, &sent);
-
-        assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
-    }
-}
-
 fn proto_for(s: &str) -> i32 {
     match s {
         "tcp" => mesh_ipc::pb::Protocol::Tcp as i32,
@@ -474,5 +445,39 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
                 a.sync_hosted_services().await;
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
+    use crate::agent::CpView;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    #[test]
+    fn cp_timestamps_move_to_this_pcs_clock() {
+        // CP 30 s ahead; heartbeat sent at PC 1_000_000, answered 200 ms later
+        let offset = cp_clock_offset_ms(1_030_100, 1_000_200, Duration::from_millis(200));
+        assert_eq!(offset, 30_000);
+        let v = CpView {
+            cp_clock_offset_ms: offset,
+            ..Default::default()
+        };
+        assert_eq!(v.to_local_ms(1_025_000), 995_000);
+        assert_eq!(v.to_local_ms(0), 0);
+    }
+
+    #[test]
+    fn delete_acknowledgement_removes_only_sent_ids() {
+        let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
+        let sent = pending_delete_ack_ids(&pending);
+        assert_eq!(sent, vec!["snap_a".to_string(), "snap_b".to_string()]);
+
+        pending.lock().unwrap().insert("snap_c".into());
+        acknowledge_delete_acks(&pending, &sent);
+
+        assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
     }
 }

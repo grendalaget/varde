@@ -245,51 +245,64 @@ impl CpClient {
         })?
         .map_err(Error::Io)?;
 
-        let resp: Response<Incoming> = if https {
-            let cfg = rustls_client_config()?;
-            let server_name = rustls::pki_types::ServerName::try_from(host.clone())
-                .map_err(|e| Error::Url(format!("{host}: {e}")))?;
-            let tls = tokio_rustls::TlsConnector::from(cfg)
-                .connect(server_name, stream)
-                .await
-                .map_err(Error::Io)?;
-            let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
-                .await
-                .map_err(|e| Error::Http(e.to_string()))?;
-            tokio::spawn(async move {
-                let _ = conn.await;
-            });
-            sender
-                .send_request(req)
-                .await
-                .map_err(|e| Error::Http(e.to_string()))?
-        } else {
-            let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-                .await
-                .map_err(|e| Error::Http(e.to_string()))?;
-            tokio::spawn(async move {
-                let _ = conn.await;
-            });
-            sender
-                .send_request(req)
-                .await
-                .map_err(|e| Error::Http(e.to_string()))?
-        };
+        // deadline for handshake + send + response body — a peer that
+        // accepts the connection then stalls must not hang the caller
+        let exchange = async move {
+            let resp: Response<Incoming> = if https {
+                let cfg = rustls_client_config()?;
+                let server_name = rustls::pki_types::ServerName::try_from(host.clone())
+                    .map_err(|e| Error::Url(format!("{host}: {e}")))?;
+                let tls = tokio_rustls::TlsConnector::from(cfg)
+                    .connect(server_name, stream)
+                    .await
+                    .map_err(Error::Io)?;
+                let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?;
+                tokio::spawn(async move {
+                    let _ = conn.await;
+                });
+                sender
+                    .send_request(req)
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?
+            } else {
+                let (mut sender, conn) =
+                    hyper::client::conn::http1::handshake(TokioIo::new(stream))
+                        .await
+                        .map_err(|e| Error::Http(e.to_string()))?;
+                tokio::spawn(async move {
+                    let _ = conn.await;
+                });
+                sender
+                    .send_request(req)
+                    .await
+                    .map_err(|e| Error::Http(e.to_string()))?
+            };
 
-        let status = resp.status().as_u16();
-        let location = resp
-            .headers()
-            .get("location")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let bytes = resp
-            .into_body()
-            .collect()
+            let status = resp.status().as_u16();
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let bytes = resp
+                .into_body()
+                .collect()
+                .await
+                .map_err(|e| Error::Http(e.to_string()))?
+                .to_bytes()
+                .to_vec();
+            Ok((status, location, bytes))
+        };
+        tokio::time::timeout(Duration::from_secs(30), exchange)
             .await
-            .map_err(|e| Error::Http(e.to_string()))?
-            .to_bytes()
-            .to_vec();
-        Ok((status, location, bytes))
+            .map_err(|_| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "request timeout",
+                ))
+            })?
     }
 
     /// JSON call that maps error statuses into `Error::Api`.

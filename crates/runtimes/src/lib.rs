@@ -20,6 +20,11 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 const UA: &str = concat!("varde-agent/", env!("CARGO_PKG_VERSION"));
 
+/// Deadlines so a stalled server can't hang a runtime fetch forever:
+/// connect is short, the whole request generous (JREs are ~200 MB).
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// Runtime ids the provider can fetch on this host. Reported in node
 /// capabilities so the scheduler can place games whose runtime isn't
 /// installed yet — `HttpRuntimes` downloads it on demand.
@@ -83,7 +88,9 @@ impl RuntimeProvider for HttpRuntimes {
     }
 
     async fn get_json(&self, url: &str) -> game_driver_api::Result<serde_json::Value> {
-        let body = http_get(url, 8).await?;
+        let body = tokio::time::timeout(REQUEST_TIMEOUT, http_get(url, 8))
+            .await
+            .map_err(|_| "request timed out")??;
         Ok(serde_json::from_slice(&body)?)
     }
 
@@ -304,7 +311,12 @@ async fn http_get(url: &str, redirs: u32) -> game_driver_api::Result<Vec<u8>> {
     let host = uri.host().ok_or("url has no host")?.to_string();
     let https = uri.scheme_str() == Some("https");
     let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
-    let stream = tokio::net::TcpStream::connect((host.as_str(), port)).await?;
+    let stream = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio::net::TcpStream::connect((host.as_str(), port)),
+    )
+    .await
+    .map_err(|_| "connect timed out")??;
     let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     let req = Request::get(path)
         .header(HOST, HeaderValue::from_str(&host)?)
@@ -413,7 +425,9 @@ async fn download_verified(
     sha1: Option<&str>,
 ) -> game_driver_api::Result<()> {
     tracing::info!(url, dest = %file.display(), "runtime download");
-    let body = http_get(url, 8).await?;
+    let body = tokio::time::timeout(REQUEST_TIMEOUT, http_get(url, 8))
+        .await
+        .map_err(|_| "download timed out")??;
     let (s256, s1) = (sha256.map(String::from), sha1.map(String::from));
     let f = file.to_path_buf();
     let u = url.to_string();

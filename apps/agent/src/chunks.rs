@@ -3,17 +3,22 @@
 //! mesh as internal service `agent.chunks`. Also implements the pull side:
 //! fetch a manifest + missing chunks from `source_node_ids`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use snapshot_store::{ChunkId, Manifest, SnapshotId, Store};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 pub const SERVICE_NAME: &str = "agent.chunks";
 const BATCH_INFLIGHT: usize = 4;
+/// Deadline for a whole request/response exchange with a peer — a stalled
+/// connection must not park the replication worker forever.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Largest request body the chunk server will allocate — far above the
 /// biggest real request (a batch of BATCH_INFLIGHT hashes ≈ a few hundred
@@ -30,33 +35,64 @@ struct Served {
 }
 
 #[derive(Default)]
-pub struct ServeTracker {
-    inner: Mutex<HashMap<String, Served>>, // snap_id → serving state
+struct Tracked {
+    map: HashMap<String, Served>, // snap_id → serving state
+    order: VecDeque<String>,      // insertion order, for FIFO eviction
+    /// Snapshots with an in-flight replication hold — never evicted.
+    pinned: HashSet<String>,
 }
 
+#[derive(Default)]
+pub struct ServeTracker {
+    inner: Mutex<Tracked>,
+}
+
+/// A peer's hints could otherwise grow the map without bound.
+const MAX_TRACKED_SNAPSHOTS: usize = 1024;
+
 impl ServeTracker {
+    /// Entry for `id`; when the map is full the oldest unpinned entry is
+    /// evicted (FIFO). Pinned snapshots keep their state until the hold
+    /// ends — they are the only entries whose loss would stall a
+    /// replication wait.
+    fn entry<'a>(g: &'a mut Tracked, id: &str) -> &'a mut Served {
+        if !g.map.contains_key(id) {
+            if g.map.len() >= MAX_TRACKED_SNAPSHOTS {
+                let victim = g
+                    .order
+                    .iter()
+                    .position(|k| !g.pinned.contains(k))
+                    .and_then(|i| g.order.remove(i));
+                if let Some(victim) = victim {
+                    g.map.remove(&victim);
+                }
+            }
+            g.order.push_back(id.to_string());
+        }
+        g.map.entry(id.to_string()).or_default()
+    }
+    /// Mark `id` as an in-flight replication target; it cannot be evicted
+    /// until `unpin` — pin count is bounded by real agent work, not peer
+    /// input.
+    pub fn pin(&self, id: &str) {
+        self.inner.lock().unwrap().pinned.insert(id.to_string());
+    }
+    pub fn unpin(&self, id: &str) {
+        self.inner.lock().unwrap().pinned.remove(id);
+    }
     fn record_manifest(&self, id: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .entry(id.to_string())
-            .or_default()
-            .manifest = true;
+        Self::entry(&mut self.inner.lock().unwrap(), id).manifest = true;
     }
     /// A fetcher reports replica-ready after POSTing to the CP; with dedup a
     /// peer may need zero chunks, so served-count alone can't prove readiness.
     fn record_ready(&self, id: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .entry(id.to_string())
-            .or_default()
-            .peer_ready = true;
+        Self::entry(&mut self.inner.lock().unwrap(), id).peer_ready = true;
     }
     pub fn peer_ready(&self, snap_id: &str) -> bool {
         self.inner
             .lock()
             .unwrap()
+            .map
             .get(snap_id)
             .map(|s| s.peer_ready)
             .unwrap_or(false)
@@ -64,16 +100,13 @@ impl ServeTracker {
     fn record_chunk(&self, snap_hints: &[String], chunk: &str) {
         let mut g = self.inner.lock().unwrap();
         for h in snap_hints {
-            g.entry(h.clone())
-                .or_default()
-                .chunks
-                .insert(chunk.to_string());
+            Self::entry(&mut g, h).chunks.insert(chunk.to_string());
         }
     }
     /// True once some peer fetched the manifest and every chunk of `m`.
     pub fn fully_served(&self, snap_id: &str, m: &Manifest) -> bool {
         let g = self.inner.lock().unwrap();
-        let Some(s) = g.get(snap_id) else {
+        let Some(s) = g.map.get(snap_id) else {
             return false;
         };
         if !s.manifest {
@@ -89,6 +122,7 @@ impl ServeTracker {
         self.inner
             .lock()
             .unwrap()
+            .map
             .get(snap_id)
             .map(|s| s.chunks.len())
             .unwrap_or(0)
@@ -128,33 +162,56 @@ pub async fn serve(
     Ok(ChunkServer { addr, tracker })
 }
 
+/// Bytes of `avail` to consume so `head` ends exactly at the head terminator.
+/// The terminator may straddle the head|avail boundary; returns None when it
+/// does not complete within `avail`.
+fn terminator_in(head: &[u8], avail: &[u8]) -> Option<usize> {
+    const T: &[u8; 4] = b"\r\n\r\n";
+    for k in 1..=3usize.min(avail.len()) {
+        if head.ends_with(&T[..4 - k]) && avail[..k] == T[4 - k..] {
+            return Some(k);
+        }
+    }
+    avail.windows(4).position(|w| w == T).map(|p| p + 4)
+}
+
 async fn handle(
     stream: tokio::net::TcpStream,
     store: Arc<Store>,
     tracker: Arc<ServeTracker>,
 ) -> Result<()> {
-    let (mut rd, mut wr) = tokio::io::split(stream);
+    let (rd, mut wr) = tokio::io::split(stream);
+    let mut rd = tokio::io::BufReader::new(rd);
     loop {
-        let mut head = Vec::new();
-        let mut byte = [0u8; 1];
+        // bounded head read: never consume past the \r\n\r\n terminator,
+        // which may straddle a fill_buf boundary — pipelined request bytes
+        // must stay in the buffer
+        let mut head = Vec::with_capacity(256);
         while !head.ends_with(b"\r\n\r\n") {
-            let n = tokio::io::AsyncReadExt::read(&mut rd, &mut byte).await?;
-            if n == 0 {
-                return Ok(());
-            }
-            head.push(byte[0]);
-            if head.len() > 16 * 1024 {
+            if head.len() >= 16 * 1024 {
                 bail!("head too large");
             }
+            let avail = rd.fill_buf().await?;
+            if avail.is_empty() {
+                return Ok(());
+            }
+            let take = terminator_in(&head, avail)
+                .unwrap_or(avail.len())
+                .min(16 * 1024 - head.len());
+            head.extend_from_slice(&avail[..take]);
+            rd.consume(take);
         }
-        let head = String::from_utf8_lossy(&head).to_string();
+        let head = String::from_utf8_lossy(&head);
         let mut lines = head.lines();
         let mut req_line = lines.next().unwrap_or("").split_whitespace();
-        let (method, target) = (req_line.next().unwrap_or(""), req_line.next().unwrap_or(""));
+        let (method, target) = (
+            req_line.next().unwrap_or("").to_string(),
+            req_line.next().unwrap_or("").to_string(),
+        );
         let mut content_len = 0usize;
         let mut close = false;
         for l in lines {
-            let l = l.to_ascii_lowercase();
+            let l = l.trim().to_ascii_lowercase();
             if let Some(v) = l.strip_prefix("content-length:") {
                 content_len = v.trim().parse().unwrap_or(0);
             }
@@ -163,17 +220,21 @@ async fn handle(
             }
         }
         if content_len > MAX_REQUEST_BODY {
-            tokio::io::AsyncWriteExt::write_all(
-                &mut wr,
+            wr.write_all(
                 b"HTTP/1.1 413 Payload Too Large\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
             )
             .await?;
             return Ok(());
         }
         let mut body = vec![0u8; content_len];
-        tokio::io::AsyncReadExt::read_exact(&mut rd, &mut body).await?;
-        let resp = route(method, target, &body, &store, &tracker);
-        tokio::io::AsyncWriteExt::write_all(&mut wr, &resp).await?;
+        rd.read_exact(&mut body).await?;
+        // route touches the filesystem — keep it off the async executor
+        let store2 = store.clone();
+        let tracker2 = tracker.clone();
+        let resp =
+            tokio::task::spawn_blocking(move || route(&method, &target, &body, &store2, &tracker2))
+                .await?;
+        wr.write_all(&resp).await?;
         if close {
             return Ok(());
         }
@@ -213,10 +274,11 @@ fn route(
                     Ok(v) => {
                         let mut frames = Vec::new();
                         let mut missing = Vec::new();
+                        // only well-formed snapshot ids are tracked
                         let snap_hints: Vec<String> = v
                             .get("snapshot_id")
                             .and_then(|s| s.as_str())
-                            .map(|s| vec![s.to_string()])
+                            .and_then(|s| SnapshotId::parse(s).map(|id| vec![id.0]))
                             .unwrap_or_default();
                         for h in v
                             .get("hashes")
@@ -228,11 +290,9 @@ fn route(
                             match store.read_chunk_compressed(&h.to_string()) {
                                 Ok(z) => {
                                     frames.extend_from_slice(&(z.len() as u32).to_le_bytes());
-                                    // chunk id is 64 lowercase hex chars = 32 bytes
+                                    // success implies a valid 64-hex id = 32 bytes
                                     if let Ok(raw) = hex::decode(h) {
-                                        frames.extend_from_slice(&raw[..32.min(raw.len())]);
-                                    } else {
-                                        frames.extend_from_slice(&[0u8; 32]);
+                                        frames.extend_from_slice(&raw);
                                     }
                                     frames.extend_from_slice(&z);
                                     tracker.record_chunk(&snap_hints, h);
@@ -256,8 +316,12 @@ fn route(
                 }
             }
             ("POST", ["", "v1", "replicas", id]) => {
-                tracker.record_ready(id);
-                ("200 OK", "text/plain", b"ok".to_vec())
+                if let Some(id) = SnapshotId::parse(id) {
+                    tracker.record_ready(&id.0);
+                    ("200 OK", "text/plain", b"ok".to_vec())
+                } else {
+                    ("400 Bad Request", "text/plain", b"bad id".to_vec())
+                }
             }
             _ => ("404 Not Found", "text/plain", b"not found".to_vec()),
         };
@@ -293,7 +357,15 @@ pub async fn fetch_snapshot(
         for src in source_node_ids {
             match http_get(mesh, src, &format!("/v1/manifests/{snapshot_id}")).await {
                 Ok(bytes) => {
-                    let id = store.put_manifest_bytes(&bytes)?;
+                    // a malformed or hostile manifest must not stop the
+                    // remaining sources from providing a valid one
+                    let id = match store.put_manifest_bytes(&bytes) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(src, error = %e, "bad manifest");
+                            continue;
+                        }
+                    };
                     if id != *snapshot_id {
                         store.delete_snapshot(&id).ok();
                         continue;
@@ -382,22 +454,29 @@ where
     Ok(())
 }
 
+/// One request/response round trip with `EXCHANGE_TIMEOUT` covering
+/// connect + send + full-body read.
+async fn exchange(addr: &str, request: String) -> Result<Vec<u8>> {
+    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
+        let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+        stream.write_all(request.as_bytes()).await?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await?;
+        anyhow::Ok(buf)
+    })
+    .await
+    .context("chunk request timed out")?
+}
+
 async fn http_get(mesh: &crate::mesh_ctl::MeshCtl, peer: &str, path: &str) -> Result<Vec<u8>> {
     let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
         bail!("mesh not connected");
     };
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!(
-                "GET {path} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-            )
-            .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!("GET {path} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
+    )
+    .await?;
     let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("GET {path} → {status}");
@@ -415,16 +494,11 @@ pub async fn notify_ready(
     let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
         bail!("mesh not connected");
     };
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!("POST /v1/replicas/{snap_id} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-                .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!("POST /v1/replicas/{snap_id} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
+    )
+    .await?;
     let (status, _) = parse_http(&buf)?;
     if status != 200 {
         bail!("ready notify → {status}");
@@ -442,20 +516,15 @@ async fn batch_get(
         bail!("mesh not connected");
     };
     let body = serde_json::json!({"snapshot_id": snap_id.0, "hashes": hashes}).to_string();
-    let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream
-        .write_all(
-            format!(
-                "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .as_bytes(),
-        )
-        .await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let buf = exchange(
+        &addr,
+        format!(
+            "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ),
+    )
+    .await?;
     let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("batch status {status}");
@@ -531,6 +600,34 @@ mod body_limit_tests {
         assert!(head.starts_with("HTTP/1.1 413"), "resp: {head}");
         // no allocation happened for the promised body — connection closed
         // without reading it
+    }
+
+    #[tokio::test]
+    async fn head_split_across_writes_still_serves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(tmp.path().join("store")).unwrap());
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let srv = serve(store, Arc::new(ServeTracker::default()), rx)
+            .await
+            .unwrap();
+        let body = r#"{"snapshot_id":"snap_x","hashes":[]}"#;
+        let mut s = tokio::net::TcpStream::connect(srv.addr).await.unwrap();
+        // terminator straddles the two writes: head ends "\r\n\r", then "\n"
+        s.write_all(
+            format!(
+                "POST /v1/chunks/batch HTTP/1.1\r\ncontent-length: {}\r\nconnection: close\r\n\r",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await; // force two reads
+        s.write_all(format!("\n{body}").as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        let head = String::from_utf8_lossy(&buf);
+        assert!(head.starts_with("HTTP/1.1 200"), "resp: {head}");
     }
 
     #[tokio::test]
