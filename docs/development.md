@@ -42,6 +42,21 @@ Verified versions on this machine (2026-10): Go 1.27.1, Node 22.20.0, bun
 12.9.1, buf 1.73.0, golangci-lint 2.14.0, rustc 1.97.1, nfpm 2.47.0,
 oapi-codegen 2.8.0, mingw-w64 gcc 10.
 
+### Nix (optional)
+
+`flake.nix` provides the full toolchain as a dev shell — Rust (stable, plus
+the `x86_64-pc-windows-gnu` and `aarch64-linux-android` targets), Go, buf with
+the protoc plugins, oapi-codegen, golangci-lint, bun, Node, nfpm, the
+mingw-w64 linker, and the Tauri Linux webview dependencies:
+
+```sh
+nix develop        # or `direnv allow` — .envrc is provided
+```
+
+It's additive: CI doesn't use it and nothing in the repo requires it. Game
+runtimes (JRE, SteamCMD) are still fetched by the agent at runtime, and
+release packaging is unchanged.
+
 ## Workflow
 
 ```sh
