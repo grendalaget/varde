@@ -882,13 +882,16 @@ async fn hold_for_replication(agent: &Agent, id: &SnapshotId) -> Result<()> {
     let timeout = Duration::from_secs(agent.cfg.shutdown_replication_timeout_s.max(1) as u64);
     let deadline = Instant::now() + timeout;
     let m = agent.store.manifest(id)?;
+    agent.chunk_tracker.pin(&id.0);
     while Instant::now() < deadline {
         if agent.chunk_tracker.fully_served(&id.0, &m) || agent.chunk_tracker.peer_ready(&id.0) {
+            agent.chunk_tracker.unpin(&id.0);
             tracing::info!(snap = %id, "final snapshot fully fetched by a peer");
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    agent.chunk_tracker.unpin(&id.0);
     tracing::warn!(snap = %id, "replication hold timed out; save remains local for now");
     Ok(())
 }

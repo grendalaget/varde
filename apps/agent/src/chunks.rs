@@ -38,6 +38,8 @@ struct Served {
 struct Tracked {
     map: HashMap<String, Served>, // snap_id → serving state
     order: VecDeque<String>,      // insertion order, for FIFO eviction
+    /// Snapshots with an in-flight replication hold — never evicted.
+    pinned: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -49,19 +51,34 @@ pub struct ServeTracker {
 const MAX_TRACKED_SNAPSHOTS: usize = 1024;
 
 impl ServeTracker {
-    /// Entry for `id`; when the map is full the oldest entry is evicted
-    /// (FIFO) — in-flight replications are the freshest ids, so evicting is
-    /// strictly better than refusing to track.
+    /// Entry for `id`; when the map is full the oldest unpinned entry is
+    /// evicted (FIFO). Pinned snapshots keep their state until the hold
+    /// ends — they are the only entries whose loss would stall a
+    /// replication wait.
     fn entry<'a>(g: &'a mut Tracked, id: &str) -> &'a mut Served {
         if !g.map.contains_key(id) {
             if g.map.len() >= MAX_TRACKED_SNAPSHOTS {
-                if let Some(victim) = g.order.pop_front() {
+                let victim = g
+                    .order
+                    .iter()
+                    .position(|k| !g.pinned.contains(k))
+                    .and_then(|i| g.order.remove(i));
+                if let Some(victim) = victim {
                     g.map.remove(&victim);
                 }
             }
             g.order.push_back(id.to_string());
         }
         g.map.entry(id.to_string()).or_default()
+    }
+    /// Mark `id` as an in-flight replication target; it cannot be evicted
+    /// until `unpin` — pin count is bounded by real agent work, not peer
+    /// input.
+    pub fn pin(&self, id: &str) {
+        self.inner.lock().unwrap().pinned.insert(id.to_string());
+    }
+    pub fn unpin(&self, id: &str) {
+        self.inner.lock().unwrap().pinned.remove(id);
     }
     fn record_manifest(&self, id: &str) {
         Self::entry(&mut self.inner.lock().unwrap(), id).manifest = true;
