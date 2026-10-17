@@ -27,6 +27,8 @@ class AnchorService : Service() {
         private const val CHANNEL = "anchor"
         private const val NOTIF_ID = 1
         private const val TAG = "AnchorService"
+        private val MESSAGE_RE =
+            Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.){0,80})")
 
         @Volatile
         var lastStatus: String = "stopped"
@@ -37,6 +39,18 @@ class AnchorService : Service() {
             ctx.applicationInfo.nativeLibraryDir + "/libagent.so"
         fun meshBin(ctx: Context): String =
             ctx.applicationInfo.nativeLibraryDir + "/libmesh.so"
+
+        // App-spawned processes inherit no HOME/TMPDIR and cwd=/ — the
+        // agent writes temp files and resolves paths through them, and
+        // every write to / fails EROFS on Android.
+        fun procBuilder(ctx: Context, vararg args: String): ProcessBuilder {
+            val pb = ProcessBuilder(*args)
+            pb.directory(dataDir(ctx).apply { mkdirs() })
+            val env = pb.environment()
+            env["HOME"] = ctx.filesDir.absolutePath
+            env["TMPDIR"] = ctx.cacheDir.absolutePath
+            return pb
+        }
     }
 
     private var proc: Process? = null
@@ -99,8 +113,8 @@ class AnchorService : Service() {
             return
         }
         val p = try {
-            ProcessBuilder(
-                agent, "run",
+            procBuilder(
+                this, agent, "run",
                 "--data-dir", dir.absolutePath,
                 "--mesh-bin", mesh,
                 "--anchor",
@@ -132,10 +146,16 @@ class AnchorService : Service() {
         try {
             proc?.inputStream?.bufferedReader()?.forEachLine { line ->
                 Log.i(TAG, line)
-                // surface the latest agent line as the notification text
-                if (line.isNotBlank()) {
-                    broadcast(line.take(80))
-                    startForegroundWithNotification(line.take(80))
+                // agent logs JSON lines; surface the message field, not raw JSON
+                val msg = MESSAGE_RE.find(line)?.groupValues?.get(1)
+                    ?.replace("\\\"", "\"")
+                    ?.replace("\\n", " ")
+                    ?.replace("\\t", " ")
+                    ?.replace("\\\\", "\\")
+                    ?: line.take(80)
+                if (msg.isNotBlank()) {
+                    broadcast(msg.take(80))
+                    startForegroundWithNotification(msg.take(80))
                 }
             }
         } catch (_: Exception) {
@@ -156,8 +176,8 @@ class AnchorService : Service() {
             Thread.sleep(backoff)
             if (stopping) return
             val np = try {
-                ProcessBuilder(
-                    agentBin(this), "run",
+                procBuilder(
+                    this, agentBin(this), "run",
                     "--data-dir", dataDir(this).absolutePath,
                     "--mesh-bin", meshBin(this),
                     "--anchor",
