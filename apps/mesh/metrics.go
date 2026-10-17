@@ -8,21 +8,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// promReg is the registry used for the optional --debug-listen metrics.
-type promReg = prometheus.Registry
-
 type metrics struct {
-	reg              *promReg
+	reg              *prometheus.Registry
 	peerRTT          *prometheus.GaugeVec
-	peerBytesTx      *prometheus.CounterVec
-	peerBytesRx      *prometheus.CounterVec
+	peerBytesTx      *prometheus.GaugeVec
+	peerBytesRx      *prometheus.GaugeVec
 	peerPath         *prometheus.GaugeVec
 	relayRTT         *prometheus.GaugeVec
 	relayRegistered  *prometheus.GaugeVec
 	datagramsDropped prometheus.Counter
 }
 
-func newMetrics(reg *promReg, n *Node) *metrics {
+func newMetrics(reg *prometheus.Registry, n *Node) *metrics {
 	if reg == nil {
 		reg = prometheus.NewRegistry()
 	}
@@ -30,10 +27,10 @@ func newMetrics(reg *promReg, n *Node) *metrics {
 		reg: reg,
 		peerRTT: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "mesh_peer_rtt_us"}, []string{"peer"}),
-		peerBytesTx: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "mesh_peer_bytes_tx_total"}, []string{"peer"}),
-		peerBytesRx: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "mesh_peer_bytes_rx_total"}, []string{"peer"}),
+		peerBytesTx: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "mesh_peer_bytes_tx"}, []string{"peer"}),
+		peerBytesRx: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "mesh_peer_bytes_rx"}, []string{"peer"}),
 		peerPath: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "mesh_peer_path"}, []string{"peer", "kind"}),
 		relayRTT: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -57,7 +54,8 @@ func (m *metrics) collect(n *Node) {
 		st := p.state()
 		m.peerRTT.WithLabelValues(p.id).Set(float64(st.GetRttUs()))
 		m.peerPath.WithLabelValues(p.id, st.GetPath().String()).Set(1)
-		m.peerBytesTx.WithLabelValues(p.id).Add(0) // ensure series exists
+		m.peerBytesTx.WithLabelValues(p.id).Set(float64(st.GetBytesTx()))
+		m.peerBytesRx.WithLabelValues(p.id).Set(float64(st.GetBytesRx()))
 	}
 	for id, rc := range n.relays {
 		st, _ := rc.state()

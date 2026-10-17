@@ -53,7 +53,7 @@ func serviceTokenFlags() (*flag.FlagSet, *string) {
 // serviceScopes is the allowlist for --scopes. '*' is explicit opt-in to
 // every scope; anything else is validated so a typo cannot quietly grant
 // more (or less) than the operator meant.
-var serviceScopes = map[string]bool{"enroll": true, "members": true, "nodes": true, "*": true}
+var serviceScopes = map[string]struct{}{"enroll": {}, "members": {}, "nodes": {}, "*": {}}
 
 func openServiceStore(dbURL string) (*store.Store, error) {
 	if p := sqlitePath(dbURL); p != "" {
@@ -72,7 +72,7 @@ func serviceTokenCreate(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	scopeList := []string{}
+	var scopeList []string
 	for _, s := range strings.Split(*scopes, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			scopeList = append(scopeList, s)
@@ -82,7 +82,7 @@ func serviceTokenCreate(args []string) error {
 		return fmt.Errorf("--name and --scopes are required")
 	}
 	for _, s := range scopeList {
-		if !serviceScopes[s] {
+		if _, ok := serviceScopes[s]; !ok {
 			return fmt.Errorf("unknown scope %q (known: enroll, members, nodes, *)", s)
 		}
 	}
@@ -92,7 +92,7 @@ func serviceTokenCreate(args []string) error {
 			groupsProvided = true
 		}
 	})
-	groupList := []string{}
+	var groupList []string
 	for _, g := range strings.Split(*groups, ",") {
 		if g = strings.TrimSpace(g); g != "" {
 			groupList = append(groupList, g)

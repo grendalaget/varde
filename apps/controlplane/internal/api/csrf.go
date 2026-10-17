@@ -39,11 +39,11 @@ func (s *Server) sessionCookie(token string, maxAge int) *http.Cookie {
 
 // cookieAuthPaths get a Set-Cookie on success: login, signup and the
 // federated exchange stash the token they just issued; logout expires it.
-var cookieAuthPaths = map[string]bool{
-	"/v1/auth/login":    true,
-	"/v1/auth/signup":   true,
-	"/v1/auth/logout":   true,
-	"/v1/auth/external": true,
+var cookieAuthPaths = map[string]struct{}{
+	"/v1/auth/login":    {},
+	"/v1/auth/signup":   {},
+	"/v1/auth/logout":   {},
+	"/v1/auth/external": {},
 }
 
 // sessionCookies injects Set-Cookie on the auth endpoints. The strict
@@ -51,7 +51,7 @@ var cookieAuthPaths = map[string]bool{
 // three paths are buffered, inspected, then flushed.
 func (s *Server) sessionCookies(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !cookieAuthPaths[r.URL.Path] {
+		if _, ok := cookieAuthPaths[r.URL.Path]; !ok {
 			next.ServeHTTP(w, r)
 			return
 		}

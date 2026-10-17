@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -93,5 +92,3 @@ func (s *Server) publicBase(ctx context.Context) string {
 	}
 	return "http://localhost:8080"
 }
-
-var _ = json.Marshal

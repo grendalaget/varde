@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -138,11 +139,7 @@ func (r *Reconciler) nodeLiveness(ctx context.Context) error {
 			if last == state {
 				continue
 			}
-			if state != "online" {
-				_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node."+state, map[string]any{"name": n.Name})
-			} else {
-				_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node.online", map[string]any{"name": n.Name})
-			}
+			_ = r.Store.EmitEvent(ctx, r.Store.DB, g.ID, nil, strptr(n.ID), "node."+state, map[string]any{"name": n.Name})
 		}
 	}
 	return nil
@@ -183,7 +180,7 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 	s := r.Store
 	now := s.NowMs()
 	active, err := s.ActiveExecution(ctx, srv.ID)
-	if err != nil && err != store.ErrNotFound {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 
@@ -237,7 +234,7 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 			if restoreFailures < 3 {
 				lastFailure := execs[0].EndedAt
 				if lastFailure != nil && now >= *lastFailure+10_000 {
-					return r.activate(ctx, srv, nil, true)
+					return r.activate(ctx, srv, true)
 				}
 				if srv.ObservedState != "recovering" {
 					if err := s.SetObservedState(ctx, s.DB, srv.ID, "recovering", now); err != nil {
@@ -258,7 +255,7 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 			}
 			return nil
 		}
-		return r.activate(ctx, srv, active, true)
+		return r.activate(ctx, srv, true)
 	}
 
 	// 3. desired stopped, active run → mark stop (unless a migration manages it).
@@ -329,7 +326,7 @@ func ActivationError(err error) *activationError {
 
 // activate creates a new execution for srv. recovery=true means the previous
 // execution was lost (lease expiry) — use committed snapshots only.
-func (r *Reconciler) activate(ctx context.Context, srv *store.Server, prev *store.Execution, recovery bool) error {
+func (r *Reconciler) activate(ctx context.Context, srv *store.Server, recovery bool) error {
 	return r.activateWith(ctx, srv, recovery, "", nil)
 }
 
@@ -396,9 +393,7 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 			_ = s.EmitEvent(ctx, s.DB, srv.GroupID, &srv.ID, nil, "server.unschedulable",
 				map[string]any{"reasons": serr.Reasons})
 			if srv.DesiredState == "running" {
-				msg := fmt.Sprintf("unschedulable: %v", serr.Reasons)
 				_ = s.SetObservedState(ctx, s.DB, srv.ID, "failed", now)
-				_ = msg
 			}
 			return &activationError{Code: "unschedulable", Message: err.Error(), Details: map[string]any{"reasons": serr.Reasons}}
 		}
@@ -451,9 +446,7 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 		return nil, nil, err
 	}
 	// newest first
-	for i, j := 0, len(snaps)-1; i < j; i, j = i+1, j-1 {
-		snaps[i], snaps[j] = snaps[j], snaps[i]
-	}
+	slices.Reverse(snaps)
 	online, err := r.onlineNodeIDs(ctx, srv.GroupID)
 	if err != nil {
 		return nil, nil, err
@@ -496,7 +489,8 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 		}
 		var ready []string
 		for _, rep := range reps {
-			if rep.State == "ready" && online[rep.NodeID] {
+			_, on := online[rep.NodeID]
+			if rep.State == "ready" && on {
 				ready = append(ready, rep.NodeID)
 			}
 		}
@@ -533,15 +527,15 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 	return nil, nil, nil // no committed save yet: start fresh
 }
 
-func (r *Reconciler) onlineNodeIDs(ctx context.Context, groupID string) (map[string]bool, error) {
+func (r *Reconciler) onlineNodeIDs(ctx context.Context, groupID string) (map[string]struct{}, error) {
 	nodes, err := r.Store.ListNodes(ctx, groupID)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]bool{}
+	out := map[string]struct{}{}
 	for i := range nodes {
 		if r.Liveness(&nodes[i]) == "online" {
-			out[nodes[i].ID] = true
+			out[nodes[i].ID] = struct{}{}
 		}
 	}
 	return out, nil
@@ -670,7 +664,7 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 				return err
 			}
 			_ = s.UpdateMigration(ctx, m)
-			_ = s.EmitEvent(ctx, s.DB, snapGroupID(ctx, s, finalSnap), &m.ServerID, &m.ToNodeID,
+			_ = s.EmitEvent(ctx, s.DB, finalSnap.GroupID, &m.ServerID, &m.ToNodeID,
 				"migration.started", map[string]any{"snapshot_id": finalSnap.ID})
 
 		case "await_replication":
@@ -845,10 +839,6 @@ func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m
 		return s.EmitEvent(ctx, tx, srv.GroupID, &srv.ID, &m.ToNodeID, "server.assigned",
 			map[string]any{"execution_id": exec.ID, "epoch": exec.Epoch, "migration": m.ID})
 	})
-}
-
-func snapGroupID(ctx context.Context, s *store.Store, snap *store.Snapshot) string {
-	return snap.GroupID
 }
 
 func mustJSON(v any) string {

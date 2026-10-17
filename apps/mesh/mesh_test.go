@@ -816,7 +816,7 @@ func TestWatchEventsEmitsPathChanges(t *testing.T) {
 func TestRetryDirectLoopWithoutConn(t *testing.T) {
 	n := NewNode(testLog(), testTimings, nil)
 	t.Cleanup(func() { n.Close() })
-	p := &peerState{n: n, id: "node_b", stopCh: make(chan struct{})}
+	p := newPeerState(n, &meshv1.Peer{NodeId: "node_b"})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -941,7 +941,8 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	rt.mu.Lock()
 	stale := &udpFlow{src: &net.UDPAddr{IP: net.ParseIP("127.0.0.9"), Port: 9},
 		hostNodeID: "node_b", epoch: 1, rt: rt, done: make(chan struct{})}
-	rt.flows["27002|stale"] = stale
+	staleKey := udpFlowKey{port: testUDP, src: stale.src.AddrPort()}
+	rt.flows[staleKey] = stale
 	rt.mu.Unlock()
 	flip2 := routeFor(testSvcID, testIP, testTCP, "node_b", 3, testUDP)
 	flip2.DrainHostNodeId = "node_c"
@@ -952,7 +953,7 @@ func TestRouteFlipDrainWindow(t *testing.T) {
 	}); err != nil || len(rr.GetErrors()) > 0 {
 		t.Fatalf("routes4: %v", rr.GetErrors())
 	}
-	if _, ok := rt.flows["27002|stale"]; ok {
+	if _, ok := rt.flows[staleKey]; ok {
 		t.Fatal("stale pre-prevHost flow survived consecutive flip")
 	}
 	if !stale.closed.Load() {

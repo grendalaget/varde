@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/grendalaget/varde/go/ids"
 	"github.com/grendalaget/varde/go/relaytoken"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
@@ -278,15 +276,15 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 	}
 	// warm migrations freeze their source execution until the handoff lands
 	// (or abort unfreezes it)
-	frozenExecs := map[string]bool{}
+	frozenExecs := map[string]struct{}{}
 	if ms, err := s.Store.OpenMigrations(ctx); err == nil {
 		for _, m := range ms {
 			if m.Mode == "warm" {
-				frozenExecs[m.FromExecutionID] = true
+				frozenExecs[m.FromExecutionID] = struct{}{}
 			}
 		}
 	}
-	out := []gen.ExecutionDirective{}
+	out := make([]gen.ExecutionDirective, 0, len(execs))
 	for i := range execs {
 		e := &execs[i]
 		srv, err := s.Store.GetServer(ctx, e.ServerID)
@@ -312,7 +310,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 			holders := s.saveHolders(ctx, snap.ID)
 			ed.LatestSaveOn = &holders
 		}
-		if frozenExecs[e.ID] {
+		if _, frozen := frozenExecs[e.ID]; frozen {
 			ed.Freeze = ptr(true)
 		}
 		if e.StopReason != nil {
@@ -475,7 +473,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 	if err != nil {
 		return d, err
 	}
-	delIDs := []string{}
+	delIDs := make([]string, 0, len(del))
 	for _, r := range del {
 		delIDs = append(delIDs, r.SnapshotID)
 	}
@@ -489,7 +487,7 @@ func (s *Server) readyOnlineSources(ctx context.Context, snap *store.Snapshot) (
 	if err != nil {
 		return nil, err
 	}
-	out := []string{}
+	out := make([]string, 0, len(reps))
 	for _, r := range reps {
 		if r.State != "ready" {
 			continue
@@ -901,6 +899,3 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	s.Recon.Wake()
 	return gen.AgentReplicaReady204Response{}, nil
 }
-
-var _ = base64.StdEncoding
-var _ = ids.Must

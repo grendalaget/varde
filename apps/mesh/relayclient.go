@@ -94,7 +94,7 @@ type relayClient struct {
 }
 
 func (n *Node) newRelayClientLocked(id, addr, token string) (*relayClient, error) {
-	ua, err := resolveUDP(addr)
+	ua, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -232,9 +232,10 @@ func (rc *relayClient) handleFrame(data []byte) {
 		rc.observed = dedupe(append(rc.observed, rr.GetObservedAddr()))
 		rc.mu.Unlock()
 		if !wasReg {
+			st, _ := rc.state()
 			rc.n.events.emit(&meshv1.MeshEvent{
 				AtUnixMs: time.Now().UnixMilli(),
-				Event:    &meshv1.MeshEvent_RelayChanged{RelayChanged: mustState(rc)},
+				Event:    &meshv1.MeshEvent_RelayChanged{RelayChanged: st},
 			})
 			rc.n.events.emit(&meshv1.MeshEvent{
 				AtUnixMs: time.Now().UnixMilli(),
@@ -274,9 +275,4 @@ func (rc *relayClient) handleFrame(data []byte) {
 			rc.n.log.Warn("relay error", "relay", rc.id, "code", re.GetCode(), "msg", re.GetMessage())
 		}
 	}
-}
-
-func mustState(rc *relayClient) *meshv1.RelayState {
-	st, _ := rc.state()
-	return st
 }

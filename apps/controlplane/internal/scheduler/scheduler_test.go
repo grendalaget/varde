@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -93,7 +94,7 @@ func TestPlaceSkipsDrainingNode(t *testing.T) {
 	}
 	_, err = Place(srv, testGame, []NodeView{drain}, SnapView{})
 	se, ok := err.(*Error)
-	if !ok || !contains(se.Reasons, "node_drain: shutting down") {
+	if !ok || !slices.Contains(se.Reasons, "node_drain: shutting down") {
 		t.Fatalf("expected shutting-down reason, got %v", err)
 	}
 }

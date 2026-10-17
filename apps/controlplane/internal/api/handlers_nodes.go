@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/grendalaget/varde/go/ids"
 
@@ -554,5 +553,3 @@ func jsonUnmarshal(data string, v any) error {
 	}
 	return json.Unmarshal([]byte(data), v)
 }
-
-var _ = time.Now
