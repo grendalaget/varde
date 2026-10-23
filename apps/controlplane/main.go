@@ -101,25 +101,27 @@ func (r *relayFlags) Set(v string) error {
 }
 
 type serveCfg struct {
-	listen          string
-	dbURL           string
-	secretsKeyFile  string
-	publicURL       string
-	steamAPIKey     string
-	dev             bool
-	signup          string
-	authMode        string
-	fedSecret       string
-	pluginManifests []string
-	embeddedRelay   string
-	embeddedAddr    string
-	relays          relayFlags
-	heartbeatMs     int64
-	leaseTTLMs      int64
-	startGraceMs    int64
-	suspectAfterMs  int64
-	offlineAfterMs  int64
-	logLevel        string
+	listen           string
+	dbURL            string
+	secretsKeyFile   string
+	publicURL        string
+	steamAPIKey      string
+	dev              bool
+	signup           string
+	authMode         string
+	fedSecret        string
+	pluginManifests  []string
+	embeddedRelay    string
+	embeddedAddr     string
+	relays           relayFlags
+	heartbeatMs      int64
+	leaseTTLMs       int64
+	shortHeartbeatMs int64
+	shortLeaseTTLMs  int64
+	startGraceMs     int64
+	suspectAfterMs   int64
+	offlineAfterMs   int64
+	logLevel         string
 }
 
 // serveFlags returns a FlagSet bound to a fresh serveCfg; both interactive
@@ -147,6 +149,8 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.StringVar(&cfg.embeddedAddr, "embedded-relay-addr", envOr("VARDE_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
 	fs.Int64Var(&cfg.heartbeatMs, "heartbeat-interval-ms", envInt("VARDE_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
 	fs.Int64Var(&cfg.leaseTTLMs, "lease-ttl-ms", envInt("VARDE_LEASE_TTL_MS", 20000), "execution lease TTL")
+	fs.Int64Var(&cfg.shortHeartbeatMs, "short-heartbeat-interval-ms", envInt("VARDE_SHORT_HEARTBEAT_INTERVAL_MS", 1000), "short-profile agent heartbeat interval")
+	fs.Int64Var(&cfg.shortLeaseTTLMs, "short-lease-ttl-ms", envInt("VARDE_SHORT_LEASE_TTL_MS", 5000), "short-profile execution lease TTL")
 	fs.Int64Var(&cfg.startGraceMs, "start-grace-ms", envInt("VARDE_START_GRACE_MS", 30000), "extra lease while preparing/restoring")
 	fs.Int64Var(&cfg.suspectAfterMs, "suspect-after-ms", envInt("VARDE_SUSPECT_AFTER_MS", 15000), "node suspect threshold")
 	fs.Int64Var(&cfg.offlineAfterMs, "offline-after-ms", envInt("VARDE_OFFLINE_AFTER_MS", 30000), "node offline threshold")
@@ -190,6 +194,12 @@ func main() {
 // logOut overrides the JSON log destination (the Windows service logs to a
 // file); nil means stdout.
 func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
+	if err := validateTimingProfile("standard", cfg.heartbeatMs, cfg.leaseTTLMs); err != nil {
+		return err
+	}
+	if err := validateTimingProfile("short", cfg.shortHeartbeatMs, cfg.shortLeaseTTLMs); err != nil {
+		return err
+	}
 	pluginRegistry, err := plugins.Load(cfg.pluginManifests)
 	if err != nil {
 		return err
@@ -232,6 +242,8 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	timings := reconciler.DefaultTimings()
 	timings.HeartbeatIntervalMs = cfg.heartbeatMs
 	timings.LeaseTTLMs = cfg.leaseTTLMs
+	timings.ShortHeartbeatIntervalMs = cfg.shortHeartbeatMs
+	timings.ShortLeaseTTLMs = cfg.shortLeaseTTLMs
 	timings.StartGraceMs = cfg.startGraceMs
 	timings.SuspectAfterMs = cfg.suspectAfterMs
 	timings.OfflineAfterMs = cfg.offlineAfterMs
@@ -346,6 +358,13 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
+	}
+	return nil
+}
+
+func validateTimingProfile(profile string, heartbeatMs, leaseTTLMs int64) error {
+	if heartbeatMs <= 0 || leaseTTLMs <= 0 || leaseTTLMs/heartbeatMs < 3 {
+		return fmt.Errorf("%s lease TTL must be at least 3x its positive heartbeat interval", profile)
 	}
 	return nil
 }

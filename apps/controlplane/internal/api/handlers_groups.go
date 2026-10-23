@@ -118,6 +118,7 @@ func (s *Server) UpdateGroup(ctx context.Context, req gen.UpdateGroupRequestObje
 	if err := s.Store.UpdateGroup(ctx, g); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(g.ID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &g.ID, "user", u.ID, "group.update", g.ID, nil)
 	return gen.UpdateGroup200JSONResponse(genGroup(g)), nil
 }
@@ -130,6 +131,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req gen.DeleteGroupRequestObje
 	if err := s.Store.DeleteGroup(ctx, req.GroupId); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(req.GroupId)
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "group.delete", req.GroupId, nil)
 	return gen.DeleteGroup204Response{}, nil
 }

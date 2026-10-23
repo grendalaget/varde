@@ -15,8 +15,56 @@ use tracing::{debug, info, warn};
 use crate::exec::{self, ExecCtl, Phase, StopKind};
 use crate::Agent;
 
+static WARNED_FENCE_MARGIN_CAPS: std::sync::OnceLock<Mutex<HashSet<(i64, i64)>>> =
+    std::sync::OnceLock::new();
+
+fn capped_fence_margin_ms(configured_margin_ms: i64, lease_ttl_ms: i64) -> i64 {
+    let configured_margin_ms = configured_margin_ms.max(0);
+    let capped_margin_ms = configured_margin_ms.min(lease_ttl_ms.max(0) / 2);
+    if capped_margin_ms < configured_margin_ms {
+        let warned = WARNED_FENCE_MARGIN_CAPS.get_or_init(|| Mutex::new(HashSet::new()));
+        if warned
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((configured_margin_ms, capped_margin_ms))
+        {
+            warn!(
+                configured_margin_ms,
+                capped_margin_ms,
+                lease_ttl_ms,
+                "capping fencing margin to preserve half the lease window"
+            );
+        }
+    }
+    capped_margin_ms
+}
+
+fn fence_deadline(
+    sent: Instant,
+    window_ms: i64,
+    configured_margin_ms: i64,
+    lease_ttl_ms: i64,
+) -> (Instant, i64) {
+    let margin_ms = capped_fence_margin_ms(configured_margin_ms, lease_ttl_ms);
+    let margin = Duration::from_millis(margin_ms as u64);
+    (
+        sent + Duration::from_millis(window_ms.max(0) as u64).saturating_sub(margin),
+        margin_ms,
+    )
+}
+
+struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
+
+impl Drop for HeartbeatCompletionGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .send_modify(|sequence| *sequence = sequence.wrapping_add(1));
+    }
+}
+
 /// One heartbeat iteration: returns the interval to wait before the next.
 pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
+    let _completion = HeartbeatCompletionGuard(&agent.heartbeat_sequence);
     // capture send instant BEFORE the request — fencing math depends on it
     let sent = Instant::now();
     let deleted_snapshots = pending_delete_ack_ids(&agent.pending_delete_acks);
@@ -34,6 +82,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
             agent
                 .shutting_down
                 .load(std::sync::atomic::Ordering::SeqCst),
+            &agent.cfg.lease_profile,
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
@@ -65,6 +114,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         cp_clock_offset_ms(d.server_time_unix_ms, crate::now_ms(), posted.elapsed());
     acknowledge_delete_acks(&agent.pending_delete_acks, &deleted_snapshots);
     apply(agent, &d, sent).await?;
+    agent.directives_digest.send_replace(d.directives_digest);
     let elapsed_ms = sent.elapsed().as_millis() as u64;
     if elapsed_ms > 1000 {
         warn!(elapsed_ms, "slow heartbeat");
@@ -235,19 +285,23 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         .await?;
 
     // ---- executions ----
-    let margin = Duration::from_millis(agent.cfg.fence_margin_ms.max(0) as u64);
     let mut wanted: HashSet<String> = HashSet::new();
     for e in &d.executions {
         wanted.insert(e.execution_id.clone());
         // fencing deadline: sent_instant + (lease − server_time) − margin
         let window_ms = e.lease_expires_at_unix_ms - d.server_time_unix_ms;
-        let window = Duration::from_millis(window_ms.max(0) as u64);
         // saturating: a nearly-expired lease still yields a deadline <= sent
-        let deadline = sent + window.saturating_sub(margin);
+        let (deadline, margin_ms) = fence_deadline(
+            sent,
+            window_ms,
+            agent.cfg.effective_fence_margin_ms(),
+            d.lease_ttl_ms,
+        );
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
         match existing {
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
+                ctl.set_fence_margin_ms(margin_ms);
                 // stop reason first: the shutdown drain reads an unfreeze
                 // without a 'handoff' stop as an aborted migration
                 ctl.set_stop_reason(e.stop_reason.clone());
@@ -276,6 +330,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                 }
                 let ctl = ExecCtl::new(e.clone());
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                ctl.set_fence_margin_ms(margin_ms);
                 *ctl.deadline.lock().unwrap() = Some(deadline);
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
@@ -306,9 +361,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     agent.sync_hosted_services().await;
 
     // ---- replication + deletes ----
-    for t in &d.replication_tasks {
-        agent.enqueue_replication(t.clone());
-    }
+    agent.replace_replication_tasks(&d.replication_tasks);
     for id in &d.delete_snapshots {
         if let Some(sid) = snapshot_store::SnapshotId::parse(id) {
             match agent.store.delete_snapshot(&sid) {
@@ -364,28 +417,163 @@ async fn report_absent_stopped_msg(agent: &Agent, e: &cp_api::ExecutionDirective
 pub async fn control_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
     let mut interval = Duration::from_millis(1000);
     loop {
-        match heartbeat_once(&agent).await {
-            Ok(ms) => interval = Duration::from_millis(ms.clamp(100, 60_000) as u64),
+        let heartbeat_succeeded = match heartbeat_once(&agent).await {
+            Ok(ms) => {
+                interval = Duration::from_millis(ms.clamp(100, 60_000) as u64);
+                true
+            }
             Err(e) => {
                 warn!(error = %e, "heartbeat failed");
                 interval = (interval * 2).min(Duration::from_secs(5));
+                false
             }
-        }
+        };
         // a draining host heartbeats fast so shutdown handoffs start (and
         // their flips land) without waiting out the normal interval
-        let wait = if agent
+        let shutting_down = agent
             .shutting_down
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let wait = if shutting_down {
             interval.min(SHUTDOWN_HEARTBEAT)
         } else {
             interval
         };
         tokio::select! {
             _ = tokio::time::sleep(wait) => {},
-            _ = agent.heartbeat_now.notified() => {},
             _ = stop.changed() => return,
+            _ = agent.heartbeat_now.notified(), if heartbeat_succeeded || shutting_down => {},
         }
+    }
+}
+
+pub async fn wake_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    let mut digest = agent.directives_digest.subscribe();
+    let mut heartbeat_sequence = agent.heartbeat_sequence.subscribe();
+    let mut backoff = Duration::from_secs(1);
+    let mut last_wake_heartbeat: Option<Instant> = None;
+    let mut consecutive_unchanged = 0;
+    let mut last_unchanged_warning = None;
+
+    loop {
+        if *stop.borrow() {
+            return;
+        }
+        let current_digest = loop {
+            if let Some(value) = digest.borrow().clone() {
+                break value;
+            }
+            tokio::select! {
+                changed = digest.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+                _ = stop.changed() => return,
+            }
+        };
+
+        let path = format!("/v1/agent/directives/wait?digest={current_digest}&timeout_ms=20000");
+        let request = agent
+            .cp
+            .json::<serde_json::Value, cp_api::AgentDirectivesWait>("GET", &path, None);
+        let result = tokio::select! {
+            result = request => result,
+            _ = stop.changed() => return,
+        };
+        match result {
+            Ok(response) => {
+                backoff = Duration::from_secs(1);
+                if response.changed {
+                    let before_digest = digest.borrow_and_update().clone();
+                    let sequence_before = *heartbeat_sequence.borrow_and_update();
+                    if let Some(last) = last_wake_heartbeat {
+                        let spacing = Duration::from_millis(200);
+                        if let Some(remaining) = spacing.checked_sub(last.elapsed()) {
+                            if !sleep_or_stop(&mut stop, remaining).await {
+                                return;
+                            }
+                        }
+                    }
+                    last_wake_heartbeat = Some(Instant::now());
+                    agent.heartbeat_now.notify_one();
+                    if !wait_for_heartbeat_sequence(
+                        &mut heartbeat_sequence,
+                        &mut stop,
+                        sequence_before,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    let digest_updated = digest.has_changed().unwrap_or(false);
+                    let after_digest = digest.borrow_and_update().clone();
+                    if digest_updated && after_digest == before_digest {
+                        consecutive_unchanged += 1;
+                        let should_warn = last_unchanged_warning
+                            .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(60));
+                        if consecutive_unchanged >= 2 && should_warn {
+                            warn!(
+                                digest = ?after_digest,
+                                "two consecutive wake-triggered heartbeats returned an unchanged digest"
+                            );
+                            last_unchanged_warning = Some(Instant::now());
+                        }
+                    } else {
+                        consecutive_unchanged = 0;
+                    }
+                }
+            }
+            Err(error) if is_legacy_directives_wait_error(&error) => {
+                if !sleep_or_stop(&mut stop, Duration::from_secs(5 * 60)).await {
+                    return;
+                }
+            }
+            Err(error) => {
+                warn!(error = %error, "directive wait failed");
+                if !sleep_or_stop(&mut stop, backoff).await {
+                    return;
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(30));
+            }
+        }
+    }
+}
+
+fn is_legacy_directives_wait_error(error: &cp_api::Error) -> bool {
+    matches!(error.status(), Some(404 | 405))
+}
+
+async fn wait_for_heartbeat_sequence(
+    sequence: &mut tokio::sync::watch::Receiver<u64>,
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+    previous: u64,
+) -> bool {
+    if *stop.borrow() {
+        return false;
+    }
+    let changed = async {
+        loop {
+            if *sequence.borrow_and_update() != previous {
+                return;
+            }
+            if sequence.changed().await.is_err() {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        _ = tokio::time::timeout(Duration::from_secs(5), changed) => true,
+        _ = stop.changed() => false,
+    }
+}
+
+async fn sleep_or_stop(stop: &mut tokio::sync::watch::Receiver<bool>, duration: Duration) -> bool {
+    if *stop.borrow() {
+        return false;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => true,
+        _ = stop.changed() => false,
     }
 }
 
@@ -437,7 +625,7 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
             let a = agent.clone();
             let c = c.clone();
             tokio::spawn(async move {
-                let bound = Duration::from_millis((a.cfg.fence_margin_ms.max(0) as u64) / 2);
+                let bound = Duration::from_millis((c.fence_margin_ms() as u64) / 2);
                 if let Some(p) = c.proc() {
                     if bound > Duration::ZERO {
                         let _ = p.terminate().await;
@@ -465,7 +653,10 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
+    use super::{
+        acknowledge_delete_acks, cp_clock_offset_ms, fence_deadline,
+        is_legacy_directives_wait_error, pending_delete_ack_ids, wait_for_heartbeat_sequence,
+    };
     use crate::agent::CpView;
     use std::collections::BTreeSet;
     use std::sync::Mutex;
@@ -485,6 +676,14 @@ mod tests {
     }
 
     #[test]
+    fn short_lease_caps_explicit_fence_margin() {
+        let sent = std::time::Instant::now();
+        let (deadline, margin_ms) = fence_deadline(sent, 5000, 5000, 5000);
+        assert_eq!(margin_ms, 2500);
+        assert_eq!(deadline.duration_since(sent), Duration::from_millis(2500));
+    }
+
+    #[test]
     fn delete_acknowledgement_removes_only_sent_ids() {
         let pending = Mutex::new(BTreeSet::from(["snap_a".to_string(), "snap_b".to_string()]));
         let sent = pending_delete_ack_ids(&pending);
@@ -494,5 +693,35 @@ mod tests {
         acknowledge_delete_acks(&pending, &sent);
 
         assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
+    }
+
+    #[test]
+    fn directive_wait_response_and_legacy_statuses_are_recognized() {
+        let response: cp_api::AgentDirectivesWait =
+            serde_json::from_str(r#"{"digest":"abc","changed":true}"#).unwrap();
+        assert_eq!(response.digest, "abc");
+        assert!(response.changed);
+
+        let error = |status| cp_api::Error::Api {
+            status,
+            code: "http_error".into(),
+            message: "not found".into(),
+            details: None,
+        };
+        assert!(is_legacy_directives_wait_error(&error(404)));
+        assert!(is_legacy_directives_wait_error(&error(405)));
+        assert!(!is_legacy_directives_wait_error(&error(500)));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_sequence_waits_for_attempt_completion() {
+        let (sequence_tx, mut sequence) = tokio::sync::watch::channel(0);
+        let (_stop_tx, mut stop) = tokio::sync::watch::channel(false);
+        let waiter =
+            tokio::spawn(
+                async move { wait_for_heartbeat_sequence(&mut sequence, &mut stop, 0).await },
+            );
+        sequence_tx.send_replace(1);
+        assert!(waiter.await.unwrap());
     }
 }

@@ -34,7 +34,7 @@ invites(code PK, group_id, role, created_by, expires_at, max_uses, uses)
 enrollment_tokens(id, group_id, token_hash UNIQUE, anchor, hosting_enabled, labels_json, expires_at, max_uses, uses, created_by)
 device_links(user_code PK, device_code_hash UNIQUE, public_key, hostname, os, arch, agent_version,
              state{pending,approved,consumed,expired}, group_id, node_id, approved_by, expires_at, created_at)
-nodes(id, group_id, name, public_key UNIQUE, os, arch, agent_version, hosting_enabled, anchor, priority,
+nodes(id, group_id, name, public_key UNIQUE, os, arch, agent_version, lease_profile{standard,short}, hosting_enabled, anchor, priority,
       max_memory_mb, max_cpu_percent, max_storage_bytes, admin_state{active,draining,disabled},
       last_seen_at, created_at)
 node_status(node_id PK, status_json, mesh_json, updated_at)   -- latest heartbeat payload (capabilities, endpoints, paths)
@@ -92,15 +92,17 @@ Users link Steam with `POST /v1/me/steam/link`; Steam returns to `/v1/auth/steam
 
 ## Agent protocol: heartbeat = reconciliation
 
-Agents run a single loop: `POST /v1/agent/heartbeat` every `heartbeat_interval_ms` (default 5000). The request
-reports observed state; the response is the **complete desired state for that node**. Both are idempotent, so a
-restart of either side re-converges.
+Agents run a heartbeat loop: `POST /v1/agent/heartbeat` every `heartbeat_interval_ms` (default 5000), plus a signed
+long-poll on `GET /v1/agent/directives/wait` that requests an immediate heartbeat when desired state changes. The
+wait response contains only a digest and a `changed` flag; directives are still delivered **only** by the heartbeat
+response, whose send instant is used for lease fencing math. The heartbeat request reports observed state; its
+response is the **complete desired state for that node**. Both are idempotent, so a restart of either side re-converges.
 
 Request `AgentHeartbeat`:
 ```jsonc
 {
   "agent_version": "0.1.0",
-  "capabilities": {"os":"linux","arch":"x86_64","cpu_cores":8,"memory_total_mb":32000,"memory_available_mb":20000,
+  "capabilities": {"os":"linux","arch":"x86_64","lease_profile":"standard","cpu_cores":8,"memory_total_mb":32000,"memory_available_mb":20000,
                     "disk_free_bytes":..., "on_battery":false, "user_active":false,
                     "runtimes":["native","java","steamcmd"], "cached_deployments":["dep_…"], "drivers":["testgame","minecraft"]},
   "mesh": {"listen_port":41641, "local_endpoints":["192.168.1.5:41641"], "observed_endpoints":["84.1.2.3:41641"],
@@ -114,6 +116,7 @@ Response `AgentDirectives`:
 ```jsonc
 {
   "server_time_unix_ms": 1790000000000,
+  "directives_digest": "first-16-bytes-of-sha256",
   "heartbeat_interval_ms": 5000,
   "lease_ttl_ms": 20000,
   "node": {"name":"Arne-PC","hosting_enabled":true,"anchor":false,"admin_state":"active"},
@@ -137,6 +140,14 @@ Response `AgentDirectives`:
   "delete_snapshots": ["snap_…"]          // explicit only (I8)
 }
 ```
+
+The digest excludes per-call timestamps and credentials (including the server clock, lease expiries, relay-token
+expiry/signature, drain deadline, and save-holder `last_seen_at`). The wait endpoint uses it only to detect a change:
+it never returns the directive document. It defaults to 20 s and clamps requests to 1–25 s.
+API mutations that request a reconciler wake notify waiters only in the affected group.
+Reconciler passes compare per-group fingerprints of active executions, migrations,
+node scheduling state, snapshot replicas, server state, and event IDs; changed groups
+are notified. A 2 s fallback detects mutations made on another control-plane instance.
 
 Lease renewal is implicit: for each reported execution that is still the server's active execution, held by this
 node, with matching epoch and not `stopped/failed`, the CP extends `lease_expires_at = now + lease_ttl` **before**
@@ -171,10 +182,15 @@ unrecoverable prepare/restore error, with `message`).
   the CP considers the lease expired, without clock synchronisation. When the deadline passes the agent kills the game
   (graceful attempt bounded to `fence_margin/2`, then hard kill) and marks the execution `fenced` locally; it never
   uploads snapshots for it.
-* Defaults (all configurable): heartbeat 5 s, node `suspect` after 15 s without heartbeat, `offline` after 30 s, lease
-  TTL 20 s, start grace 30 s for `preparing/restoring`. Heartbeats renew `preparing`/`restoring` leases, so the grace
-  only covers the gap from placement to the first report — not the whole download window. The agent's own fencing
-  deadline derives from this lease, so a long grace would also let a partitioned agent keep hosting for that long.
+* The optional `Capabilities.lease_profile` is `standard` when absent or unknown. Standard defaults are a 5 s heartbeat,
+  `suspect` after 15 s, `offline` after 30 s, and a 20 s lease. The short profile defaults to a 1 s heartbeat, `suspect`
+  after 3 s, `offline` after 6 s, and a 5 s lease. Heartbeat and lease values are configurable with
+  `--short-heartbeat-interval-ms` and `--short-lease-ttl-ms`; short suspect/offline thresholds are 3×/6× its heartbeat.
+  Both profiles require a lease TTL of at least three heartbeat intervals. Start grace remains 30 s for
+  `preparing/restoring`. Heartbeats renew `preparing`/`restoring` leases, so grace only covers the gap from placement
+  to the first report — not the whole download window.
+* The short profile is an availability trade-off: if a short-profile host loses network contact for more than about
+  3 s, it fences itself and loses hosting. Fencing still guarantees that only one host can serve an execution.
 
 ## Reconciler
 

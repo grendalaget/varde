@@ -97,6 +97,8 @@ pub struct Capabilities {
     /// true while the agent drains executions on shutdown
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draining: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,6 +329,8 @@ pub struct AgentDirectives {
     pub server_time_unix_ms: i64,
     pub heartbeat_interval_ms: i64,
     pub lease_ttl_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directives_digest: Option<String>,
     pub node: NodeFlags,
     #[serde(default, deserialize_with = "null_vec")]
     pub executions: Vec<ExecutionDirective>,
@@ -340,6 +344,12 @@ pub struct AgentDirectives {
     pub replication_tasks: Vec<ReplicationTask>,
     #[serde(default, deserialize_with = "null_vec")]
     pub delete_snapshots: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDirectivesWait {
+    pub digest: String,
+    pub changed: bool,
 }
 
 // ---------- other agent writes ----------

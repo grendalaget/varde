@@ -24,9 +24,11 @@ pub struct Config {
     /// so several agents can coexist on one host. CP allocation is unchanged.
     #[serde(default)]
     pub loopback_prefix: Option<String>,
+    #[serde(default = "default_lease_profile")]
+    pub lease_profile: String,
     /// Fencing margin subtracted from the lease window (ms).
-    #[serde(default = "default_fence_margin_ms")]
-    pub fence_margin_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fence_margin_ms: Option<i64>,
     /// How long a graceful host shutdown waits for the final snapshot to be
     /// reported ready on an anchor/peer (s).
     #[serde(default = "default_shutdown_repl_s")]
@@ -63,8 +65,8 @@ pub struct UpdateCfg {
     pub interval_s: Option<i64>,
 }
 
-fn default_fence_margin_ms() -> i64 {
-    5000
+fn default_lease_profile() -> String {
+    "standard".to_string()
 }
 fn default_shutdown_repl_s() -> i64 {
     60
@@ -74,6 +76,16 @@ fn default_shutdown_handoff_s() -> i64 {
 }
 
 impl Config {
+    pub fn effective_fence_margin_ms(&self) -> i64 {
+        self.fence_margin_ms.unwrap_or_else(|| {
+            if self.lease_profile == "short" {
+                2000
+            } else {
+                5000
+            }
+        })
+    }
+
     pub fn load(data_dir: &Path) -> Result<Config> {
         let p = data_dir.join("config.toml");
         let s = std::fs::read_to_string(&p)
@@ -108,5 +120,42 @@ impl Config {
             }
             _ => ip.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    fn config(extra: &str) -> Config {
+        toml::from_str(&format!(
+            r#"
+control_plane_url = "https://cp.example"
+node_id = "node"
+group_id = "group"
+control_plane_public_key = "key"
+{extra}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn short_profile_uses_short_margin_when_unset() {
+        assert_eq!(
+            config("lease_profile = \"short\"").effective_fence_margin_ms(),
+            2000
+        );
+    }
+
+    #[test]
+    fn explicit_fence_margin_overrides_profile_default() {
+        assert_eq!(
+            config("lease_profile = \"short\"\nfence_margin_ms = 3500").effective_fence_margin_ms(),
+            3500
+        );
+        let standard = config("");
+        assert_eq!(standard.lease_profile, "standard");
+        assert_eq!(standard.effective_fence_margin_ms(), 5000);
     }
 }
