@@ -250,7 +250,7 @@ impl GameDriver for ValheimDriver {
     }
 
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
-        // steamcmd bootstrap + app 896660 validate, all via the provider
+        // steamcmd bootstrap + app 896660 update, all via the provider
         ctx.runtimes
             .steam_app_install(APP_ID, &Self::server_dir_dep(ctx))
             .await?;

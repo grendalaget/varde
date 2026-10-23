@@ -117,9 +117,13 @@ pub trait RuntimeProvider: Send + Sync {
         Err("runtime provider cannot fetch".into())
     }
     /// Install/update a Steam dedicated app into `dest` via steamcmd
-    /// (`+force_install_dir +login anonymous +app_update <app> validate +quit`).
+    /// Validate missing/incomplete installations; routine updates skip validation.
     async fn steam_app_install(&self, _app_id: u32, _dest: &Path) -> Result<()> {
         Err("runtime provider cannot fetch".into())
+    }
+    /// Bootstrap SteamCMD and return its executable path.
+    async fn steamcmd_path(&self) -> Result<PathBuf> {
+        Err("runtime provider cannot supply steamcmd".into())
     }
 }
 

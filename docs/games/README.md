@@ -3,6 +3,46 @@
 Per-game driver notes (runtime requirements, config schema, snapshot
 include/exclude lists) land here as each driver is implemented.
 
+## Counter-Strike 2 Dedicated
+
+CS2 installs SteamCMD app 730 on Linux/Windows x86_64. A first install needs
+at least 75 GB free; routine updates skip Steam's full-content validation.
+Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
+The driver copies SteamCMD's `linux64/steamclient.so` next to the server binary
+and prepends that directory to `LD_LIBRARY_PATH`; no home-directory symlink is needed.
+
+In CS2 open the console and run `connect <address>` using the Varde address.
+Only UDP 27015 is exposed through the mesh, not RCON or SourceTV. CS2's UDP
+socket can remain wildcard-bound despite loopback settings; the driver uses
+the agent-allocated port and local UDP health checks. Real gameplay over the
+mesh and gameplay packet sizes still need client validation.
+
+Modes: casual, competitive (default), wingman, arms_race and deathmatch.
+The default map is `de_dust2`, player limit 10 (2–64), and bot quota 0 (0–64).
+Hostname, password and bot quota are written to generated `varde.cfg`, not
+process arguments. Optional GSLT is passed via `+sv_setsteamaccount`, so it is
+visible to local process inspection. Catalog secret fields mask inputs, not
+stored/API configuration. Without a GSLT the server reports LAN-only operation.
+
+Readiness requires an A2S_INFO reply with the configured map and nonzero
+player capacity. Stop uses stdin `quit`, falling back to an interrupt after
+five seconds (or immediately if stdin is unavailable).
+There is no world save: only `game/csgo/cfg/banned_user.cfg` and `banned_ip.cfg`
+are snapshotted. The live snapshot hook copies these files into the state
+directory without stopping the game; configure restores and executes them.
+Generated configuration, Steam content, logs, demos and plugins are excluded.
+
+Real Linux smoke test (the reused install's generated configuration is replaced):
+
+```sh
+VARDE_NET_TESTS=1 VARDE_CS2_TEST=1 \
+VARDE_CS2_INSTALL=/path/to/install \
+VARDE_CS2_STEAMCMD=/path/to/steamcmd.sh \
+cargo test -p game-cs2 --test net -- --nocapture
+```
+
+Omit the reuse variables to install afresh through the runtime provider.
+
 ## Valheim Dedicated
 
 Valheim installs SteamCMD app 896660. On Linux, the host needs glibc 2.29 or

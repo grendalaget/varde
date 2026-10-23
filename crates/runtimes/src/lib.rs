@@ -82,6 +82,9 @@ impl HttpRuntimes {
 
 #[async_trait]
 impl RuntimeProvider for HttpRuntimes {
+    async fn steamcmd_path(&self) -> game_driver_api::Result<PathBuf> {
+        steamcmd(self).await
+    }
     fn runtime_path(&self, kind: &str, id: &str) -> Option<PathBuf> {
         let p = self.dest(kind, id);
         Self::done(&p).then_some(p)
@@ -164,14 +167,7 @@ impl RuntimeProvider for HttpRuntimes {
         let mut retried_after_self_update = false;
         loop {
             let mut child = tokio::process::Command::new(&cmd)
-                .arg("+force_install_dir")
-                .arg(dest)
-                .arg("+login")
-                .arg("anonymous")
-                .arg("+app_update")
-                .arg(app_id.to_string())
-                .arg("validate")
-                .arg("+quit")
+                .args(steam_app_args(app_id, dest))
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true)
@@ -207,6 +203,29 @@ impl RuntimeProvider for HttpRuntimes {
             return Err(format!("steamcmd exited {st}\nlast output:\n{}", lines.join("\n")).into());
         }
     }
+}
+
+fn steam_app_args(app_id: u32, dest: &Path) -> Vec<std::ffi::OsString> {
+    let manifest =
+        std::fs::read_to_string(dest.join(format!("steamapps/appmanifest_{app_id}.acf")))
+            .unwrap_or_default();
+    let tokens: Vec<_> = manifest.split('"').collect();
+    let installed = tokens
+        .windows(3)
+        .any(|w| w[0] == "StateFlags" && w[2] == "4");
+    let mut args = vec![
+        "+force_install_dir".into(),
+        dest.as_os_str().to_owned(),
+        "+login".into(),
+        "anonymous".into(),
+        "+app_update".into(),
+        app_id.to_string().into(),
+    ];
+    if !installed {
+        args.push("validate".into());
+    }
+    args.push("+quit".into());
+    args
 }
 
 fn steamcmd_self_updated(output: &[String]) -> bool {
@@ -514,6 +533,40 @@ pub async fn system_java(min: u32, candidates: &[PathBuf]) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AOrd};
+
+    #[test]
+    fn steam_app_arguments_validate_only_missing_or_incomplete_installs() {
+        for app in [730, 896660] {
+            let dir = tempfile::tempdir().unwrap();
+            let manifest = dir.path().join(format!("steamapps/appmanifest_{app}.acf"));
+            std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+            for state in [
+                None,
+                Some(""),
+                Some("\"StateFlags\" \"0\""),
+                Some("\"StateFlags\" \"1026\""),
+                Some("\"StateFlags\" \"4\""),
+            ] {
+                if let Some(state) = state {
+                    std::fs::write(&manifest, state).unwrap();
+                }
+                let args = steam_app_args(app, dir.path());
+                let mut expected: Vec<std::ffi::OsString> = vec![
+                    "+force_install_dir".into(),
+                    dir.path().as_os_str().to_owned(),
+                    "+login".into(),
+                    "anonymous".into(),
+                    "+app_update".into(),
+                    app.to_string().into(),
+                ];
+                if state != Some("\"StateFlags\" \"4\"") {
+                    expected.push("validate".into());
+                }
+                expected.push("+quit".into());
+                assert_eq!(args, expected);
+            }
+        }
+    }
 
     #[test]
     fn provisionable_linux_x64() {

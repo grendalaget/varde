@@ -1,0 +1,358 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use executor_api::{ProcessHandle, ProcessSpec};
+use game_driver_api::*;
+use serde_json::Value;
+
+pub const APP_ID: u32 = 730;
+pub const PORT: u32 = 27015;
+const MIN_DISK_BYTES: u64 = 75_000_000_000;
+const BANS: [&str; 2] = ["banned_user.cfg", "banned_ip.cfg"];
+const INFO_REQUEST: &[u8] = b"\xff\xff\xff\xffTSource Engine Query\0";
+
+fn check_install_space(available: u64) -> Result<()> {
+    if available < MIN_DISK_BYTES {
+        return Err(format!(
+            "cs2: first install requires at least 75 GB free ({} bytes available)",
+            available
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+pub struct Cs2Driver;
+
+impl Cs2Driver {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn install_dir(ctx: &DriverContext<'_>) -> PathBuf {
+        ctx.deployment_dir.join("server")
+    }
+
+    fn binary(ctx: &DriverContext<'_>) -> PathBuf {
+        Self::install_dir(ctx).join(if cfg!(windows) {
+            "game/bin/win64/cs2.exe"
+        } else {
+            "game/bin/linuxsteamrt64/cs2"
+        })
+    }
+
+    fn string<'a>(cfg: &'a Value, key: &str, default: &'a str) -> Result<&'a str> {
+        let value = match cfg.get(key) {
+            Some(v) => v
+                .as_str()
+                .ok_or_else(|| format!("cs2: {key} must be a string"))?,
+            None => default,
+        };
+        if value
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '"' | '\\' | ';'))
+        {
+            return Err(format!(
+                "cs2: {key} must not contain controls, quotes, backslashes or semicolons"
+            )
+            .into());
+        }
+        Ok(value)
+    }
+
+    fn number(cfg: &Value, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
+        let n = match cfg.get(key) {
+            Some(v) => v
+                .as_u64()
+                .ok_or_else(|| format!("cs2: {key} must be an integer"))?,
+            None => default,
+        };
+        if !(min..=max).contains(&n) {
+            return Err(format!("cs2: {key} must be {min}–{max}").into());
+        }
+        Ok(n)
+    }
+
+    fn mode(cfg: &Value) -> Result<(u8, u8)> {
+        match Self::string(cfg, "game_mode", "competitive")? {
+            "casual" => Ok((0, 0)),
+            "competitive" => Ok((0, 1)),
+            "wingman" => Ok((0, 2)),
+            "arms_race" => Ok((1, 0)),
+            "deathmatch" => Ok((1, 2)),
+            _ => Err("cs2: unsupported game_mode".into()),
+        }
+    }
+
+    fn map(cfg: &Value) -> Result<&str> {
+        let map = Self::string(cfg, "map", "de_dust2")?;
+        if map.is_empty() || !map.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err("cs2: map must contain only letters, digits and underscores".into());
+        }
+        Ok(map)
+    }
+
+    fn cfg(cfg: &Value) -> Result<String> {
+        Ok(format!(
+            "hostname \"{}\"\nsv_password \"{}\"\nbot_quota_mode normal\nbot_quota {}\n",
+            Self::string(cfg, "server_name", "")?,
+            Self::string(cfg, "password", "")?,
+            Self::number(cfg, "bots", 0, 0, 64)?
+        ))
+    }
+
+    fn args(cfg: &Value, port: u32) -> Result<Vec<OsString>> {
+        let (kind, mode) = Self::mode(cfg)?;
+        let mut args: Vec<OsString> = vec![
+            "-dedicated".into(),
+            "-port".into(),
+            port.to_string().into(),
+            "-maxplayers".into(),
+            Self::number(cfg, "max_players", 10, 2, 64)?
+                .to_string()
+                .into(),
+            "+game_type".into(),
+            kind.to_string().into(),
+            "+game_mode".into(),
+            mode.to_string().into(),
+            "+exec".into(),
+            "varde.cfg".into(),
+            "+map".into(),
+            Self::map(cfg)?.into(),
+        ];
+        let token = Self::string(cfg, "gslt", "")?;
+        if !token.is_empty() {
+            args.extend(["+sv_setsteamaccount".into(), token.into()]);
+        }
+        Ok(args)
+    }
+
+    async fn sync_bans(ctx: &DriverContext<'_>, restoring: bool) -> Result<()> {
+        let state = ctx.server_dir.join("game/csgo/cfg");
+        let installed = Self::install_dir(ctx).join("game/csgo/cfg");
+        let (from, to) = if restoring {
+            (state, installed)
+        } else {
+            (installed, state)
+        };
+        tokio::fs::create_dir_all(&to).await?;
+        for name in BANS {
+            match tokio::fs::copy(from.join(name), to.join(name)).await {
+                Ok(_) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    match tokio::fs::remove_file(to.join(name)).await {
+                        Ok(()) => (),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum QueryReply<'a> {
+    Challenge([u8; 4]),
+    Info { map: &'a str, max_players: u8 },
+}
+
+fn cstring<'a>(data: &mut &'a [u8]) -> Option<&'a str> {
+    let end = data.iter().position(|b| *b == 0)?;
+    let s = std::str::from_utf8(&data[..end]).ok()?;
+    *data = &data[end + 1..];
+    Some(s)
+}
+
+fn parse_reply(data: &[u8]) -> Option<QueryReply<'_>> {
+    if data.get(..4)? != [255; 4] {
+        return None;
+    }
+    match *data.get(4)? {
+        0x41 if data.len() == 9 => Some(QueryReply::Challenge(data[5..9].try_into().ok()?)),
+        0x49 => {
+            let mut rest = data.get(6..)?;
+            cstring(&mut rest)?;
+            let map = cstring(&mut rest)?;
+            cstring(&mut rest)?;
+            cstring(&mut rest)?;
+            let max_players = *rest.get(3)?;
+            // Fixed INFO fields through visibility/VAC, then version.
+            let mut version = rest.get(9..)?;
+            cstring(&mut version)?;
+            Some(QueryReply::Info { map, max_players })
+        }
+        _ => None,
+    }
+}
+
+async fn a2s_ready(port: u16, map: &str) -> Result<bool> {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+    socket
+        .connect((std::net::Ipv4Addr::LOCALHOST, port))
+        .await?;
+    socket.send(INFO_REQUEST).await?;
+    let mut buf = [0; 2048];
+    for _ in 0..2 {
+        let n = socket.recv(&mut buf).await?;
+        match parse_reply(&buf[..n]) {
+            Some(QueryReply::Challenge(challenge)) => {
+                let mut request = INFO_REQUEST.to_vec();
+                request.extend(challenge);
+                socket.send(&request).await?;
+            }
+            Some(QueryReply::Info {
+                map: actual,
+                max_players,
+            }) => return Ok(actual == map && max_players > 0),
+            None => return Ok(false),
+        }
+    }
+    Ok(false)
+}
+
+#[async_trait]
+impl GameDriver for Cs2Driver {
+    fn id(&self) -> &'static str {
+        "cs2"
+    }
+    fn ports(&self, _: &Value) -> Vec<PortSpec> {
+        vec![PortSpec {
+            port: PORT,
+            protocol: GameProtocol::Udp,
+        }]
+    }
+    fn persistent_paths(&self, _: &Value) -> Vec<PathPattern> {
+        BANS.iter()
+            .map(|name| PathPattern::new(format!("game/csgo/cfg/{name}")))
+            .collect()
+    }
+    fn validate(&self, cfg: &Value) -> Result<()> {
+        if Self::string(cfg, "server_name", "")?.trim().is_empty() {
+            return Err("cs2: server_name is required".into());
+        }
+        Self::cfg(cfg)?;
+        Self::args(cfg, PORT)?;
+        let token = Self::string(cfg, "gslt", "")?;
+        if !token.is_empty() && (token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err("cs2: gslt must be a 32-character hexadecimal token".into());
+        }
+        Ok(())
+    }
+    async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
+        let dir = Self::install_dir(ctx);
+        tokio::fs::create_dir_all(&dir).await?;
+        if !dir.join("steamapps/appmanifest_730.acf").is_file() {
+            check_install_space(fs2::available_space(&dir)?)
+                .map_err(|e| format!("{e} at {}", dir.display()))?;
+        }
+        ctx.runtimes.steam_app_install(APP_ID, &dir).await?;
+        if !Self::binary(ctx).is_file() {
+            return Err("cs2: installed server binary is missing".into());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let steamcmd = ctx.runtimes.steamcmd_path().await?;
+            let library = steamcmd
+                .parent()
+                .ok_or("cs2: steamcmd path has no parent")?
+                .join("linux64/steamclient.so");
+            tokio::fs::copy(library, Self::binary(ctx).with_file_name("steamclient.so")).await?;
+        }
+        Ok(())
+    }
+    async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
+        self.validate(ctx.config)?;
+        Self::sync_bans(ctx, true).await?;
+        let path = Self::install_dir(ctx).join("game/csgo/cfg/varde.cfg");
+        let mut cfg = Self::cfg(ctx.config)?;
+        for name in BANS {
+            if path.with_file_name(name).is_file() {
+                cfg.push_str(&format!("exec {name}\n"));
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)?;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            use std::io::Write;
+            file.write_all(cfg.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        tokio::fs::write(path, cfg).await?;
+        Ok(())
+    }
+    fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
+        let mut env = Vec::new();
+        if cfg!(target_os = "linux") {
+            let dir = Self::binary(ctx).parent().unwrap().to_path_buf();
+            let mut paths = vec![dir];
+            if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
+                paths.extend(std::env::split_paths(&old));
+            }
+            env.push(("LD_LIBRARY_PATH".into(), std::env::join_paths(paths)?));
+        }
+        Ok(ProcessSpec {
+            program: Self::binary(ctx),
+            args: Self::args(ctx.config, ctx.local_port(PORT))?,
+            env,
+            cwd: Self::install_dir(ctx),
+            stdin: true,
+        })
+    }
+    async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
+        let map = Self::map(ctx.config)?;
+        let port = u16::try_from(ctx.local_port(PORT))?;
+        let ready = matches!(
+            tokio::time::timeout(Duration::from_millis(500), a2s_ready(port, map)).await,
+            Ok(Ok(true))
+        );
+        Ok(if ready {
+            GameHealth::Healthy
+        } else {
+            GameHealth::Starting
+        })
+    }
+    async fn prepare_snapshot(
+        &self,
+        ctx: &DriverContext<'_>,
+        _: &dyn ProcessHandle,
+    ) -> Result<SnapshotBarrier> {
+        Self::sync_bans(ctx, false).await?;
+        Ok(SnapshotBarrier::Live)
+    }
+    async fn resume_after_snapshot(
+        &self,
+        _: &DriverContext<'_>,
+        _: &dyn ProcessHandle,
+    ) -> Result<()> {
+        Ok(())
+    }
+    async fn graceful_stop(&self, _: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
+        if p.write_stdin("quit\n").await.is_err() {
+            return p.interrupt().await;
+        }
+        match tokio::time::timeout(Duration::from_secs(5), p.wait()).await {
+            Ok(result) => {
+                result?;
+            }
+            Err(_) => p.interrupt().await?,
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests;

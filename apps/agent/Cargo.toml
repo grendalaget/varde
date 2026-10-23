@@ -24,6 +24,7 @@ game-driver-api = { path = "../../crates/game-driver-api" }
 game-minecraft = { path = "../../games/minecraft" }
 game-testgame = { path = "../../games/testgame" }
 game-valheim = { path = "../../games/valheim" }
+game-cs2 = { path = "../../games/cs2" }
 hex.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1"] }
