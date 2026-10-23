@@ -3,6 +3,7 @@ import type { GameConfigField, Schemas } from "../api/client";
 type ConfigField = GameConfigField | Schemas["PluginField"];
 
 export function initialFieldValue(f: ConfigField, stored?: unknown): unknown {
+  if (f.type === "secret" || f.secret) return "";
   if (stored !== undefined && stored !== null) return stored;
   if (f.default !== undefined && f.default !== null) return f.default;
   switch (f.type) {
