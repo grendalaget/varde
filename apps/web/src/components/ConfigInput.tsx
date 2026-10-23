@@ -31,7 +31,7 @@ export function ConfigInput({
   if (f.type === "multiselect") {
     const selected = Array.isArray(value) ? value.map(String) : [];
     return (
-      <Field label={label} help={f.help}>
+      <Field group label={label} help={f.help}>
         <div className="flex flex-wrap gap-2">
           {(f.options ?? []).map((option) => {
             const choice = String(option);
@@ -68,7 +68,7 @@ export function ConfigInput({
     const selected = Array.isArray(value) ? value.map(String) : [];
     const requiresSteam = f.requires === "steam_id";
     return (
-      <Field label={label} help={f.help}>
+      <Field group label={label} help={f.help}>
         <div className="space-y-1">
           {members.map((member) => {
             const memberDisabled = disabled || (requiresSteam && !member.steam_id);
