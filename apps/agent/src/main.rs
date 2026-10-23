@@ -620,26 +620,8 @@ async fn run_linked(
     agent
         .shutting_down
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let execs: Vec<Arc<exec::ExecCtl>> = agent.execs.lock().unwrap().values().cloned().collect();
-    for c in execs {
-        c.request_stop(exec::StopKind::Graceful);
-    }
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(
-            agent.cfg.shutdown_replication_timeout_s.max(5) as u64 + 30,
-        );
-    while std::time::Instant::now() < deadline {
-        if agent
-            .execs
-            .lock()
-            .unwrap()
-            .values()
-            .all(|c| c.is_finished())
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
+    agent.heartbeat_now.notify_one();
+    exec::drain_for_shutdown(&agent).await;
 
     let _ = stop_tx.send(true);
     // let the mesh child exit before a re-link spawns a new one

@@ -259,8 +259,10 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         match existing {
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
-                ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                // stop reason first: the shutdown drain reads an unfreeze
+                // without a 'handoff' stop as an aborted migration
                 ctl.set_stop_reason(e.stop_reason.clone());
+                ctl.set_want_frozen(e.freeze.unwrap_or(false));
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -384,10 +386,20 @@ pub async fn control_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Recei
                 false
             }
         };
+        // a draining host heartbeats fast so shutdown handoffs start (and
+        // their flips land) without waiting out the normal interval
+        let shutting_down = agent
+            .shutting_down
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let wait = if shutting_down {
+            interval.min(SHUTDOWN_HEARTBEAT)
+        } else {
+            interval
+        };
         tokio::select! {
-            _ = tokio::time::sleep(interval) => {},
+            _ = tokio::time::sleep(wait) => {},
             _ = stop.changed() => return,
-            _ = agent.heartbeat_now.notified(), if heartbeat_succeeded => {},
+            _ = agent.heartbeat_now.notified(), if heartbeat_succeeded || shutting_down => {},
         }
     }
 }
@@ -522,6 +534,8 @@ async fn sleep_or_stop(stop: &mut tokio::sync::watch::Receiver<bool>, duration: 
         _ = stop.changed() => false,
     }
 }
+
+const SHUTDOWN_HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// Fencing watchdog: deadline expiry ⇒ graceful stop bounded to
 /// fence_margin/2, then kill; mark fenced; drop hosted services; never upload.

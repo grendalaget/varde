@@ -123,6 +123,9 @@ impl ExecCtl {
     pub fn set_want_frozen(&self, v: bool) {
         self.want_frozen.store(v, Ordering::SeqCst);
     }
+    pub fn want_frozen(&self) -> bool {
+        self.want_frozen.load(Ordering::SeqCst)
+    }
     pub fn is_frozen(&self) -> bool {
         self.frozen.load(Ordering::SeqCst)
     }
@@ -255,11 +258,7 @@ pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
 
 async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let dir = ctl.dir.clone();
-    let game_id = dir
-        .deployment
-        .as_ref()
-        .map(|d| d.game_id.clone())
-        .unwrap_or_else(|| "testgame".into());
+    let game_id = exec_game_id(&dir).to_string();
     let driver: &dyn GameDriver = agent
         .drivers
         .get(&game_id)
@@ -510,6 +509,110 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     report(&agent, &ctl).await;
     agent.sync_hosted_services().await;
     Ok(())
+}
+
+/// How long a shutting-down host waits for the control plane to start a
+/// warm migration (seen as a freeze on the execution) before stopping.
+const SHUTDOWN_HANDOFF_ACK: Duration = Duration::from_secs(10);
+
+/// What the shutdown drain does next with one handoff-capable execution.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DrainStep {
+    /// the execution finished or the flip arrived; nothing left to decide
+    Done,
+    /// the warm migration is pending or in progress
+    Wait,
+    /// fall back to the graceful stop (final save + replication hold)
+    Stop,
+}
+
+/// `acked`: the CP froze this execution for a warm migration at some point.
+pub fn drain_step(
+    ctl: &ExecCtl,
+    acked: bool,
+    now: Instant,
+    ack_by: Instant,
+    handoff_by: Instant,
+) -> DrainStep {
+    if ctl.is_finished() || ctl.stop_reason().as_deref() == Some("handoff") {
+        return DrainStep::Done;
+    }
+    let aborted = acked && !ctl.want_frozen();
+    if aborted || now >= handoff_by || (!acked && now >= ack_by) {
+        return DrainStep::Stop;
+    }
+    DrainStep::Wait
+}
+
+fn exec_game_id(dir: &ExecutionDirective) -> &str {
+    dir.deployment
+        .as_ref()
+        .map(|d| d.game_id.as_str())
+        .unwrap_or("testgame")
+}
+
+/// Clean-shutdown drain. Running servers whose driver can hand players off
+/// stay up while the control plane warm-migrates them (players are
+/// transferred, not disconnected); everything else, and any handoff that is
+/// not acknowledged, aborts or overruns `shutdown_handoff_timeout_s`, takes
+/// the graceful stop. Returns once every execution finished or the overall
+/// budget ran out.
+pub async fn drain_for_shutdown(agent: &Agent) {
+    let start = Instant::now();
+    let handoff_budget = Duration::from_secs(agent.cfg.shutdown_handoff_timeout_s.max(0) as u64);
+    let ack_by = start + SHUTDOWN_HANDOFF_ACK.min(handoff_budget);
+    let handoff_by = start + handoff_budget;
+    let deadline = handoff_by
+        + Duration::from_secs(agent.cfg.shutdown_replication_timeout_s.max(5) as u64 + 30);
+
+    let execs: Vec<Arc<ExecCtl>> = agent.execs.lock().unwrap().values().cloned().collect();
+    let mut waiting: Vec<(Arc<ExecCtl>, bool)> = Vec::new();
+    for c in execs {
+        let can_handoff = agent
+            .drivers
+            .get(exec_game_id(&c.dir))
+            .is_some_and(|d| d.can_handoff());
+        if can_handoff && c.phase() == Phase::Running && !handoff_budget.is_zero() {
+            waiting.push((c, false));
+        } else {
+            c.request_stop(StopKind::Graceful);
+        }
+    }
+    if !waiting.is_empty() {
+        tracing::info!(
+            servers = waiting.len(),
+            "shutting down: waiting for the control plane to move servers"
+        );
+    }
+    loop {
+        let now = Instant::now();
+        waiting.retain_mut(|(c, acked)| {
+            *acked |= c.want_frozen();
+            match drain_step(c, *acked, now, ack_by, handoff_by) {
+                DrainStep::Done => false,
+                DrainStep::Wait => true,
+                DrainStep::Stop => {
+                    tracing::info!(
+                        exec = %c.dir.execution_id,
+                        acked = *acked,
+                        "shutdown handoff did not complete; stopping"
+                    );
+                    c.request_stop(StopKind::Graceful);
+                    false
+                }
+            }
+        });
+        let all_finished = agent
+            .execs
+            .lock()
+            .unwrap()
+            .values()
+            .all(|c| c.is_finished());
+        if all_finished || now >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 /// Issue the driver's client handoff when this execution is stopping for a
@@ -1155,6 +1258,7 @@ mod requires_stop_tests {
         live_barrier: bool,
         handoff_target: std::sync::Mutex<Option<(String, u16)>>,
         freeze_calls: AtomicUsize,
+        handoff: bool,
     }
 
     impl StopDriver {
@@ -1166,6 +1270,7 @@ mod requires_stop_tests {
                 live_barrier,
                 handoff_target: std::sync::Mutex::new(None),
                 freeze_calls: AtomicUsize::new(0),
+                handoff: false,
             }
         }
     }
@@ -1174,6 +1279,9 @@ mod requires_stop_tests {
     impl game_driver_api::GameDriver for StopDriver {
         fn id(&self) -> &'static str {
             "stopgame"
+        }
+        fn can_handoff(&self) -> bool {
+            self.handoff
         }
         fn ports(&self, _c: &serde_json::Value) -> Vec<PortSpec> {
             vec![]
@@ -1349,6 +1457,7 @@ mod requires_stop_tests {
                 loopback_prefix: None,
                 fence_margin_ms: 5000,
                 shutdown_replication_timeout_s: 1,
+                shutdown_handoff_timeout_s: 45,
                 force_relay: false,
                 mesh_listen_port: 0,
                 update: Default::default(),
@@ -1377,6 +1486,165 @@ mod requires_stop_tests {
             cp_view: Mutex::new(Default::default()),
             update: Mutex::new(crate::update::UpdateState::default()),
         }
+    }
+
+    fn running_ctl(game_id: &str) -> Arc<ExecCtl> {
+        let mut dir = test_ctl().dir.clone();
+        dir.deployment = Some(cp_api::Deployment {
+            id: "dep_t".into(),
+            game_id: game_id.into(),
+            spec: serde_json::json!({}),
+        });
+        let ctl = ExecCtl::new(dir);
+        ctl.set_phase(Phase::Running);
+        ctl
+    }
+
+    fn stop_requested(ctl: &ExecCtl) -> bool {
+        ctl.stop_rx().borrow().is_some()
+    }
+
+    #[test]
+    fn drain_step_waits_for_ack_then_flip() {
+        let ctl = test_ctl();
+        let t0 = Instant::now();
+        let (ack_by, handoff_by) = (t0 + Duration::from_secs(10), t0 + Duration::from_secs(45));
+        assert_eq!(
+            drain_step(&ctl, false, t0, ack_by, handoff_by),
+            DrainStep::Wait
+        );
+        // no ack in time: fall back
+        assert_eq!(
+            drain_step(&ctl, false, ack_by, ack_by, handoff_by),
+            DrainStep::Stop
+        );
+        // acked (frozen): keeps waiting past the ack window
+        ctl.set_want_frozen(true);
+        assert_eq!(
+            drain_step(&ctl, true, ack_by, ack_by, handoff_by),
+            DrainStep::Wait
+        );
+        // overran the handoff budget
+        assert_eq!(
+            drain_step(&ctl, true, handoff_by, ack_by, handoff_by),
+            DrainStep::Stop
+        );
+        // flip: control loop sets the handoff stop reason before unfreezing
+        ctl.set_stop_reason(Some("handoff".into()));
+        ctl.set_want_frozen(false);
+        assert_eq!(
+            drain_step(&ctl, true, t0, ack_by, handoff_by),
+            DrainStep::Done
+        );
+    }
+
+    #[test]
+    fn drain_step_stops_when_migration_aborts() {
+        let ctl = test_ctl();
+        let t0 = Instant::now();
+        let later = t0 + Duration::from_secs(60);
+        // frozen, then unfrozen without a handoff stop = CP aborted the move
+        assert_eq!(drain_step(&ctl, true, t0, later, later), DrainStep::Stop);
+        ctl.mark_finished();
+        assert_eq!(drain_step(&ctl, true, t0, later, later), DrainStep::Done);
+    }
+
+    #[tokio::test]
+    async fn shutdown_drain_stops_servers_without_handoff_at_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        agent.drivers.register(Box::new(StopDriver::new(true)));
+        let ctl = running_ctl("stopgame");
+        agent
+            .execs
+            .lock()
+            .unwrap()
+            .insert("exec_t".into(), ctl.clone());
+        let finisher = {
+            let ctl = ctl.clone();
+            tokio::spawn(async move {
+                while !stop_requested(&ctl) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                ctl.mark_finished();
+            })
+        };
+        let t0 = Instant::now();
+        drain_for_shutdown(&agent).await;
+        finisher.await.unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "non-handoff server waited"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_drain_waits_for_handoff_flip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        let mut driver = StopDriver::new(true);
+        driver.handoff = true;
+        agent.drivers.register(Box::new(driver));
+        let ctl = running_ctl("stopgame");
+        agent
+            .execs
+            .lock()
+            .unwrap()
+            .insert("exec_t".into(), ctl.clone());
+        // the CP freezes (ack), then flips: handoff stop reason, unfreeze,
+        // stop — the drain must not stop the server itself in between
+        let cp = {
+            let ctl = ctl.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                ctl.set_want_frozen(true);
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                assert!(!stop_requested(&ctl), "drain stopped a server mid-handoff");
+                ctl.set_stop_reason(Some("handoff".into()));
+                ctl.set_want_frozen(false);
+                ctl.request_stop(StopKind::Graceful);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                ctl.mark_finished();
+            })
+        };
+        drain_for_shutdown(&agent).await;
+        cp.await.unwrap();
+        assert_eq!(ctl.stop_reason().as_deref(), Some("handoff"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_drain_falls_back_when_migration_aborts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        let mut driver = StopDriver::new(true);
+        driver.handoff = true;
+        agent.drivers.register(Box::new(driver));
+        let ctl = running_ctl("stopgame");
+        agent
+            .execs
+            .lock()
+            .unwrap()
+            .insert("exec_t".into(), ctl.clone());
+        let cp = {
+            let ctl = ctl.clone();
+            tokio::spawn(async move {
+                ctl.set_want_frozen(true);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                ctl.set_want_frozen(false); // aborted: no handoff stop
+                while !stop_requested(&ctl) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                ctl.mark_finished();
+            })
+        };
+        let t0 = Instant::now();
+        drain_for_shutdown(&agent).await;
+        cp.await.unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_secs(3),
+            "abort was not noticed"
+        );
+        assert_eq!(ctl.stop_reason(), None);
     }
 
     fn test_ctl() -> Arc<ExecCtl> {

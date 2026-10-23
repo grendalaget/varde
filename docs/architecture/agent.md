@@ -88,6 +88,14 @@ On shutdown the agent first drains executions (graceful stop, final snapshot, re
 the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
 as a snapshot source and refuses new executions — and only then signals the loops to stop.
 
+**Shutdown handoff.** Running servers whose driver `can_handoff()` (Minecraft) are not stopped straight away: the
+heartbeat advertises `draining`, the agent heartbeats every 1 s, and the control plane opens a warm migration to the
+node the scheduler would pick (see `control-plane.md#reconciler`). The agent treats the source being frozen as the
+acknowledgement and keeps serving until the flip's `handoff` stop transfers players to the replacement. It falls back
+to the graceful stop above when no freeze arrives within 10 s, the CP unfreezes without a `handoff` stop (migration
+aborted), or `shutdown_handoff_timeout_s` (default 45 s, 0 disables) runs out. Service stop budgets cover the
+handoff wait plus the fallback: systemd `TimeoutStopSec=150`, Windows preshutdown 150 s, launchd `ExitTimeout=180`.
+
 ## Executor API (`crates/executor-api`)
 
 ```rust

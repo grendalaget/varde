@@ -30,7 +30,7 @@ The installer:
   SYSTEM/Administrators-only (`logs\` stays readable by Users)
 - registers and starts the `VardeAgent` Windows service (the agent's own
   `service install` path — STOP and PRESHUTDOWN map to the graceful-stop
-  path, with a 120 s preshutdown timeout). Unlinked, the service waits
+  path, with a 150 s preshutdown timeout). Unlinked, the service waits
   idle for provisioning and exits 0 so SCM doesn't count restarts
 - adds `varde-tray.exe --autostart` to `HKLM\...\Run` when the
   autostart task is selected (default)
