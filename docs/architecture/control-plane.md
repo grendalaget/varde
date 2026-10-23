@@ -180,7 +180,7 @@ unrecoverable prepare/restore error, with `message`).
 * A new execution is created only when the server has **no** active execution. An active execution ends only by
   (a) agent reporting `stopped`/`failed`, or (b) the reconciler observing `now > lease_expires_at` (`end_reason=lost`).
 * **Agent fencing deadline** = `local_monotonic_at_request_send + (lease_expires_at − server_time) − fence_margin`
-  (`fence_margin` default 5 s, capped at half the lease TTL — 4 s for an 8 s fast lease). Because the send time precedes the CP's receive time, the agent always stops *before*
+  (`fence_margin` default 5 s, or 2 s for short-profile and fast leases; always capped at half the lease TTL). Because the send time precedes the CP's receive time, the agent always stops *before*
   the CP considers the lease expired, without clock synchronisation. When the deadline passes the agent kills the game
   (graceful attempt bounded to `fence_margin/2`, then hard kill) and marks the execution `fenced` locally; it never
   uploads snapshots for it.

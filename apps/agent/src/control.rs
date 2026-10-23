@@ -296,7 +296,9 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         let (deadline, margin_ms) = fence_deadline(
             sent,
             window_ms,
-            agent.cfg.effective_fence_margin_ms(),
+            agent
+                .cfg
+                .effective_fence_margin_ms(d.lease_renew_interval_ms.is_some()),
             d.lease_ttl_ms,
         );
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
@@ -650,7 +652,7 @@ async fn renew_once(agent: &Arc<Agent>) -> Result<()> {
         let (deadline, margin_ms) = fence_deadline(
             sent,
             window_ms,
-            agent.cfg.effective_fence_margin_ms(),
+            agent.cfg.effective_fence_margin_ms(true),
             lease_ttl_ms,
         );
         c.set_fence_margin_ms(margin_ms);
