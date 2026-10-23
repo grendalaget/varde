@@ -1680,6 +1680,10 @@ components:
         # true while the agent drains executions on shutdown; scheduler must
         # not place new work on it
         draining: { type: boolean }
+        lease_profile:
+          type: string
+          enum: [standard, short]
+          description: Optional lease timing profile; absent or unknown values use standard.
     MeshReport:
       type: object
       properties:

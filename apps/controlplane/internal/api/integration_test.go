@@ -52,13 +52,15 @@ type env struct {
 }
 
 var testTimings = reconciler.Timings{
-	HeartbeatIntervalMs: 5000,
-	LeaseTTLMs:          20000,
-	StartGraceMs:        600000,
-	SuspectAfterMs:      15000,
-	OfflineAfterMs:      30000,
-	UnschedulableRetry:  60000,
-	TickInterval:        time.Second,
+	HeartbeatIntervalMs:      5000,
+	LeaseTTLMs:               20000,
+	ShortHeartbeatIntervalMs: 1000,
+	ShortLeaseTTLMs:          5000,
+	StartGraceMs:             600000,
+	SuspectAfterMs:           15000,
+	OfflineAfterMs:           30000,
+	UnschedulableRetry:       60000,
+	TickInterval:             time.Second,
 }
 
 func newEnv(t *testing.T) *env {
@@ -262,8 +264,10 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
-	DirectivesDigest string `json:"directives_digest"`
-	Node             struct {
+	DirectivesDigest    string `json:"directives_digest"`
+	HeartbeatIntervalMs int    `json:"heartbeat_interval_ms"`
+	LeaseTtlMs          int    `json:"lease_ttl_ms"`
+	Node                struct {
 		Name      string  `json:"name"`
 		GroupName *string `json:"group_name"`
 	} `json:"node"`
@@ -654,6 +658,178 @@ func TestEnrollTokenAndHeartbeat(t *testing.T) {
 	nodes := b["nodes"].([]any)
 	if len(nodes) != 1 {
 		t.Fatalf("nodes: %v", b)
+	}
+}
+
+func TestHeartbeatUsesLeaseProfileTimingsAndRenewsLease(t *testing.T) {
+	e := newEnv(t)
+	short := e.newAgent("short")
+	standard := e.newAgent("standard")
+	serverID := e.createServer("testgame", "profile-timings", nil)
+	host, executionID, epoch := e.startToRunning(serverID, short, standard)
+
+	shortCaps := caps()
+	shortCaps["lease_profile"] = "short"
+	d, response := host.heartbeatCaps([]map[string]any{{
+		"execution_id": executionID, "server_id": serverID, "epoch": epoch, "state": "running",
+	}}, shortCaps)
+	if response.Status != http.StatusOK {
+		t.Fatalf("short heartbeat: %d %s", response.Status, response.Raw)
+	}
+	if d.HeartbeatIntervalMs != 1000 || d.LeaseTtlMs != 5000 {
+		t.Fatalf("short timings = %d/%d, want 1000/5000", d.HeartbeatIntervalMs, d.LeaseTtlMs)
+	}
+	var leaseExpiresAt int64
+	if err := e.st.DB.Get(&leaseExpiresAt, e.st.Rebind(
+		`SELECT lease_expires_at FROM server_executions WHERE id=?`), executionID); err != nil {
+		t.Fatal(err)
+	}
+	if want := e.clk.ms + 5000; leaseExpiresAt != want {
+		t.Fatalf("short lease expiry = %d, want %d", leaseExpiresAt, want)
+	}
+
+	standardCaps := caps()
+	standardDirectives, response := host.heartbeatCaps([]map[string]any{{
+		"execution_id": executionID, "server_id": serverID, "epoch": epoch, "state": "running",
+	}}, standardCaps)
+	if response.Status != http.StatusOK {
+		t.Fatalf("standard heartbeat: %d %s", response.Status, response.Raw)
+	}
+	if standardDirectives.HeartbeatIntervalMs != 5000 || standardDirectives.LeaseTtlMs != 20000 {
+		t.Fatalf("standard timings = %d/%d, want 5000/20000",
+			standardDirectives.HeartbeatIntervalMs, standardDirectives.LeaseTtlMs)
+	}
+	if err := e.st.DB.Get(&leaseExpiresAt, e.st.Rebind(
+		`SELECT lease_expires_at FROM server_executions WHERE id=?`), executionID); err != nil {
+		t.Fatal(err)
+	}
+	if want := e.clk.ms + 20000; leaseExpiresAt != want {
+		t.Fatalf("standard lease expiry = %d, want %d", leaseExpiresAt, want)
+	}
+
+	standardAgent := short
+	if host == short {
+		standardAgent = standard
+	}
+	standardDirectives, response = standardAgent.heartbeat(nil)
+	if response.Status != http.StatusOK {
+		t.Fatalf("legacy heartbeat: %d %s", response.Status, response.Raw)
+	}
+	if standardDirectives.HeartbeatIntervalMs != 5000 || standardDirectives.LeaseTtlMs != 20000 {
+		t.Fatalf("legacy timings = %d/%d, want 5000/20000",
+			standardDirectives.HeartbeatIntervalMs, standardDirectives.LeaseTtlMs)
+	}
+	var storedProfile string
+	if err := e.st.DB.Get(&storedProfile, e.st.Rebind(
+		`SELECT lease_profile FROM nodes WHERE id=?`), standardAgent.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if storedProfile != "standard" {
+		t.Fatalf("old-agent profile = %q, want standard", storedProfile)
+	}
+
+	unknownCaps := caps()
+	unknownCaps["lease_profile"] = "future"
+	if _, response := standardAgent.heartbeatCaps(nil, unknownCaps); response.Status != http.StatusOK {
+		t.Fatalf("unknown profile heartbeat: %d %s", response.Status, response.Raw)
+	}
+	if err := e.st.DB.Get(&storedProfile, e.st.Rebind(
+		`SELECT lease_profile FROM nodes WHERE id=?`), standardAgent.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if storedProfile != "standard" {
+		t.Fatalf("unknown profile stored as %q, want standard", storedProfile)
+	}
+}
+
+func TestShortProfileNewExecutionUsesTargetLease(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("short")
+	shortCaps := caps()
+	shortCaps["lease_profile"] = "short"
+	if _, response := a.heartbeatCaps(nil, shortCaps); response.Status != http.StatusOK {
+		t.Fatalf("short heartbeat: %d %s", response.Status, response.Raw)
+	}
+	serverID := e.createServer("testgame", "short-start-lease", nil)
+	startedAt := e.clk.ms
+	e.mustOK(e.do("POST", "/v1/servers/"+serverID+"/start", map[string]any{}, e.token))
+	active := e.activeExec(serverID)
+	if active == nil {
+		t.Fatal("no execution after start")
+	}
+	var leaseExpiresAt int64
+	if err := e.st.DB.Get(&leaseExpiresAt, e.st.Rebind(
+		`SELECT lease_expires_at FROM server_executions WHERE id=?`), active["id"]); err != nil {
+		t.Fatal(err)
+	}
+	want := startedAt + testTimings.ShortLeaseTTLMs + testTimings.StartGraceMs
+	if leaseExpiresAt != want {
+		t.Fatalf("short execution lease expiry = %d, want %d", leaseExpiresAt, want)
+	}
+}
+
+func TestShortProfileLivenessThresholds(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("short")
+	if err := e.st.SetNodeLeaseProfile(context.Background(), a.nodeID, "short"); err != nil {
+		t.Fatal(err)
+	}
+	node, err := e.st.GetNode(context.Background(), a.nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.recon.Liveness(node); got != "online" {
+		t.Fatalf("liveness at 0 ms = %q, want online", got)
+	}
+	e.clk.advance(3000)
+	if got := e.recon.Liveness(node); got != "online" {
+		t.Fatalf("liveness at 3000 ms = %q, want online", got)
+	}
+	e.clk.advance(1)
+	if got := e.recon.Liveness(node); got != "suspect" {
+		t.Fatalf("liveness at 3001 ms = %q, want suspect", got)
+	}
+	e.clk.advance(2999)
+	if got := e.recon.Liveness(node); got != "suspect" {
+		t.Fatalf("liveness at 6000 ms = %q, want suspect", got)
+	}
+	e.clk.advance(1)
+	if got := e.recon.Liveness(node); got != "offline" {
+		t.Fatalf("liveness at 6001 ms = %q, want offline", got)
+	}
+}
+
+func TestShortProfileLeaseExpiryReassignsExecution(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("short")
+	b := e.newAgent("standard")
+	serverID := e.createServer("testgame", "short-failover", nil)
+	host, executionID, epoch := e.startToRunning(serverID, a, b)
+	shortCaps := caps()
+	shortCaps["lease_profile"] = "short"
+	_, response := host.heartbeatCaps([]map[string]any{{
+		"execution_id": executionID, "server_id": serverID, "epoch": epoch, "state": "running",
+	}}, shortCaps)
+	if response.Status != http.StatusOK {
+		t.Fatalf("short heartbeat: %d %s", response.Status, response.Raw)
+	}
+	other := a
+	if host == a {
+		other = b
+	}
+	other.heartbeat(nil)
+
+	e.clk.advance(4999)
+	e.reconcile()
+	if active := e.activeExec(serverID); active == nil || active["id"] != executionID {
+		t.Fatalf("execution changed before short lease expiry: %+v", active)
+	}
+
+	e.clk.advance(1)
+	e.reconcile()
+	active := e.activeExec(serverID)
+	if active == nil || active["node"] != other.nodeID || active["id"] == executionID {
+		t.Fatalf("execution not reassigned after short lease expiry: %+v", active)
 	}
 }
 

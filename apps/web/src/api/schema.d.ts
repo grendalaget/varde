@@ -1150,6 +1150,11 @@ export interface components {
             /** Format: int64 */
             agent_started_at?: number;
             draining?: boolean;
+            /**
+             * @description Optional lease timing profile; absent or unknown values use standard.
+             * @enum {string}
+             */
+            lease_profile?: "standard" | "short";
         };
         MeshReport: {
             listen_port?: number;

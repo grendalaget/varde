@@ -118,6 +118,18 @@ fn directives_digest_is_backward_compatible() {
     assert_eq!(parsed.directives_digest, None);
 }
 
+#[test]
+fn short_lease_profile_capability_serializes() {
+    let capabilities = cp_api::Capabilities {
+        lease_profile: Some("short".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(capabilities).unwrap()["lease_profile"],
+        "short"
+    );
+}
+
 /// Request-side types must accept (and reserialize) every declared field.
 #[test]
 fn request_schemas_in_sync() {

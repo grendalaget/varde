@@ -63,6 +63,24 @@ func (e AgentSnapshotReason) Valid() bool {
 	}
 }
 
+// Defines values for CapabilitiesLeaseProfile.
+const (
+	Short    CapabilitiesLeaseProfile = "short"
+	Standard CapabilitiesLeaseProfile = "standard"
+)
+
+// Valid indicates whether the value is a known member of the CapabilitiesLeaseProfile enum.
+func (e CapabilitiesLeaseProfile) Valid() bool {
+	switch e {
+	case Short:
+		return true
+	case Standard:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CrashReportBodyKind.
 const (
 	Dump    CrashReportBodyKind = "dump"
@@ -744,14 +762,20 @@ type Capabilities struct {
 	DiskFreeBytes     *int64    `json:"disk_free_bytes,omitempty"`
 	Draining          *bool     `json:"draining,omitempty"`
 	Drivers           *[]string `json:"drivers,omitempty"`
-	MemoryAvailableMb *int      `json:"memory_available_mb,omitempty"`
-	MemoryTotalMb     *int      `json:"memory_total_mb,omitempty"`
-	OnBattery         *bool     `json:"on_battery,omitempty"`
-	Os                *string   `json:"os,omitempty"`
-	Runtimes          *[]string `json:"runtimes,omitempty"`
-	UptimeS           *int      `json:"uptime_s,omitempty"`
-	UserActive        *bool     `json:"user_active,omitempty"`
+
+	// LeaseProfile Optional lease timing profile; absent or unknown values use standard.
+	LeaseProfile      *CapabilitiesLeaseProfile `json:"lease_profile,omitempty"`
+	MemoryAvailableMb *int                      `json:"memory_available_mb,omitempty"`
+	MemoryTotalMb     *int                      `json:"memory_total_mb,omitempty"`
+	OnBattery         *bool                     `json:"on_battery,omitempty"`
+	Os                *string                   `json:"os,omitempty"`
+	Runtimes          *[]string                 `json:"runtimes,omitempty"`
+	UptimeS           *int                      `json:"uptime_s,omitempty"`
+	UserActive        *bool                     `json:"user_active,omitempty"`
 }
+
+// CapabilitiesLeaseProfile Optional lease timing profile; absent or unknown values use standard.
+type CapabilitiesLeaseProfile string
 
 // CrashReportAck defines model for CrashReportAck.
 type CrashReportAck struct {

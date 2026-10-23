@@ -15,6 +15,44 @@ use tracing::{debug, info, warn};
 use crate::exec::{self, ExecCtl, Phase, StopKind};
 use crate::Agent;
 
+static WARNED_FENCE_MARGIN_CAPS: std::sync::OnceLock<Mutex<HashSet<(i64, i64)>>> =
+    std::sync::OnceLock::new();
+
+fn capped_fence_margin_ms(configured_margin_ms: i64, lease_ttl_ms: i64) -> i64 {
+    let configured_margin_ms = configured_margin_ms.max(0);
+    let capped_margin_ms = configured_margin_ms.min(lease_ttl_ms.max(0) / 2);
+    if capped_margin_ms < configured_margin_ms {
+        let warned = WARNED_FENCE_MARGIN_CAPS.get_or_init(|| Mutex::new(HashSet::new()));
+        if warned
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((configured_margin_ms, capped_margin_ms))
+        {
+            warn!(
+                configured_margin_ms,
+                capped_margin_ms,
+                lease_ttl_ms,
+                "capping fencing margin to preserve half the lease window"
+            );
+        }
+    }
+    capped_margin_ms
+}
+
+fn fence_deadline(
+    sent: Instant,
+    window_ms: i64,
+    configured_margin_ms: i64,
+    lease_ttl_ms: i64,
+) -> (Instant, i64) {
+    let margin_ms = capped_fence_margin_ms(configured_margin_ms, lease_ttl_ms);
+    let margin = Duration::from_millis(margin_ms as u64);
+    (
+        sent + Duration::from_millis(window_ms.max(0) as u64).saturating_sub(margin),
+        margin_ms,
+    )
+}
+
 struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
 
 impl Drop for HeartbeatCompletionGuard<'_> {
@@ -44,6 +82,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
             agent
                 .shutting_down
                 .load(std::sync::atomic::Ordering::SeqCst),
+            &agent.cfg.lease_profile,
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
@@ -246,19 +285,23 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         .await?;
 
     // ---- executions ----
-    let margin = Duration::from_millis(agent.cfg.fence_margin_ms.max(0) as u64);
     let mut wanted: HashSet<String> = HashSet::new();
     for e in &d.executions {
         wanted.insert(e.execution_id.clone());
         // fencing deadline: sent_instant + (lease − server_time) − margin
         let window_ms = e.lease_expires_at_unix_ms - d.server_time_unix_ms;
-        let window = Duration::from_millis(window_ms.max(0) as u64);
         // saturating: a nearly-expired lease still yields a deadline <= sent
-        let deadline = sent + window.saturating_sub(margin);
+        let (deadline, margin_ms) = fence_deadline(
+            sent,
+            window_ms,
+            agent.cfg.effective_fence_margin_ms(),
+            d.lease_ttl_ms,
+        );
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
         match existing {
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
+                ctl.set_fence_margin_ms(margin_ms);
                 // stop reason first: the shutdown drain reads an unfreeze
                 // without a 'handoff' stop as an aborted migration
                 ctl.set_stop_reason(e.stop_reason.clone());
@@ -287,6 +330,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                 }
                 let ctl = ExecCtl::new(e.clone());
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                ctl.set_fence_margin_ms(margin_ms);
                 *ctl.deadline.lock().unwrap() = Some(deadline);
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
@@ -581,7 +625,7 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
             let a = agent.clone();
             let c = c.clone();
             tokio::spawn(async move {
-                let bound = Duration::from_millis((a.cfg.fence_margin_ms.max(0) as u64) / 2);
+                let bound = Duration::from_millis((c.fence_margin_ms() as u64) / 2);
                 if let Some(p) = c.proc() {
                     if bound > Duration::ZERO {
                         let _ = p.terminate().await;
@@ -610,8 +654,8 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
 #[cfg(test)]
 mod tests {
     use super::{
-        acknowledge_delete_acks, cp_clock_offset_ms, is_legacy_directives_wait_error,
-        pending_delete_ack_ids, wait_for_heartbeat_sequence,
+        acknowledge_delete_acks, cp_clock_offset_ms, fence_deadline,
+        is_legacy_directives_wait_error, pending_delete_ack_ids, wait_for_heartbeat_sequence,
     };
     use crate::agent::CpView;
     use std::collections::BTreeSet;
@@ -629,6 +673,14 @@ mod tests {
         };
         assert_eq!(v.to_local_ms(1_025_000), 995_000);
         assert_eq!(v.to_local_ms(0), 0);
+    }
+
+    #[test]
+    fn short_lease_caps_explicit_fence_margin() {
+        let sent = std::time::Instant::now();
+        let (deadline, margin_ms) = fence_deadline(sent, 5000, 5000, 5000);
+        assert_eq!(margin_ms, 2500);
+        assert_eq!(deadline.duration_since(sent), Duration::from_millis(2500));
     }
 
     #[test]

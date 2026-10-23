@@ -84,6 +84,13 @@ contact, the pending code, and each server this machine hosts with its phase and
 * **Mesh supervisor**: spawn, restart with backoff, re-apply all `Set*` state after restart.
 * **Replication workers** (storage.md) and **chunk server**.
 
+**Lease profile.** `lease_profile` is `standard` by default; use `--lease-profile short` on enrollment/run or set it in
+`config.toml` for an embedded or mobile host. The control plane supplies each heartbeat interval. Standard uses a
+5 s heartbeat and 20 s lease; short uses a 1 s heartbeat and 5 s lease. An unset `fence_margin_ms` defaults to 5 s for
+standard and 2 s for short; an explicit margin overrides either default.
+Short trades availability for faster handoff: losing network contact for about 3 s fences the host and stops its
+executions. The lease/epoch fencing guarantee still prevents two hosts from serving the same execution.
+
 On shutdown the agent first drains executions (graceful stop, final snapshot, replication hold) while heartbeats,
 the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
 as a snapshot source and refuses new executions — and only then signals the loops to stop.

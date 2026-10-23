@@ -241,6 +241,7 @@ fn service_main_inner() -> Result<()> {
         false,
         false,
         None,
+        None,
         Some(stop_rx),
     ));
 

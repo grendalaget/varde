@@ -59,6 +59,21 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 
 	// update status + last seen
 	caps := b.Capabilities
+	leaseProfile := "standard"
+	if caps != nil && caps.LeaseProfile != nil {
+		reportedProfile := string(*caps.LeaseProfile)
+		if reportedProfile == "standard" || reportedProfile == "short" {
+			leaseProfile = reportedProfile
+		} else {
+			s.Log.Debug("unknown lease profile; using standard", "node", node.ID, "lease_profile", reportedProfile)
+		}
+	}
+	if node.LeaseProfile != leaseProfile {
+		if err := s.Store.SetNodeLeaseProfile(ctx, node.ID, leaseProfile); err != nil {
+			return nil, err
+		}
+		node.LeaseProfile = leaseProfile
+	}
 	statusJSON := "{}"
 	if caps != nil {
 		statusJSON = mustJSON(caps)
@@ -223,7 +238,7 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 	if er.Message != nil {
 		exec.Message = er.Message
 	}
-	leaseExp := now + s.Cfg.Timings.LeaseTTLMs
+	leaseExp := now + s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs
 
 	return s.Store.Tx(ctx, func(tx *sqlx.Tx) error {
 		if er.JoinCode != nil {
@@ -287,8 +302,8 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int64) (gen.AgentDirectives, error) {
 	d := gen.AgentDirectives{
 		ServerTimeUnixMs:    now,
-		HeartbeatIntervalMs: int(s.Cfg.Timings.HeartbeatIntervalMs),
-		LeaseTtlMs:          int(s.Cfg.Timings.LeaseTTLMs),
+		HeartbeatIntervalMs: int(s.Cfg.Timings.ForProfile(node.LeaseProfile).HeartbeatIntervalMs),
+		LeaseTtlMs:          int(s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs),
 		Executions:          &[]gen.ExecutionDirective{},
 		Peers:               &[]gen.DirectivePeer{},
 		Routes:              &[]gen.DirectiveRoute{},
