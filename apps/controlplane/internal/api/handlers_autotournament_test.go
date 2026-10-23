@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,6 +82,95 @@ func linkAT(t *testing.T, e *env, server *httptest.Server) {
 	if strings.Contains(string(linked.Raw), "test-service-token") ||
 		strings.Contains(string(linked.Raw), "test-fleet-key") {
 		t.Fatalf("link response exposed credentials: %s", linked.Raw)
+	}
+}
+
+func TestAutoTournamentLinkRejectsUnauthorizedTokens(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{name: "401", status: http.StatusUnauthorized},
+		{name: "403", status: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			e := newEnv(t)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodGet || r.URL.Path != "/api/tournaments" {
+					t.Errorf("unexpected Auto Tournament request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"error":"Invalid API token"}`))
+			}))
+			t.Cleanup(server.Close)
+			e.srv.AutoTournamentHTTP = server.Client()
+
+			path := fmt.Sprintf("/v1/groups/%s/integrations/autotournament", e.group)
+			response := e.do(http.MethodPut, path, map[string]any{
+				"base_url": server.URL, "api_token": "wrong-token",
+			}, e.token)
+			if response.Status != http.StatusBadRequest ||
+				response.Body["message"] != "auto tournament rejected the token" {
+				t.Fatalf("status=%d body=%s; want 400 auto tournament rejected the token",
+					response.Status, response.Raw)
+			}
+			if requests != 1 {
+				t.Fatalf("Auto Tournament requests = %d, want one Ping request", requests)
+			}
+			if _, err := e.st.GroupIntegration(context.Background(), e.group, "autotournament"); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("integration row exists or lookup failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestAutoTournamentLinkRejectsUnauthorizedFleetKey(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{name: "401", status: http.StatusUnauthorized},
+		{name: "403", status: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			e := newEnv(t)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/tournaments":
+					_, _ = w.Write([]byte(`{"tournaments":[]}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/fleet/keys":
+					w.WriteHeader(test.status)
+					_, _ = w.Write([]byte(`{"error":"Invalid API token"}`))
+				default:
+					t.Errorf("unexpected Auto Tournament request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			e.srv.AutoTournamentHTTP = server.Client()
+
+			path := fmt.Sprintf("/v1/groups/%s/integrations/autotournament", e.group)
+			response := e.do(http.MethodPut, path, map[string]any{
+				"base_url": server.URL, "api_token": "wrong-token",
+			}, e.token)
+			if response.Status != http.StatusBadRequest ||
+				response.Body["message"] != "auto tournament rejected the token" {
+				t.Fatalf("status=%d body=%s; want 400 auto tournament rejected the token",
+					response.Status, response.Raw)
+			}
+			if requests != 2 {
+				t.Fatalf("Auto Tournament requests = %d, want Ping and fleet-key requests", requests)
+			}
+			if _, err := e.st.GroupIntegration(context.Background(), e.group, "autotournament"); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("integration row exists or lookup failed: %v", err)
+			}
+		})
 	}
 }
 

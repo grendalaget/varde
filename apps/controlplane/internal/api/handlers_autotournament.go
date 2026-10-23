@@ -68,6 +68,9 @@ func (s *Server) PutAutoTournamentLink(ctx context.Context, req gen.PutAutoTourn
 	}
 	fleetKey, err := client.CreateFleetKey(ctx, "varde-"+group.Name)
 	if err != nil {
+		if errors.Is(err, autotournament.ErrUnauthorized) {
+			return nil, errResp(gen.Validation, "auto tournament rejected the token", nil)
+		}
 		return nil, errResp(gen.AutoTournamentUnavailable, err.Error(), nil)
 	}
 	if s.Secrets == nil {
