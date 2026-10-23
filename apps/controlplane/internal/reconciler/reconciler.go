@@ -5,6 +5,8 @@ package reconciler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,12 +60,22 @@ type Reconciler struct {
 
 	wake chan struct{}
 
+	changedMu sync.Mutex
+	changed   map[string]chan struct{}
+
+	fingerprintMu           sync.Mutex
+	fingerprints            map[string]string
+	fingerprintsInitialized bool
+
 	lvMu sync.Mutex
 	lv   map[string]string // last emitted liveness state per node
 }
 
 func New(s *store.Store, t Timings, log *slog.Logger) *Reconciler {
-	return &Reconciler{Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1), lv: map[string]string{}}
+	return &Reconciler{
+		Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1),
+		fingerprints: make(map[string]string), lv: map[string]string{},
+	}
 }
 
 // Wake asks for an immediate pass (API mutation, heartbeat).
@@ -71,6 +83,35 @@ func (r *Reconciler) Wake() {
 	select {
 	case r.wake <- struct{}{}:
 	default:
+	}
+}
+
+// WakeGroup notifies waiters for groupID and asks for an immediate pass.
+func (r *Reconciler) WakeGroup(groupID string) {
+	r.NotifyGroup(groupID)
+	r.Wake()
+}
+
+// Changed returns the current change generation channel for groupID.
+func (r *Reconciler) Changed(groupID string) <-chan struct{} {
+	r.changedMu.Lock()
+	defer r.changedMu.Unlock()
+	if r.changed == nil {
+		r.changed = make(map[string]chan struct{})
+	}
+	if r.changed[groupID] == nil {
+		r.changed[groupID] = make(chan struct{})
+	}
+	return r.changed[groupID]
+}
+
+// NotifyGroup closes the active generation for groupID, if there is one.
+func (r *Reconciler) NotifyGroup(groupID string) {
+	r.changedMu.Lock()
+	defer r.changedMu.Unlock()
+	if ch := r.changed[groupID]; ch != nil {
+		close(ch)
+		delete(r.changed, groupID)
 	}
 }
 
@@ -99,7 +140,15 @@ func (r *Reconciler) Run(ctx context.Context) {
 }
 
 // Pass processes nodes (liveness) then servers (table from control-plane.md).
-func (r *Reconciler) Pass(ctx context.Context) error {
+func (r *Reconciler) Pass(ctx context.Context) (passErr error) {
+	defer func() {
+		if err := r.notifyChangedGroups(ctx); err != nil {
+			r.Log.Error("compute directive fingerprints", "error", err)
+			if passErr == nil {
+				passErr = err
+			}
+		}
+	}()
 	if err := r.nodeLiveness(ctx); err != nil {
 		return err
 	}
@@ -116,6 +165,120 @@ func (r *Reconciler) Pass(ctx context.Context) error {
 		return err
 	}
 	return r.migrations(ctx)
+}
+
+type directiveGroupFingerprint struct {
+	Executions []store.DirectiveExecutionFingerprint `json:"executions"`
+	Migrations []store.DirectiveMigrationFingerprint `json:"migrations"`
+	Nodes      []directiveNodeFingerprint            `json:"nodes"`
+	Replicas   []store.DirectiveReplicaFingerprint   `json:"replicas"`
+	Events     int64                                 `json:"max_event_id"`
+	Servers    []store.DirectiveServerFingerprint    `json:"servers"`
+}
+
+type directiveNodeFingerprint struct {
+	ID             string `json:"id"`
+	Liveness       string `json:"liveness"`
+	AdminState     string `json:"admin_state"`
+	HostingEnabled int64  `json:"hosting_enabled"`
+	Anchor         int64  `json:"anchor"`
+}
+
+func (r *Reconciler) notifyChangedGroups(ctx context.Context) error {
+	data, err := r.Store.DirectiveFingerprintData(ctx)
+	if err != nil {
+		return err
+	}
+
+	groups := make(map[string]*directiveGroupFingerprint, len(data.Groups))
+	for _, groupID := range data.Groups {
+		groups[groupID] = &directiveGroupFingerprint{
+			Executions: make([]store.DirectiveExecutionFingerprint, 0),
+			Migrations: make([]store.DirectiveMigrationFingerprint, 0),
+			Nodes:      make([]directiveNodeFingerprint, 0),
+			Replicas:   make([]store.DirectiveReplicaFingerprint, 0),
+			Servers:    make([]store.DirectiveServerFingerprint, 0),
+		}
+	}
+	groupFor := func(groupID string) *directiveGroupFingerprint {
+		group := groups[groupID]
+		if group == nil {
+			group = &directiveGroupFingerprint{
+				Executions: make([]store.DirectiveExecutionFingerprint, 0),
+				Migrations: make([]store.DirectiveMigrationFingerprint, 0),
+				Nodes:      make([]directiveNodeFingerprint, 0),
+				Replicas:   make([]store.DirectiveReplicaFingerprint, 0),
+				Servers:    make([]store.DirectiveServerFingerprint, 0),
+			}
+			groups[groupID] = group
+		}
+		return group
+	}
+	for _, execution := range data.Executions {
+		group := groupFor(execution.GroupID)
+		group.Executions = append(group.Executions, execution)
+	}
+	for _, migration := range data.Migrations {
+		group := groupFor(migration.GroupID)
+		group.Migrations = append(group.Migrations, migration)
+	}
+	for _, node := range data.Nodes {
+		group := groupFor(node.GroupID)
+		group.Nodes = append(group.Nodes, directiveNodeFingerprint{
+			ID:             node.ID,
+			Liveness:       r.Liveness(&store.Node{LastSeenAt: node.LastSeenAt}),
+			AdminState:     node.AdminState,
+			HostingEnabled: node.HostingEnabled,
+			Anchor:         node.Anchor,
+		})
+	}
+	for _, replica := range data.Replicas {
+		group := groupFor(replica.GroupID)
+		group.Replicas = append(group.Replicas, replica)
+	}
+	for _, event := range data.Events {
+		groupFor(event.GroupID).Events = event.MaxID
+	}
+	for _, server := range data.Servers {
+		group := groupFor(server.GroupID)
+		group.Servers = append(group.Servers, server)
+	}
+
+	current := make(map[string]string, len(groups))
+	for groupID, group := range groups {
+		encoded, err := json.Marshal(group)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(encoded)
+		current[groupID] = hex.EncodeToString(sum[:])
+	}
+
+	r.fingerprintMu.Lock()
+	if !r.fingerprintsInitialized {
+		r.fingerprints = current
+		r.fingerprintsInitialized = true
+		r.fingerprintMu.Unlock()
+		return nil
+	}
+	changed := make([]string, 0)
+	for groupID, fingerprint := range current {
+		if previous, ok := r.fingerprints[groupID]; !ok || previous != fingerprint {
+			changed = append(changed, groupID)
+		}
+	}
+	for groupID := range r.fingerprints {
+		if _, ok := current[groupID]; !ok {
+			changed = append(changed, groupID)
+		}
+	}
+	r.fingerprints = current
+	r.fingerprintMu.Unlock()
+
+	for _, groupID := range changed {
+		r.NotifyGroup(groupID)
+	}
+	return nil
 }
 
 // ---- node liveness ----

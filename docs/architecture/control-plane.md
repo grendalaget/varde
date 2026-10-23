@@ -86,9 +86,11 @@ Group limits (`max_nodes`) are checked at approval/enrollment.
 
 ## Agent protocol: heartbeat = reconciliation
 
-Agents run a single loop: `POST /v1/agent/heartbeat` every `heartbeat_interval_ms` (default 5000). The request
-reports observed state; the response is the **complete desired state for that node**. Both are idempotent, so a
-restart of either side re-converges.
+Agents run a heartbeat loop: `POST /v1/agent/heartbeat` every `heartbeat_interval_ms` (default 5000), plus a signed
+long-poll on `GET /v1/agent/directives/wait` that requests an immediate heartbeat when desired state changes. The
+wait response contains only a digest and a `changed` flag; directives are still delivered **only** by the heartbeat
+response, whose send instant is used for lease fencing math. The heartbeat request reports observed state; its
+response is the **complete desired state for that node**. Both are idempotent, so a restart of either side re-converges.
 
 Request `AgentHeartbeat`:
 ```jsonc
@@ -108,6 +110,7 @@ Response `AgentDirectives`:
 ```jsonc
 {
   "server_time_unix_ms": 1790000000000,
+  "directives_digest": "first-16-bytes-of-sha256",
   "heartbeat_interval_ms": 5000,
   "lease_ttl_ms": 20000,
   "node": {"name":"Arne-PC","hosting_enabled":true,"anchor":false,"admin_state":"active"},
@@ -131,6 +134,14 @@ Response `AgentDirectives`:
   "delete_snapshots": ["snap_…"]          // explicit only (I8)
 }
 ```
+
+The digest excludes per-call timestamps and credentials (including the server clock, lease expiries, relay-token
+expiry/signature, drain deadline, and save-holder `last_seen_at`). The wait endpoint uses it only to detect a change:
+it never returns the directive document. It defaults to 20 s and clamps requests to 1–25 s.
+API mutations that request a reconciler wake notify waiters only in the affected group.
+Reconciler passes compare per-group fingerprints of active executions, migrations,
+node scheduling state, snapshot replicas, server state, and event IDs; changed groups
+are notified. A 2 s fallback detects mutations made on another control-plane instance.
 
 Lease renewal is implicit: for each reported execution that is still the server's active execution, held by this
 node, with matching epoch and not `stopped/failed`, the CP extends `lease_expires_at = now + lease_ttl` **before**

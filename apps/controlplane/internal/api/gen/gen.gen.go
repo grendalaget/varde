@@ -662,7 +662,10 @@ func (e UpdateNodeJSONBodyAdminState) Valid() bool {
 
 // AgentDirectives defines model for AgentDirectives.
 type AgentDirectives struct {
-	DeleteSnapshots     *[]string             `json:"delete_snapshots,omitempty"`
+	DeleteSnapshots *[]string `json:"delete_snapshots,omitempty"`
+
+	// DirectivesDigest Stable digest of desired state, excluding per-call timestamps and credentials.
+	DirectivesDigest    *string               `json:"directives_digest,omitempty"`
 	Executions          *[]ExecutionDirective `json:"executions,omitempty"`
 	HeartbeatIntervalMs int                   `json:"heartbeat_interval_ms"`
 	LeaseTtlMs          int                   `json:"lease_ttl_ms"`
@@ -684,6 +687,12 @@ type AgentDirectives struct {
 
 // AgentDirectivesNodeAdminState defines model for AgentDirectives.Node.AdminState.
 type AgentDirectivesNodeAdminState string
+
+// AgentDirectivesWait defines model for AgentDirectivesWait.
+type AgentDirectivesWait struct {
+	Changed bool   `json:"changed"`
+	Digest  string `json:"digest"`
+}
 
 // AgentHeartbeat defines model for AgentHeartbeat.
 type AgentHeartbeat struct {
@@ -1404,6 +1413,14 @@ type ServerId = string
 // UserId defines model for UserId.
 type UserId = string
 
+// AgentDirectivesWaitParams defines parameters for AgentDirectivesWait.
+type AgentDirectivesWaitParams struct {
+	Digest string `form:"digest" json:"digest"`
+
+	// TimeoutMs Long-poll duration; defaults to 20000 ms and is clamped to 1000–25000 ms.
+	TimeoutMs *int `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+}
+
 // AgentEnrollDevicePollJSONBody defines parameters for AgentEnrollDevicePoll.
 type AgentEnrollDevicePollJSONBody struct {
 	DeviceCode string `json:"device_code"`
@@ -1633,6 +1650,9 @@ type ServerInterface interface {
 	// AgentSubmitCrashReport Upload one crash report captured on this machine.
 	// (POST /v1/agent/crash-reports)
 	AgentSubmitCrashReport(w http.ResponseWriter, r *http.Request)
+
+	// (GET /v1/agent/directives/wait)
+	AgentDirectivesWait(w http.ResponseWriter, r *http.Request, params AgentDirectivesWaitParams)
 	// AgentEnrollDevice Start device-code enrollment (unsigned; no node yet).
 	// (POST /v1/agent/enroll/device)
 	AgentEnrollDevice(w http.ResponseWriter, r *http.Request)
@@ -1876,6 +1896,52 @@ func (siw *ServerInterfaceWrapper) AgentSubmitCrashReport(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AgentSubmitCrashReport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AgentDirectivesWait operation middleware
+func (siw *ServerInterfaceWrapper) AgentDirectivesWait(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AgentDirectivesWaitParams
+
+	// ------------- Required query parameter "digest" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "digest", r.URL.Query(), &params.Digest, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "digest"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "digest", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "timeout_ms" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "timeout_ms", r.URL.Query(), &params.TimeoutMs, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "timeout_ms"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timeout_ms", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AgentDirectivesWait(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3341,6 +3407,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/device/poll", wrapper.AgentEnrollDevicePoll)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/token", wrapper.AgentEnrollToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/heartbeat", wrapper.AgentHeartbeat)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agent/directives/wait", wrapper.AgentDirectivesWait)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/executions/{executionId}/status", wrapper.AgentExecutionStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/executions/{executionId}/logs", wrapper.AgentExecutionLogs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/snapshots", wrapper.AgentCreateSnapshot)
@@ -3570,6 +3637,56 @@ func (response AgentSubmitCrashReport413JSONResponse) VisitAgentSubmitCrashRepor
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentDirectivesWaitRequestObject struct {
+	Params AgentDirectivesWaitParams
+}
+
+type AgentDirectivesWaitResponseObject interface {
+	VisitAgentDirectivesWaitResponse(w http.ResponseWriter) error
+}
+
+type AgentDirectivesWait200JSONResponse AgentDirectivesWait
+
+func (response AgentDirectivesWait200JSONResponse) VisitAgentDirectivesWaitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentDirectivesWait401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AgentDirectivesWait401JSONResponse) VisitAgentDirectivesWaitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentDirectivesWait403JSONResponse Error
+
+func (response AgentDirectivesWait403JSONResponse) VisitAgentDirectivesWaitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6286,6 +6403,9 @@ type StrictServerInterface interface {
 	// AgentSubmitCrashReport Upload one crash report captured on this machine.
 	// (POST /v1/agent/crash-reports)
 	AgentSubmitCrashReport(ctx context.Context, request AgentSubmitCrashReportRequestObject) (AgentSubmitCrashReportResponseObject, error)
+
+	// (GET /v1/agent/directives/wait)
+	AgentDirectivesWait(ctx context.Context, request AgentDirectivesWaitRequestObject) (AgentDirectivesWaitResponseObject, error)
 	// AgentEnrollDevice Start device-code enrollment (unsigned; no node yet).
 	// (POST /v1/agent/enroll/device)
 	AgentEnrollDevice(ctx context.Context, request AgentEnrollDeviceRequestObject) (AgentEnrollDeviceResponseObject, error)
@@ -6615,6 +6735,32 @@ func (sh *strictHandler) AgentSubmitCrashReport(w http.ResponseWriter, r *http.R
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AgentSubmitCrashReportResponseObject); ok {
 		if err := validResponse.VisitAgentSubmitCrashReportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AgentDirectivesWait operation middleware
+func (sh *strictHandler) AgentDirectivesWait(w http.ResponseWriter, r *http.Request, params AgentDirectivesWaitParams) {
+	var request AgentDirectivesWaitRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AgentDirectivesWait(ctx, request.(AgentDirectivesWaitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AgentDirectivesWait")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AgentDirectivesWaitResponseObject); ok {
+		if err := validResponse.VisitAgentDirectivesWaitResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

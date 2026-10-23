@@ -524,11 +524,13 @@ async fn run_linked(
         pending_delete_acks: Mutex::new(BTreeSet::new()),
         chunk_tracker: Arc::new(chunks::ServeTracker::default()),
         started_at_ms: now_ms(),
-        repl: Mutex::new(agent::ReplQueue::default()),
-        repl_notify: tokio::sync::Notify::new(),
+        repl: Arc::new(Mutex::new(agent::ReplQueue::default())),
+        repl_notify: Arc::new(tokio::sync::Notify::new()),
         last_heartbeat_ok: Mutex::new(None),
-        shutting_down: AtomicBool::new(false),
+        directives_digest: tokio::sync::watch::channel(None).0,
+        heartbeat_sequence: tokio::sync::watch::channel(0).0,
         heartbeat_now: tokio::sync::Notify::new(),
+        shutting_down: AtomicBool::new(false),
         cp_view: Mutex::new(Default::default()),
         update: Mutex::new(update::UpdateState::default()),
     });
@@ -556,6 +558,9 @@ async fn run_linked(
     let a = agent.clone();
     let s = stop_rx.clone();
     tokio::spawn(async move { control::control_loop(a, s).await });
+    let a = agent.clone();
+    let s = stop_rx.clone();
+    tokio::spawn(async move { control::wake_loop(a, s).await });
     let a = agent.clone();
     let s = stop_rx.clone();
     tokio::spawn(async move { control::fence_watchdog(a, s).await });

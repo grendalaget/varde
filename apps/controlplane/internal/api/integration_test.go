@@ -167,9 +167,9 @@ func crossplayConfig() map[string]any {
 	}
 }
 
-func (e *env) enrollToken() string {
+func (e *env) enrollTokenForGroup(groupID string) string {
 	e.t.Helper()
-	b := e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/enrollment-tokens",
+	b := e.mustOK(e.do("POST", "/v1/groups/"+groupID+"/enrollment-tokens",
 		map[string]any{}, e.token))
 	return b["token"].(string)
 }
@@ -217,12 +217,16 @@ type agent struct {
 }
 
 func (e *env) newAgent(hostname string) *agent {
+	return e.newAgentInGroup(hostname, e.group)
+}
+
+func (e *env) newAgentInGroup(hostname, groupID string) *agent {
 	e.t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	a := &agent{e: e, priv: priv, pub: pub}
 	// enroll via token (unsigned endpoint)
 	r := e.do("POST", "/v1/agent/enroll/token", map[string]any{
-		"token":      e.enrollToken(),
+		"token":      e.enrollTokenForGroup(groupID),
 		"public_key": base64.StdEncoding.EncodeToString(pub),
 		"hostname":   hostname, "os": "linux", "arch": "x86_64",
 	}, "")
@@ -237,8 +241,8 @@ func (e *env) newAgent(hostname string) *agent {
 // the signature headers to simulate attack cases.
 func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper func(h http.Header)) apiResp {
 	ts := a.e.clk.ms + tsDelta
-	sig := identity.SignRequest(a.priv, method, path, ts, body)
 	req, _ := http.NewRequest(method, a.e.http.URL+path, bytes.NewReader(body))
+	sig := identity.SignRequest(a.priv, method, req.URL.Path, ts, body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Varde-Node", a.nodeID)
 	req.Header.Set("X-Varde-Timestamp", fmt.Sprint(ts))
@@ -258,7 +262,8 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
-	Node struct {
+	DirectivesDigest string `json:"directives_digest"`
+	Node             struct {
 		Name      string  `json:"name"`
 		GroupName *string `json:"group_name"`
 	} `json:"node"`

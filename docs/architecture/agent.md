@@ -70,7 +70,9 @@ contact, the pending code, and each server this machine hosts with its phase and
 ## Main loops
 
 * **Control loop**: heartbeat (`control-plane.md`) → apply directives: `SetPeers / SetRoutes / SetHostedServices /
-  Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots.
+  Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots. A separate
+  signed directives wait long-poll only wakes this loop; complete directives still arrive exclusively in the
+  heartbeat response.
   Heartbeat failures back off (1 s → 5 s) but never block fencing.
 * **Fencing watchdog**: per execution, deadline per `control-plane.md#leases-epochs-fencing`, checked on a monotonic
   clock every 250 ms. Expired ⇒ stop game (bounded graceful, then kill), mark `fenced`, drop from `SetHostedServices`,

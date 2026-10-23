@@ -117,7 +117,42 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	if err != nil {
 		return nil, err
 	}
-	s.Recon.Wake()
+	claimedSnapshotRequests := make(map[string]struct{})
+	if resp.Executions != nil {
+		for _, execution := range *resp.Executions {
+			if execution.SnapshotRequests == nil {
+				continue
+			}
+			for _, request := range *execution.SnapshotRequests {
+				if err := s.Store.ClaimSnapshotRequest(ctx, request.RequestId); err == nil {
+					claimedSnapshotRequests[request.RequestId] = struct{}{}
+				}
+			}
+		}
+	}
+	digestDirectives := resp
+	if len(claimedSnapshotRequests) > 0 && resp.Executions != nil {
+		executions := append([]gen.ExecutionDirective(nil), (*resp.Executions)...)
+		for i := range executions {
+			if executions[i].SnapshotRequests == nil {
+				continue
+			}
+			remaining := make([]gen.SnapshotRequest, 0, len(*executions[i].SnapshotRequests))
+			for _, request := range *executions[i].SnapshotRequests {
+				if _, claimed := claimedSnapshotRequests[request.RequestId]; !claimed {
+					remaining = append(remaining, request)
+				}
+			}
+			if len(remaining) == 0 {
+				executions[i].SnapshotRequests = nil
+			} else {
+				executions[i].SnapshotRequests = &remaining
+			}
+		}
+		digestDirectives.Executions = &executions
+	}
+	resp.DirectivesDigest = ptr(directivesDigest(digestDirectives))
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
 }
 
@@ -358,7 +393,6 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 				sr = append(sr, gen.SnapshotRequest{
 					RequestId: rq.ID, Reason: gen.SnapshotRequestReason(rq.Reason),
 				})
-				_ = s.Store.ClaimSnapshotRequest(ctx, rq.ID)
 			}
 			ed.SnapshotRequests = &sr
 		}
@@ -545,7 +579,7 @@ func (s *Server) AgentExecutionStatus(ctx context.Context, req gen.AgentExecutio
 	}, now); err != nil {
 		return nil, errResp(gen.StaleEpoch, "stale execution", nil)
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentExecutionStatus204Response{}, nil
 }
 
@@ -642,7 +676,7 @@ func (s *Server) AgentCreateSnapshot(ctx context.Context, req gen.AgentCreateSna
 	if err := s.evaluateCommit(ctx, srv, snap); err != nil {
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	v, err := s.snapshotView(ctx, snap)
 	if err != nil {
 		return nil, err
@@ -896,6 +930,6 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	if err := s.ApplyRetention(ctx, srv); err != nil {
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentReplicaReady204Response{}, nil
 }
