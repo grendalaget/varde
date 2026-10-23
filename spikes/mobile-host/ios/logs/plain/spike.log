@@ -1,0 +1,43 @@
+2026-10-23T15:43:28.374Z launch pid=6284 title=HostSpike (plain)
+2026-10-23T15:43:28.507Z StartSFU ok (0.13s)
+2026-10-23T15:43:28.512Z socket path 173 bytes >= 104; chdir /Users/devin/Library/Developer/CoreSimulator/Devices/EDD9B083-63F1-44E6-9A7B-0A6964CC2561/data/Containers/Data/Application/F7E364B7-BC37-409A-934A-B971A16DDCA0/tmp and use relative mesh.sock
+2026-10-23T15:43:28.616Z StartMesh ok (0.10s) ipc=mesh.sock
+2026-10-23T15:43:28.617Z mesh IPC connect: connected
+2026-10-23T15:43:28.640Z URLSession /health: HTTP 200 {"status":"healthy","service":"sfu","version":"dev","timestamp":"2026-10-23T15:43:28Z"}
+2026-10-23T15:43:38.408Z didEnterBackground beginBackgroundTask=3 backgroundTimeRemaining=unlimited
+2026-10-23T15:43:38.792Z heartbeat bg+0.4s backgroundTimeRemaining=unlimited
+2026-10-23T15:43:39.389Z heartbeat bg+1.0s backgroundTimeRemaining=29.6
+2026-10-23T15:43:40.493Z heartbeat bg+2.1s backgroundTimeRemaining=28.5
+2026-10-23T15:43:41.575Z heartbeat bg+3.2s backgroundTimeRemaining=27.4
+2026-10-23T15:43:42.569Z heartbeat bg+4.2s backgroundTimeRemaining=26.4
+2026-10-23T15:43:43.568Z heartbeat bg+5.2s backgroundTimeRemaining=25.4
+2026-10-23T15:43:44.578Z heartbeat bg+6.2s backgroundTimeRemaining=24.4
+2026-10-23T15:43:45.569Z heartbeat bg+7.2s backgroundTimeRemaining=23.4
+2026-10-23T15:43:46.577Z heartbeat bg+8.2s backgroundTimeRemaining=22.4
+2026-10-23T15:43:47.554Z heartbeat bg+9.2s backgroundTimeRemaining=21.5
+2026-10-23T15:43:48.569Z heartbeat bg+10.2s backgroundTimeRemaining=20.4
+2026-10-23T15:43:49.579Z heartbeat bg+11.2s backgroundTimeRemaining=19.4
+2026-10-23T15:43:50.575Z heartbeat bg+12.2s backgroundTimeRemaining=18.4
+2026-10-23T15:43:51.575Z heartbeat bg+13.2s backgroundTimeRemaining=17.4
+2026-10-23T15:43:52.569Z heartbeat bg+14.2s backgroundTimeRemaining=16.4
+2026-10-23T15:43:53.568Z heartbeat bg+15.2s backgroundTimeRemaining=15.4
+2026-10-23T15:43:54.550Z heartbeat bg+16.2s backgroundTimeRemaining=14.5
+2026-10-23T15:43:55.385Z heartbeat bg+17.0s backgroundTimeRemaining=13.6
+2026-10-23T15:43:56.572Z heartbeat bg+18.2s backgroundTimeRemaining=12.4
+2026-10-23T15:43:57.503Z heartbeat bg+19.1s backgroundTimeRemaining=11.5
+2026-10-23T15:43:58.552Z heartbeat bg+20.2s backgroundTimeRemaining=10.5
+2026-10-23T15:43:59.575Z heartbeat bg+21.2s backgroundTimeRemaining=9.4
+2026-10-23T15:44:00.551Z heartbeat bg+22.2s backgroundTimeRemaining=8.5
+2026-10-23T15:44:01.575Z heartbeat bg+23.2s backgroundTimeRemaining=7.4
+2026-10-23T15:44:02.553Z heartbeat bg+24.2s backgroundTimeRemaining=6.5
+2026-10-23T15:44:03.551Z heartbeat bg+25.2s backgroundTimeRemaining=5.5
+2026-10-23T15:44:04.235Z expirationHandler fired bg+25.9s
+2026-10-23T15:44:04.483Z heartbeat bg+26.1s backgroundTimeRemaining=4.4
+2026-10-23T15:44:05.383Z heartbeat bg+27.0s backgroundTimeRemaining=3.5
+2026-10-23T15:44:06.387Z heartbeat bg+28.0s backgroundTimeRemaining=2.5
+2026-10-23T15:44:07.387Z heartbeat bg+29.0s backgroundTimeRemaining=1.5
+2026-10-23T15:44:08.388Z heartbeat bg+30.0s backgroundTimeRemaining=0.5
+2026-10-23T15:44:09.387Z heartbeat bg+31.0s backgroundTimeRemaining=0.0
+2026-10-23T15:47:37.361Z heartbeat bg+239.0s backgroundTimeRemaining=unlimited
+2026-10-23T15:47:37.362Z willEnterForeground after bg+239.0s
+2026-10-23T15:47:37.366Z URLSession /health: HTTP 200 {"status":"healthy","service":"sfu","version":"dev","timestamp":"2026-10-23T15:47:37Z"}

@@ -1,0 +1,48 @@
+name: MobileHostSpike
+options:
+  bundleIdPrefix: games.varde.spike
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    GENERATE_INFOPLIST_FILE: "NO"
+targetTemplates:
+  HostApp:
+    type: application
+    platform: iOS
+    sources: [MobileHostSpike]
+    dependencies:
+      - framework: Mobilehost.xcframework
+        embed: false
+    settings:
+      base:
+        OTHER_LDFLAGS: "-lresolv"
+targets:
+  MobileHostSpike:
+    templates: [HostApp]
+    info:
+      path: Generated/Plain-Info.plist
+      properties:
+        CFBundleDisplayName: HostSpike
+        UILaunchScreen: {}
+        NSAppTransportSecurity: {NSAllowsLocalNetworking: true}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: games.varde.spike.mobilehost
+  MobileHostSpikeAudio:
+    templates: [HostApp]
+    info:
+      path: Generated/Audio-Info.plist
+      properties:
+        CFBundleDisplayName: HostSpike Audio
+        UILaunchScreen: {}
+        NSAppTransportSecurity: {NSAllowsLocalNetworking: true}
+        UIBackgroundModes: [audio]
+        NSMicrophoneUsageDescription: Spike keeps an active playAndRecord audio session.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: games.varde.spike.mobilehost.audio
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: AUDIO_MODE
