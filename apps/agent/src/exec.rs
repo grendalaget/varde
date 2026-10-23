@@ -1336,6 +1336,7 @@ mod requires_stop_tests {
 
     fn test_agent(cp: String, tmp: &Path) -> Agent {
         let (directives_digest, _) = tokio::sync::watch::channel(None);
+        let (heartbeat_sequence, _) = tokio::sync::watch::channel(0);
         Agent {
             cfg: crate::config::Config {
                 control_plane_url: cp.clone(),
@@ -1370,6 +1371,7 @@ mod requires_stop_tests {
             repl_notify: tokio::sync::Notify::new(),
             last_heartbeat_ok: Mutex::new(None),
             directives_digest,
+            heartbeat_sequence,
             heartbeat_now: tokio::sync::Notify::new(),
             shutting_down: AtomicBool::new(false),
             cp_view: Mutex::new(Default::default()),

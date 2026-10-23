@@ -117,17 +117,41 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	if err != nil {
 		return nil, err
 	}
-	resp.DirectivesDigest = ptr(directivesDigest(resp))
+	claimedSnapshotRequests := make(map[string]struct{})
 	if resp.Executions != nil {
 		for _, execution := range *resp.Executions {
 			if execution.SnapshotRequests == nil {
 				continue
 			}
 			for _, request := range *execution.SnapshotRequests {
-				_ = s.Store.ClaimSnapshotRequest(ctx, request.RequestId)
+				if err := s.Store.ClaimSnapshotRequest(ctx, request.RequestId); err == nil {
+					claimedSnapshotRequests[request.RequestId] = struct{}{}
+				}
 			}
 		}
 	}
+	digestDirectives := resp
+	if len(claimedSnapshotRequests) > 0 && resp.Executions != nil {
+		executions := append([]gen.ExecutionDirective(nil), (*resp.Executions)...)
+		for i := range executions {
+			if executions[i].SnapshotRequests == nil {
+				continue
+			}
+			remaining := make([]gen.SnapshotRequest, 0, len(*executions[i].SnapshotRequests))
+			for _, request := range *executions[i].SnapshotRequests {
+				if _, claimed := claimedSnapshotRequests[request.RequestId]; !claimed {
+					remaining = append(remaining, request)
+				}
+			}
+			if len(remaining) == 0 {
+				executions[i].SnapshotRequests = nil
+			} else {
+				executions[i].SnapshotRequests = &remaining
+			}
+		}
+		digestDirectives.Executions = &executions
+	}
+	resp.DirectivesDigest = ptr(directivesDigest(digestDirectives))
 	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
 }

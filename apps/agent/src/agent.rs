@@ -40,6 +40,8 @@ pub struct Agent {
     pub last_heartbeat_ok: Mutex<Option<std::time::Instant>>,
     /// Digest of the directives returned by the latest successful heartbeat.
     pub directives_digest: tokio::sync::watch::Sender<Option<String>>,
+    /// Completion sequence for heartbeat attempts, including failures.
+    pub heartbeat_sequence: tokio::sync::watch::Sender<u64>,
     /// Wakes the control loop for an immediate heartbeat after a directive change.
     pub heartbeat_now: tokio::sync::Notify,
     /// shutdown requested: drain executions while heartbeats, the mesh, the

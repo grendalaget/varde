@@ -128,6 +128,10 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 			}
 		}
 	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_drain_server
+		ON migrations(drain_until, server_id) WHERE drain_until IS NOT NULL`); err != nil {
+		return err
+	}
 	// UNIQUE on the federated id; sqlite can't add UNIQUE columns via ALTER,
 	// so both dialects get it through the index (NULLs don't collide).
 	if _, err := db.Exec(

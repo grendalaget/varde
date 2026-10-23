@@ -1,11 +1,15 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 func (a *agent) waitForDirectives(digest string, timeoutMs int) apiResp {
@@ -48,6 +52,44 @@ func TestAgentHeartbeatDirectiveDigestStable(t *testing.T) {
 	second := a.currentDirectivesDigest()
 	if first != second {
 		t.Fatalf("unchanged heartbeat digests differ: %q != %q", first, second)
+	}
+}
+
+func TestAgentHeartbeatDigestMatchesAfterSnapshotRequestClaim(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("node-a")
+	b := e.newAgent("node-b")
+	serverID := e.createServer("testgame", "snapshot-digest", nil)
+	host, _, _ := e.startToRunning(serverID, a, b)
+	if err := e.st.CreateSnapshotRequest(context.Background(), &store.SnapshotRequest{
+		ID: "snr_digest_test", ServerID: serverID, Reason: "manual", CreatedAt: e.st.NowMs(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	directives, heartbeat := host.heartbeat(nil)
+	if heartbeat.Status != http.StatusOK {
+		t.Fatalf("heartbeat: %d %s", heartbeat.Status, heartbeat.Raw)
+	}
+	if !strings.Contains(string(heartbeat.Raw), "snr_digest_test") {
+		t.Fatal("heartbeat did not deliver the pending snapshot request")
+	}
+	var claimed int
+	if err := e.st.DB.Get(&claimed, e.st.Rebind(
+		`SELECT claimed FROM snapshot_requests WHERE id=?`), "snr_digest_test"); err != nil {
+		t.Fatal(err)
+	}
+	if claimed != 1 {
+		t.Fatalf("heartbeat left snapshot request claimed=%d, want 1", claimed)
+	}
+
+	response := host.waitForDirectives(directives.DirectivesDigest, 1000)
+	if response.Status != http.StatusOK {
+		t.Fatalf("wait: %d %s", response.Status, response.Raw)
+	}
+	got, changed := decodeWaitResponse(t, response)
+	if changed || got != directives.DirectivesDigest {
+		t.Fatalf("wait response = (%q, %t), want (%q, false)", got, changed, directives.DirectivesDigest)
 	}
 }
 

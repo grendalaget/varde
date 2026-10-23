@@ -210,8 +210,6 @@ CREATE TABLE IF NOT EXISTS migrations (
 );
 CREATE INDEX IF NOT EXISTS idx_migrations_open_server
     ON migrations(server_id) WHERE finished_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_migrations_drain_server
-    ON migrations(drain_until, server_id) WHERE drain_until IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS snapshots (
     id              TEXT PRIMARY KEY,

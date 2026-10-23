@@ -528,6 +528,7 @@ async fn run_linked(
         repl_notify: tokio::sync::Notify::new(),
         last_heartbeat_ok: Mutex::new(None),
         directives_digest: tokio::sync::watch::channel(None).0,
+        heartbeat_sequence: tokio::sync::watch::channel(0).0,
         heartbeat_now: tokio::sync::Notify::new(),
         shutting_down: AtomicBool::new(false),
         cp_view: Mutex::new(Default::default()),

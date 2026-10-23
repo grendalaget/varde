@@ -15,8 +15,18 @@ use tracing::{debug, info, warn};
 use crate::exec::{self, ExecCtl, Phase, StopKind};
 use crate::Agent;
 
+struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
+
+impl Drop for HeartbeatCompletionGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .send_modify(|sequence| *sequence = sequence.wrapping_add(1));
+    }
+}
+
 /// One heartbeat iteration: returns the interval to wait before the next.
 pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
+    let _completion = HeartbeatCompletionGuard(&agent.heartbeat_sequence);
     // capture send instant BEFORE the request — fencing math depends on it
     let sent = Instant::now();
     let deleted_snapshots = pending_delete_ack_ids(&agent.pending_delete_acks);
@@ -384,7 +394,11 @@ pub async fn control_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Recei
 
 pub async fn wake_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
     let mut digest = agent.directives_digest.subscribe();
+    let mut heartbeat_sequence = agent.heartbeat_sequence.subscribe();
     let mut backoff = Duration::from_secs(1);
+    let mut last_wake_heartbeat: Option<Instant> = None;
+    let mut consecutive_unchanged = 0;
+    let mut last_unchanged_warning = None;
 
     loop {
         if *stop.borrow() {
@@ -416,9 +430,42 @@ pub async fn wake_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver
             Ok(response) => {
                 backoff = Duration::from_secs(1);
                 if response.changed {
+                    let before_digest = digest.borrow_and_update().clone();
+                    let sequence_before = *heartbeat_sequence.borrow_and_update();
+                    if let Some(last) = last_wake_heartbeat {
+                        let spacing = Duration::from_millis(200);
+                        if let Some(remaining) = spacing.checked_sub(last.elapsed()) {
+                            if !sleep_or_stop(&mut stop, remaining).await {
+                                return;
+                            }
+                        }
+                    }
+                    last_wake_heartbeat = Some(Instant::now());
                     agent.heartbeat_now.notify_one();
-                    if !wait_for_digest_change(&mut digest, &mut stop, &current_digest).await {
+                    if !wait_for_heartbeat_sequence(
+                        &mut heartbeat_sequence,
+                        &mut stop,
+                        sequence_before,
+                    )
+                    .await
+                    {
                         return;
+                    }
+                    let digest_updated = digest.has_changed().unwrap_or(false);
+                    let after_digest = digest.borrow_and_update().clone();
+                    if digest_updated && after_digest == before_digest {
+                        consecutive_unchanged += 1;
+                        let should_warn = last_unchanged_warning
+                            .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(60));
+                        if consecutive_unchanged >= 2 && should_warn {
+                            warn!(
+                                digest = ?after_digest,
+                                "two consecutive wake-triggered heartbeats returned an unchanged digest"
+                            );
+                            last_unchanged_warning = Some(Instant::now());
+                        }
+                    } else {
+                        consecutive_unchanged = 0;
                     }
                 }
             }
@@ -442,20 +489,20 @@ fn is_legacy_directives_wait_error(error: &cp_api::Error) -> bool {
     matches!(error.status(), Some(404 | 405))
 }
 
-async fn wait_for_digest_change(
-    digest: &mut tokio::sync::watch::Receiver<Option<String>>,
+async fn wait_for_heartbeat_sequence(
+    sequence: &mut tokio::sync::watch::Receiver<u64>,
     stop: &mut tokio::sync::watch::Receiver<bool>,
-    previous: &str,
+    previous: u64,
 ) -> bool {
     if *stop.borrow() {
         return false;
     }
     let changed = async {
         loop {
-            if digest.borrow().as_deref() != Some(previous) {
+            if *sequence.borrow_and_update() != previous {
                 return;
             }
-            if digest.changed().await.is_err() {
+            if sequence.changed().await.is_err() {
                 return;
             }
         }
@@ -552,7 +599,7 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
 mod tests {
     use super::{
         acknowledge_delete_acks, cp_clock_offset_ms, is_legacy_directives_wait_error,
-        pending_delete_ack_ids,
+        pending_delete_ack_ids, wait_for_heartbeat_sequence,
     };
     use crate::agent::CpView;
     use std::collections::BTreeSet;
@@ -600,5 +647,17 @@ mod tests {
         assert!(is_legacy_directives_wait_error(&error(404)));
         assert!(is_legacy_directives_wait_error(&error(405)));
         assert!(!is_legacy_directives_wait_error(&error(500)));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_sequence_waits_for_attempt_completion() {
+        let (sequence_tx, mut sequence) = tokio::sync::watch::channel(0);
+        let (_stop_tx, mut stop) = tokio::sync::watch::channel(false);
+        let waiter =
+            tokio::spawn(
+                async move { wait_for_heartbeat_sequence(&mut sequence, &mut stop, 0).await },
+            );
+        sequence_tx.send_replace(1);
+        assert!(waiter.await.unwrap());
     }
 }
