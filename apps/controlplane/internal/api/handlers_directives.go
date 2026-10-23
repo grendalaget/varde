@@ -15,7 +15,7 @@ const (
 	directivesWaitDefaultMs = 20_000
 	directivesWaitMinMs     = 1_000
 	directivesWaitMaxMs     = 25_000
-	directivesWaitFallback  = time.Second
+	directivesWaitFallback  = 2 * time.Second
 	directivesWaitThrottle  = 100 * time.Millisecond
 )
 
@@ -140,7 +140,7 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 	lastCheck := time.Time{}
 
 	for {
-		changed := s.Recon.Changed()
+		changed := s.Recon.Changed(node.GroupID)
 		directives, err := s.buildDirectives(ctx, node, s.Store.NowMs())
 		if err != nil {
 			return nil, err

@@ -128,7 +128,7 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 			}
 		}
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
 }
 
@@ -555,7 +555,7 @@ func (s *Server) AgentExecutionStatus(ctx context.Context, req gen.AgentExecutio
 	}, now); err != nil {
 		return nil, errResp(gen.StaleEpoch, "stale execution", nil)
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentExecutionStatus204Response{}, nil
 }
 
@@ -652,7 +652,7 @@ func (s *Server) AgentCreateSnapshot(ctx context.Context, req gen.AgentCreateSna
 	if err := s.evaluateCommit(ctx, srv, snap); err != nil {
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	v, err := s.snapshotView(ctx, snap)
 	if err != nil {
 		return nil, err
@@ -906,6 +906,6 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	if err := s.ApplyRetention(ctx, srv); err != nil {
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentReplicaReady204Response{}, nil
 }

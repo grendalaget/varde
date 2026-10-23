@@ -6,25 +6,45 @@ import (
 	"time"
 )
 
-func TestWakeBroadcastsChangeGenerations(t *testing.T) {
+func TestNotifyGroupClosesOnlyItsGeneration(t *testing.T) {
 	r := New(nil, Timings{}, slog.Default())
-	first := r.Changed()
+	firstA := r.Changed("a")
+	firstB := r.Changed("b")
 	r.Wake()
 
 	select {
-	case <-first:
-	case <-time.After(time.Second):
-		t.Fatal("Wake did not close the current change channel")
+	case <-firstA:
+		t.Fatal("Wake closed group a's change channel")
+	case <-firstB:
+		t.Fatal("Wake closed group b's change channel")
+	default:
 	}
 
-	second := r.Changed()
-	if first == second {
-		t.Fatal("Changed returned the closed generation")
-	}
-	r.Wake()
+	r.NotifyGroup("a")
 	select {
-	case <-second:
+	case <-firstA:
 	case <-time.After(time.Second):
-		t.Fatal("second Wake did not close the replacement channel")
+		t.Fatal("NotifyGroup did not close group a's current channel")
+	}
+	select {
+	case <-firstB:
+		t.Fatal("NotifyGroup for a closed group b's channel")
+	default:
+	}
+
+	secondA := r.Changed("a")
+	if firstA == secondA {
+		t.Fatal("Changed returned group a's closed generation")
+	}
+	r.NotifyGroup("a")
+	select {
+	case <-secondA:
+	case <-time.After(time.Second):
+		t.Fatal("NotifyGroup did not close group a's fresh channel")
+	}
+	select {
+	case <-firstB:
+		t.Fatal("group b's channel was closed")
+	default:
 	}
 }

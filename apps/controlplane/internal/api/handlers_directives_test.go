@@ -140,6 +140,90 @@ func TestAgentDirectivesWaitWakesOnServerStop(t *testing.T) {
 	}
 }
 
+func TestAgentDirectivesWaitWakesOnReconcilerChange(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("node-a")
+	b := e.newAgent("node-b")
+	serverID := e.createServer("testgame", "wait-reconcile", nil)
+	host, execID, _ := e.startToRunning(serverID, a, b)
+	e.reconcile()
+	digest := host.currentDirectivesDigest()
+
+	type waitResult struct {
+		response apiResp
+		elapsed  time.Duration
+	}
+	result := make(chan waitResult, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		startedAt := time.Now()
+		result <- waitResult{
+			response: host.waitForDirectives(digest, 20_000),
+			elapsed:  time.Since(startedAt),
+		}
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := e.st.DB.Exec(
+		`UPDATE server_executions SET lease_expires_at=? WHERE id=?`,
+		e.clk.ms-1, execID,
+	); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	e.reconcile()
+
+	select {
+	case r := <-result:
+		if r.response.Status != http.StatusOK {
+			t.Fatalf("wait after reconcile: %d %s", r.response.Status, r.response.Raw)
+		}
+		newDigest, changed := decodeWaitResponse(t, r.response)
+		if !changed || newDigest == digest {
+			t.Fatalf("wait response = (%q, %t), old digest %q", newDigest, changed, digest)
+		}
+		if r.elapsed >= 1500*time.Millisecond {
+			t.Fatalf("reconciler directive wake took %s", r.elapsed)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("reconciler directive change did not wake the wait")
+	}
+}
+
+func TestOtherGroupHeartbeatDoesNotWakeDirectiveWait(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("node-a")
+	groupB := e.createGroup("g2")
+	b := e.newAgentInGroup("node-b", groupB)
+	digest := a.currentDirectivesDigest()
+
+	result := make(chan apiResp, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		result <- a.waitForDirectives(digest, 1000)
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	if _, r := b.heartbeat(nil); r.Status != http.StatusOK {
+		t.Fatalf("other-group heartbeat: %d %s", r.Status, r.Raw)
+	}
+	select {
+	case r := <-result:
+		if r.Status != http.StatusOK {
+			t.Fatalf("wait after other-group heartbeat: %d %s", r.Status, r.Raw)
+		}
+		got, changed := decodeWaitResponse(t, r)
+		if changed || got != digest {
+			t.Fatalf("wait response = (%q, %t), want (%q, false)", got, changed, digest)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("other-group heartbeat did not leave the wait to time out")
+	}
+}
+
 func TestAgentDirectivesWaitRequiresSignature(t *testing.T) {
 	e := newEnv(t)
 	a := e.newAgent("node-a")

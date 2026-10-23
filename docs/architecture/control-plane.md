@@ -137,8 +137,11 @@ Response `AgentDirectives`:
 
 The digest excludes per-call timestamps and credentials (including the server clock, lease expiries, relay-token
 expiry/signature, drain deadline, and save-holder `last_seen_at`). The wait endpoint uses it only to detect a change:
-it never returns the directive document. It defaults to 20 s and clamps requests to 1–25 s; a reconciler signal wakes
-the wait, with a 1 s fallback for mutations made on another control-plane instance.
+it never returns the directive document. It defaults to 20 s and clamps requests to 1–25 s.
+API mutations that request a reconciler wake notify waiters only in the affected group.
+Reconciler passes compare per-group fingerprints of active executions, migrations,
+node scheduling state, snapshot replicas, server state, and event IDs; changed groups
+are notified. A 2 s fallback detects mutations made on another control-plane instance.
 
 Lease renewal is implicit: for each reported execution that is still the server's active execution, held by this
 node, with matching epoch and not `stopped/failed`, the CP extends `lease_expires_at = now + lease_ttl` **before**

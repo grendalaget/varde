@@ -168,8 +168,12 @@ func crossplayConfig() map[string]any {
 }
 
 func (e *env) enrollToken() string {
+	return e.enrollTokenForGroup(e.group)
+}
+
+func (e *env) enrollTokenForGroup(groupID string) string {
 	e.t.Helper()
-	b := e.mustOK(e.do("POST", "/v1/groups/"+e.group+"/enrollment-tokens",
+	b := e.mustOK(e.do("POST", "/v1/groups/"+groupID+"/enrollment-tokens",
 		map[string]any{}, e.token))
 	return b["token"].(string)
 }
@@ -217,12 +221,16 @@ type agent struct {
 }
 
 func (e *env) newAgent(hostname string) *agent {
+	return e.newAgentInGroup(hostname, e.group)
+}
+
+func (e *env) newAgentInGroup(hostname, groupID string) *agent {
 	e.t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	a := &agent{e: e, priv: priv, pub: pub}
 	// enroll via token (unsigned endpoint)
 	r := e.do("POST", "/v1/agent/enroll/token", map[string]any{
-		"token":      e.enrollToken(),
+		"token":      e.enrollTokenForGroup(groupID),
 		"public_key": base64.StdEncoding.EncodeToString(pub),
 		"hostname":   hostname, "os": "linux", "arch": "x86_64",
 	}, "")

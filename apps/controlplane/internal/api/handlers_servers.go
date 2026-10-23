@@ -452,7 +452,7 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 		}
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	// re-read for the fresh epoch/observed state
 	srv2, err := s.Store.GetServer(ctx, srv.ID)
 	if err != nil {
@@ -486,7 +486,7 @@ func (s *Server) StopServer(ctx context.Context, req gen.StopServerRequestObject
 	}
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, srv.GroupID, &srv.ID, nil, "server.stop_requested", nil)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.stop", srv.ID, nil)
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -548,7 +548,7 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 	}
 	_ = s.Store.SetObservedState(ctx, s.Store.DB, srv.ID, "migrating", now)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.move", srv.ID, map[string]any{"to": target.ID})
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -628,7 +628,7 @@ func (s *Server) RequestSnapshot(ctx context.Context, req gen.RequestSnapshotReq
 	}
 	_ = active
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "snapshot.request", srv.ID, nil)
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	return gen.RequestSnapshot202JSONResponse{RequestId: r.ID}, nil
 }
 
