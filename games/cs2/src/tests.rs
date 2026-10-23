@@ -186,13 +186,47 @@ fn validation_defaults_bounds_and_injection() {
 }
 
 #[test]
+fn incomplete_install_disk_budget() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("steamapps")).unwrap();
+    let manifest = root.path().join("steamapps/appmanifest_730.acf");
+    for state in [None, Some("incomplete"), Some("0"), Some("1026")] {
+        if let Some(state) = state {
+            std::fs::write(&manifest, format!("\"StateFlags\" \"{state}\"")).unwrap();
+        }
+        assert!(check_install_space(root.path(), 0).is_err(), "{state:?}");
+    }
+    std::fs::create_dir_all(root.path().join("game")).unwrap();
+    std::fs::write(root.path().join("game/partial.bin"), vec![1; 65536]).unwrap();
+    let installed = allocated_install_bytes(root.path()).unwrap();
+    assert!(installed > 0);
+    check_install_space(root.path(), MIN_DISK_BYTES - installed).unwrap();
+    assert!(check_install_space(root.path(), MIN_DISK_BYTES - installed - 1).is_err());
+    std::fs::write(&manifest, "\"StateFlags\" \"4\"").unwrap();
+    check_install_space(root.path(), 0).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn install_disk_budget_ignores_sparse_bytes_and_symlinks() {
+    let root = tempfile::tempdir().unwrap();
+    let sparse = std::fs::File::create(root.path().join("partial.bin")).unwrap();
+    sparse.set_len(MIN_DISK_BYTES).unwrap();
+    assert!(allocated_install_bytes(root.path()).unwrap() < MIN_DISK_BYTES);
+    assert!(check_install_space(root.path(), 0).is_err());
+    std::os::unix::fs::symlink(root.path(), root.path().join("loop")).unwrap();
+    assert!(check_install_space(root.path(), 0).is_err());
+}
+
+#[test]
 fn disk_and_persistence() {
-    assert!(check_install_space(0).is_err());
-    assert!(check_install_space(MIN_DISK_BYTES - 1)
+    let root = tempfile::tempdir().unwrap();
+    assert!(check_install_space(root.path(), 0).is_err());
+    assert!(check_install_space(root.path(), MIN_DISK_BYTES - 1)
         .unwrap_err()
         .to_string()
         .contains("75 GB"));
-    check_install_space(MIN_DISK_BYTES).unwrap();
+    check_install_space(root.path(), MIN_DISK_BYTES).unwrap();
     let driver = Cs2Driver::new();
     assert_eq!(driver.id(), "cs2");
     assert_eq!(
@@ -348,13 +382,12 @@ async fn probe_handles_closed_port_and_missing_install() {
         Cs2Driver.probe(&ctx, &Process::default()).await.unwrap(),
         GameHealth::Starting
     );
-    // A manifest bypasses first-install disk gating, even on low-disk hosts.
     tokio::fs::create_dir_all(root.path().join("server/steamapps"))
         .await
         .unwrap();
     tokio::fs::write(
         root.path().join("server/steamapps/appmanifest_730.acf"),
-        "incomplete",
+        "\"StateFlags\" \"4\"",
     )
     .await
     .unwrap();

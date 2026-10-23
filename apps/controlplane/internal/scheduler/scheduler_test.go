@@ -3,6 +3,7 @@ package scheduler
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,39 @@ func TestPlacePicksOnlyEligible(t *testing.T) {
 	// tie → smaller node_id wins
 	if d.NodeID != "node_a" {
 		t.Fatalf("want node_a, got %s", d.NodeID)
+	}
+}
+
+func TestPlaceMinimumDisk(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		minDiskMB  int64
+		deployment int64
+		restore    int64
+		free       int64
+		wantErr    bool
+	}{
+		{name: "unset minimum"},
+		{name: "fresh install insufficient", minDiskMB: 75000, free: 74_999_999_999, wantErr: true},
+		{name: "fresh install exact", minDiskMB: 75000, free: 75_000_000_000},
+		{name: "deployment larger than minimum", minDiskMB: 75000, deployment: 80_000_000_000, free: 75_000_000_000, wantErr: true},
+		{name: "deployment exact", minDiskMB: 75000, deployment: 80_000_000_000, free: 80_000_000_000},
+		{name: "restore needs headroom", minDiskMB: 75000, restore: 1000, free: 75_000_001_999, wantErr: true},
+		{name: "restore exact", minDiskMB: 75000, restore: 1000, free: 75_000_002_000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			game := testGame
+			game.MinDiskMB = tc.minDiskMB
+			node := okNode("node_a")
+			node.DiskFreeBytes = tc.free
+			_, err := Place(testSrv, game, []NodeView{node}, SnapView{DeploymentSize: tc.deployment, RestoreBytes: tc.restore})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Place() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "insufficient disk") {
+				t.Fatalf("expected insufficient disk, got %v", err)
+			}
+		})
 	}
 }
 

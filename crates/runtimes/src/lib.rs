@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-use game_driver_api::{ArchiveKind, FetchSpec, RuntimeProvider};
+use game_driver_api::{steam_app_installed, ArchiveKind, FetchSpec, RuntimeProvider};
 use http_body_util::BodyExt;
 use hyper::header::{HeaderValue, HOST, LOCATION, USER_AGENT};
 use hyper::{Request, Uri};
@@ -206,13 +206,7 @@ impl RuntimeProvider for HttpRuntimes {
 }
 
 fn steam_app_args(app_id: u32, dest: &Path) -> Vec<std::ffi::OsString> {
-    let manifest =
-        std::fs::read_to_string(dest.join(format!("steamapps/appmanifest_{app_id}.acf")))
-            .unwrap_or_default();
-    let tokens: Vec<_> = manifest.split('"').collect();
-    let installed = tokens
-        .windows(3)
-        .any(|w| w[0] == "StateFlags" && w[2] == "4");
+    let installed = steam_app_installed(app_id, dest);
     let mut args = vec![
         "+force_install_dir".into(),
         dest.as_os_str().to_owned(),

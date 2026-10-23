@@ -7,6 +7,12 @@ func TestCS2Config(t *testing.T) {
 	if game == nil {
 		t.Fatal("cs2 catalog entry missing")
 	}
+	if game.MinDiskMB != 75000 {
+		t.Fatalf("cs2 min_disk_mb = %d, want 75000", game.MinDiskMB)
+	}
+	if Get("valheim").MinDiskMB != 0 {
+		t.Fatal("omitted min_disk_mb must default to zero")
+	}
 	for _, tc := range []struct {
 		key     string
 		value   any

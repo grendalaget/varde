@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,15 +13,40 @@ const MIN_DISK_BYTES: u64 = 75_000_000_000;
 const BANS: [&str; 2] = ["banned_user.cfg", "banned_ip.cfg"];
 const INFO_REQUEST: &[u8] = b"\xff\xff\xff\xffTSource Engine Query\0";
 
-fn check_install_space(available: u64) -> Result<()> {
-    if available < MIN_DISK_BYTES {
+fn check_install_space(dir: &Path, available: u64) -> Result<()> {
+    if steam_app_installed(APP_ID, dir) {
+        return Ok(());
+    }
+    let installed = allocated_install_bytes(dir)?;
+    if available.saturating_add(installed) < MIN_DISK_BYTES {
         return Err(format!(
-            "cs2: first install requires at least 75 GB free ({} bytes available)",
-            available
+            "cs2: incomplete install requires a 75 GB disk budget ({} bytes free, {} bytes already installed)",
+            available, installed
         )
         .into());
     }
     Ok(())
+}
+
+fn allocated_install_bytes(dir: &Path) -> Result<u64> {
+    let mut dirs = vec![dir.to_path_buf()];
+    let mut total = 0u64;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                dirs.push(entry.path());
+            } else if kind.is_file() {
+                let file = std::fs::File::open(entry.path())?;
+                total = total.saturating_add(fs2::FileExt::allocated_size(&file)?);
+                if total >= MIN_DISK_BYTES {
+                    return Ok(total);
+                }
+            }
+        }
+    }
+    Ok(total)
 }
 
 #[derive(Default)]
@@ -248,10 +273,8 @@ impl GameDriver for Cs2Driver {
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
         let dir = Self::install_dir(ctx);
         tokio::fs::create_dir_all(&dir).await?;
-        if !dir.join("steamapps/appmanifest_730.acf").is_file() {
-            check_install_space(fs2::available_space(&dir)?)
-                .map_err(|e| format!("{e} at {}", dir.display()))?;
-        }
+        check_install_space(&dir, fs2::available_space(&dir)?)
+            .map_err(|e| format!("{e} at {}", dir.display()))?;
         ctx.runtimes.steam_app_install(APP_ID, &dir).await?;
         if !Self::binary(ctx).is_file() {
             return Err("cs2: installed server binary is missing".into());

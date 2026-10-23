@@ -21,6 +21,7 @@ type ServerView struct {
 type GameView struct {
 	ID          string
 	MinMemoryMB int64
+	MinDiskMB   int64
 	OS          []string
 	Arch        []string
 	Runtimes    []string
@@ -120,7 +121,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 			reasons = append(reasons, n.ID+": over max_memory_mb")
 			continue
 		}
-		need := snap.RestoreBytes*2 + snap.DeploymentSize
+		need := snap.RestoreBytes*2 + max(snap.DeploymentSize, game.MinDiskMB*1_000_000)
 		if need > 0 && n.DiskFreeBytes < need {
 			reasons = append(reasons, n.ID+": insufficient disk")
 			continue
