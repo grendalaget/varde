@@ -167,10 +167,6 @@ func crossplayConfig() map[string]any {
 	}
 }
 
-func (e *env) enrollToken() string {
-	return e.enrollTokenForGroup(e.group)
-}
-
 func (e *env) enrollTokenForGroup(groupID string) string {
 	e.t.Helper()
 	b := e.mustOK(e.do("POST", "/v1/groups/"+groupID+"/enrollment-tokens",
