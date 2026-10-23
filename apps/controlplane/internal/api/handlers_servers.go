@@ -72,6 +72,7 @@ func crossplayEnabled(gameID string, cfg map[string]any) bool {
 func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server, error) {
 	var cfg map[string]any
 	_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+	delete(cfg, "_autotournament")
 	crossplay := crossplayEnabled(srv.GameID, cfg)
 	v := gen.Server{
 		Id:                srv.ID,
@@ -218,6 +219,7 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	if b.Config != nil {
 		cfg = *b.Config
 	}
+	delete(cfg, "_autotournament")
 	if verr := game.ValidateConfig(cfg); len(verr) > 0 {
 		return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), map[string]any{"fields": verr})
 	}
@@ -347,21 +349,23 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 		return nil, errResp(gen.Validation, "missing body", nil)
 	}
 	if b.Config != nil {
+		cfg := *b.Config
+		delete(cfg, "_autotournament")
 		game := catalog.Get(srv.GameID)
 		if game != nil {
-			if verr := game.ValidateConfig(*b.Config); len(verr) > 0 {
+			if verr := game.ValidateConfig(cfg); len(verr) > 0 {
 				return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), nil)
 			}
 		}
 		var oldConfig map[string]any
 		_ = json.Unmarshal([]byte(srv.ConfigJSON), &oldConfig)
 		if crossplayEnabled(srv.GameID, oldConfig) !=
-			crossplayEnabled(srv.GameID, *b.Config) {
+			crossplayEnabled(srv.GameID, cfg) {
 			if _, err := s.Store.ActiveExecution(ctx, srv.ID); err == nil {
 				return nil, errResp(gen.Conflict, "stop the server before changing crossplay", nil)
 			}
 		}
-		srv.ConfigJSON = mustJSON(*b.Config)
+		srv.ConfigJSON = mustJSON(cfg)
 	}
 	if b.Name != nil {
 		srv.Name = *b.Name

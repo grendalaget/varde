@@ -17,6 +17,7 @@ type User struct {
 	IsOperator   int64  `db:"is_operator"`
 	// varde.games user id when the account came in through federation.
 	WebsiteUserID *string `db:"website_user_id"`
+	SteamID       *string `db:"steam_id"`
 	CreatedAt     int64   `db:"created_at"`
 }
 
@@ -73,8 +74,20 @@ type Member struct {
 	Role      string `db:"role"`
 	CreatedAt int64  `db:"created_at"`
 	// joined from users when listing
-	Email       string `db:"email"`
-	DisplayName string `db:"display_name"`
+	Email       string  `db:"email"`
+	DisplayName string  `db:"display_name"`
+	SteamID     *string `db:"steam_id"`
+}
+
+type GroupIntegration struct {
+	GroupID        string  `db:"group_id"`
+	Kind           string  `db:"kind"`
+	BaseURL        string  `db:"base_url"`
+	APITokenSealed string  `db:"api_token_sealed"`
+	FleetKeySealed string  `db:"fleet_key_sealed"`
+	CreatedBy      *string `db:"created_by"`
+	CreatedAt      int64   `db:"created_at"`
+	UpdatedAt      int64   `db:"updated_at"`
 }
 
 type Invite struct {

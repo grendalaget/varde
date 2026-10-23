@@ -20,6 +20,7 @@ type GroupSettings = Schemas["GroupSettings"];
 
 export default function Settings() {
   const { group, refreshMe, selectGroup } = useSession();
+  const { me } = useSession();
   const loc = useLocation();
   const admin = canAdmin(group.role);
   const g = useLoad(
@@ -34,6 +35,11 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [steamId, setSteamId] = useState(me.user.steam_id ?? "");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<string | null>(null);
+
+  useEffect(() => setSteamId(me.user.steam_id ?? ""), [me.user.steam_id]);
 
   useEffect(() => {
     if (g.data) {
@@ -77,6 +83,64 @@ export default function Settings() {
   return (
     <>
       <PageHeader title="Settings" subtitle={group.name} />
+      <div className="vd-stagger mb-6 space-y-6">
+        <Card>
+          <CardHeader title="Your profile" subtitle="Player identity for Auto Tournament." />
+          <form
+            className="space-y-4 p-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setProfileBusy(true);
+              setErr(null);
+              setProfileMsg(null);
+              const { error } = await api.PATCH("/v1/me", {
+                body: { steam_id: steamId.trim() || null },
+              });
+              setProfileBusy(false);
+              if (error) setErr(errorMessage(error));
+              else {
+                setProfileMsg("Saved");
+                await refreshMe();
+              }
+            }}
+          >
+            <Field
+              label="Steam ID"
+              help={
+                <>
+                  17-digit SteamID64. Find yours at{" "}
+                  <a
+                    href="https://steamid.io"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-accent underline"
+                  >
+                    steamid.io
+                  </a>
+                  .
+                </>
+              }
+            >
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                autoComplete="off"
+                value={steamId}
+                onChange={(e) => setSteamId(e.target.value)}
+                placeholder="7656119…"
+              />
+            </Field>
+            <ErrorNote>{err}</ErrorNote>
+            <div className="flex items-center justify-end gap-3">
+              {profileMsg && <span className="text-sm text-emerald-400">{profileMsg}</span>}
+              <Button variant="primary" type="submit" busy={profileBusy}>
+                Save profile
+              </Button>
+            </div>
+          </form>
+        </Card>
+        <AutoTournamentSettings groupId={group.group_id} admin={admin} />
+      </div>
       <form
         className="vd-stagger space-y-6"
         onSubmit={async (e) => {
@@ -194,5 +258,116 @@ export default function Settings() {
         </Card>
       )}
     </>
+  );
+}
+
+function AutoTournamentSettings({
+  groupId,
+  admin,
+}: {
+  groupId: string;
+  admin: boolean;
+}) {
+  const link = useLoad(
+    () =>
+      api.GET("/v1/groups/{groupId}/integrations/autotournament", {
+        params: { path: { groupId } },
+      }),
+    [groupId],
+  );
+  const [baseUrl, setBaseUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const linked = link.data?.linked ?? false;
+
+  useEffect(() => {
+    setBaseUrl(link.data?.base_url ?? "");
+  }, [groupId, link.data?.base_url]);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Auto Tournament"
+        subtitle={linked ? `Linked to ${link.data?.base_url}` : "Not linked"}
+      />
+      <div className="space-y-4 p-4">
+        {admin && (
+          <form
+            className="space-y-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              setErr(null);
+              setMsg(null);
+              const { error } = await api.PUT(
+                "/v1/groups/{groupId}/integrations/autotournament",
+                {
+                  params: { path: { groupId } },
+                  body: { base_url: baseUrl.trim(), api_token: token },
+                },
+              );
+              setBusy(false);
+              if (error) setErr(errorMessage(error));
+              else {
+                setToken("");
+                setMsg("Linked");
+                void link.refresh();
+              }
+            }}
+          >
+            <Field label="Base URL">
+              <input
+                className={inputClass}
+                type="url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://tournaments.example.com"
+                required
+              />
+            </Field>
+            <Field label="API token" help="The token is stored encrypted and never shown again.">
+              <input
+                className={inputClass}
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                autoComplete="new-password"
+                required
+              />
+            </Field>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {msg && <span className="text-sm text-emerald-400">{msg}</span>}
+              {linked && (
+                <Button
+                  variant="danger"
+                  busy={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setErr(null);
+                    const { error } = await api.DELETE(
+                      "/v1/groups/{groupId}/integrations/autotournament",
+                      { params: { path: { groupId } } },
+                    );
+                    setBusy(false);
+                    if (error) setErr(errorMessage(error));
+                    else void link.refresh();
+                  }}
+                >
+                  Unlink
+                </Button>
+              )}
+              <Button variant="primary" type="submit" busy={busy}>
+                {linked ? "Update link" : "Link"}
+              </Button>
+            </div>
+          </form>
+        )}
+        {!admin && <p className="text-sm text-muted">{linked ? "Linked" : "Not linked"}</p>}
+        <ErrorNote>{err}</ErrorNote>
+        <p className="text-xs text-muted">Auto Tournament is licensed for noncommercial use.</p>
+      </div>
+    </Card>
   );
 }

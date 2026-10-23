@@ -17,6 +17,7 @@ import NewServer from "./pages/NewServer";
 import ServerDetail from "./pages/ServerDetail";
 import Servers from "./pages/Servers";
 import Settings from "./pages/Settings";
+import Tournaments from "./pages/Tournaments";
 
 const GROUP_KEY = "varde.group";
 // The site's federated sign-in bounce mints a token and hands it back in the
@@ -283,6 +284,11 @@ const NAV = [
     active: (p: string) => p.startsWith("/machines"),
   },
   {
+    to: "/tournaments",
+    label: "Tournaments",
+    active: (p: string) => p.startsWith("/tournaments"),
+  },
+  {
     to: "/members",
     label: "Members",
     active: (p: string) => p.startsWith("/members"),
@@ -312,6 +318,7 @@ function Layout() {
   else if ((m = match("/servers/:id", p)))
     page = <ServerDetail id={m.id} key={m.id} />;
   else if (p === "/machines") page = <Machines />;
+  else if (p === "/tournaments") page = <Tournaments />;
   else if (p === "/machines/add") page = <AddMachine />;
   else if (p === "/link")
     page = <LinkDevice code={loc.search.get("code") ?? ""} />;

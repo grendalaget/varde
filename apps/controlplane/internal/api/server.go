@@ -20,6 +20,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
@@ -39,8 +40,11 @@ type RelayConf struct {
 
 // Server implements gen.StrictServerInterface.
 type Server struct {
-	Store *store.Store
-	Auth  auth.Provider
+	Store                      *store.Store
+	Secrets                    *secrets.Manager
+	AutoTournamentHTTP         *http.Client
+	AutoTournamentAllowPrivate bool
+	Auth                       auth.Provider
 	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
 	Federation *auth.Federation
 	Cfg        Config
@@ -104,6 +108,10 @@ func statusFor(code gen.ErrorCode) int {
 		return http.StatusUnauthorized
 	case gen.StaleEpoch, gen.LatestSaveUnavailable, gen.Conflict:
 		return http.StatusConflict
+	case gen.AutoTournamentUnavailable:
+		return http.StatusBadGateway
+	case gen.SecretsUnconfigured:
+		return http.StatusServiceUnavailable
 	case gen.LimitExceeded:
 		return http.StatusForbidden
 	case gen.Validation, gen.Unschedulable:

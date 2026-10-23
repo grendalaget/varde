@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/identity"
 )
@@ -80,12 +82,17 @@ func newBareEnv(t *testing.T) *env {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	recon := reconciler.New(st, testTimings, log)
+	secretManager, err := secrets.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, relayPriv, _ := ed25519.GenerateKey(rand.Reader)
 	srv := &api.Server{
-		Store: st,
-		Auth:  &auth.Local{Store: st, Policy: auth.SignupOpen},
-		Cfg:   api.Config{Timings: testTimings, Version: "test"},
-		Recon: recon, RelayKey: relayPriv, Log: log,
+		Store:   st,
+		Secrets: secretManager,
+		Auth:    &auth.Local{Store: st, Policy: auth.SignupOpen},
+		Cfg:     api.Config{Timings: testTimings, Version: "test"},
+		Recon:   recon, RelayKey: relayPriv, Log: log,
 	}
 	e := &env{t: t, clk: clk, st: st, recon: recon, srv: srv}
 	e.http = httptest.NewServer(api.NewHandler(srv, nil))
@@ -1919,6 +1926,56 @@ func TestCookieSession(t *testing.T) {
 	}
 }
 
+func TestUpdateMeSteamID(t *testing.T) {
+	e := newEnv(t)
+	validID := "76561198000000001"
+	updated := e.do("PATCH", "/v1/me", map[string]any{"steam_id": validID}, e.token)
+	if updated.Status != http.StatusOK {
+		t.Fatalf("PATCH valid Steam ID: status=%d body=%s", updated.Status, updated.Raw)
+	}
+	user := updated.Body["user"].(map[string]any)
+	if got := user["steam_id"]; got != validID {
+		t.Fatalf("steam_id = %#v, want %q", got, validID)
+	}
+
+	invalid := e.do("PATCH", "/v1/me", map[string]any{"steam_id": "7656119800000000x"}, e.token)
+	if invalid.Status != http.StatusBadRequest || invalid.Body["message"] != "invalid steam id" {
+		t.Fatalf("PATCH invalid Steam ID: status=%d body=%s", invalid.Status, invalid.Raw)
+	}
+
+	unchanged := e.do("PATCH", "/v1/me", map[string]any{"display_name": "renamed"}, e.token)
+	if unchanged.Status != http.StatusOK ||
+		unchanged.Body["user"].(map[string]any)["steam_id"] != validID {
+		t.Fatalf("PATCH without steam_id changed profile: status=%d body=%s", unchanged.Status, unchanged.Raw)
+	}
+
+	cleared := e.do("PATCH", "/v1/me", map[string]any{"steam_id": nil}, e.token)
+	if cleared.Status != http.StatusOK ||
+		cleared.Body["user"].(map[string]any)["steam_id"] != nil {
+		t.Fatalf("PATCH null Steam ID did not clear it: status=%d body=%s", cleared.Status, cleared.Raw)
+	}
+}
+
+func TestUpdateMeRejectsOversizedBody(t *testing.T) {
+	e := newEnv(t)
+	body := `{"steam_id":null,"padding":"` + strings.Repeat("x", 64<<10) + `"}`
+	req, err := http.NewRequest(http.MethodPatch, e.http.URL+"/v1/me", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("oversized PATCH /v1/me: status=%d body=%s; want 413", resp.StatusCode, raw)
+	}
+}
+
 func TestCSRFGuard(t *testing.T) {
 	e := newEnv(t)
 	r := e.do("POST", "/v1/auth/signup", map[string]any{
@@ -2392,6 +2449,36 @@ func TestExternalLogin(t *testing.T) {
 	if r := e.do("POST", "/v1/auth/login", map[string]any{
 		"email": "op@example.com", "password": "password123"}, ""); r.Status != 404 {
 		t.Fatalf("federated login: want 404, got %d %s", r.Status, r.Raw)
+	}
+}
+
+func TestFederatedDisplayNameIsManagedByVarde(t *testing.T) {
+	e := newEnv(t)
+	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Federation = fed
+	fedToken := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_profile", "fed-profile@example.com", time.Now().Add(5*time.Minute))
+	login := e.mustOK(e.do("POST", "/v1/auth/external", map[string]any{"token": fedToken}, ""))
+	session := login["token"].(string)
+
+	displayName := e.do(http.MethodPatch, "/v1/me", map[string]any{"display_name": "Local override"}, session)
+	if displayName.Status != http.StatusBadRequest ||
+		displayName.Body["message"] != "display name is managed by varde.games" {
+		t.Fatalf("federated display-name update: status=%d body=%s", displayName.Status, displayName.Raw)
+	}
+	current := e.mustOK(e.do(http.MethodGet, "/v1/me", nil, session))
+	if got := current["user"].(map[string]any)["display_name"]; got != "Fed User" {
+		t.Fatalf("federated display name changed to %#v", got)
+	}
+
+	steamID := "76561198000000001"
+	steamUpdate := e.do(http.MethodPatch, "/v1/me", map[string]any{"steam_id": steamID}, session)
+	if steamUpdate.Status != http.StatusOK ||
+		steamUpdate.Body["user"].(map[string]any)["steam_id"] != steamID {
+		t.Fatalf("federated Steam ID update: status=%d body=%s", steamUpdate.Status, steamUpdate.Raw)
 	}
 }
 

@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -59,10 +62,43 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		case strings.HasSuffix(p, "/events/stream") && strings.HasPrefix(p, "/v1/groups/"):
 			s.userAuth(http.HandlerFunc(s.ServeSSE)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/") || p == "/healthz" || p == "/readyz":
-			s.userAuth(s.csrf(s.sessionCookies(genMux))).ServeHTTP(w, r)
+			s.userAuth(s.csrf(s.sessionCookies(captureSteamIDPresence(genMux)))).ServeHTTP(w, r)
 		default:
 			spa.ServeHTTP(w, r)
 		}
+	})
+}
+
+type steamIDPresenceKey struct{}
+
+func steamIDWasProvided(ctx context.Context) bool {
+	provided, _ := ctx.Value(steamIDPresenceKey{}).(bool)
+	return provided
+}
+
+func captureSteamIDPresence(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/me" && r.Method == http.MethodPatch {
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
+					writeErr(w, http.StatusRequestEntityTooLarge, gen.Validation, "request body too large", nil)
+				} else {
+					writeErr(w, http.StatusBadRequest, gen.Validation, "body read failed", nil)
+				}
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var fields map[string]json.RawMessage
+			present := false
+			if json.Unmarshal(body, &fields) == nil {
+				_, present = fields["steam_id"]
+			}
+			r = r.WithContext(context.WithValue(r.Context(), steamIDPresenceKey{}, present))
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

@@ -84,6 +84,54 @@ func (e CrashReportBodyKind) Valid() bool {
 	}
 }
 
+// Defines values for CreateGroupTournamentRequestFormat.
+const (
+	DoubleElimination CreateGroupTournamentRequestFormat = "double_elimination"
+	RoundRobin        CreateGroupTournamentRequestFormat = "round_robin"
+	Shuffle           CreateGroupTournamentRequestFormat = "shuffle"
+	SingleElimination CreateGroupTournamentRequestFormat = "single_elimination"
+	Swiss             CreateGroupTournamentRequestFormat = "swiss"
+)
+
+// Valid indicates whether the value is a known member of the CreateGroupTournamentRequestFormat enum.
+func (e CreateGroupTournamentRequestFormat) Valid() bool {
+	switch e {
+	case DoubleElimination:
+		return true
+	case RoundRobin:
+		return true
+	case Shuffle:
+		return true
+	case SingleElimination:
+		return true
+	case Swiss:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateGroupTournamentRequestMatchFormat.
+const (
+	Bo1 CreateGroupTournamentRequestMatchFormat = "bo1"
+	Bo3 CreateGroupTournamentRequestMatchFormat = "bo3"
+	Bo5 CreateGroupTournamentRequestMatchFormat = "bo5"
+)
+
+// Valid indicates whether the value is a known member of the CreateGroupTournamentRequestMatchFormat enum.
+func (e CreateGroupTournamentRequestMatchFormat) Valid() bool {
+	switch e {
+	case Bo1:
+		return true
+	case Bo3:
+		return true
+	case Bo5:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DesiredState.
 const (
 	DesiredStateRunning DesiredState = "running"
@@ -128,21 +176,25 @@ func (e DeviceLinkState) Valid() bool {
 
 // Defines values for ErrorCode.
 const (
-	Conflict              ErrorCode = "conflict"
-	Forbidden             ErrorCode = "forbidden"
-	Internal              ErrorCode = "internal"
-	LatestSaveUnavailable ErrorCode = "latest_save_unavailable"
-	LimitExceeded         ErrorCode = "limit_exceeded"
-	NotFound              ErrorCode = "not_found"
-	StaleEpoch            ErrorCode = "stale_epoch"
-	Unauthorized          ErrorCode = "unauthorized"
-	Unschedulable         ErrorCode = "unschedulable"
-	Validation            ErrorCode = "validation"
+	AutoTournamentUnavailable ErrorCode = "auto_tournament_unavailable"
+	Conflict                  ErrorCode = "conflict"
+	Forbidden                 ErrorCode = "forbidden"
+	Internal                  ErrorCode = "internal"
+	LatestSaveUnavailable     ErrorCode = "latest_save_unavailable"
+	LimitExceeded             ErrorCode = "limit_exceeded"
+	NotFound                  ErrorCode = "not_found"
+	SecretsUnconfigured       ErrorCode = "secrets_unconfigured"
+	StaleEpoch                ErrorCode = "stale_epoch"
+	Unauthorized              ErrorCode = "unauthorized"
+	Unschedulable             ErrorCode = "unschedulable"
+	Validation                ErrorCode = "validation"
 )
 
 // Valid indicates whether the value is a known member of the ErrorCode enum.
 func (e ErrorCode) Valid() bool {
 	switch e {
+	case AutoTournamentUnavailable:
+		return true
 	case Conflict:
 		return true
 	case Forbidden:
@@ -154,6 +206,8 @@ func (e ErrorCode) Valid() bool {
 	case LimitExceeded:
 		return true
 	case NotFound:
+		return true
+	case SecretsUnconfigured:
 		return true
 	case StaleEpoch:
 		return true
@@ -726,6 +780,28 @@ type AuthResponse struct {
 	User  User   `json:"user"`
 }
 
+// AutoTournamentLink defines model for AutoTournamentLink.
+type AutoTournamentLink struct {
+	BaseUrl  *string `json:"base_url,omitempty"`
+	Linked   bool    `json:"linked"`
+	LinkedAt *int64  `json:"linked_at,omitempty"`
+}
+
+// AutoTournamentLinkRequest defines model for AutoTournamentLinkRequest.
+type AutoTournamentLinkRequest struct {
+	ApiToken string `json:"api_token"`
+	BaseUrl  string `json:"base_url"`
+}
+
+// AutoTournamentTournament defines model for AutoTournamentTournament.
+type AutoTournamentTournament struct {
+	Id     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Type   string `json:"type"`
+	Url    string `json:"url"`
+}
+
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
 	AgentStartedAt    *int64    `json:"agent_started_at,omitempty"`
@@ -819,6 +895,34 @@ type CrashReportMeta struct {
 	NodeName         *string `json:"node_name,omitempty"`
 	ReceivedAtUnixMs int64   `json:"received_at_unix_ms"`
 	Version          *string `json:"version,omitempty"`
+}
+
+// CreateGroupTournamentRequest defines model for CreateGroupTournamentRequest.
+type CreateGroupTournamentRequest struct {
+	Format      *CreateGroupTournamentRequestFormat      `json:"format,omitempty"`
+	Maps        *[]string                                `json:"maps,omitempty"`
+	MatchFormat *CreateGroupTournamentRequestMatchFormat `json:"match_format,omitempty"`
+	Name        string                                   `json:"name"`
+	Start       *bool                                    `json:"start,omitempty"`
+	TeamSize    *int                                     `json:"team_size,omitempty"`
+	UserIds     *[]string                                `json:"user_ids,omitempty"`
+}
+
+// CreateGroupTournamentRequestFormat defines model for CreateGroupTournamentRequest.Format.
+type CreateGroupTournamentRequestFormat string
+
+// CreateGroupTournamentRequestMatchFormat defines model for CreateGroupTournamentRequest.MatchFormat.
+type CreateGroupTournamentRequestMatchFormat string
+
+// CreateGroupTournamentResponse defines model for CreateGroupTournamentResponse.
+type CreateGroupTournamentResponse struct {
+	BracketUrl   string   `json:"bracket_url"`
+	Players      int      `json:"players"`
+	Skipped      []string `json:"skipped"`
+	StartError   *string  `json:"start_error,omitempty"`
+	Started      bool     `json:"started"`
+	TournamentId string   `json:"tournament_id"`
+	Url          string   `json:"url"`
 }
 
 // DesiredState defines model for DesiredState.
@@ -1155,11 +1259,12 @@ type Me struct {
 
 // Member defines model for Member.
 type Member struct {
-	CreatedAt   int64  `json:"created_at"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
-	Role        Role   `json:"role"`
-	UserId      string `json:"user_id"`
+	CreatedAt   int64   `json:"created_at"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Role        Role    `json:"role"`
+	SteamId     *string `json:"steam_id,omitempty"`
+	UserId      string  `json:"user_id"`
 }
 
 // MeshReport defines model for MeshReport.
@@ -1380,11 +1485,12 @@ type TokenEnrollRequest struct {
 
 // User defines model for User.
 type User struct {
-	CreatedAt   int64  `json:"created_at"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
-	Id          string `json:"id"`
-	IsOperator  bool   `json:"is_operator"`
+	CreatedAt   int64   `json:"created_at"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Id          string  `json:"id"`
+	IsOperator  bool    `json:"is_operator"`
+	SteamId     *string `json:"steam_id,omitempty"`
 }
 
 // Version defines model for Version.
@@ -1495,6 +1601,12 @@ type CreateServerJSONBody struct {
 	SnapshotIntervalS *int                    `json:"snapshot_interval_s,omitempty"`
 }
 
+// UpdateMeJSONBody defines parameters for UpdateMe.
+type UpdateMeJSONBody struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	SteamId     *string `json:"steam_id,omitempty"`
+}
+
 // UpdateNodeJSONBody defines parameters for UpdateNode.
 type UpdateNodeJSONBody struct {
 	AdminState      *UpdateNodeJSONBodyAdminState `json:"admin_state,omitempty"`
@@ -1592,6 +1704,9 @@ type UpdateGroupJSONRequestBody UpdateGroupJSONBody
 // CreateEnrollmentTokenJSONRequestBody defines body for CreateEnrollmentToken for application/json ContentType.
 type CreateEnrollmentTokenJSONRequestBody CreateEnrollmentTokenJSONBody
 
+// PutAutoTournamentLinkJSONRequestBody defines body for PutAutoTournamentLink for application/json ContentType.
+type PutAutoTournamentLinkJSONRequestBody = AutoTournamentLinkRequest
+
 // CreateInviteJSONRequestBody defines body for CreateInvite for application/json ContentType.
 type CreateInviteJSONRequestBody CreateInviteJSONBody
 
@@ -1600,6 +1715,12 @@ type UpdateMemberJSONRequestBody UpdateMemberJSONBody
 
 // CreateServerJSONRequestBody defines body for CreateServer for application/json ContentType.
 type CreateServerJSONRequestBody CreateServerJSONBody
+
+// CreateGroupTournamentJSONRequestBody defines body for CreateGroupTournament for application/json ContentType.
+type CreateGroupTournamentJSONRequestBody = CreateGroupTournamentRequest
+
+// UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
+type UpdateMeJSONRequestBody UpdateMeJSONBody
 
 // UpdateNodeJSONRequestBody defines body for UpdateNode for application/json ContentType.
 type UpdateNodeJSONRequestBody UpdateNodeJSONBody
@@ -1715,6 +1836,15 @@ type ServerInterface interface {
 	// (GET /v1/groups/{groupId}/events/stream)
 	StreamEvents(w http.ResponseWriter, r *http.Request, groupId GroupId)
 
+	// (DELETE /v1/groups/{groupId}/integrations/autotournament)
+	DeleteAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
+	// (GET /v1/groups/{groupId}/integrations/autotournament)
+	GetAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
+	// (PUT /v1/groups/{groupId}/integrations/autotournament)
+	PutAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
 	// (POST /v1/groups/{groupId}/invites)
 	CreateInvite(w http.ResponseWriter, r *http.Request, groupId GroupId)
 
@@ -1736,6 +1866,12 @@ type ServerInterface interface {
 	// (POST /v1/groups/{groupId}/servers)
 	CreateServer(w http.ResponseWriter, r *http.Request, groupId GroupId)
 
+	// (GET /v1/groups/{groupId}/tournaments)
+	GetGroupTournaments(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
+	// (POST /v1/groups/{groupId}/tournaments)
+	CreateGroupTournament(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
 	// (GET /v1/invites/{code})
 	GetInvite(w http.ResponseWriter, r *http.Request, code string)
 
@@ -1744,6 +1880,9 @@ type ServerInterface interface {
 
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+
+	// (PATCH /v1/me)
+	UpdateMe(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(w http.ResponseWriter, r *http.Request, nodeId NodeId)
@@ -2494,6 +2633,84 @@ func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteAutoTournamentLink operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAutoTournamentLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAutoTournamentLink(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAutoTournamentLink operation middleware
+func (siw *ServerInterfaceWrapper) GetAutoTournamentLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAutoTournamentLink(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAutoTournamentLink operation middleware
+func (siw *ServerInterfaceWrapper) PutAutoTournamentLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAutoTournamentLink(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateInvite operation middleware
 func (siw *ServerInterfaceWrapper) CreateInvite(w http.ResponseWriter, r *http.Request) {
 
@@ -2694,6 +2911,58 @@ func (siw *ServerInterfaceWrapper) CreateServer(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetGroupTournaments operation middleware
+func (siw *ServerInterfaceWrapper) GetGroupTournaments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGroupTournaments(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateGroupTournament operation middleware
+func (siw *ServerInterfaceWrapper) CreateGroupTournament(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateGroupTournament(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetInvite operation middleware
 func (siw *ServerInterfaceWrapper) GetInvite(w http.ResponseWriter, r *http.Request) {
 
@@ -2751,6 +3020,20 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateMe operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMe(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3297,11 +3580,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/external", wrapper.ExternalLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/me", wrapper.UpdateMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups", wrapper.ListGroups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups", wrapper.CreateGroup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}", wrapper.DeleteGroup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}", wrapper.GetGroup)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/groups/{groupId}", wrapper.UpdateGroup)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}/integrations/autotournament", wrapper.DeleteAutoTournamentLink)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/integrations/autotournament", wrapper.GetAutoTournamentLink)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/groups/{groupId}/integrations/autotournament", wrapper.PutAutoTournamentLink)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/tournaments", wrapper.GetGroupTournaments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/tournaments", wrapper.CreateGroupTournament)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/members", wrapper.ListMembers)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}/members/{userId}", wrapper.RemoveMember)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/groups/{groupId}/members/{userId}", wrapper.UpdateMember)
@@ -5005,6 +5294,221 @@ func (response StreamEvents403JSONResponse) VisitStreamEventsResponse(w http.Res
 	return err
 }
 
+type DeleteAutoTournamentLinkRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+}
+
+type DeleteAutoTournamentLinkResponseObject interface {
+	VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error
+}
+
+type DeleteAutoTournamentLink204Response struct {
+}
+
+func (response DeleteAutoTournamentLink204Response) VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAutoTournamentLink401JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteAutoTournamentLink401JSONResponse) VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAutoTournamentLink403JSONResponse Error
+
+func (response DeleteAutoTournamentLink403JSONResponse) VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAutoTournamentLink503JSONResponse Error
+
+func (response DeleteAutoTournamentLink503JSONResponse) VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAutoTournamentLinkRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+}
+
+type GetAutoTournamentLinkResponseObject interface {
+	VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error
+}
+
+type GetAutoTournamentLink200JSONResponse AutoTournamentLink
+
+func (response GetAutoTournamentLink200JSONResponse) VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAutoTournamentLink401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAutoTournamentLink401JSONResponse) VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAutoTournamentLink403JSONResponse Error
+
+func (response GetAutoTournamentLink403JSONResponse) VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAutoTournamentLink503JSONResponse Error
+
+func (response GetAutoTournamentLink503JSONResponse) VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLinkRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+	Body    *PutAutoTournamentLinkJSONRequestBody
+}
+
+type PutAutoTournamentLinkResponseObject interface {
+	VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error
+}
+
+type PutAutoTournamentLink200JSONResponse AutoTournamentLink
+
+func (response PutAutoTournamentLink200JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutAutoTournamentLink400JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink401JSONResponse Error
+
+func (response PutAutoTournamentLink401JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink403JSONResponse Error
+
+func (response PutAutoTournamentLink403JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink502JSONResponse Error
+
+func (response PutAutoTournamentLink502JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink503JSONResponse Error
+
+func (response PutAutoTournamentLink503JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateInviteRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 	Body    *CreateInviteJSONRequestBody
@@ -5374,6 +5878,205 @@ func (response CreateServer403JSONResponse) VisitCreateServerResponse(w http.Res
 	return err
 }
 
+type GetGroupTournamentsRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+}
+
+type GetGroupTournamentsResponseObject interface {
+	VisitGetGroupTournamentsResponse(w http.ResponseWriter) error
+}
+
+type GetGroupTournaments200JSONResponse []AutoTournamentTournament
+
+func (response GetGroupTournaments200JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupTournaments401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetGroupTournaments401JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupTournaments403JSONResponse Error
+
+func (response GetGroupTournaments403JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupTournaments409JSONResponse Error
+
+func (response GetGroupTournaments409JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupTournaments502JSONResponse Error
+
+func (response GetGroupTournaments502JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupTournaments503JSONResponse Error
+
+func (response GetGroupTournaments503JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournamentRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+	Body    *CreateGroupTournamentJSONRequestBody
+}
+
+type CreateGroupTournamentResponseObject interface {
+	VisitCreateGroupTournamentResponse(w http.ResponseWriter) error
+}
+
+type CreateGroupTournament201JSONResponse CreateGroupTournamentResponse
+
+func (response CreateGroupTournament201JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateGroupTournament400JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament401JSONResponse Error
+
+func (response CreateGroupTournament401JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament403JSONResponse Error
+
+func (response CreateGroupTournament403JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament409JSONResponse Error
+
+func (response CreateGroupTournament409JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament502JSONResponse Error
+
+func (response CreateGroupTournament502JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament503JSONResponse Error
+
+func (response CreateGroupTournament503JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetInviteRequestObject struct {
 	Code string `json:"code"`
 }
@@ -5514,6 +6217,56 @@ func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 type GetMe401JSONResponse struct{ ErrorJSONResponse }
 
 func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMeRequestObject struct {
+	Body *UpdateMeJSONRequestBody
+}
+
+type UpdateMeResponseObject interface {
+	VisitUpdateMeResponse(w http.ResponseWriter) error
+}
+
+type UpdateMe200JSONResponse Me
+
+func (response UpdateMe200JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMe400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateMe400JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMe401JSONResponse Error
+
+func (response UpdateMe401JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -6368,6 +7121,15 @@ type StrictServerInterface interface {
 	// (GET /v1/groups/{groupId}/events/stream)
 	StreamEvents(ctx context.Context, request StreamEventsRequestObject) (StreamEventsResponseObject, error)
 
+	// (DELETE /v1/groups/{groupId}/integrations/autotournament)
+	DeleteAutoTournamentLink(ctx context.Context, request DeleteAutoTournamentLinkRequestObject) (DeleteAutoTournamentLinkResponseObject, error)
+
+	// (GET /v1/groups/{groupId}/integrations/autotournament)
+	GetAutoTournamentLink(ctx context.Context, request GetAutoTournamentLinkRequestObject) (GetAutoTournamentLinkResponseObject, error)
+
+	// (PUT /v1/groups/{groupId}/integrations/autotournament)
+	PutAutoTournamentLink(ctx context.Context, request PutAutoTournamentLinkRequestObject) (PutAutoTournamentLinkResponseObject, error)
+
 	// (POST /v1/groups/{groupId}/invites)
 	CreateInvite(ctx context.Context, request CreateInviteRequestObject) (CreateInviteResponseObject, error)
 
@@ -6389,6 +7151,12 @@ type StrictServerInterface interface {
 	// (POST /v1/groups/{groupId}/servers)
 	CreateServer(ctx context.Context, request CreateServerRequestObject) (CreateServerResponseObject, error)
 
+	// (GET /v1/groups/{groupId}/tournaments)
+	GetGroupTournaments(ctx context.Context, request GetGroupTournamentsRequestObject) (GetGroupTournamentsResponseObject, error)
+
+	// (POST /v1/groups/{groupId}/tournaments)
+	CreateGroupTournament(ctx context.Context, request CreateGroupTournamentRequestObject) (CreateGroupTournamentResponseObject, error)
+
 	// (GET /v1/invites/{code})
 	GetInvite(ctx context.Context, request GetInviteRequestObject) (GetInviteResponseObject, error)
 
@@ -6397,6 +7165,9 @@ type StrictServerInterface interface {
 
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+
+	// (PATCH /v1/me)
+	UpdateMe(ctx context.Context, request UpdateMeRequestObject) (UpdateMeResponseObject, error)
 
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(ctx context.Context, request DeleteNodeRequestObject) (DeleteNodeResponseObject, error)
@@ -7407,6 +8178,91 @@ func (sh *strictHandler) StreamEvents(w http.ResponseWriter, r *http.Request, gr
 	}
 }
 
+// DeleteAutoTournamentLink operation middleware
+func (sh *strictHandler) DeleteAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request DeleteAutoTournamentLinkRequestObject
+
+	request.GroupId = groupId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAutoTournamentLink(ctx, request.(DeleteAutoTournamentLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAutoTournamentLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAutoTournamentLinkResponseObject); ok {
+		if err := validResponse.VisitDeleteAutoTournamentLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAutoTournamentLink operation middleware
+func (sh *strictHandler) GetAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request GetAutoTournamentLinkRequestObject
+
+	request.GroupId = groupId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAutoTournamentLink(ctx, request.(GetAutoTournamentLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAutoTournamentLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAutoTournamentLinkResponseObject); ok {
+		if err := validResponse.VisitGetAutoTournamentLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutAutoTournamentLink operation middleware
+func (sh *strictHandler) PutAutoTournamentLink(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request PutAutoTournamentLinkRequestObject
+
+	request.GroupId = groupId
+
+	var body PutAutoTournamentLinkJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutAutoTournamentLink(ctx, request.(PutAutoTournamentLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutAutoTournamentLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutAutoTournamentLinkResponseObject); ok {
+		if err := validResponse.VisitPutAutoTournamentLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CreateInvite operation middleware
 func (sh *strictHandler) CreateInvite(w http.ResponseWriter, r *http.Request, groupId GroupId) {
 	var request CreateInviteRequestObject
@@ -7612,6 +8468,65 @@ func (sh *strictHandler) CreateServer(w http.ResponseWriter, r *http.Request, gr
 	}
 }
 
+// GetGroupTournaments operation middleware
+func (sh *strictHandler) GetGroupTournaments(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request GetGroupTournamentsRequestObject
+
+	request.GroupId = groupId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetGroupTournaments(ctx, request.(GetGroupTournamentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetGroupTournaments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetGroupTournamentsResponseObject); ok {
+		if err := validResponse.VisitGetGroupTournamentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateGroupTournament operation middleware
+func (sh *strictHandler) CreateGroupTournament(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request CreateGroupTournamentRequestObject
+
+	request.GroupId = groupId
+
+	var body CreateGroupTournamentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateGroupTournament(ctx, request.(CreateGroupTournamentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateGroupTournament")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateGroupTournamentResponseObject); ok {
+		if err := validResponse.VisitCreateGroupTournamentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetInvite operation middleware
 func (sh *strictHandler) GetInvite(w http.ResponseWriter, r *http.Request, code string) {
 	var request GetInviteRequestObject
@@ -7681,6 +8596,37 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateMe operation middleware
+func (sh *strictHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	var request UpdateMeRequestObject
+
+	var body UpdateMeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateMe(ctx, request.(UpdateMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateMeResponseObject); ok {
+		if err := validResponse.VisitUpdateMeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

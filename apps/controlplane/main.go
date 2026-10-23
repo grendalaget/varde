@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/api"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/apps/controlplane/internal/webui"
 )
@@ -98,21 +100,24 @@ func (r *relayFlags) Set(v string) error {
 }
 
 type serveCfg struct {
-	listen         string
-	dbURL          string
-	publicURL      string
-	signup         string
-	authMode       string
-	fedSecret      string
-	embeddedRelay  string
-	embeddedAddr   string
-	relays         relayFlags
-	heartbeatMs    int64
-	leaseTTLMs     int64
-	startGraceMs   int64
-	suspectAfterMs int64
-	offlineAfterMs int64
-	logLevel       string
+	listen                        string
+	dbURL                         string
+	secretsKeyFile                string
+	publicURL                     string
+	signup                        string
+	authMode                      string
+	fedSecret                     string
+	autotournamentAllowPrivate    bool
+	autotournamentAllowPrivateSet bool
+	embeddedRelay                 string
+	embeddedAddr                  string
+	relays                        relayFlags
+	heartbeatMs                   int64
+	leaseTTLMs                    int64
+	startGraceMs                  int64
+	suspectAfterMs                int64
+	offlineAfterMs                int64
+	logLevel                      string
 }
 
 // serveFlags returns a FlagSet bound to a fresh serveCfg; both interactive
@@ -123,9 +128,13 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs := flag.NewFlagSet("varde-control-plane", flag.ExitOnError)
 	fs.StringVar(&cfg.listen, "listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
+	fs.StringVar(&cfg.secretsKeyFile, "secrets-key-file", envOr("VARDE_SECRETS_KEY_FILE", ""), "file containing the 32-byte secrets encryption key")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
 	fs.StringVar(&cfg.signup, "signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
 	fs.StringVar(&cfg.authMode, "auth-mode", envOr("VARDE_AUTH_MODE", "local"), "auth mode: local|federated (federated trusts varde.games tokens on /v1/auth/external)")
+	fs.Var(&autoTournamentPrivateFlag{value: &cfg.autotournamentAllowPrivate, set: &cfg.autotournamentAllowPrivateSet},
+		"autotournament-allow-private",
+		"allow Auto Tournament URLs on private networks (default: true for local auth, false for federated auth; VARDE_AUTOTOURNAMENT_ALLOW_PRIVATE overrides)")
 	fs.StringVar(&cfg.fedSecret, "federation-secret", envOr("VARDE_FEDERATION_SECRET", ""), "shared secret for varde.games federation tokens (required with --auth-mode=federated)")
 	fs.StringVar(&cfg.embeddedRelay, "embedded-relay", envOr("VARDE_EMBEDDED_RELAY", ""), "run an in-process relay on this UDP addr (e.g. :3478)")
 	fs.StringVar(&cfg.embeddedAddr, "embedded-relay-addr", envOr("VARDE_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
@@ -137,6 +146,46 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.StringVar(&cfg.logLevel, "log-level", envOr("VARDE_LOG_LEVEL", "info"), "slog level")
 	fs.Var(&cfg.relays, "relay", "declared relay id=…,addr=… (repeatable)")
 	return fs, cfg
+}
+
+type autoTournamentPrivateFlag struct {
+	value *bool
+	set   *bool
+}
+
+func (f *autoTournamentPrivateFlag) String() string {
+	if !*f.set {
+		return "auto"
+	}
+	return strconv.FormatBool(*f.value)
+}
+
+func (f *autoTournamentPrivateFlag) Set(value string) error {
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	*f.value = parsed
+	*f.set = true
+	return nil
+}
+
+func (*autoTournamentPrivateFlag) IsBoolFlag() bool { return true }
+
+func applyAutoTournamentPrivateDefault(cfg *serveCfg) error {
+	if cfg.autotournamentAllowPrivateSet {
+		return nil
+	}
+	if value := os.Getenv("VARDE_AUTOTOURNAMENT_ALLOW_PRIVATE"); value != "" {
+		allowPrivate, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("parse VARDE_AUTOTOURNAMENT_ALLOW_PRIVATE: %w", err)
+		}
+		cfg.autotournamentAllowPrivate = allowPrivate
+		return nil
+	}
+	cfg.autotournamentAllowPrivate = cfg.authMode == "local"
+	return nil
 }
 
 func main() {
@@ -161,6 +210,9 @@ func main() {
 // logOut overrides the JSON log destination (the Windows service logs to a
 // file); nil means stdout.
 func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
+	if err := applyAutoTournamentPrivateDefault(cfg); err != nil {
+		return err
+	}
 	var level slog.Level
 	_ = level.UnmarshalText([]byte(cfg.logLevel))
 	if logOut == nil {
@@ -179,6 +231,16 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = st.Close() }()
+
+	secretManager, secretKeyPath, err := secrets.Load(os.Getenv("VARDE_SECRETS_KEY"), cfg.secretsKeyFile, cfg.dbURL)
+	if err != nil {
+		return fmt.Errorf("secrets key: %w", err)
+	}
+	if secretManager == nil {
+		log.Warn("Auto Tournament secrets are not configured; set VARDE_SECRETS_KEY (same value on every control plane replica) to use Auto Tournament")
+	} else if secretKeyPath != "" {
+		log.Info("loaded secrets encryption key", "path", secretKeyPath)
+	}
 
 	// CP signing key for relay tokens, persisted in kv.
 	relayKey, err := loadOrCreateRelayKey(context.Background(), st)
@@ -260,13 +322,15 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	}
 
 	srv := &api.Server{
-		Store:      st,
-		Auth:       local,
-		Federation: fed,
-		Cfg:        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
-		Recon:      recon,
-		RelayKey:   relayKey,
-		Log:        log,
+		Store:                      st,
+		Auth:                       local,
+		Federation:                 fed,
+		AutoTournamentAllowPrivate: cfg.autotournamentAllowPrivate,
+		Cfg:                        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
+		Recon:                      recon,
+		RelayKey:                   relayKey,
+		Secrets:                    secretManager,
+		Log:                        log,
 	}
 
 	handler := api.NewHandler(srv, webui.Handler())

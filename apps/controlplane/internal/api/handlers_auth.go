@@ -34,6 +34,7 @@ func genUser(u *store.User) gen.User {
 		DisplayName: u.DisplayName,
 		IsOperator:  u.IsOperator == 1,
 		CreatedAt:   u.CreatedAt,
+		SteamId:     u.SteamID,
 	}
 }
 
@@ -124,9 +125,17 @@ func (s *Server) GetMe(ctx context.Context, _ gen.GetMeRequestObject) (gen.GetMe
 	if err != nil {
 		return nil, err
 	}
-	ms, err := s.Store.GroupsForUser(ctx, u.ID)
+	me, err := s.me(ctx, u)
 	if err != nil {
 		return nil, err
+	}
+	return gen.GetMe200JSONResponse(me), nil
+}
+
+func (s *Server) me(ctx context.Context, u *store.User) (gen.Me, error) {
+	ms, err := s.Store.GroupsForUser(ctx, u.ID)
+	if err != nil {
+		return gen.Me{}, err
 	}
 	groups := []struct {
 		GroupId string   `json:"group_id"`
@@ -144,8 +153,61 @@ func (s *Server) GetMe(ctx context.Context, _ gen.GetMeRequestObject) (gen.GetMe
 			Role    gen.Role `json:"role"`
 		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
 	}
-	return gen.GetMe200JSONResponse{
+	return gen.Me{
 		User:   genUser(u),
 		Groups: groups,
 	}, nil
+}
+
+func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (gen.UpdateMeResponseObject, error) {
+	u, err := s.requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		return nil, errResp(gen.Validation, "missing body", nil)
+	}
+	if u.WebsiteUserID != nil && req.Body.DisplayName != nil {
+		return nil, errResp(gen.Validation, "display name is managed by varde.games", nil)
+	}
+	var steamID **string
+	if req.Body.SteamId != nil {
+		value := *req.Body.SteamId
+		if value != "" && !validSteamID(value) {
+			return nil, errResp(gen.Validation, "invalid steam id", nil)
+		}
+		if value == "" {
+			var clear *string
+			steamID = &clear
+		} else {
+			steamID = &req.Body.SteamId
+		}
+	} else if steamIDWasProvided(ctx) {
+		var clear *string
+		steamID = &clear
+	}
+	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName, steamID); err != nil {
+		return nil, err
+	}
+	u, err = s.Store.UserByID(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	me, err := s.me(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return gen.UpdateMe200JSONResponse(me), nil
+}
+
+func validSteamID(id string) bool {
+	if len(id) != 17 || !strings.HasPrefix(id, "7656119") {
+		return false
+	}
+	for _, digit := range id {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }

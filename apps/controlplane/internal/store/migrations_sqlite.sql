@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash   TEXT NOT NULL,
     is_operator     INTEGER NOT NULL DEFAULT 0,
     website_user_id TEXT,
+    steam_id        TEXT,
     created_at      BIGINT NOT NULL
 );
 
@@ -37,6 +38,18 @@ CREATE TABLE IF NOT EXISTS group_limits (
     max_servers           BIGINT,
     max_storage_bytes     BIGINT,
     max_relay_bytes_month BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS group_integrations (
+    group_id         TEXT NOT NULL REFERENCES groups(id),
+    kind             TEXT NOT NULL,
+    base_url         TEXT NOT NULL,
+    api_token_sealed TEXT NOT NULL,
+    fleet_key_sealed TEXT NOT NULL,
+    created_by       TEXT,
+    created_at       BIGINT NOT NULL,
+    updated_at       BIGINT NOT NULL,
+    PRIMARY KEY (group_id, kind)
 );
 
 CREATE TABLE IF NOT EXISTS group_members (
