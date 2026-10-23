@@ -156,8 +156,8 @@ func (s *Server) CreateGroupTournament(ctx context.Context, req gen.CreateGroupT
 	if req.Body.TeamSize != nil {
 		teamSize = *req.Body.TeamSize
 	}
-	if teamSize < 1 || teamSize > 5 {
-		return nil, errResp(gen.Validation, "team_size must be between 1 and 5", nil)
+	if teamSize < 2 || teamSize > 5 {
+		return nil, errResp(gen.Validation, "team size must be 2–5", nil)
 	}
 	maps := []string{"de_mirage", "de_inferno", "de_nuke"}
 	if req.Body.Maps != nil {

@@ -293,6 +293,49 @@ func TestAutoTournamentValidation(t *testing.T) {
 	})
 }
 
+func TestAutoTournamentTeamSizeBounds(t *testing.T) {
+	tests := []struct {
+		name        string
+		teamSize    int
+		playerCount int
+		wantStatus  int
+	}{
+		{name: "below minimum", teamSize: 1, wantStatus: http.StatusBadRequest},
+		{name: "minimum", teamSize: 2, playerCount: 4, wantStatus: http.StatusCreated},
+		{name: "maximum", teamSize: 5, playerCount: 10, wantStatus: http.StatusCreated},
+		{name: "above maximum", teamSize: 6, wantStatus: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := newEnv(t)
+			at, _ := newATStub(t, e)
+			linkAT(t, e, at)
+			if test.playerCount > 0 {
+				addATMembers(t, e, test.playerCount, test.playerCount)
+			}
+
+			path := fmt.Sprintf("/v1/groups/%s/tournaments", e.group)
+			response := e.do(http.MethodPost, path, map[string]any{
+				"name": "Boundary", "format": "single_elimination", "team_size": test.teamSize,
+			}, e.token)
+			if response.Status != test.wantStatus {
+				t.Fatalf("team_size %d: status=%d body=%s, want %d",
+					test.teamSize, response.Status, response.Raw, test.wantStatus)
+			}
+			if test.wantStatus == http.StatusBadRequest &&
+				response.Body["message"] != "team size must be 2–5" {
+				t.Fatalf("team_size %d: message=%v, want team size must be 2–5",
+					test.teamSize, response.Body["message"])
+			}
+			if test.wantStatus == http.StatusCreated &&
+				response.Body["players"] != float64(test.playerCount) {
+				t.Fatalf("team_size %d: players=%v, want %d",
+					test.teamSize, response.Body["players"], test.playerCount)
+			}
+		})
+	}
+}
+
 func jsonObjectHas(value any, key string, want any) bool {
 	object, ok := value.(map[string]any)
 	return ok && object[key] == want

@@ -189,7 +189,7 @@ export default function Tournaments() {
                 value={teamSize}
                 onChange={(e) => setTeamSize(Number(e.target.value))}
               >
-                {[1, 2, 3, 4, 5].map((size) => (
+                {[2, 3, 4, 5].map((size) => (
                   <option key={size} value={size}>
                     {size}
                   </option>
