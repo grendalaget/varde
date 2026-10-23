@@ -55,6 +55,11 @@ socket can remain wildcard-bound despite loopback settings; the driver uses
 the agent-allocated port and local UDP health checks. Real gameplay over the
 mesh and gameplay packet sizes still need client validation.
 
+**Future hardening:** On Linux, per-server overlayfs (shared install as a read-only lower dir, per-server upper dir)
+would isolate `steam_appid.txt`/`boot.vcfg` writes and keep the shared install read-only.
+Pair it with per-server network namespaces for the wildcard UDP bind ([#96](https://github.com/grendalaget/varde/issues/96)).
+The agent runs as unprivileged `varde`; Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor.
+
 Modes: casual, competitive (default), wingman, arms_race and deathmatch.
 The default map is `de_dust2`, player limit 10 (2–64), and bot quota 0 (0–64).
 Hostname, password and bot quota are written to private generated `varde.cfg`, not
