@@ -2,6 +2,7 @@ import { Button as HButton } from "@heroui/react";
 import { StateCairn } from "./Logo";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -178,17 +179,32 @@ export function Field({
   label,
   help,
   children,
+  group = false,
 }: {
   label: string;
   help?: ReactNode;
   children: ReactNode;
+  group?: boolean;
 }) {
-  return (
-    <label className="block">
-      <span className="text-sm font-medium text-foreground">{label}</span>
+  const id = useId();
+  const content = (
+    <>
+      <span
+        id={group ? id : undefined}
+        className="text-sm font-medium text-foreground"
+      >
+        {label}
+      </span>
       <div className="mt-1">{children}</div>
       {help && <p className="mt-1 text-xs text-muted">{help}</p>}
-    </label>
+    </>
+  );
+  return group ? (
+    <div role="group" aria-labelledby={id} className="block">
+      {content}
+    </div>
+  ) : (
+    <label className="block">{content}</label>
   );
 }
 

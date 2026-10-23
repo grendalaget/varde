@@ -22,6 +22,7 @@ type Querier interface {
 // helpers we wrap the store.
 
 var ErrNotFound = errors.New("store: not found")
+var ErrSteamIDTaken = errors.New("store: steam id already linked")
 
 func (s *Store) q() *sqlx.DB { return s.DB }
 
@@ -81,6 +82,94 @@ func (s *Store) UserByWebsiteID(ctx context.Context, websiteUserID string) (*Use
 func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName string) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`UPDATE users SET email=?, display_name=? WHERE id=?`), email, displayName, id)
+	return err
+}
+
+func (s *Store) UpdateUserProfile(ctx context.Context, id string, displayName *string) error {
+	if displayName != nil {
+		if _, err := s.q().ExecContext(ctx, s.Rebind(
+			`UPDATE users SET display_name=? WHERE id=?`), *displayName, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) CreateSteamLinkState(ctx context.Context, nonce, userID string, expiresAt int64) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO steam_link_states(nonce, user_id, expires_at) VALUES(?, ?, ?)`),
+		nonce, userID, expiresAt)
+	return err
+}
+
+func (s *Store) ConsumeSteamLinkState(ctx context.Context, nonce string, now int64) (string, error) {
+	var userID string
+	missing := false
+	err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM steam_link_states WHERE expires_at <= ?`), now); err != nil {
+			return err
+		}
+		err := tx.GetContext(ctx, &userID, s.Rebind(
+			`DELETE FROM steam_link_states WHERE nonce=? AND expires_at>? RETURNING user_id`),
+			nonce, now)
+		if errors.Is(err, sql.ErrNoRows) {
+			missing = true
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		return "", sql.ErrNoRows
+	}
+	return userID, err
+}
+
+func (s *Store) SetUserSteam(ctx context.Context, userID string, steamID, persona, avatar *string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE users SET steam_id=?, steam_persona_name=?, steam_avatar_url=? WHERE id=?`),
+		steamID, persona, avatar, userID)
+	if IsUniqueViolation(err) {
+		return ErrSteamIDTaken
+	}
+	return err
+}
+
+func (s *Store) GroupPlugin(ctx context.Context, groupID, pluginID string) (*GroupPlugin, error) {
+	var row GroupPlugin
+	err := s.q().GetContext(ctx, &row, s.Rebind(
+		`SELECT group_id, plugin_id, settings_json, enabled_by, created_at, updated_at
+		 FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (s *Store) ListGroupPlugins(ctx context.Context, groupID string) ([]GroupPlugin, error) {
+	var rows []GroupPlugin
+	err := s.q().SelectContext(ctx, &rows, s.Rebind(
+		`SELECT group_id, plugin_id, settings_json, enabled_by, created_at, updated_at
+		 FROM group_plugins WHERE group_id=? ORDER BY plugin_id`), groupID)
+	return rows, err
+}
+
+func (s *Store) UpsertGroupPlugin(ctx context.Context, row GroupPlugin) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO group_plugins(group_id, plugin_id, settings_json, enabled_by, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(group_id, plugin_id) DO UPDATE SET
+		   settings_json=excluded.settings_json, enabled_by=excluded.enabled_by, updated_at=excluded.updated_at`),
+		row.GroupID, row.PluginID, row.SettingsJSON, row.EnabledBy, row.CreatedAt, row.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteGroupPlugin(ctx context.Context, groupID, pluginID string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`DELETE FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
 	return err
 }
 
@@ -152,8 +241,13 @@ func (s *Store) UpdateGroup(ctx context.Context, g *Group) error {
 }
 
 func (s *Store) DeleteGroup(ctx context.Context, id string) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
-	return err
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM group_plugins WHERE group_id=?`), id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
+		return err
+	})
 }
 
 func (s *Store) GroupsForUser(ctx context.Context, userID string) ([]Member, error) {
@@ -177,7 +271,7 @@ func (s *Store) MemberRole(ctx context.Context, groupID, userID string) (string,
 func (s *Store) ListMembers(ctx context.Context, groupID string) ([]Member, error) {
 	var ms []Member
 	err := s.q().SelectContext(ctx, &ms, s.Rebind(
-		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name
+		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name, u.steam_id
 		 FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=?`), groupID)
 	return ms, err
 }

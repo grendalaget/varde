@@ -27,7 +27,10 @@ import (
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
+	"github.com/grendalaget/varde/apps/controlplane/internal/outbound"
+	"github.com/grendalaget/varde/apps/controlplane/internal/plugins"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/apps/controlplane/internal/webui"
 )
@@ -100,10 +103,13 @@ func (r *relayFlags) Set(v string) error {
 type serveCfg struct {
 	listen           string
 	dbURL            string
+	secretsKeyFile   string
 	publicURL        string
+	steamAPIKey      string
 	signup           string
 	authMode         string
 	fedSecret        string
+	pluginManifests  []string
 	embeddedRelay    string
 	embeddedAddr     string
 	relays           relayFlags
@@ -125,10 +131,18 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs := flag.NewFlagSet("varde-control-plane", flag.ExitOnError)
 	fs.StringVar(&cfg.listen, "listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
+	fs.StringVar(&cfg.secretsKeyFile, "secrets-key-file", envOr("VARDE_SECRETS_KEY_FILE", ""), "file containing the 32-byte secrets encryption key")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
+	fs.StringVar(&cfg.steamAPIKey, "steam-api-key", envOr("VARDE_STEAM_API_KEY", ""), "optional Steam Web API key for profile details")
 	fs.StringVar(&cfg.signup, "signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
 	fs.StringVar(&cfg.authMode, "auth-mode", envOr("VARDE_AUTH_MODE", "local"), "auth mode: local|federated (federated trusts varde.games tokens on /v1/auth/external)")
 	fs.StringVar(&cfg.fedSecret, "federation-secret", envOr("VARDE_FEDERATION_SECRET", ""), "shared secret for varde.games federation tokens (required with --auth-mode=federated)")
+	for _, path := range strings.Split(os.Getenv("VARDE_PLUGINS"), ",") {
+		if path = strings.TrimSpace(path); path != "" {
+			cfg.pluginManifests = append(cfg.pluginManifests, path)
+		}
+	}
+	fs.Var((*pluginManifestFlags)(&cfg.pluginManifests), "plugin", "plugin manifest path (repeatable; VARDE_PLUGINS is comma-separated)")
 	fs.StringVar(&cfg.embeddedRelay, "embedded-relay", envOr("VARDE_EMBEDDED_RELAY", ""), "run an in-process relay on this UDP addr (e.g. :3478)")
 	fs.StringVar(&cfg.embeddedAddr, "embedded-relay-addr", envOr("VARDE_EMBEDDED_RELAY_ADDR", ""), "public addr of the embedded relay (default: --public-url host + embedded-relay port)")
 	fs.Int64Var(&cfg.heartbeatMs, "heartbeat-interval-ms", envInt("VARDE_HEARTBEAT_INTERVAL_MS", 5000), "agent heartbeat interval")
@@ -141,6 +155,19 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.StringVar(&cfg.logLevel, "log-level", envOr("VARDE_LOG_LEVEL", "info"), "slog level")
 	fs.Var(&cfg.relays, "relay", "declared relay id=…,addr=… (repeatable)")
 	return fs, cfg
+}
+
+type pluginManifestFlags []string
+
+func (f *pluginManifestFlags) String() string { return strings.Join(*f, ",") }
+
+func (f *pluginManifestFlags) Set(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("plugin manifest path must not be empty")
+	}
+	*f = append(*f, path)
+	return nil
 }
 
 func main() {
@@ -171,6 +198,10 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	if err := validateTimingProfile("short", cfg.shortHeartbeatMs, cfg.shortLeaseTTLMs); err != nil {
 		return err
 	}
+	pluginRegistry, err := plugins.Load(cfg.pluginManifests)
+	if err != nil {
+		return err
+	}
 	var level slog.Level
 	_ = level.UnmarshalText([]byte(cfg.logLevel))
 	if logOut == nil {
@@ -189,6 +220,16 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = st.Close() }()
+
+	secretManager, secretKeyPath, err := secrets.Load(os.Getenv("VARDE_SECRETS_KEY"), cfg.secretsKeyFile, cfg.dbURL)
+	if err != nil {
+		return fmt.Errorf("secrets key: %w", err)
+	}
+	if secretManager == nil {
+		log.Warn("plugin secrets are not configured; set VARDE_SECRETS_KEY (same value on every control plane replica) to use plugins")
+	} else if secretKeyPath != "" {
+		log.Info("loaded secrets encryption key", "path", secretKeyPath)
+	}
 
 	// CP signing key for relay tokens, persisted in kv.
 	relayKey, err := loadOrCreateRelayKey(context.Background(), st)
@@ -275,7 +316,10 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		Store:      st,
 		Auth:       local,
 		Federation: fed,
-		Cfg:        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
+		Secrets:    secretManager,
+		Plugins:    pluginRegistry,
+		PluginHTTP: outbound.NewClient(10 * time.Second),
+		Cfg:        api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Timings: timings, Relays: cfg.relays, Version: version},
 		Recon:      recon,
 		RelayKey:   relayKey,
 		Log:        log,

@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,16 +21,19 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
+	"github.com/grendalaget/varde/apps/controlplane/internal/plugins"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // Config carries the flag/env configuration used by handlers.
 type Config struct {
-	PublicURL string
-	Timings   reconciler.Timings
-	Relays    []RelayConf
-	Version   string
+	PublicURL   string
+	SteamAPIKey string
+	Timings     reconciler.Timings
+	Relays      []RelayConf
+	Version     string
 }
 
 // RelayConf is one --relay id=…,addr=… entry.
@@ -42,11 +47,16 @@ type Server struct {
 	Store *store.Store
 	Auth  auth.Provider
 	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
-	Federation *auth.Federation
-	Cfg        Config
-	Recon      *reconciler.Reconciler
-	RelayKey   ed25519.PrivateKey // CP signing key for relay tokens
-	Log        *slog.Logger
+	Federation     *auth.Federation
+	Cfg            Config
+	Secrets        *secrets.Manager
+	Plugins        *plugins.Registry
+	PluginHTTP     *http.Client
+	SteamOpenIDURL string
+	SteamAPIBase   string
+	Recon          *reconciler.Reconciler
+	RelayKey       ed25519.PrivateKey // CP signing key for relay tokens
+	Log            *slog.Logger
 }
 
 type ctxKey int
@@ -108,6 +118,10 @@ func statusFor(code gen.ErrorCode) int {
 		return http.StatusForbidden
 	case gen.Validation, gen.Unschedulable:
 		return http.StatusBadRequest
+	case gen.PluginUnavailable:
+		return http.StatusBadGateway
+	case gen.SecretsUnconfigured:
+		return http.StatusServiceUnavailable
 	}
 	return http.StatusInternalServerError
 }
@@ -193,6 +207,16 @@ func (s *Server) scopedActor(ctx context.Context, groupID, scope, minRole string
 		}
 		if !st.AllowsGroup(groupID) {
 			return "", "", errResp(gen.Forbidden, "service token not bound to group", nil)
+		}
+		for _, plugin := range s.Plugins.All() {
+			if plugin.ServiceToken != st.Name {
+				continue
+			}
+			if _, err := s.Store.GroupPlugin(ctx, groupID, plugin.ID); errors.Is(err, sql.ErrNoRows) {
+				return "", "", errResp(gen.Forbidden, "plugin not enabled for group", nil)
+			} else if err != nil {
+				return "", "", err
+			}
 		}
 		// audit_log.actor_type has no 'service' value; system + a
 		// "service:<name>" id keeps the actor readable without a schema change.
