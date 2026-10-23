@@ -805,7 +805,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "auto_tournament_unavailable";
+            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "auto_tournament_unavailable" | "secrets_unconfigured";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -948,6 +948,7 @@ export interface components {
             bracket_url: string;
             started: boolean;
             players: number;
+            start_error?: string;
             skipped: string[];
         };
         Invite: {
@@ -1937,6 +1938,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     putAutoTournamentLink: {
@@ -1967,6 +1969,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     deleteAutoTournamentLink: {
@@ -1989,6 +1992,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getGroupTournaments: {
@@ -2015,6 +2019,7 @@ export interface operations {
             403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     createGroupTournament: {
@@ -2046,6 +2051,7 @@ export interface operations {
             403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     listMembers: {

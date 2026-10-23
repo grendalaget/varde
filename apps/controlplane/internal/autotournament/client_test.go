@@ -75,8 +75,10 @@ func TestClientRequests(t *testing.T) {
 		t.Fatalf("CreateFleetKey() = %q, %v", key, err)
 	}
 	players := []Player{{ID: "76561198000000001", Name: "Player One"}}
-	if err := client.ImportPlayers(ctx, players); err != nil {
+	if failures, err := client.ImportPlayers(ctx, players); err != nil {
 		t.Fatal(err)
+	} else if len(failures) != 0 {
+		t.Fatalf("ImportPlayers() failures = %+v, want none", failures)
 	}
 	tournament, err := client.CreateShuffle(ctx, "Shuffle", 2, []string{"de_mirage"})
 	if err != nil || tournament.ID != "42" {
@@ -94,8 +96,10 @@ func TestClientRequests(t *testing.T) {
 	if err != nil || bracket.ID != "42" {
 		t.Fatalf("CreateBracket() = %+v, %v", bracket, err)
 	}
-	if err := client.RegisterPlayers(ctx, "42", []string{players[0].ID}); err != nil {
+	if failures, err := client.RegisterPlayers(ctx, "42", []string{players[0].ID}); err != nil {
 		t.Fatal(err)
+	} else if len(failures) != 0 {
+		t.Fatalf("RegisterPlayers() failures = %+v, want none", failures)
 	}
 	if err := client.Start(ctx, "42"); err != nil {
 		t.Fatal(err)
@@ -147,6 +151,33 @@ func TestClientRequests(t *testing.T) {
 		"teamSize": float64(1), "maps": []any{"de_mirage"}, "teamIds": []any{"varde-abc-1"},
 	})
 	assertRequestJSON(t, requests[6].body, map[string]any{"playerIds": []any{players[0].ID}})
+}
+
+func TestPlayerFailuresAreReturned(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/players/bulk-import", "/api/tournament/42/register-players":
+			_, _ = w.Write([]byte(`{"errors":[{"playerId":"76561198000000001","name":"Player One","error":"already exists"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	importFailures, err := client.ImportPlayers(context.Background(), []Player{{ID: "76561198000000001", Name: "Player One"}})
+	if err != nil || !reflect.DeepEqual(importFailures, []PlayerFailure{{
+		ID: "76561198000000001", Name: "Player One", Message: "already exists",
+	}}) {
+		t.Fatalf("ImportPlayers() = %+v, %v", importFailures, err)
+	}
+	registrationFailures, err := client.RegisterPlayers(context.Background(), "42", []string{"76561198000000001"})
+	if err != nil || !reflect.DeepEqual(registrationFailures, importFailures) {
+		t.Fatalf("RegisterPlayers() = %+v, %v; want %+v", registrationFailures, err, importFailures)
+	}
 }
 
 func assertRequestJSON(t *testing.T, body []byte, want any) {
@@ -246,16 +277,33 @@ func TestIsPrivateAddress(t *testing.T) {
 		{address: "10.1.2.3", want: true},
 		{address: "192.168.1.1", want: true},
 		{address: "172.31.1.1", want: true},
+		{address: "224.0.0.1", want: true},
 		{address: "fc00::1", want: true},
 		{address: "fe80::1", want: true},
+		{address: "ff02::1", want: true},
 		{address: "0.0.0.0", want: true},
 		{address: "::", want: true},
 		{address: "100.64.0.1", want: true},
 		{address: "100.127.255.254", want: true},
 		{address: "::ffff:127.0.0.1", want: true},
+		{address: "0.1.2.3", want: true},
+		{address: "192.0.0.1", want: true},
+		{address: "192.0.2.1", want: true},
+		{address: "198.18.0.1", want: true},
+		{address: "198.51.100.1", want: true},
+		{address: "203.0.113.1", want: true},
+		{address: "240.0.0.1", want: true},
+		{address: "255.255.255.255", want: true},
+		{address: "64:ff9b::1", want: true},
+		{address: "64:ff9b:1::1", want: true},
+		{address: "2001:db8::1", want: true},
+		{address: "2002::1", want: true},
+		{address: "100::1", want: true},
 		{address: "100.63.255.255", want: false},
 		{address: "100.128.0.1", want: false},
+		{address: "1.1.1.1", want: false},
 		{address: "8.8.8.8", want: false},
+		{address: "2606:4700::1111", want: false},
 		{address: "2606:4700:4700::1111", want: false},
 	} {
 		t.Run(test.address, func(t *testing.T) {

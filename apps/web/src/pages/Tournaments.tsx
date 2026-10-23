@@ -273,6 +273,11 @@ export default function Tournaments() {
             {created && (
               <div className="rounded-md border border-separator p-3 text-sm">
                 <p className="font-medium text-foreground">Tournament created.</p>
+                {created.start_error && (
+                  <p className="mt-2 text-sm text-muted">
+                    Created but not started: {created.start_error}
+                  </p>
+                )}
                 <a
                   className="text-accent underline"
                   href={created.url}
@@ -283,7 +288,7 @@ export default function Tournaments() {
                 </a>
                 {created.skipped.length > 0 && (
                   <p className="mt-2 text-muted">
-                    Skipped (no Steam ID): {created.skipped.join(", ")}
+                    Skipped players: {created.skipped.join(", ")}
                   </p>
                 )}
               </div>

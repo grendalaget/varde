@@ -110,6 +110,8 @@ func statusFor(code gen.ErrorCode) int {
 		return http.StatusConflict
 	case gen.AutoTournamentUnavailable:
 		return http.StatusBadGateway
+	case gen.SecretsUnconfigured:
+		return http.StatusServiceUnavailable
 	case gen.LimitExceeded:
 		return http.StatusForbidden
 	case gen.Validation, gen.Unschedulable:

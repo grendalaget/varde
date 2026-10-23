@@ -13,6 +13,10 @@ AT.
    service token. Linking checks the token and creates a fleet enrollment key
    for the group. The token and fleet key are encrypted at rest by Varde and
    are never returned by the API.
+   When using PostgreSQL or multiple control-plane replicas, set
+   `VARDE_SECRETS_KEY` to the same base64-encoded 32-byte key on every replica.
+   A shared database does not get an auto-generated key; Auto Tournament
+   endpoints return `503 secrets_unconfigured` until a key is configured.
 3. Add each participant's SteamID64 in **Settings → Your profile**. A valid ID
    is 17 digits and starts with `7656119`; players without one cannot be
    selected for a tournament.

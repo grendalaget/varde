@@ -236,7 +236,9 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("secrets key: %w", err)
 	}
-	if secretKeyPath != "" {
+	if secretManager == nil {
+		log.Warn("Auto Tournament secrets are not configured; set VARDE_SECRETS_KEY (same value on every control plane replica) to use Auto Tournament")
+	} else if secretKeyPath != "" {
 		log.Info("loaded secrets encryption key", "path", secretKeyPath)
 	}
 

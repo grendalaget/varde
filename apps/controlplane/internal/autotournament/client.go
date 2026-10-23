@@ -24,6 +24,25 @@ const privateNetworkError = "auto tournament address is on a private network; th
 
 var errPrivateNetwork = errors.New(privateNetworkError)
 
+var disallowedAddressPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("255.255.255.255/32"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+}
+
 type Client struct {
 	BaseURL      string
 	Token        string
@@ -34,6 +53,12 @@ type Client struct {
 type Player struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+type PlayerFailure struct {
+	ID      string
+	Name    string
+	Message string
 }
 
 type Tournament struct {
@@ -147,13 +172,15 @@ func isPrivateAddress(addr netip.Addr) bool {
 		return true
 	}
 	addr = addr.Unmap()
-	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
+		addr.IsMulticast() || addr.IsUnspecified() {
 		return true
 	}
-	if addr.Is4() {
-		octets := addr.As4()
-		return octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127
+	for _, prefix := range disallowedAddressPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
 	}
 	return false
 }
@@ -190,15 +217,15 @@ func (c *Client) CreateFleetKey(ctx context.Context, name string) (string, error
 	return result.Value, nil
 }
 
-func (c *Client) ImportPlayers(ctx context.Context, players []Player) error {
+func (c *Client) ImportPlayers(ctx context.Context, players []Player) ([]PlayerFailure, error) {
 	body, status, err := c.do(ctx, http.MethodPost, "/api/players/bulk-import", players, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		return responseError(status, body)
+		return nil, responseError(status, body)
 	}
-	return nil
+	return decodePlayerFailures(body)
 }
 
 func (c *Client) CreateShuffle(ctx context.Context, name string, teamSize int, maps []string) (Tournament, error) {
@@ -228,16 +255,16 @@ func (c *Client) CreateBracket(ctx context.Context, name, tournamentType, format
 	return c.createTournament(ctx, request)
 }
 
-func (c *Client) RegisterPlayers(ctx context.Context, id string, steamIDs []string) error {
+func (c *Client) RegisterPlayers(ctx context.Context, id string, steamIDs []string) ([]PlayerFailure, error) {
 	body, status, err := c.do(ctx, http.MethodPost, "/api/tournament/"+url.PathEscape(id)+"/register-players",
 		map[string][]string{"playerIds": steamIDs}, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		return responseError(status, body)
+		return nil, responseError(status, body)
 	}
-	return nil
+	return decodePlayerFailures(body)
 }
 
 func (c *Client) Start(ctx context.Context, id string) error {
@@ -377,6 +404,70 @@ func responseMessage(body []byte) string {
 	}
 	_ = json.Unmarshal(body, &response)
 	return response.Error
+}
+
+func decodePlayerFailures(body []byte) ([]PlayerFailure, error) {
+	if len(body) == 0 {
+		return nil, nil
+	}
+	var response struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("auto tournament decode player errors: %w", err)
+	}
+	failures := make([]PlayerFailure, 0, len(response.Errors))
+	for _, raw := range response.Errors {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			var message string
+			if json.Unmarshal(raw, &message) != nil {
+				return nil, fmt.Errorf("auto tournament decode player error: %w", err)
+			}
+			failures = append(failures, PlayerFailure{Message: message})
+			continue
+		}
+		failure := PlayerFailure{
+			ID:      firstJSONFieldString(fields, "id", "playerId", "player_id", "steamId", "steam_id", "steamID"),
+			Name:    firstJSONFieldString(fields, "name", "playerName", "player_name"),
+			Message: firstJSONFieldString(fields, "error", "message", "reason"),
+		}
+		if player, ok := fields["player"]; ok {
+			if failure.ID == "" {
+				failure.ID = firstJSONFieldString(map[string]json.RawMessage{"player": player}, "player")
+				var nested map[string]json.RawMessage
+				if json.Unmarshal(player, &nested) == nil {
+					if failure.ID == "" {
+						failure.ID = firstJSONFieldString(nested, "id", "playerId", "player_id", "steamId", "steam_id", "steamID")
+					}
+					if failure.Name == "" {
+						failure.Name = firstJSONFieldString(nested, "name", "playerName", "player_name")
+					}
+				}
+			}
+		}
+		if failure.Message == "" {
+			failure.Message = string(raw)
+		}
+		failures = append(failures, failure)
+	}
+	return failures, nil
+}
+
+func firstJSONFieldString(fields map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		if raw, ok := fields[key]; ok {
+			var value string
+			if json.Unmarshal(raw, &value) == nil {
+				return value
+			}
+			var number json.Number
+			if json.Unmarshal(raw, &number) == nil {
+				return number.String()
+			}
+		}
+	}
+	return ""
 }
 
 func responseError(status int, body []byte) error {

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1955,6 +1956,26 @@ func TestUpdateMeSteamID(t *testing.T) {
 	}
 }
 
+func TestUpdateMeRejectsOversizedBody(t *testing.T) {
+	e := newEnv(t)
+	body := `{"steam_id":null,"padding":"` + strings.Repeat("x", 64<<10) + `"}`
+	req, err := http.NewRequest(http.MethodPatch, e.http.URL+"/v1/me", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("oversized PATCH /v1/me: status=%d body=%s; want 413", resp.StatusCode, raw)
+	}
+}
+
 func TestCSRFGuard(t *testing.T) {
 	e := newEnv(t)
 	r := e.do("POST", "/v1/auth/signup", map[string]any{
@@ -2428,6 +2449,36 @@ func TestExternalLogin(t *testing.T) {
 	if r := e.do("POST", "/v1/auth/login", map[string]any{
 		"email": "op@example.com", "password": "password123"}, ""); r.Status != 404 {
 		t.Fatalf("federated login: want 404, got %d %s", r.Status, r.Raw)
+	}
+}
+
+func TestFederatedDisplayNameIsManagedByVarde(t *testing.T) {
+	e := newEnv(t)
+	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Federation = fed
+	fedToken := mintFedToken(t, "test-fed-secret", "https://varde.games", "cp.varde.games",
+		"wuser_profile", "fed-profile@example.com", time.Now().Add(5*time.Minute))
+	login := e.mustOK(e.do("POST", "/v1/auth/external", map[string]any{"token": fedToken}, ""))
+	session := login["token"].(string)
+
+	displayName := e.do(http.MethodPatch, "/v1/me", map[string]any{"display_name": "Local override"}, session)
+	if displayName.Status != http.StatusBadRequest ||
+		displayName.Body["message"] != "display name is managed by varde.games" {
+		t.Fatalf("federated display-name update: status=%d body=%s", displayName.Status, displayName.Raw)
+	}
+	current := e.mustOK(e.do(http.MethodGet, "/v1/me", nil, session))
+	if got := current["user"].(map[string]any)["display_name"]; got != "Fed User" {
+		t.Fatalf("federated display name changed to %#v", got)
+	}
+
+	steamID := "76561198000000001"
+	steamUpdate := e.do(http.MethodPatch, "/v1/me", map[string]any{"steam_id": steamID}, session)
+	if steamUpdate.Status != http.StatusOK ||
+		steamUpdate.Body["user"].(map[string]any)["steam_id"] != steamID {
+		t.Fatalf("federated Steam ID update: status=%d body=%s", steamUpdate.Status, steamUpdate.Raw)
 	}
 }
 

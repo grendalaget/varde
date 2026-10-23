@@ -79,16 +79,24 @@ func steamIDWasProvided(ctx context.Context) bool {
 func captureSteamIDPresence(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/me" && r.Method == http.MethodPatch {
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			body, err := io.ReadAll(r.Body)
-			if err == nil {
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				var fields map[string]json.RawMessage
-				present := false
-				if json.Unmarshal(body, &fields) == nil {
-					_, present = fields["steam_id"]
+			if err != nil {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
+					writeErr(w, http.StatusRequestEntityTooLarge, gen.Validation, "request body too large", nil)
+				} else {
+					writeErr(w, http.StatusBadRequest, gen.Validation, "body read failed", nil)
 				}
-				r = r.WithContext(context.WithValue(r.Context(), steamIDPresenceKey{}, present))
+				return
 			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var fields map[string]json.RawMessage
+			present := false
+			if json.Unmarshal(body, &fields) == nil {
+				_, present = fields["steam_id"]
+			}
+			r = r.WithContext(context.WithValue(r.Context(), steamIDPresenceKey{}, present))
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -167,6 +167,9 @@ func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (g
 	if req.Body == nil {
 		return nil, errResp(gen.Validation, "missing body", nil)
 	}
+	if u.WebsiteUserID != nil && req.Body.DisplayName != nil {
+		return nil, errResp(gen.Validation, "display name is managed by varde.games", nil)
+	}
 	var steamID **string
 	if req.Body.SteamId != nil {
 		value := *req.Body.SteamId

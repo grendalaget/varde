@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,9 @@ func TestOpenRejectsTampering(t *testing.T) {
 
 func TestLoadCreatesPrivateKeyBesideSQLiteDB(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".secrets.key.tmp-stale"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	db := filepath.Join(dir, "state.db")
 	manager, path, err := Load("", "", "sqlite://"+db)
 	if err != nil {
@@ -86,5 +90,59 @@ func TestLoadCreatesPrivateKeyBesideSQLiteDB(t *testing.T) {
 		} else if info.Mode().Perm() != 0o600 {
 			t.Fatalf("key permissions = %o, want 600", info.Mode().Perm())
 		}
+	}
+}
+
+func TestLoadLeavesSharedDatabaseUnconfiguredWithoutKey(t *testing.T) {
+	manager, path, err := Load("", "", "postgres://db.example.test/varde")
+	if err != nil || manager != nil || path != "" {
+		t.Fatalf("Load() = %v, %q, %v; want nil manager and path", manager, path, err)
+	}
+}
+
+func TestLoadReadsConfiguredSharedDatabaseKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared.key")
+	key := bytes.Repeat([]byte{3}, 32)
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, loadedPath, err := Load("", path, "postgres://db.example.test/varde")
+	if err != nil || manager == nil || loadedPath != path {
+		t.Fatalf("Load() = %v, %q, %v; want configured key", manager, loadedPath, err)
+	}
+}
+
+func TestLoadEnvironmentKeyOverridesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.key")
+	encodedKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
+	manager, loadedPath, err := Load(encodedKey, path, "postgres://db.example.test/varde")
+	if err != nil || manager == nil || loadedPath != "" {
+		t.Fatalf("Load() = %v, %q, %v; want environment key and no key-file path", manager, loadedPath, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("environment key path was accessed: stat error = %v", err)
+	}
+}
+
+func TestLoadDoesNotGenerateMissingSharedDatabaseKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.key")
+	if _, _, err := Load("", path, "postgres://db.example.test/varde"); err == nil {
+		t.Fatal("Load() succeeded without the configured shared database key")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("missing key file was created: stat error = %v", err)
+	}
+}
+
+func TestLoadWrongLengthKeyIncludesRecoveryGuidance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.key")
+	if err := os.WriteFile(path, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := Load("", path, "postgres://db.example.test/varde")
+	if err == nil || !strings.Contains(err.Error(), path) ||
+		!strings.Contains(err.Error(), "restore it from backup") ||
+		!strings.Contains(err.Error(), "delete it only if no Auto Tournament integrations are linked") {
+		t.Fatalf("Load() error = %v; want path and recovery guidance", err)
 	}
 }

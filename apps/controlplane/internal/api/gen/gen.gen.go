@@ -183,6 +183,7 @@ const (
 	LatestSaveUnavailable     ErrorCode = "latest_save_unavailable"
 	LimitExceeded             ErrorCode = "limit_exceeded"
 	NotFound                  ErrorCode = "not_found"
+	SecretsUnconfigured       ErrorCode = "secrets_unconfigured"
 	StaleEpoch                ErrorCode = "stale_epoch"
 	Unauthorized              ErrorCode = "unauthorized"
 	Unschedulable             ErrorCode = "unschedulable"
@@ -205,6 +206,8 @@ func (e ErrorCode) Valid() bool {
 	case LimitExceeded:
 		return true
 	case NotFound:
+		return true
+	case SecretsUnconfigured:
 		return true
 	case StaleEpoch:
 		return true
@@ -916,6 +919,7 @@ type CreateGroupTournamentResponse struct {
 	BracketUrl   string   `json:"bracket_url"`
 	Players      int      `json:"players"`
 	Skipped      []string `json:"skipped"`
+	StartError   *string  `json:"start_error,omitempty"`
 	Started      bool     `json:"started"`
 	TournamentId string   `json:"tournament_id"`
 	Url          string   `json:"url"`
@@ -5334,6 +5338,20 @@ func (response DeleteAutoTournamentLink403JSONResponse) VisitDeleteAutoTournamen
 	return err
 }
 
+type DeleteAutoTournamentLink503JSONResponse Error
+
+func (response DeleteAutoTournamentLink503JSONResponse) VisitDeleteAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetAutoTournamentLinkRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 }
@@ -5380,6 +5398,20 @@ func (response GetAutoTournamentLink403JSONResponse) VisitGetAutoTournamentLinkR
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAutoTournamentLink503JSONResponse Error
+
+func (response GetAutoTournamentLink503JSONResponse) VisitGetAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5459,6 +5491,20 @@ func (response PutAutoTournamentLink502JSONResponse) VisitPutAutoTournamentLinkR
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutAutoTournamentLink503JSONResponse Error
+
+func (response PutAutoTournamentLink503JSONResponse) VisitPutAutoTournamentLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5910,6 +5956,20 @@ func (response GetGroupTournaments502JSONResponse) VisitGetGroupTournamentsRespo
 	return err
 }
 
+type GetGroupTournaments503JSONResponse Error
+
+func (response GetGroupTournaments503JSONResponse) VisitGetGroupTournamentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateGroupTournamentRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 	Body    *CreateGroupTournamentJSONRequestBody
@@ -5999,6 +6059,20 @@ func (response CreateGroupTournament502JSONResponse) VisitCreateGroupTournamentR
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateGroupTournament503JSONResponse Error
+
+func (response CreateGroupTournament503JSONResponse) VisitCreateGroupTournamentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }

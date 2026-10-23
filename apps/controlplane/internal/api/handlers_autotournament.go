@@ -26,6 +26,9 @@ func (s *Server) GetAutoTournamentLink(ctx context.Context, req gen.GetAutoTourn
 	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
 		return nil, err
 	}
+	if err := s.requireAutoTournamentSecrets(); err != nil {
+		return nil, err
+	}
 	integration, err := s.Store.GroupIntegration(ctx, req.GroupId, autoTournamentKind)
 	if errors.Is(err, store.ErrNotFound) {
 		return gen.GetAutoTournamentLink200JSONResponse{Linked: false}, nil
@@ -43,6 +46,9 @@ func (s *Server) GetAutoTournamentLink(ctx context.Context, req gen.GetAutoTourn
 func (s *Server) PutAutoTournamentLink(ctx context.Context, req gen.PutAutoTournamentLinkRequestObject) (gen.PutAutoTournamentLinkResponseObject, error) {
 	user, _, err := s.requireRole(ctx, req.GroupId, "admin")
 	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAutoTournamentSecrets(); err != nil {
 		return nil, err
 	}
 	if req.Body == nil {
@@ -73,9 +79,6 @@ func (s *Server) PutAutoTournamentLink(ctx context.Context, req gen.PutAutoTourn
 		}
 		return nil, errResp(gen.AutoTournamentUnavailable, err.Error(), nil)
 	}
-	if s.Secrets == nil {
-		return nil, errResp(gen.Internal, "secrets encryption is unavailable", nil)
-	}
 	tokenSealed, err := s.Secrets.Seal(req.Body.ApiToken, integrationAAD(req.GroupId, "api_token"))
 	if err != nil {
 		return nil, err
@@ -103,6 +106,9 @@ func (s *Server) PutAutoTournamentLink(ctx context.Context, req gen.PutAutoTourn
 func (s *Server) DeleteAutoTournamentLink(ctx context.Context, req gen.DeleteAutoTournamentLinkRequestObject) (gen.DeleteAutoTournamentLinkResponseObject, error) {
 	user, _, err := s.requireRole(ctx, req.GroupId, "admin")
 	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAutoTournamentSecrets(); err != nil {
 		return nil, err
 	}
 	if err := s.Store.DeleteGroupIntegration(ctx, req.GroupId, autoTournamentKind); err != nil {
@@ -195,16 +201,29 @@ func (s *Server) CreateGroupTournament(ctx context.Context, req gen.CreateGroupT
 		imported = append(imported, autotournament.Player{ID: player.steamID, Name: player.name})
 		steamIDs = append(steamIDs, player.steamID)
 	}
-	if err := client.ImportPlayers(ctx, imported); err != nil {
+	importFailures, err := client.ImportPlayers(ctx, imported)
+	if err != nil {
 		return nil, errResp(gen.AutoTournamentUnavailable, err.Error(), nil)
+	}
+	if len(importFailures) > 0 {
+		_, descriptions, _ := summarizePlayerFailures(importFailures, players)
+		return nil, errResp(gen.AutoTournamentUnavailable,
+			"auto tournament could not import players: "+strings.Join(descriptions, "; "), nil)
 	}
 
 	var tournament autotournament.Tournament
 	var tournamentErr error
+	registeredPlayers := len(players)
 	if format == "shuffle" {
 		tournament, tournamentErr = client.CreateShuffle(ctx, req.Body.Name, teamSize, maps)
 		if tournamentErr == nil {
-			tournamentErr = client.RegisterPlayers(ctx, tournament.ID, steamIDs)
+			var registrationFailures []autotournament.PlayerFailure
+			registrationFailures, tournamentErr = client.RegisterPlayers(ctx, tournament.ID, steamIDs)
+			if tournamentErr == nil && len(registrationFailures) > 0 {
+				failedNames, _, failedCount := summarizePlayerFailures(registrationFailures, players)
+				skipped = appendUniqueNames(skipped, failedNames)
+				registeredPlayers -= failedCount
+			}
 		}
 	} else {
 		if err := shuffleTournamentPlayers(players); err != nil {
@@ -224,22 +243,94 @@ func (s *Server) CreateGroupTournament(ctx context.Context, req gen.CreateGroupT
 		return nil, errResp(gen.AutoTournamentUnavailable, tournamentErr.Error(), nil)
 	}
 	started := req.Body.Start == nil || *req.Body.Start
+	var startError *string
 	if started {
 		if err := client.Start(ctx, tournament.ID); err != nil {
-			return nil, errResp(gen.AutoTournamentUnavailable, err.Error(), nil)
+			message := err.Error()
+			startError = &message
+			started = false
 		}
 	}
 	baseURL := strings.TrimRight(integration.BaseURL, "/")
 	tournamentURL := baseURL + "/tournament/" + tournament.ID
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", user.ID,
 		"group.tournament.create", tournament.ID, map[string]any{
-			"format": format, "players": len(players), "started": started,
+			"format": format, "players": registeredPlayers, "started": started,
 		})
 	return gen.CreateGroupTournament201JSONResponse{
 		TournamentId: tournament.ID, Url: tournamentURL,
-		BracketUrl: tournamentURL + "/bracket", Started: started,
-		Players: len(players), Skipped: skipped,
+		BracketUrl: tournamentURL + "/bracket", Started: started, StartError: startError,
+		Players: registeredPlayers, Skipped: skipped,
 	}, nil
+}
+
+func summarizePlayerFailures(failures []autotournament.PlayerFailure, players []tournamentPlayer) ([]string, []string, int) {
+	playersByID := make(map[string]tournamentPlayer, len(players))
+	playersByName := make(map[string]tournamentPlayer, len(players))
+	for _, player := range players {
+		playersByID[player.steamID] = player
+		playersByName[player.name] = player
+	}
+	names := make([]string, 0, len(failures))
+	descriptions := make([]string, 0, len(failures))
+	seenNames := make(map[string]struct{}, len(failures))
+	seenFailures := make(map[string]struct{}, len(failures))
+	for i, failure := range failures {
+		player, found := playersByID[failure.ID]
+		if !found && failure.Name != "" {
+			player, found = playersByName[failure.Name]
+		}
+		failureKey := failure.ID
+		if failureKey == "" {
+			failureKey = failure.Name
+		}
+		if failureKey == "" {
+			failureKey = fmt.Sprintf("failure-%d", i)
+		}
+		name := failure.Name
+		if found {
+			name = player.name
+		}
+		if name == "" {
+			name = failure.ID
+		}
+		if name == "" {
+			name = "unknown player"
+		}
+		if _, exists := seenFailures[failureKey]; !exists {
+			seenFailures[failureKey] = struct{}{}
+		}
+		if _, exists := seenNames[name]; !exists {
+			seenNames[name] = struct{}{}
+			names = append(names, name)
+			if failure.Message == "" {
+				descriptions = append(descriptions, name)
+			} else {
+				descriptions = append(descriptions, name+": "+failure.Message)
+			}
+		}
+	}
+	failedCount := len(seenFailures)
+	if failedCount > len(players) {
+		failedCount = len(players)
+	}
+	return names, descriptions, failedCount
+}
+
+func appendUniqueNames(existing, added []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(added))
+	for _, name := range existing {
+		seen[name] = struct{}{}
+	}
+	result := append([]string(nil), existing...)
+	for _, name := range added {
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	return result
 }
 
 func (s *Server) autoTournamentClient(baseURL, token string) (*autotournament.Client, error) {
@@ -254,15 +345,15 @@ func (s *Server) autoTournamentClient(baseURL, token string) (*autotournament.Cl
 }
 
 func (s *Server) linkedAutoTournament(ctx context.Context, groupID string) (*store.GroupIntegration, *autotournament.Client, error) {
+	if err := s.requireAutoTournamentSecrets(); err != nil {
+		return nil, nil, err
+	}
 	integration, err := s.Store.GroupIntegration(ctx, groupID, autoTournamentKind)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil, errResp(gen.Conflict, "auto tournament not linked", nil)
 	}
 	if err != nil {
 		return nil, nil, err
-	}
-	if s.Secrets == nil {
-		return nil, nil, errResp(gen.Internal, "secrets encryption is unavailable", nil)
 	}
 	token, err := s.Secrets.Open(integration.APITokenSealed, integrationAAD(groupID, "api_token"))
 	if err != nil {
@@ -273,6 +364,13 @@ func (s *Server) linkedAutoTournament(ctx context.Context, groupID string) (*sto
 		return nil, nil, errResp(gen.Internal, "stored auto tournament URL is invalid", nil)
 	}
 	return integration, client, nil
+}
+
+func (s *Server) requireAutoTournamentSecrets() error {
+	if s.Secrets == nil {
+		return errResp(gen.SecretsUnconfigured, "set VARDE_SECRETS_KEY (same value on every control plane replica) to use Auto Tournament", nil)
+	}
+	return nil
 }
 
 func (s *Server) addAutoTournamentDirective(ctx context.Context, srv *store.Server, cfg map[string]any) {

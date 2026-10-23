@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
@@ -68,6 +70,52 @@ func newATStub(t *testing.T, e *env) (*httptest.Server, *[]atCall) {
 	t.Cleanup(server.Close)
 	e.srv.AutoTournamentHTTP = server.Client()
 	return server, &calls
+}
+
+func newATWorkflowStub(t *testing.T, e *env, importBody, registerBody []byte, startStatus int) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	if importBody == nil {
+		importBody = []byte(`{"errors":[]}`)
+	}
+	if registerBody == nil {
+		registerBody = []byte(`{"errors":[]}`)
+	}
+	if startStatus == 0 {
+		startStatus = http.StatusOK
+	}
+	created := &atomic.Int32{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/tournaments":
+			_, _ = w.Write([]byte(`{"tournaments":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/fleet/keys":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"value":"test-fleet-key"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/players/bulk-import":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(importBody)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/tournaments":
+			created.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"tournament":{"id":101,"name":"Created","type":"shuffle"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/register-players"):
+			_, _ = w.Write(registerBody)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/tournament/start":
+			w.WriteHeader(startStatus)
+			if startStatus >= 200 && startStatus < 300 {
+				_, _ = w.Write([]byte(`{"success":true}`))
+			} else {
+				_, _ = w.Write([]byte(`{"error":"start failed"}`))
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"unexpected request"}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	e.srv.AutoTournamentHTTP = server.Client()
+	return server, created
 }
 
 func linkAT(t *testing.T, e *env, server *httptest.Server) {
@@ -171,6 +219,99 @@ func TestAutoTournamentLinkRejectsUnauthorizedFleetKey(t *testing.T) {
 				t.Fatalf("integration row exists or lookup failed: %v", err)
 			}
 		})
+	}
+}
+
+func TestAutoTournamentEndpointsRequireSecretsConfiguration(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Secrets = nil
+	groupPath := fmt.Sprintf("/v1/groups/%s", e.group)
+	requests := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{method: http.MethodGet, path: groupPath + "/integrations/autotournament"},
+		{method: http.MethodPut, path: groupPath + "/integrations/autotournament", body: map[string]any{
+			"base_url": "https://at.example.test", "api_token": "token",
+		}},
+		{method: http.MethodDelete, path: groupPath + "/integrations/autotournament"},
+		{method: http.MethodGet, path: groupPath + "/tournaments"},
+		{method: http.MethodPost, path: groupPath + "/tournaments", body: map[string]any{
+			"name": "Needs secrets",
+		}},
+	}
+	for _, request := range requests {
+		response := e.do(request.method, request.path, request.body, e.token)
+		if response.Status != http.StatusServiceUnavailable ||
+			response.Body["code"] != "secrets_unconfigured" ||
+			response.Body["message"] != "set VARDE_SECRETS_KEY (same value on every control plane replica) to use Auto Tournament" {
+			t.Errorf("%s %s: status=%d body=%s; want 503 secrets_unconfigured",
+				request.method, request.path, response.Status, response.Raw)
+		}
+	}
+}
+
+func TestAutoTournamentPartialImportStopsBeforeTournamentCreation(t *testing.T) {
+	e := newEnv(t)
+	server, created := newATWorkflowStub(t, e,
+		[]byte(`{"errors":[{"playerId":"76561198000000001","error":"invalid player"}]}`), nil, 0)
+	linkAT(t, e, server)
+	addATMembers(t, e, 4, 4)
+
+	path := fmt.Sprintf("/v1/groups/%s/tournaments", e.group)
+	response := e.do(http.MethodPost, path, map[string]any{
+		"name": "Partial import", "team_size": 2,
+	}, e.token)
+	if response.Status != http.StatusBadGateway ||
+		response.Body["code"] != "auto_tournament_unavailable" ||
+		!strings.Contains(response.Body["message"].(string), "Varde Player 1") ||
+		!strings.Contains(response.Body["message"].(string), "invalid player") {
+		t.Fatalf("partial import response: status=%d body=%s", response.Status, response.Raw)
+	}
+	if count := created.Load(); count != 0 {
+		t.Fatalf("created %d tournaments after a partial import failure", count)
+	}
+}
+
+func TestAutoTournamentPartialRegistrationIsReportedAsSkipped(t *testing.T) {
+	e := newEnv(t)
+	server, _ := newATWorkflowStub(t, e, nil,
+		[]byte(`{"registered":3,"errors":[{"playerId":"76561198000000001","error":"already registered"}]}`), 0)
+	linkAT(t, e, server)
+	addATMembers(t, e, 4, 4)
+
+	userIDs := []string{"usr_at_1", "usr_at_2", "usr_at_3", "usr_at_4"}
+	path := fmt.Sprintf("/v1/groups/%s/tournaments", e.group)
+	response := e.do(http.MethodPost, path, map[string]any{
+		"name": "Partial registration", "team_size": 2, "user_ids": userIDs, "start": false,
+	}, e.token)
+	if response.Status != http.StatusCreated || response.Body["players"] != float64(3) ||
+		response.Body["started"] != false {
+		t.Fatalf("partial registration response: status=%d body=%s", response.Status, response.Raw)
+	}
+	skipped, ok := response.Body["skipped"].([]any)
+	if !ok || !reflect.DeepEqual(skipped, []any{"Varde Player 1"}) {
+		t.Fatalf("skipped = %#v, want Varde Player 1", response.Body["skipped"])
+	}
+}
+
+func TestAutoTournamentStartFailureReturnsCreatedTournament(t *testing.T) {
+	e := newEnv(t)
+	server, _ := newATWorkflowStub(t, e, nil, nil, http.StatusBadGateway)
+	linkAT(t, e, server)
+	addATMembers(t, e, 4, 4)
+
+	path := fmt.Sprintf("/v1/groups/%s/tournaments", e.group)
+	response := e.do(http.MethodPost, path, map[string]any{
+		"name": "Start failure", "team_size": 2,
+	}, e.token)
+	if response.Status != http.StatusCreated || response.Body["tournament_id"] != "101" ||
+		response.Body["url"] != server.URL+"/tournament/101" ||
+		response.Body["bracket_url"] != server.URL+"/tournament/101/bracket" ||
+		response.Body["started"] != false ||
+		!strings.Contains(response.Body["start_error"].(string), "start failed") {
+		t.Fatalf("start failure response: status=%d body=%s", response.Status, response.Raw)
 	}
 }
 

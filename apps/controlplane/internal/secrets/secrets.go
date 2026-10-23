@@ -74,8 +74,8 @@ func (m *Manager) gcm() (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-// Load uses an environment key when configured; otherwise it reads or creates
-// a private key file. The returned path is empty when the key came from env.
+// Load uses an environment key when configured. SQLite deployments may create
+// a private key file; shared databases require a configured key.
 func Load(envKey, keyFile, dbURL string) (*Manager, string, error) {
 	if envKey != "" {
 		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(envKey))
@@ -89,14 +89,20 @@ func Load(envKey, keyFile, dbURL string) (*Manager, string, error) {
 		return manager, "", nil
 	}
 
+	createIfMissing := strings.HasPrefix(dbURL, "sqlite://")
 	if keyFile == "" {
+		if !createIfMissing {
+			return nil, "", nil
+		}
 		keyFile = defaultKeyPath(dbURL)
 	}
-	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
-		return nil, "", fmt.Errorf("secrets: create key directory: %w", err)
+	if createIfMissing {
+		if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+			return nil, "", fmt.Errorf("secrets: create key directory: %w", err)
+		}
 	}
 	key, err := os.ReadFile(keyFile)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && createIfMissing {
 		key = make([]byte, 32)
 		if _, err := rand.Read(key); err != nil {
 			return nil, "", fmt.Errorf("secrets: generate key: %w", err)
@@ -109,26 +115,42 @@ func Load(envKey, keyFile, dbURL string) (*Manager, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("secrets: read key file: %w", err)
 	}
+	if len(key) != 32 {
+		return nil, "", fmt.Errorf("secrets: key file %q must contain exactly 32 raw bytes; restore it from backup or delete it only if no Auto Tournament integrations are linked", keyFile)
+	}
 	if err := os.Chmod(keyFile, 0o600); err != nil {
 		return nil, "", fmt.Errorf("secrets: set key file permissions: %w", err)
 	}
 	manager, err := New(key)
 	if err != nil {
-		return nil, "", fmt.Errorf("secrets: key file must contain 32 raw bytes: %w", err)
+		return nil, "", fmt.Errorf("secrets: key file %q: %w", keyFile, err)
 	}
 	return manager, keyFile, nil
 }
 
 func writeKey(path string, key []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return err
 	}
 	if _, err := f.Write(key); err != nil {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Link(tmpPath, path)
 }
 
 func defaultKeyPath(dbURL string) string {

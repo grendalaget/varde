@@ -279,6 +279,7 @@ paths:
               schema: { $ref: "#/components/schemas/AutoTournamentLink" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
     put:
       operationId: putAutoTournamentLink
       tags: [groups]
@@ -299,6 +300,7 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
     delete:
       operationId: deleteAutoTournamentLink
       tags: [groups]
@@ -308,6 +310,7 @@ paths:
         "204": { description: Unlinked. }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/tournaments:
     get:
       operationId: getGroupTournaments
@@ -326,6 +329,7 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
     post:
       operationId: createGroupTournament
       tags: [groups]
@@ -347,6 +351,7 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/members:
     get:
       operationId: listMembers
@@ -1318,7 +1323,8 @@ components:
           type: string
           enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
                  limit_exceeded, validation, unauthorized, conflict,
-                 unschedulable, internal, auto_tournament_unavailable]
+                 unschedulable, internal, auto_tournament_unavailable,
+                 secrets_unconfigured]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:
@@ -1480,6 +1486,7 @@ components:
         bracket_url: { type: string }
         started: { type: boolean }
         players: { type: integer }
+        start_error: { type: string }
         skipped:
           type: array
           items: { type: string }
