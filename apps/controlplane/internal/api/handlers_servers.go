@@ -302,6 +302,7 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	if err := s.Store.CreateServer(ctx, srv, svc); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "server.create", srv.ID, map[string]any{"name": srv.Name, "game": srv.GameID})
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, req.GroupId, &srv.ID, nil, "server.created", map[string]any{"name": srv.Name, "game": srv.GameID})
 	v, err := s.serverView(ctx, srv)
@@ -382,6 +383,7 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 	if err := s.Store.UpdateServerMeta(ctx, srv); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.update", srv.ID, nil)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
@@ -402,6 +404,7 @@ func (s *Server) DeleteServer(ctx context.Context, req gen.DeleteServerRequestOb
 	if err := s.Store.DeleteServer(ctx, req.ServerId); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.delete", srv.ID, nil)
 	return gen.DeleteServer204Response{}, nil
 }

@@ -44,6 +44,46 @@ func decodeWaitResponse(t *testing.T, r apiResp) (string, bool) {
 	return response.Digest, response.Changed
 }
 
+type directiveWaitResult struct {
+	response apiResp
+	elapsed  time.Duration
+}
+
+func startDirectiveWait(a *agent, digest string) <-chan directiveWaitResult {
+	result := make(chan directiveWaitResult, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		startedAt := time.Now()
+		result <- directiveWaitResult{
+			response: a.waitForDirectives(digest, 20_000),
+			elapsed:  time.Since(startedAt),
+		}
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+	return result
+}
+
+func assertDirectiveWaitChanged(t *testing.T, result <-chan directiveWaitResult, oldDigest string) {
+	t.Helper()
+	select {
+	case r := <-result:
+		if r.response.Status != http.StatusOK {
+			t.Fatalf("wait after directive update: %d %s", r.response.Status, r.response.Raw)
+		}
+		newDigest, changed := decodeWaitResponse(t, r.response)
+		if !changed || newDigest == oldDigest {
+			t.Fatalf("wait response = (%q, %t), old digest %q", newDigest, changed, oldDigest)
+		}
+		if r.elapsed >= 750*time.Millisecond {
+			t.Fatalf("directive wait wake took %s", r.elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("directive wait did not wake within 1 second")
+	}
+}
+
 func TestAgentHeartbeatDirectiveDigestStable(t *testing.T) {
 	e := newEnv(t)
 	a := e.newAgent("node-a")
@@ -52,6 +92,68 @@ func TestAgentHeartbeatDirectiveDigestStable(t *testing.T) {
 	second := a.currentDirectivesDigest()
 	if first != second {
 		t.Fatalf("unchanged heartbeat digests differ: %q != %q", first, second)
+	}
+}
+
+func TestAgentDirectivesWaitWakesOnNodeUpdate(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "rename", body: map[string]any{"name": "node-renamed"}},
+		{name: "disable hosting", body: map[string]any{"hosting_enabled": false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			a := e.newAgent("node-a")
+			digest := a.currentDirectivesDigest()
+			result := startDirectiveWait(a, digest)
+
+			r := e.do("PATCH", "/v1/nodes/"+a.nodeID, tt.body, e.token)
+			if r.Status != http.StatusOK {
+				t.Fatalf("update node: %d %s", r.Status, r.Raw)
+			}
+			assertDirectiveWaitChanged(t, result, digest)
+		})
+	}
+}
+
+func TestAgentDirectivesWaitReturnsHeartbeatAuthErrorAfterNodeUnavailable(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       map[string]any
+		wantStatus int
+	}{
+		{
+			name: "disabled", method: "PATCH",
+			body:       map[string]any{"admin_state": "disabled"},
+			wantStatus: http.StatusForbidden,
+		},
+		{name: "deleted", method: "DELETE", wantStatus: http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			a := e.newAgent("node-a")
+			result := startDirectiveWait(a, a.currentDirectivesDigest())
+			r := e.do(tt.method, "/v1/nodes/"+a.nodeID, tt.body, e.token)
+			if r.Status != http.StatusOK && r.Status != http.StatusNoContent {
+				t.Fatalf("make node unavailable: %d %s", r.Status, r.Raw)
+			}
+			select {
+			case got := <-result:
+				if got.response.Status != tt.wantStatus {
+					t.Fatalf("wait status = %d, want %d: %s", got.response.Status, tt.wantStatus, got.response.Raw)
+				}
+				if got.elapsed >= 750*time.Millisecond {
+					t.Fatalf("node auth error was returned after %s", got.elapsed)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("wait did not return after node became unavailable")
+			}
+		})
 	}
 }
 
@@ -91,6 +193,22 @@ func TestAgentHeartbeatDigestMatchesAfterSnapshotRequestClaim(t *testing.T) {
 	if changed || got != directives.DirectivesDigest {
 		t.Fatalf("wait response = (%q, %t), want (%q, false)", got, changed, directives.DirectivesDigest)
 	}
+}
+
+func TestAgentDirectivesWaitWakesOnServerRename(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("node-a")
+	b := e.newAgent("node-b")
+	serverID := e.createServer("testgame", "wait-server-rename", nil)
+	host, _, _ := e.startToRunning(serverID, a, b)
+	digest := host.currentDirectivesDigest()
+	result := startDirectiveWait(host, digest)
+
+	r := e.do("PATCH", "/v1/servers/"+serverID, map[string]any{"name": "renamed"}, e.token)
+	if r.Status != http.StatusOK {
+		t.Fatalf("rename server: %d %s", r.Status, r.Raw)
+	}
+	assertDirectiveWaitChanged(t, result, digest)
 }
 
 func TestAgentDirectivesWaitTimeoutAndWrongDigest(t *testing.T) {

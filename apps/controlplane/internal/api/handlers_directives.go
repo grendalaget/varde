@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 const (
@@ -140,8 +141,12 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 	lastCheck := time.Time{}
 
 	for {
-		changed := s.Recon.Changed(node.GroupID)
-		directives, err := s.buildDirectives(ctx, node, s.Store.NowMs())
+		currentNode, err := s.directiveWaitNode(ctx, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		changed := s.Recon.Changed(currentNode.GroupID)
+		directives, err := s.buildDirectives(ctx, currentNode, s.Store.NowMs())
 		if err != nil {
 			return nil, err
 		}
@@ -157,11 +162,10 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-timeout.C:
-			directives, err := s.buildDirectives(ctx, node, s.Store.NowMs())
+			digest, err := s.directiveWaitDigest(ctx, node.ID)
 			if err != nil {
 				return nil, err
 			}
-			digest = directivesDigest(directives)
 			return gen.AgentDirectivesWait200JSONResponse(gen.AgentDirectivesWait{
 				Digest: digest, Changed: digest != req.Params.Digest,
 			}), nil
@@ -177,11 +181,10 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 				return nil, ctx.Err()
 			case <-timeout.C:
 				throttle.Stop()
-				directives, err := s.buildDirectives(ctx, node, s.Store.NowMs())
+				digest, err := s.directiveWaitDigest(ctx, node.ID)
 				if err != nil {
 					return nil, err
 				}
-				digest = directivesDigest(directives)
 				return gen.AgentDirectivesWait200JSONResponse(gen.AgentDirectivesWait{
 					Digest: digest, Changed: digest != req.Params.Digest,
 				}), nil
@@ -189,4 +192,27 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 			}
 		}
 	}
+}
+
+func (s *Server) directiveWaitNode(ctx context.Context, nodeID string) (*store.Node, error) {
+	node, err := s.Store.GetNode(ctx, nodeID)
+	if err != nil {
+		return nil, errResp(gen.Unauthorized, "unknown node", nil)
+	}
+	if node.AdminState == "disabled" {
+		return nil, errResp(gen.Forbidden, "node disabled", nil)
+	}
+	return node, nil
+}
+
+func (s *Server) directiveWaitDigest(ctx context.Context, nodeID string) (string, error) {
+	node, err := s.directiveWaitNode(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	directives, err := s.buildDirectives(ctx, node, s.Store.NowMs())
+	if err != nil {
+		return "", err
+	}
+	return directivesDigest(directives), nil
 }
