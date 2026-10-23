@@ -46,7 +46,7 @@ impl ValheimDriver {
     }
 
     fn preset(config: &serde_json::Value) -> Result<Option<&'static str>> {
-        let Some(value) = config.get("modifiers") else {
+        let Some(value) = config.get("modifiers").filter(|v| !v.is_null()) else {
             return Ok(None);
         };
         let value = value
@@ -66,7 +66,7 @@ impl ValheimDriver {
     }
 
     fn save_interval_s(config: &serde_json::Value) -> Result<i64> {
-        let Some(value) = config.get("save_interval_s") else {
+        let Some(value) = config.get("save_interval_s").filter(|v| !v.is_null()) else {
             return Ok(300);
         };
         let seconds = value
@@ -81,6 +81,7 @@ impl ValheimDriver {
     fn crossplay(config: &serde_json::Value) -> Result<bool> {
         Ok(config
             .get("crossplay")
+            .filter(|v| !v.is_null())
             .map(|value| {
                 value
                     .as_bool()
@@ -507,6 +508,26 @@ mod tests {
 
         config["crossplay"] = json!("true");
         assert!(ValheimDriver::new().validate(&config).is_err());
+    }
+
+    #[test]
+    fn null_optional_config_uses_defaults() {
+        let mut config = cfg();
+        config.as_object_mut().unwrap().remove("modifiers");
+        let expected = ValheimDriver::args(&config, "srv-123", Path::new("/srv"), 2456).unwrap();
+        for key in ["modifiers", "save_interval_s", "crossplay", "public"] {
+            config[key] = json!(null);
+        }
+        ValheimDriver::new().validate(&config).unwrap();
+        assert_eq!(
+            ValheimDriver::args(&config, "srv-123", Path::new("/srv"), 2456).unwrap(),
+            expected
+        );
+        for key in ["server_name", "world_name", "password"] {
+            let mut invalid = config.clone();
+            invalid[key] = json!(null);
+            assert!(ValheimDriver::new().validate(&invalid).is_err());
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@ import {
 import { navigate } from "../lib/router";
 import { useSession } from "../lib/session";
 import { useGames } from "../lib/games";
+import { configDefaults } from "../lib/config-defaults";
 
 export default function NewServer() {
   const { group, nodes } = useSession();
@@ -40,10 +41,7 @@ export default function NewServer() {
 
   useEffect(() => {
     if (!game) return;
-    const c: Record<string, unknown> = {};
-    for (const f of game.config_fields)
-      if (f.default !== undefined) c[f.name] = f.default;
-    setConfig(c);
+    setConfig(configDefaults(game.config_fields));
   }, [game]);
 
   const hosts = nodes.filter(

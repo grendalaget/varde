@@ -168,7 +168,7 @@ impl Cs2Driver {
     }
 
     fn string<'a>(cfg: &'a Value, key: &str, default: &'a str) -> Result<&'a str> {
-        let value = match cfg.get(key) {
+        let value = match cfg.get(key).filter(|v| !v.is_null()) {
             Some(v) => v
                 .as_str()
                 .ok_or_else(|| format!("cs2: {key} must be a string"))?,
@@ -187,7 +187,7 @@ impl Cs2Driver {
     }
 
     fn number(cfg: &Value, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
-        let n = match cfg.get(key) {
+        let n = match cfg.get(key).filter(|v| !v.is_null()) {
             Some(v) => v
                 .as_u64()
                 .ok_or_else(|| format!("cs2: {key} must be an integer"))?,

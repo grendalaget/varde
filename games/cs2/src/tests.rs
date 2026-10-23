@@ -405,6 +405,42 @@ fn args_cfg_and_modes() {
 }
 
 #[test]
+fn dashboard_null_optional_config_uses_defaults() {
+    let driver = Cs2Driver::new();
+    let cfg = json!({"server_name":"Varde"});
+    let dashboard = json!({"server_name":"Varde","password":null,"gslt":null,"game_mode":"competitive","map":"de_dust2","max_players":10,"bots":0});
+    driver.validate(&dashboard).unwrap();
+    assert_eq!(
+        Cs2Driver::cfg(&dashboard).unwrap(),
+        Cs2Driver::cfg(&cfg).unwrap()
+    );
+    assert_eq!(
+        Cs2Driver::args(&dashboard, PORT).unwrap(),
+        Cs2Driver::args(&cfg, PORT).unwrap()
+    );
+    let mut nulls = cfg.clone();
+    for key in [
+        "password",
+        "gslt",
+        "game_mode",
+        "map",
+        "max_players",
+        "bots",
+    ] {
+        nulls[key] = Value::Null;
+    }
+    driver.validate(&nulls).unwrap();
+    assert_eq!(
+        Cs2Driver::cfg(&nulls).unwrap(),
+        Cs2Driver::cfg(&cfg).unwrap()
+    );
+    assert_eq!(
+        Cs2Driver::args(&nulls, PORT).unwrap(),
+        Cs2Driver::args(&cfg, PORT).unwrap()
+    );
+}
+
+#[test]
 fn validation_defaults_bounds_and_injection() {
     let driver = Cs2Driver::new();
     let cfg = json!({"server_name":"Varde"});
@@ -419,6 +455,7 @@ fn validation_defaults_bounds_and_injection() {
         ("server_name", json!("")),
         ("server_name", json!(" \t")),
         ("server_name", json!(4)),
+        ("server_name", json!(null)),
         ("password", json!("x\";quit")),
         ("password", json!("x\nquit")),
         ("password", json!(true)),
