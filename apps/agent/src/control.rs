@@ -317,9 +317,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     agent.sync_hosted_services().await;
 
     // ---- replication + deletes ----
-    for t in &d.replication_tasks {
-        agent.enqueue_replication(t.clone());
-    }
+    agent.replace_replication_tasks(&d.replication_tasks);
     for id in &d.delete_snapshots {
         if let Some(sid) = snapshot_store::SnapshotId::parse(id) {
             match agent.store.delete_snapshot(&sid) {
