@@ -68,9 +68,11 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 			s.Log.Debug("unknown lease profile; using standard", "node", node.ID, "lease_profile", reportedProfile)
 		}
 	}
-	node.LeaseProfile = leaseProfile
-	if err := s.Store.SetNodeLeaseProfile(ctx, node.ID, leaseProfile); err != nil {
-		return nil, err
+	if node.LeaseProfile != leaseProfile {
+		if err := s.Store.SetNodeLeaseProfile(ctx, node.ID, leaseProfile); err != nil {
+			return nil, err
+		}
+		node.LeaseProfile = leaseProfile
 	}
 	statusJSON := "{}"
 	if caps != nil {

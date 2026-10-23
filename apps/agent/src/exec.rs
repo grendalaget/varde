@@ -64,6 +64,7 @@ pub struct ExecCtl {
     join_code: Mutex<Option<String>>,
     /// fencing deadline; refreshed each heartbeat
     pub deadline: Mutex<Option<Instant>>,
+    fence_margin_ms: AtomicI64,
     fenced: AtomicBool,
     stop: watch::Sender<Option<StopKind>>,
     pgid: Mutex<u32>,
@@ -98,6 +99,7 @@ impl ExecCtl {
             message: Mutex::new(String::new()),
             join_code: Mutex::new(None),
             deadline: Mutex::new(None),
+            fence_margin_ms: AtomicI64::new(0),
             fenced: AtomicBool::new(false),
             stop: tx,
             pgid: Mutex::new(0),
@@ -168,6 +170,12 @@ impl ExecCtl {
     }
     pub fn is_fenced(&self) -> bool {
         self.fenced.load(Ordering::SeqCst)
+    }
+    pub fn set_fence_margin_ms(&self, margin_ms: i64) {
+        self.fence_margin_ms.store(margin_ms, Ordering::SeqCst);
+    }
+    pub fn fence_margin_ms(&self) -> i64 {
+        self.fence_margin_ms.load(Ordering::SeqCst)
     }
     pub fn mark_fenced(&self) {
         self.fenced.store(true, Ordering::SeqCst);
