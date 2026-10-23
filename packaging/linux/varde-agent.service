@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=varde
 ExecStart=/usr/bin/varde-agent run
-# the agent drains executions (final snapshot + replication hold, default 60 s)
-# before stopping; give it the hold plus stop overhead before SIGKILL
-TimeoutStopSec=105
+# the agent drains executions before stopping: a warm handoff of Minecraft
+# servers (default 45 s), else final snapshot + replication hold (default 60 s);
+# give it both plus stop overhead before SIGKILL
+TimeoutStopSec=150
 Restart=always
 RestartSec=5
 StateDirectory=varde

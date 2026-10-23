@@ -26,9 +26,9 @@ apps:
     command: bin/run run
     daemon: simple
     restart-condition: always
-    # the agent drains executions (final snapshot + replication hold, 60 s)
-    # before stopping; give it the hold plus stop overhead like the unit
-    stop-timeout: 120s
+    # the agent drains executions (handoff wait 45 s, final snapshot +
+    # replication hold 60 s) before stopping; same budget as the unit
+    stop-timeout: 150s
     plugs:
       - network
       - network-bind

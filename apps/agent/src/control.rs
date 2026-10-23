@@ -248,8 +248,10 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         match existing {
             Some(ctl) => {
                 *ctl.deadline.lock().unwrap() = Some(deadline);
-                ctl.set_want_frozen(e.freeze.unwrap_or(false));
+                // stop reason first: the shutdown drain reads an unfreeze
+                // without a 'handoff' stop as an aborted migration
                 ctl.set_stop_reason(e.stop_reason.clone());
+                ctl.set_want_frozen(e.freeze.unwrap_or(false));
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -369,12 +371,25 @@ pub async fn control_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Recei
                 interval = (interval * 2).min(Duration::from_secs(5));
             }
         }
+        // a draining host heartbeats fast so shutdown handoffs start (and
+        // their flips land) without waiting out the normal interval
+        let wait = if agent
+            .shutting_down
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            interval.min(SHUTDOWN_HEARTBEAT)
+        } else {
+            interval
+        };
         tokio::select! {
-            _ = tokio::time::sleep(interval) => {},
+            _ = tokio::time::sleep(wait) => {},
+            _ = agent.heartbeat_now.notified() => {},
             _ = stop.changed() => return,
         }
     }
 }
+
+const SHUTDOWN_HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// Fencing watchdog: deadline expiry ⇒ graceful stop bounded to
 /// fence_margin/2, then kill; mark fenced; drop hosted services; never upload.

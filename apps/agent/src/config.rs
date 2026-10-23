@@ -31,6 +31,11 @@ pub struct Config {
     /// reported ready on an anchor/peer (s).
     #[serde(default = "default_shutdown_repl_s")]
     pub shutdown_replication_timeout_s: i64,
+    /// How long a clean shutdown waits for the control plane to warm-migrate
+    /// handoff-capable servers (players transferred, not disconnected) before
+    /// falling back to the graceful stop (s; 0 disables).
+    #[serde(default = "default_shutdown_handoff_s")]
+    pub shutdown_handoff_timeout_s: i64,
     /// Never attempt direct paths (passed through to mesh Configure).
     #[serde(default)]
     pub force_relay: bool,
@@ -63,6 +68,9 @@ fn default_fence_margin_ms() -> i64 {
 }
 fn default_shutdown_repl_s() -> i64 {
     60
+}
+fn default_shutdown_handoff_s() -> i64 {
+    45
 }
 
 impl Config {

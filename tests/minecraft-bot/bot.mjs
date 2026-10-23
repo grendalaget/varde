@@ -54,6 +54,12 @@ const hardTimeout = setTimeout(() => {
   process.exit(1)
 }, mode === 'hold' ? holdSeconds * 1000 + 90_000 : 60_000)
 
+// Vanilla /transfer (1.20.5+): mineflayer doesn't follow it, so report the
+// packet and let tests assert the handoff reached the client.
+bot._client.on('transfer', (p) => {
+  if (mode === 'hold') console.log(JSON.stringify({ transferred: true, host: p.host, port: p.port }))
+})
+
 let errored = false
 let holdDisconnect
 let holdDisconnectedByServer = false

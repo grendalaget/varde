@@ -339,6 +339,10 @@ impl GameDriver for MinecraftDriver {
         p.write_stdin("tick unfreeze").await
     }
 
+    fn can_handoff(&self) -> bool {
+        true
+    }
+
     async fn handoff(
         &self,
         _ctx: &DriverContext<'_>,

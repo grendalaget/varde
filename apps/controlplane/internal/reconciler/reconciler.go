@@ -112,6 +112,9 @@ func (r *Reconciler) Pass(ctx context.Context) error {
 			r.Log.Error("reconcile server", "server", srv.ID, "error", err)
 		}
 	}
+	if err := r.shutdownHandoffs(ctx, servers); err != nil {
+		return err
+	}
 	return r.migrations(ctx)
 }
 
@@ -671,6 +674,10 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 			if m.FinalSnapshotID == nil {
 				continue
 			}
+			if r.warmSourceSuperseded(ctx, m) {
+				r.failMigration(ctx, m)
+				continue
+			}
 			reps, err := s.ReplicasForSnapshot(ctx, *m.FinalSnapshotID)
 			if err != nil {
 				continue
@@ -720,6 +727,12 @@ func (r *Reconciler) migrations(ctx context.Context) error {
 			if next.EndedAt != nil || next.State == "failed" {
 				// incoming exec died before the flip — abort; the source
 				// keeps serving and unfreezes via directives.
+				r.failMigration(ctx, m)
+				continue
+			}
+			if r.warmSourceSuperseded(ctx, m) {
+				// the source saved past the staged snapshot and stopped:
+				// recovery restarts from its newer save instead
 				r.failMigration(ctx, m)
 				continue
 			}

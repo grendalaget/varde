@@ -23,7 +23,7 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 const SERVICE_NAME: &str = "VardeAgent";
 const SERVICE_DISPLAY: &str = "Varde Agent";
-const PRESHUTDOWN_MS: u32 = 120_000;
+const PRESHUTDOWN_MS: u32 = 150_000;
 
 pub fn install() -> Result<()> {
     let exe = std::env::current_exe().context("resolve exe path")?;

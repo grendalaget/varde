@@ -267,6 +267,41 @@ func (b *minecraftBotHold) wait(t *testing.T, d time.Duration) {
 	}
 }
 
+// untilDisconnected reads hold-bot events up to the disconnect and returns
+// the /transfer packet seen before it (nil if none) and the disconnect event.
+func (b *minecraftBotHold) untilDisconnected(t *testing.T, d time.Duration) (transfer, disconnected map[string]any) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		ev := b.nextEvent(t, time.Until(deadline))
+		if ev["transferred"] == true {
+			transfer = ev
+			continue
+		}
+		if ev["disconnected"] != true {
+			t.Fatalf("unexpected hold bot event: %v", ev)
+		}
+		reason, _ := ev["reason"].(string)
+		if strings.HasPrefix(reason, "timeout after") {
+			t.Fatalf("hold bot timed out instead of being handed off: %s", reason)
+		}
+		return transfer, ev
+	}
+}
+
+// requireTransferTo fails unless the client was sent a /transfer to the
+// stable service address.
+func requireTransferTo(t *testing.T, transfer map[string]any, svc string) {
+	t.Helper()
+	if transfer == nil {
+		t.Fatal("client got no /transfer packet before the disconnect")
+	}
+	got := fmt.Sprintf("%v:%v", transfer["host"], transfer["port"])
+	if got != svc {
+		t.Fatalf("client transferred to %s, want the stable address %s", got, svc)
+	}
+}
+
 func randNonce(t *testing.T) string {
 	t.Helper()
 	var b [4]byte
@@ -922,16 +957,10 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	moveStarted := time.Now()
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/move", e.tok,
 		map[string]any{"target_node_id": e.nodes["kari"].nodeID}, 200)
-	disconnected := hold.nextEvent(t, 2*time.Minute)
-	if disconnected["disconnected"] != true {
-		t.Fatalf("hold bot did not report disconnected: %v", disconnected)
-	}
-	reason, _ := disconnected["reason"].(string)
-	if strings.HasPrefix(reason, "timeout after") {
-		t.Fatalf("hold bot timed out instead of disconnecting during move: %s", reason)
-	}
+	transfer, disconnected := hold.untilDisconnected(t, 2*time.Minute)
+	requireTransferTo(t, transfer, svc)
 	hold.wait(t, 10*time.Second)
-	t.Logf("hold bot disconnected: %s", reason)
+	t.Logf("hold bot transferred to %v:%v, then disconnected: %v", transfer["host"], transfer["port"], disconnected["reason"])
 
 	svc = e.waitMinecraft(serverID, "kari", 6*time.Minute)
 	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
@@ -1608,5 +1637,113 @@ func TestMinecraftSoak(t *testing.T) {
 			median = (rtoValues[len(rtoValues)/2-1] + rtoValues[len(rtoValues)/2]) / 2
 		}
 		t.Logf("%s\t%d\t%s\t%s", fault, len(rtoValues), median, rtoValues[len(rtoValues)-1])
+	}
+}
+
+// TestMinecraftShutdownHandoff: a clean host shutdown (agent SIGTERM) warm-
+// migrates the server instead of stopping it. The replacement starts while
+// the host still serves (server.jar briefly runs in both namespaces — the
+// start-first handoff, not split brain: only one is the serving epoch), and
+// the connected player is transferred rather than timing out.
+func TestMinecraftShutdownHandoff(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("kari", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-shutdown-handoff", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+	e.setHosting("kari", true)
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	hold := e.startBotHold("player", svc, 150)
+	if connected := hold.nextEvent(t, 45*time.Second); connected["connected"] != true {
+		t.Fatalf("hold bot did not report connected: %v", connected)
+	}
+
+	arneProc := e.nodes["arne"].proc
+	shutdownAt := time.Now()
+	if err := arneProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SIGTERM arne agent: %v", err)
+	}
+	go func() { _ = arneProc.wait() }()
+
+	overlap := make(chan time.Duration, 1)
+	go func() {
+		for time.Since(shutdownAt) < 3*time.Minute {
+			hosts := processHosts([]string{"arne", "kari"}, "server.jar")
+			if hosts["arne"] && hosts["kari"] {
+				overlap <- time.Since(shutdownAt)
+				return
+			}
+			if !hosts["arne"] {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		overlap <- -1
+	}()
+
+	transfer, _ := hold.untilDisconnected(t, 2*time.Minute)
+	transferredAfter := time.Since(shutdownAt)
+	requireTransferTo(t, transfer, svc)
+	hold.wait(t, 10*time.Second)
+	if d := <-overlap; d < 0 {
+		t.Fatal("arne stopped server.jar before kari ran it: not a warm handoff")
+	} else {
+		t.Logf("replacement running on kari %.1fs after SIGTERM", d.Seconds())
+	}
+	if host := e.hostOf(serverID); host != e.nodes["kari"].nodeID {
+		t.Fatalf("serving host after the transfer = %q, want kari", e.nodeName(host))
+	}
+	t.Logf("player transferred to %s %.1fs after SIGTERM", svc, transferredAfter.Seconds())
+
+	waitFor(t, 3*time.Minute, "arne agent exited", func() bool {
+		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited()
+	})
+	t.Logf("arne agent exited %.1fs after SIGTERM", time.Since(shutdownAt).Seconds())
+
+	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
+	if !ok || got != nonce {
+		t.Fatalf("col0 after shutdown handoff: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
+	}
+
+	status, body := apiCall("GET", e.cpURL+"/v1/groups/"+e.groupID+"/events?limit=200", e.tok, nil)
+	if status != 200 {
+		t.Fatalf("get group events: %d %s", status, body)
+	}
+	var eventList struct {
+		Events []struct {
+			ServerID string `json:"server_id"`
+			Type     string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(body, &eventList); err != nil {
+		t.Fatalf("decode group events: %v", err)
+	}
+	requested := false
+	for _, ev := range eventList.Events {
+		if ev.ServerID == serverID && ev.Type == "server.handoff_requested" {
+			requested = true
+		}
+		if ev.ServerID == serverID && ev.Type == "lease.expired" {
+			t.Fatalf("shutdown handoff let a lease expire: %s", body)
+		}
+	}
+	if !requested {
+		t.Fatalf("missing server.handoff_requested event: %s", body)
 	}
 }

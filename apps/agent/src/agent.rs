@@ -41,6 +41,8 @@ pub struct Agent {
     /// shutdown requested: drain executions while heartbeats, the mesh, the
     /// chunk server and replication keep running; refuse new work
     pub shutting_down: AtomicBool,
+    /// wakes the control loop for an immediate heartbeat
+    pub heartbeat_now: tokio::sync::Notify,
     /// What the control plane last told us, for local status (tray).
     pub cp_view: Mutex<CpView>,
     /// Last update-check outcome; surfaced via Status.update + heartbeat.
