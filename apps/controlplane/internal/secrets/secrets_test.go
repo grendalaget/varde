@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -79,9 +80,11 @@ func TestLoadCreatesPrivateKeyBesideSQLiteDB(t *testing.T) {
 	if got, err := manager2.Open(sealed, "aad"); err != nil || got != "test" {
 		t.Fatalf("Open() = %q, %v; want test, nil", got, err)
 	}
-	if info, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o600 {
-		t.Fatalf("key permissions = %o, want 600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		} else if info.Mode().Perm() != 0o600 {
+			t.Fatalf("key permissions = %o, want 600", info.Mode().Perm())
+		}
 	}
 }
