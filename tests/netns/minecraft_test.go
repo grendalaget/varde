@@ -1755,3 +1755,52 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 	}
 	wd.check(t)
 }
+
+// TestMinecraftHotStandby: while arne hosts, the CP makes kari the hot
+// standby — kari pre-installs the deployment and receives every snapshot —
+// so after arne's namespace is killed, recovery lands on kari and restores
+// from its local copy.
+func TestMinecraftHotStandby(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-hot-standby", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	kariDeployments := filepath.Join(e.nodes["kari"].dataDir, "deployments")
+	waitFor(t, 5*time.Minute, "kari pre-installed the deployment", func() bool {
+		marks, _ := filepath.Glob(filepath.Join(kariDeployments, "*", ".varde-prepared"))
+		return len(marks) > 0
+	})
+	t.Logf("kari pre-installed the deployment while arne hosts")
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	e.waitCommittedReplicas(serverID, "nas", "kari")
+	t.Logf("committed save replicated to the anchor and the standby")
+
+	killNamespace(t, "arne")
+	killedAt := time.Now()
+	svc = e.waitMinecraft(serverID, "kari", 3*time.Minute)
+	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
+	if !ok || got != nonce {
+		t.Fatalf("col0 after failover: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
+	}
+	t.Logf("failover to the standby: readable on kari %.1fs after arne was killed", time.Since(killedAt).Seconds())
+	wd.check(t)
+}

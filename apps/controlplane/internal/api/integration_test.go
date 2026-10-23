@@ -297,6 +297,14 @@ type directives struct {
 		ServerID   string `json:"server_id"`
 	} `json:"replication_tasks"`
 	DeleteSnapshots []string `json:"delete_snapshots"`
+	Standby         []struct {
+		ServerID   string `json:"server_id"`
+		Deployment struct {
+			ID     string `json:"id"`
+			GameID string `json:"game_id"`
+		} `json:"deployment"`
+		Config map[string]any `json:"config"`
+	} `json:"standby"`
 }
 
 func caps() map[string]any {

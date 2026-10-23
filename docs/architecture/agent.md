@@ -95,6 +95,11 @@ On shutdown the agent first drains executions (graceful stop, final snapshot, re
 the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
 as a snapshot source and refuses new executions — and only then signals the loops to stop.
 
+**Hot standby.** Directive `standby[]` lists servers this node would take over. The agent runs the driver's
+`prepare` (runtime + game files) for each in the background — once per server/deployment/config per agent run,
+serialized with executions per deployment dir — and marks the dir `.varde-prepared`; the heartbeat reports those as
+`cached_deployments`. Snapshots already replicate here, so a takeover skips both download and remote restore.
+
 **Shutdown handoff.** Running servers whose driver `can_handoff()` (Minecraft) are not stopped straight away: the
 heartbeat advertises `draining`, the agent heartbeats every 1 s, and the control plane opens a warm migration to the
 node the scheduler would pick (see `control-plane.md#reconciler`). The agent treats the source being frozen as the

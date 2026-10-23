@@ -701,6 +701,9 @@ type AgentDirectives struct {
 	ReplicationTasks *[]ReplicationTask `json:"replication_tasks,omitempty"`
 	Routes           *[]DirectiveRoute  `json:"routes,omitempty"`
 	ServerTimeUnixMs int64              `json:"server_time_unix_ms"`
+
+	// Standby Servers this node is the hot standby for: pre-install the deployment (runtime + game files) so a failover or shutdown handoff skips the download. Snapshots already replicate here.
+	Standby *[]StandbyDirective `json:"standby,omitempty"`
 }
 
 // AgentDirectivesNodeAdminState defines model for AgentDirectives.Node.AdminState.
@@ -1396,6 +1399,17 @@ type SnapshotRequest struct {
 
 // SnapshotRequestReason defines model for SnapshotRequest.Reason.
 type SnapshotRequestReason string
+
+// StandbyDirective defines model for StandbyDirective.
+type StandbyDirective struct {
+	Config     *map[string]interface{} `json:"config,omitempty"`
+	Deployment struct {
+		GameId string                 `json:"game_id"`
+		Id     string                 `json:"id"`
+		Spec   map[string]interface{} `json:"spec"`
+	} `json:"deployment"`
+	ServerId string `json:"server_id"`
+}
 
 // TokenEnrollRequest defines model for TokenEnrollRequest.
 type TokenEnrollRequest struct {

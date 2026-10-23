@@ -13,6 +13,7 @@ mod link;
 mod local;
 mod mesh_child;
 mod mesh_ctl;
+mod standby;
 mod state;
 mod sysinfo;
 mod update;
@@ -551,6 +552,8 @@ async fn run_linked(
         heartbeat_sequence: tokio::sync::watch::channel(0).0,
         heartbeat_now: tokio::sync::Notify::new(),
         shutting_down: AtomicBool::new(false),
+        prepare_locks: Mutex::new(Default::default()),
+        standby_inflight: Mutex::new(Default::default()),
         cp_view: Mutex::new(Default::default()),
         update: Mutex::new(update::UpdateState::default()),
     });

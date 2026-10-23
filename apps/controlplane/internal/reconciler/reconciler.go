@@ -189,6 +189,9 @@ func (r *Reconciler) Pass(ctx context.Context) (passErr error) {
 			r.Log.Error("reconcile server", "server", srv.ID, "error", err)
 		}
 	}
+	if err := r.standbys(ctx, servers); err != nil {
+		return err
+	}
 	if err := r.shutdownHandoffs(ctx, servers); err != nil {
 		return err
 	}
@@ -566,8 +569,7 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	}
 	var views []scheduler.NodeView
 	for i := range nodes {
-		n := &nodes[i]
-		views = append(views, r.nodeView(ctx, n, restore, sources))
+		views = append(views, r.placementView(ctx, srv, &nodes[i], restore, sources))
 	}
 	preferred := preferredOverride
 	if preferred == "" && srv.PreferredNodeID != nil {
