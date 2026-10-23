@@ -50,8 +50,35 @@ func (r *Reconciler) standbys(ctx context.Context, servers []store.Server) error
 		}
 		srv.StandbyNodeID = next
 		r.Log.Info("hot standby", "server", srv.ID, "from", cur, "to", want)
+		if want != "" {
+			if err := r.seedStandby(ctx, srv, want); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// seedStandby gives a newly chosen standby the save recovery would restore:
+// snapshots replicate to the standby when they are created, so one taken
+// before it became standby would otherwise never reach it.
+func (r *Reconciler) seedStandby(ctx context.Context, srv *store.Server, nodeID string) error {
+	restore, _, err := r.chooseRestore(ctx, srv, true, nil)
+	if err != nil || restore == nil {
+		return nil
+	}
+	reps, err := r.Store.ReplicasForSnapshot(ctx, restore.ID)
+	if err != nil {
+		return err
+	}
+	for _, rep := range reps {
+		if rep.NodeID == nodeID {
+			return nil
+		}
+	}
+	return r.Store.UpsertReplica(ctx, r.Store.DB, &store.Replica{
+		SnapshotID: restore.ID, NodeID: nodeID, State: "assigned", AssignedAt: r.Store.NowMs(),
+	})
 }
 
 // pickStandby returns srv's current standby if it is still eligible to take

@@ -223,9 +223,9 @@ type Server struct {
 	// handoff would pick, kept pre-installed and replicated-to.
 	StandbyNodeID *string `db:"standby_node_id"`
 	Epoch         int64   `db:"epoch"`
-	ConfigJSON        string  `db:"config_json"`
-	CreatedAt         int64   `db:"created_at"`
-	UpdatedAt         int64   `db:"updated_at"`
+	ConfigJSON    string  `db:"config_json"`
+	CreatedAt     int64   `db:"created_at"`
+	UpdatedAt     int64   `db:"updated_at"`
 }
 
 type Service struct {

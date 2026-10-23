@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/jmoiron/sqlx"

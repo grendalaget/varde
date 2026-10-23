@@ -135,3 +135,72 @@ func TestFailoverLandsOnStandby(t *testing.T) {
 		t.Fatalf("recovery placed %+v, want the standby %s", ex, sb)
 	}
 }
+
+// A standby chosen after a save exists still gets that save.
+func TestReplacementStandbyGetsExistingSave(t *testing.T) {
+	e := newEnv(t)
+	a, b, c := e.newAgent("nodeA"), e.newAgent("nodeB"), e.newAgent("nodeC")
+	for _, ag := range []*agent{a, b, c} {
+		ag.heartbeatCaps(nil, javaCaps())
+	}
+	srv := e.createServer("minecraft", "mc", map[string]any{"preferred_node_id": a.nodeID})
+	_, execA, epA := e.startToRunning(srv, a, b, c)
+	e.reconcile()
+	first, next := b, c
+	if e.standbyOf(srv) == c.nodeID {
+		first, next = c, b
+	}
+	if r := a.createSnapshot(execA, srv, "dep_x", epA, "scheduled", "snap_old", "51"); r.Status != 201 {
+		t.Fatalf("snap: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	if r := first.replicaReady("snap_old"); r.Status != 204 {
+		t.Fatalf("replica on first standby: %d %s", r.Status, r.Raw)
+	}
+	e.reconcile()
+	off := javaCaps()
+	off["draining"] = true
+	first.heartbeatCaps(nil, off)
+	e.reconcile()
+	if sb := e.standbyOf(srv); sb != next.nodeID {
+		t.Fatalf("standby = %q, want %s", sb, next.nodeID)
+	}
+	d, _ := next.heartbeatCaps(nil, javaCaps())
+	for _, rt := range d.ReplicationTasks {
+		if rt.SnapshotID == "snap_old" {
+			return
+		}
+	}
+	t.Fatalf("new standby has no replication task for the existing save: %+v", d.ReplicationTasks)
+}
+
+// Recovery honors the standby even when another node now scores higher.
+func TestFailoverPrefersStandbyOverHigherScore(t *testing.T) {
+	e := newEnv(t)
+	a, b, c := e.newAgent("nodeA"), e.newAgent("nodeB"), e.newAgent("nodeC")
+	for _, ag := range []*agent{a, b, c} {
+		ag.heartbeatCaps(nil, javaCaps())
+	}
+	srv := e.createServer("minecraft", "mc", map[string]any{"preferred_node_id": a.nodeID})
+	e.startToRunning(srv, a, b, c)
+	e.reconcile()
+	sb := e.standbyOf(srv)
+	other := b
+	if sb == b.nodeID {
+		other = c
+	}
+	// the other node becomes an anchor (+80): sticky standby stays put
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+other.nodeID, map[string]any{"anchor": true}, e.token))
+	e.reconcile()
+	if got := e.standbyOf(srv); got != sb {
+		t.Fatalf("standby moved to %s", got)
+	}
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	for _, ag := range []*agent{b, c} {
+		ag.heartbeatCaps(nil, javaCaps())
+	}
+	e.reconcile()
+	if ex := e.activeExec(srv); ex == nil || ex["node"] != sb {
+		t.Fatalf("recovery placed %+v, want the standby %s", ex, sb)
+	}
+}
