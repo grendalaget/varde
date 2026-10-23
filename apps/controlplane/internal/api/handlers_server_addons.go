@@ -237,7 +237,7 @@ func validServerAddonFileKey(key string) bool {
 		return false
 	}
 	for _, segment := range strings.Split(key, "/") {
-		if segment == "" || segment == ".." {
+		if segment == "" || segment == "." || segment == ".." {
 			return false
 		}
 	}

@@ -42,6 +42,8 @@ func TestServerAddonSpecValidation(t *testing.T) {
 		{name: "empty file key", mutate: func(body map[string]any) { body["files"] = map[string]string{"": "x"} }, want: 400},
 		{name: "absolute file key", mutate: func(body map[string]any) { body["files"] = map[string]string{"/cfg/x": "x"} }, want: 400},
 		{name: "parent file key", mutate: func(body map[string]any) { body["files"] = map[string]string{"cfg/../x": "x"} }, want: 400},
+		{name: "dot file key segment", mutate: func(body map[string]any) { body["files"] = map[string]string{"cfg/./server.cfg": "x"} }, want: 400},
+		{name: "dot file key prefix", mutate: func(body map[string]any) { body["files"] = map[string]string{"./x": "x"} }, want: 400},
 		{name: "backslash file key", mutate: func(body map[string]any) { body["files"] = map[string]string{`cfg\\x`: "x"} }, want: 400},
 		{name: "colon file key", mutate: func(body map[string]any) { body["files"] = map[string]string{"cfg:x": "x"} }, want: 400},
 		{name: "empty path segment", mutate: func(body map[string]any) { body["files"] = map[string]string{"cfg//x": "x"} }, want: 400},

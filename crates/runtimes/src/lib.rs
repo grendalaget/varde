@@ -331,13 +331,14 @@ fn tls_config() -> game_driver_api::Result<Arc<rustls::ClientConfig>> {
 
 /// GET `url` following ≤ `redirs` redirects; returns the final body bytes.
 async fn http_get(url: &str, redirs: u32) -> game_driver_api::Result<Vec<u8>> {
-    http_get_limited(url, redirs, None).await
+    http_get_limited(url, redirs, None, false).await
 }
 
 async fn http_get_limited(
     url: &str,
     redirs: u32,
     max_bytes: Option<u64>,
+    protect_https_origin: bool,
 ) -> game_driver_api::Result<Vec<u8>> {
     let uri: Uri = url.parse()?;
     let host = uri.host().ok_or("url has no host")?.to_string();
@@ -382,18 +383,15 @@ async fn http_get_limited(
             .get(LOCATION)
             .and_then(|v| v.to_str().ok())
             .ok_or("redirect without location")?;
-        let next = if loc.starts_with('/') {
-            format!(
-                "{}://{}:{}{}",
-                uri.scheme_str().unwrap_or("https"),
-                host,
-                port,
-                loc
-            )
-        } else {
-            loc.to_string()
-        };
-        return Box::pin(http_get_limited(&next, redirs - 1, max_bytes)).await;
+        let next = resolve_redirect(&uri, loc)?;
+        check_redirect_scheme(protect_https_origin, &next)?;
+        return Box::pin(http_get_limited(
+            &next,
+            redirs - 1,
+            max_bytes,
+            protect_https_origin,
+        ))
+        .await;
     }
     if !(200..300).contains(&status) {
         return Err(format!("GET {url} -> {status}").into());
@@ -412,6 +410,57 @@ async fn http_get_limited(
         }
     }
     Ok(bytes)
+}
+
+fn resolve_redirect(current: &Uri, location: &str) -> game_driver_api::Result<String> {
+    if location
+        .parse::<Uri>()
+        .is_ok_and(|uri| uri.scheme().is_some())
+    {
+        return Ok(location.to_string());
+    }
+    let scheme = current
+        .scheme_str()
+        .ok_or("redirect origin has no scheme")?;
+    let authority = current
+        .authority()
+        .ok_or("redirect origin has no authority")?;
+    if location.starts_with("//") {
+        return Ok(format!("{scheme}:{location}"));
+    }
+    if location.starts_with('/') {
+        return Ok(format!("{scheme}://{authority}{location}"));
+    }
+    if location.starts_with('?') {
+        return Ok(format!(
+            "{scheme}://{authority}{}{location}",
+            current.path()
+        ));
+    }
+    let directory = current
+        .path()
+        .rsplit_once('/')
+        .map(|(directory, _)| directory)
+        .unwrap_or("");
+    Ok(format!("{scheme}://{authority}{directory}/{location}"))
+}
+
+fn check_redirect_scheme(
+    protect_https_origin: bool,
+    resolved_location: &str,
+) -> game_driver_api::Result<()> {
+    let resolved_scheme = resolved_location
+        .parse::<Uri>()
+        .ok()
+        .and_then(|uri| uri.scheme_str().map(str::to_owned));
+    if protect_https_origin
+        && !resolved_scheme
+            .as_deref()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
+    {
+        return Err("addon redirect downgraded to http".into());
+    }
+    Ok(())
 }
 
 /// Blocking filesystem/CPU work (hashing, archive unpack, writes, renames)
@@ -461,6 +510,7 @@ async fn fetch_into_inner(
         spec.sha256.as_deref(),
         spec.sha1.as_deref(),
         spec.untrusted.then_some(limits.download_bytes),
+        spec.untrusted,
     )
     .await?;
     match spec.archive {
@@ -504,11 +554,16 @@ async fn download_verified(
     sha256: Option<&str>,
     sha1: Option<&str>,
     max_bytes: Option<u64>,
+    untrusted: bool,
 ) -> game_driver_api::Result<()> {
     tracing::info!(url, dest = %file.display(), "runtime download");
-    let body = tokio::time::timeout(REQUEST_TIMEOUT, http_get_limited(url, 8, max_bytes))
-        .await
-        .map_err(|_| "download timed out")??;
+    let protect_https_origin = untrusted && is_https_url(url);
+    let body = tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        http_get_limited(url, 8, max_bytes, protect_https_origin),
+    )
+    .await
+    .map_err(|_| "download timed out")??;
     let (s256, s1) = (sha256.map(String::from), sha1.map(String::from));
     let f = file.to_path_buf();
     let u = url.to_string();
@@ -529,6 +584,13 @@ async fn download_verified(
         Ok(())
     })
     .await
+}
+
+fn is_https_url(url: &str) -> bool {
+    url.parse::<Uri>()
+        .ok()
+        .and_then(|uri| uri.scheme_str().map(str::to_owned))
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
 }
 
 fn safe_archive_path(path: &Path) -> bool {
@@ -891,6 +953,16 @@ mod untrusted_archive_tests {
             builder.append_data(&mut header, *name, *contents).unwrap();
         }
         gzip(builder.into_inner().unwrap())
+    }
+
+    #[test]
+    fn untrusted_https_redirects_cannot_downgrade() {
+        let error = check_redirect_scheme(true, "http://127.0.0.1/addon").unwrap_err();
+        assert_eq!(error.to_string(), "addon redirect downgraded to http");
+        assert!(check_redirect_scheme(true, "https://example.test/addon").is_ok());
+        assert!(check_redirect_scheme(false, "http://127.0.0.1/addon").is_ok());
+        assert!(is_https_url("https://example.test/addon"));
+        assert!(!is_https_url("http://example.test/addon"));
     }
 
     async fn serve_body(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
