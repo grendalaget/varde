@@ -64,6 +64,45 @@ impl Cs2Driver {
         ctx.deployment_dir.join("server")
     }
 
+    async fn prepare_install(
+        ctx: &DriverContext<'_>,
+        client: Option<steam::Install>,
+    ) -> Result<()> {
+        if let Some(install) = client {
+            return Self::prepare_shared(ctx, &install);
+        }
+        if let Some(install) = ctx.deployment_dir.parent().and_then(steam::in_deployments) {
+            Self::update_install(ctx, &install.dir).await?;
+            return Self::prepare_shared(ctx, &install);
+        }
+        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-install.json")).await {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        Self::update_install(ctx, &Self::install_dir(ctx)).await
+    }
+
+    async fn update_install(ctx: &DriverContext<'_>, dir: &Path) -> Result<()> {
+        tokio::fs::create_dir_all(dir).await?;
+        check_install_space(dir, fs2::available_space(dir)?)
+            .map_err(|e| format!("{e} at {}", dir.display()))?;
+        ctx.runtimes.steam_app_install(APP_ID, dir).await?;
+        if !steam::binary(dir).is_file() {
+            return Err("cs2: installed server binary is missing".into());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let steamcmd = ctx.runtimes.steamcmd_path().await?;
+            let library = steamcmd
+                .parent()
+                .ok_or("cs2: steamcmd path has no parent")?
+                .join("linux64/steamclient.so");
+            tokio::fs::copy(library, steam::binary(dir).with_file_name("steamclient.so")).await?;
+        }
+        Ok(())
+    }
+
     fn selected(ctx: &DriverContext<'_>) -> Result<Option<steam::Install>> {
         match std::fs::read(ctx.deployment_dir.join("cs2-install.json")) {
             Ok(contents) => Ok(Some(serde_json::from_slice(&contents)?)),
@@ -330,33 +369,7 @@ impl GameDriver for Cs2Driver {
         Ok(())
     }
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
-        if let Some(install) = steam::detect(ctx.deployment_dir.parent()) {
-            Self::prepare_shared(ctx, &install)?;
-            return Ok(());
-        }
-        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-install.json")).await {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
-        }
-        let dir = Self::install_dir(ctx);
-        tokio::fs::create_dir_all(&dir).await?;
-        check_install_space(&dir, fs2::available_space(&dir)?)
-            .map_err(|e| format!("{e} at {}", dir.display()))?;
-        ctx.runtimes.steam_app_install(APP_ID, &dir).await?;
-        if !Self::binary(ctx)?.is_file() {
-            return Err("cs2: installed server binary is missing".into());
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let steamcmd = ctx.runtimes.steamcmd_path().await?;
-            let library = steamcmd
-                .parent()
-                .ok_or("cs2: steamcmd path has no parent")?
-                .join("linux64/steamclient.so");
-            tokio::fs::copy(library, Self::binary(ctx)?.with_file_name("steamclient.so")).await?;
-        }
-        Ok(())
+        Self::prepare_install(ctx, steam::detect_client()).await
     }
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
         self.validate(ctx.config)?;

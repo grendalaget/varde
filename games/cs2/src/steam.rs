@@ -164,6 +164,13 @@ pub fn detect(deployments: Option<&Path>) -> Option<Install> {
     if !cfg!(any(target_os = "linux", windows)) {
         return None;
     }
+    detect_client().or_else(|| in_deployments(deployments?))
+}
+
+pub fn detect_client() -> Option<Install> {
+    if !cfg!(any(target_os = "linux", windows)) {
+        return None;
+    }
     if let Some(dir) = std::env::var_os("VARDE_CS2_DIR") {
         if let Some(found) = install(PathBuf::from(dir), Path::new("")) {
             return Some(found);
@@ -174,7 +181,7 @@ pub fn detect(deployments: Option<&Path>) -> Option<Install> {
             return Some(found);
         }
     }
-    in_deployments(deployments?)
+    None
 }
 
 pub fn in_deployments(deployments: &Path) -> Option<Install> {

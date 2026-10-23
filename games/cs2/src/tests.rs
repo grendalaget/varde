@@ -178,6 +178,109 @@ fn complete_steamcmd_deployments_are_reusable() {
     std::fs::remove_file(steam::binary(&server)).unwrap();
     assert!(steam::in_deployments(root.path()).is_none());
 }
+
+struct UpdatingRuntimes {
+    calls: std::sync::Mutex<Vec<PathBuf>>,
+    steamcmd: PathBuf,
+    fail: bool,
+}
+
+#[async_trait]
+impl RuntimeProvider for UpdatingRuntimes {
+    fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {
+        None
+    }
+
+    async fn steam_app_install(&self, app_id: u32, dest: &Path) -> Result<()> {
+        assert_eq!(app_id, APP_ID);
+        assert!(game_driver_api::steam_app_installed(app_id, dest));
+        self.calls.lock().unwrap().push(dest.to_path_buf());
+        if self.fail {
+            return Err("update failed".into());
+        }
+        Ok(())
+    }
+
+    async fn steamcmd_path(&self) -> Result<PathBuf> {
+        Ok(self.steamcmd.clone())
+    }
+}
+
+#[tokio::test]
+async fn prepare_updates_complete_own_and_previous_steamcmd_installs_each_time() {
+    for (name, fail) in [("current", false), ("previous", false), ("current", true)] {
+        let root = tempfile::tempdir().unwrap();
+        let client = fake_steam_install(&root.path().join("fixture"));
+        let private = root.path().join("deployments/current");
+        std::fs::create_dir_all(&private).unwrap();
+        let owner = root.path().join("deployments").join(name);
+        std::fs::create_dir_all(&owner).unwrap();
+        let server = owner.join("server");
+        std::fs::rename(client, &server).unwrap();
+        std::fs::create_dir_all(server.join("steamapps")).unwrap();
+        std::fs::write(
+            server.join("steamapps/appmanifest_730.acf"),
+            "\"AppState\" { \"StateFlags\" \"4\" }",
+        )
+        .unwrap();
+        let runtime = root.path().join("runtime");
+        std::fs::create_dir_all(runtime.join("linux64")).unwrap();
+        std::fs::write(runtime.join("linux64/steamclient.so"), "library").unwrap();
+        let runtimes = UpdatingRuntimes {
+            calls: Default::default(),
+            steamcmd: runtime.join("steamcmd"),
+            fail,
+        };
+        let cfg = json!({});
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let mut ctx = context(&private, &cfg, &deployment);
+        ctx.runtimes = &runtimes;
+        for _ in 0..2 {
+            let result = Cs2Driver::prepare_install(&ctx, None).await;
+            if fail {
+                assert!(result.unwrap_err().to_string().contains("update failed"));
+                assert!(!private.join("cs2-install.json").exists());
+            } else {
+                result.unwrap();
+                assert_eq!(
+                    Cs2Driver::binary(&ctx).unwrap(),
+                    steam::binary(&std::fs::canonicalize(&server).unwrap())
+                );
+                #[cfg(target_os = "linux")]
+                assert_eq!(
+                    std::fs::read(steam::binary(&server).with_file_name("steamclient.so")).unwrap(),
+                    b"library"
+                );
+            }
+        }
+        assert_eq!(
+            *runtimes.calls.lock().unwrap(),
+            vec![std::fs::canonicalize(&server).unwrap(); 2]
+        );
+    }
+}
+
+#[tokio::test]
+async fn prepare_leaves_steam_client_updates_to_steam() {
+    let root = tempfile::tempdir().unwrap();
+    let client = fake_steam_install(root.path());
+    let private = root.path().join("deployments/current");
+    std::fs::create_dir_all(&private).unwrap();
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let ctx = context(&private, &cfg, &deployment);
+    for _ in 0..2 {
+        Cs2Driver::prepare_install(&ctx, steam::in_root(root.path()))
+            .await
+            .unwrap();
+        assert_eq!(
+            Cs2Driver::binary(&ctx).unwrap(),
+            steam::binary(&std::fs::canonicalize(&client).unwrap())
+        );
+    }
+    assert!(!private.join("server").exists());
+}
+
 #[async_trait]
 impl RuntimeProvider for NoRuntimes {
     fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {
