@@ -1,0 +1,13 @@
+name: Sync Vikunja task
+
+# Keeps the Vikunja task named in the branch in step with the PR: in review when it opens,
+# done when it merges. Shared in Gryt-chat/.github; needs VIKUNJA_API_TOKEN.
+
+on:
+  pull_request:
+    types: [opened, reopened, closed]
+
+jobs:
+  sync-task:
+    uses: Gryt-chat/.github/.github/workflows/vikunja-task-done.yml@main
+    secrets: inherit

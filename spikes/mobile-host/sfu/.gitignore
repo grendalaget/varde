@@ -1,0 +1,27 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+vendor/
+
+# Built binary
+#
+# Both spellings, because only one of them was here and the other slipped past:
+# `bin/sfu` was committed in the initial commit and stayed, 13 MB of compiled Go
+# in every clone of the repository forever.
+#
+# Nothing consumes it. The Dockerfile runs `go build` itself, so the image never
+# read the committed copy, and a developer runs the same command.
+/sfu
+/bin/

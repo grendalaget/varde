@@ -1,0 +1,13 @@
+name: Bump superproject gitlink
+
+# Tells Gryt-chat/gryt that main moved so it can fast-forward the gitlink. Shared
+# implementation in Gryt-chat/.github; needs the org secret GITLINK_DISPATCH_TOKEN.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    uses: Gryt-chat/.github/.github/workflows/bump-gitlink.yml@main
+    secrets: inherit

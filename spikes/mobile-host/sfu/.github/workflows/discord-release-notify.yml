@@ -1,0 +1,32 @@
+name: Release notification
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Normalize version
+        id: release
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Announce the release on Discord and Gryt
+        uses: Gryt-chat/.github/actions/release-notify@main
+        with:
+          component: SFU
+          version: ${{ steps.release.outputs.version }}
+          channel: ${{ github.event.release.prerelease && 'beta' || 'latest' }}
+          repository: ${{ github.repository }}
+          tag: ${{ github.event.release.tag_name }}
+          release-url: ${{ github.event.release.html_url }}
+          release-body: ${{ github.event.release.body }}
+          artifact-label: Docker
+          artifact-value: ghcr.io/gryt-chat/sfu:${{ steps.release.outputs.version }}
+          github-token: ${{ github.token }}
+          discord-webhook-url: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          gryt-webhook-url: ${{ secrets.GRYT_RELEASE_WEBHOOK_URL }}

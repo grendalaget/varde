@@ -1,0 +1,16 @@
+.env
+.env.*
+.git
+.gitignore
+.github
+bin/
+vendor/
+sfu
+start.sh
+env.example
+*.log
+*.md
+LICENSE
+scripts/
+.vscode/
+.idea/
