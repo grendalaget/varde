@@ -162,6 +162,7 @@ pub fn enrolled_config(cp_url: &str, r: &cp_api::EnrollResult, prev: Option<Conf
         loopback_prefix: None,
         fence_margin_ms: 5000,
         shutdown_replication_timeout_s: 60,
+        shutdown_handoff_timeout_s: 45,
         force_relay: false,
         mesh_listen_port: 0,
         update: Default::default(),

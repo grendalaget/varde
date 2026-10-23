@@ -174,6 +174,12 @@ pub trait GameDriver: Send + Sync {
     fn snapshot_after_stop(&self) -> bool {
         false
     }
+    /// The driver's `handoff` can move connected clients to a replacement
+    /// server, so a clean host shutdown waits for a warm migration instead of
+    /// stopping straight away.
+    fn can_handoff(&self) -> bool {
+        false
+    }
     fn join_code_from_log(&self, _line: &str) -> Option<String> {
         None
     }
