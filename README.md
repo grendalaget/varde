@@ -23,7 +23,7 @@ and a P2P QUIC mesh with relay fallback — no router configuration required.
 | `apps/desktop`       | Rust       | Windows tray (Tauri 2): link this PC, status        |
 | `go/`                | Go         | Shared libraries (identity, ids, generated protos)  |
 | `crates/`            | Rust       | Shared libraries (driver/executor APIs, storage)    |
-| `games/`             | Rust       | Game drivers (minecraft, valheim, testgame)         |
+| `games/`             | Rust       | Game drivers (minecraft, valheim, cs2, testgame)    |
 | `proto/`             | Protobuf   | Wire contracts (mesh IPC, frames, relay)            |
 | `api/openapi`        | OpenAPI    | Control-plane HTTP API contract                     |
 | `packaging/`         | -          | Linux (nfpm/systemd) and Windows packaging          |

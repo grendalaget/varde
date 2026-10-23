@@ -579,7 +579,7 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	}
 	dec, err := scheduler.Place(
 		scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred},
-		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
+		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB, SteamApp: game.SteamApp, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
 		views,
 		scheduler.SnapView{RestoreBytes: snapSize, DeploymentSize: depSize},
 	)
@@ -761,6 +761,7 @@ func (r *Reconciler) nodeView(ctx context.Context, n *store.Node, restore *store
 			Drivers           []string `json:"drivers"`
 			Runtimes          []string `json:"runtimes"`
 			CachedDeployments []string `json:"cached_deployments"`
+			SteamApps         []int64  `json:"steam_apps"`
 			MemoryAvailableMB int64    `json:"memory_available_mb"`
 			DiskFreeBytes     int64    `json:"disk_free_bytes"`
 			OnBattery         bool     `json:"on_battery"`
@@ -773,6 +774,7 @@ func (r *Reconciler) nodeView(ctx context.Context, n *store.Node, restore *store
 		v.Drivers = caps.Drivers
 		v.Runtimes = caps.Runtimes
 		v.CachedDeployments = caps.CachedDeployments
+		v.SteamApps = caps.SteamApps
 		v.MemoryAvailableMB = caps.MemoryAvailableMB
 		v.DiskFreeBytes = caps.DiskFreeBytes
 		v.DiskTotalBytes = caps.DiskTotalBytes

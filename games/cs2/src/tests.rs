@@ -1,0 +1,701 @@
+use super::*;
+use executor_api::{ExitStatus, OutputLine, ResourceUsage};
+use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+// Captured by /home/ubuntu/cs2-spike/probe.py (A2S_INFO and S2C_CHALLENGE).
+const INFO_HEX: &str = "ffffffff4911436f756e7465722d537472696b6520320064655f6475737432006373676f00436f756e7465722d537472696b65203200da02024002646c0001312e34312e392e3200b1eb691a0808ce64cb4001656d7074792c696e73656375726500da02000000000000";
+const CHALLENGE: &[u8] = b"\xff\xff\xff\xff\x41\xc9\xa4\x2b\x90";
+
+fn info() -> Vec<u8> {
+    (0..INFO_HEX.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&INFO_HEX[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+struct NoRuntimes;
+
+fn fake_steam_install(root: &Path) -> PathBuf {
+    let dir = root.join("steamapps/common/Counter-Strike Global Offensive");
+    std::fs::create_dir_all(steam::binary(&dir).parent().unwrap()).unwrap();
+    std::fs::write(steam::binary(&dir), "binary").unwrap();
+    std::fs::create_dir_all(dir.join("game/csgo/cfg")).unwrap();
+    std::fs::write(
+        dir.join("game/csgo/gameinfo.gi"),
+        "GameInfo { FileSystem { SearchPaths { Game csgo Game core Mod csgo } } }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("steamapps/appmanifest_730.acf"),
+        "\"AppState\" { \"StateFlags\" \"4\" \"installdir\" \"Counter-Strike Global Offensive\" }",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn steam_library_discovery_and_vdf() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(steam::in_root(root.path()).is_none());
+    let library = root.path().join("another library");
+    let dir = fake_steam_install(&library);
+    std::fs::create_dir_all(root.path().join("steamapps")).unwrap();
+    let path = library.to_string_lossy().replace('\\', "\\\\");
+    let fixture = include_str!("../tests/libraryfolders.vdf").replace("@LIBRARY@", &path);
+    std::fs::write(root.path().join("steamapps/libraryfolders.vdf"), &fixture).unwrap();
+    let parsed = vdf::parse(&fixture).unwrap();
+    assert_eq!(
+        parsed
+            .get("libraryfolders")
+            .unwrap()
+            .get("0")
+            .unwrap()
+            .get("path")
+            .unwrap()
+            .text(),
+        Some(r"C:\Program Files (x86)\Steam")
+    );
+    assert_eq!(
+        steam::in_root(root.path()).unwrap().dir,
+        std::fs::canonicalize(&dir).unwrap()
+    );
+    let manifest = library.join("steamapps/appmanifest_730.acf");
+    for flags in ["0", "6", "1026"] {
+        std::fs::write(
+            &manifest,
+            format!(
+                "AppState {{ StateFlags {flags} installdir \"Counter-Strike Global Offensive\" }}"
+            ),
+        )
+        .unwrap();
+        assert!(steam::in_root(root.path()).is_none());
+    }
+    for contents in [
+        "AppState {",
+        "AppState { StateFlags 4 }",
+        "AppState { StateFlags 4 installdir ../escape }",
+        "AppState { StateFlags 4 installdir \"\" }",
+    ] {
+        std::fs::write(&manifest, contents).unwrap();
+        assert!(steam::in_root(root.path()).is_none());
+    }
+    for input in ["\"unterminated", "a { b", "}", "a", "a { b }"] {
+        assert!(vdf::parse(input).is_err(), "{input}");
+    }
+    let info = vdf::parse(
+        "GameInfo { game \"Counter Strike\" FileSystem { SearchPaths { Game csgo Game core } } }",
+    )
+    .unwrap();
+    let roundtrip = vdf::parse(&info.render()).unwrap();
+    assert_eq!(
+        roundtrip
+            .get("GameInfo")
+            .unwrap()
+            .get("FileSystem")
+            .unwrap()
+            .get("SearchPaths")
+            .unwrap()
+            .entries()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn shared_install_config_and_bans_are_private() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = fake_steam_install(root.path());
+    let user_bans = dir.join("game/csgo/cfg/banned_user.cfg");
+    std::fs::write(&user_bans, "user bans must not change").unwrap();
+    let config = json!({"server_name":"Private server", "password":"secret"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    for name in ["first", "second"] {
+        let private = root.path().join(name);
+        std::fs::create_dir_all(&private).unwrap();
+        let ctx = context(&private, &config, &deployment);
+        let install = steam::in_root(root.path()).unwrap();
+        Cs2Driver::prepare_shared(&ctx, &install).unwrap();
+        assert_eq!(
+            Cs2Driver::binary(&ctx).unwrap(),
+            steam::binary(&std::fs::canonicalize(&dir).unwrap())
+        );
+        let state = private.join("game/csgo/cfg");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("banned_user.cfg"), "banid 0 STEAM_0:1:123\n").unwrap();
+        Cs2Driver.configure(&ctx).await.unwrap();
+        let game = Cs2Driver::game_dir(&ctx).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(game.join("cfg/banned_user.cfg")).unwrap(),
+            "banid 0 STEAM_0:1:123\n"
+        );
+        let cfg = std::fs::read_to_string(game.join("cfg/varde.cfg")).unwrap();
+        assert!(cfg.contains("exec banned_user.cfg"));
+        assert!(cfg.contains("Private server"));
+        assert!(std::fs::read_to_string(game.join("gameinfo.gi"))
+            .unwrap()
+            .contains("cs2-runtime"));
+        let spec = Cs2Driver.process_spec(&ctx).unwrap();
+        assert_eq!(
+            &spec.args[..3],
+            &[
+                OsString::from("-dedicated"),
+                OsString::from("-game"),
+                game.into_os_string()
+            ]
+        );
+        assert_eq!(
+            Cs2Driver
+                .prepare_snapshot(&ctx, &Process::default())
+                .await
+                .unwrap(),
+            SnapshotBarrier::Live
+        );
+        assert_eq!(
+            std::fs::read_to_string(&user_bans).unwrap(),
+            "user bans must not change"
+        );
+    }
+    assert!(!dir.join("game/csgo/cfg/varde.cfg").exists());
+}
+
+#[test]
+fn complete_steamcmd_deployments_are_reusable() {
+    let root = tempfile::tempdir().unwrap();
+    let server = root.path().join("dep_previous/server");
+    std::fs::create_dir_all(server.join("steamapps")).unwrap();
+    std::fs::create_dir_all(steam::binary(&server).parent().unwrap()).unwrap();
+    std::fs::write(steam::binary(&server), "binary").unwrap();
+    let manifest = server.join("steamapps/appmanifest_730.acf");
+    std::fs::write(&manifest, "\"AppState\" { \"StateFlags\" \"6\" }").unwrap();
+    assert!(steam::in_deployments(root.path()).is_none());
+    std::fs::write(&manifest, "\"AppState\" { \"StateFlags\" \"4\" }").unwrap();
+    assert_eq!(
+        steam::in_deployments(root.path()).unwrap().dir,
+        std::fs::canonicalize(&server).unwrap()
+    );
+    std::fs::remove_file(steam::binary(&server)).unwrap();
+    assert!(steam::in_deployments(root.path()).is_none());
+}
+
+struct UpdatingRuntimes {
+    calls: std::sync::Mutex<Vec<PathBuf>>,
+    steamcmd: PathBuf,
+    fail: bool,
+}
+
+#[async_trait]
+impl RuntimeProvider for UpdatingRuntimes {
+    fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {
+        None
+    }
+
+    async fn steam_app_install(&self, app_id: u32, dest: &Path) -> Result<()> {
+        assert_eq!(app_id, APP_ID);
+        assert!(game_driver_api::steam_app_installed(app_id, dest));
+        self.calls.lock().unwrap().push(dest.to_path_buf());
+        if self.fail {
+            return Err("update failed".into());
+        }
+        Ok(())
+    }
+
+    async fn steamcmd_path(&self) -> Result<PathBuf> {
+        Ok(self.steamcmd.clone())
+    }
+}
+
+#[tokio::test]
+async fn prepare_updates_complete_own_and_previous_steamcmd_installs_each_time() {
+    for (name, fail) in [("current", false), ("previous", false), ("current", true)] {
+        let root = tempfile::tempdir().unwrap();
+        let client = fake_steam_install(&root.path().join("fixture"));
+        let private = root.path().join("deployments/current");
+        std::fs::create_dir_all(&private).unwrap();
+        let owner = root.path().join("deployments").join(name);
+        std::fs::create_dir_all(&owner).unwrap();
+        let server = owner.join("server");
+        std::fs::rename(client, &server).unwrap();
+        std::fs::create_dir_all(server.join("steamapps")).unwrap();
+        std::fs::write(
+            server.join("steamapps/appmanifest_730.acf"),
+            "\"AppState\" { \"StateFlags\" \"4\" }",
+        )
+        .unwrap();
+        let runtime = root.path().join("runtime");
+        std::fs::create_dir_all(runtime.join("linux64")).unwrap();
+        std::fs::write(runtime.join("linux64/steamclient.so"), "library").unwrap();
+        let runtimes = UpdatingRuntimes {
+            calls: Default::default(),
+            steamcmd: runtime.join("steamcmd"),
+            fail,
+        };
+        let cfg = json!({});
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let mut ctx = context(&private, &cfg, &deployment);
+        ctx.runtimes = &runtimes;
+        for _ in 0..2 {
+            let result = Cs2Driver::prepare_install(&ctx, None).await;
+            if fail {
+                assert!(result.unwrap_err().to_string().contains("update failed"));
+                assert!(!private.join("cs2-install.json").exists());
+            } else {
+                result.unwrap();
+                assert_eq!(
+                    Cs2Driver::binary(&ctx).unwrap(),
+                    steam::binary(&std::fs::canonicalize(&server).unwrap())
+                );
+                #[cfg(target_os = "linux")]
+                assert_eq!(
+                    std::fs::read(steam::binary(&server).with_file_name("steamclient.so")).unwrap(),
+                    b"library"
+                );
+            }
+        }
+        assert_eq!(
+            *runtimes.calls.lock().unwrap(),
+            vec![std::fs::canonicalize(&server).unwrap(); 2]
+        );
+    }
+}
+
+#[tokio::test]
+async fn prepare_leaves_steam_client_updates_to_steam() {
+    let root = tempfile::tempdir().unwrap();
+    let client = fake_steam_install(root.path());
+    let private = root.path().join("deployments/current");
+    std::fs::create_dir_all(&private).unwrap();
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let ctx = context(&private, &cfg, &deployment);
+    for _ in 0..2 {
+        Cs2Driver::prepare_install(&ctx, steam::in_root(root.path()))
+            .await
+            .unwrap();
+        assert_eq!(
+            Cs2Driver::binary(&ctx).unwrap(),
+            steam::binary(&std::fs::canonicalize(&client).unwrap())
+        );
+    }
+    assert!(!private.join("server").exists());
+}
+
+#[async_trait]
+impl RuntimeProvider for NoRuntimes {
+    fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {
+        None
+    }
+}
+
+fn context<'a>(
+    root: &'a std::path::Path,
+    cfg: &'a Value,
+    deployment: &'a DeploymentSpec,
+) -> DriverContext<'a> {
+    DriverContext {
+        server_id: "cs2-test",
+        server_dir: root,
+        deployment_dir: root,
+        config: cfg,
+        deployment,
+        runtimes: &NoRuntimes,
+        ports: &[],
+        memory_mb: 4096,
+    }
+}
+
+#[derive(Default)]
+struct Process {
+    fail_stdin: bool,
+    stall: bool,
+    interrupts: AtomicUsize,
+}
+#[async_trait]
+impl ProcessHandle for Process {
+    fn pid(&self) -> u32 {
+        0
+    }
+    async fn write_stdin(&self, line: &str) -> Result<()> {
+        assert_eq!(line, "quit\n");
+        if self.fail_stdin {
+            Err("closed stdin".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn output(&self) -> tokio::sync::broadcast::Receiver<OutputLine> {
+        tokio::sync::broadcast::channel(1).1
+    }
+    fn output_tail(&self, _: usize) -> Vec<OutputLine> {
+        vec![]
+    }
+    async fn wait(&self) -> Result<ExitStatus> {
+        if self.stall {
+            std::future::pending().await
+        } else {
+            Ok(ExitStatus {
+                code: Some(0),
+                signal: None,
+            })
+        }
+    }
+    async fn terminate(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn interrupt(&self) -> Result<()> {
+        self.interrupts.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn kill(&self) -> Result<()> {
+        Ok(())
+    }
+    fn resource_usage(&self) -> Option<ResourceUsage> {
+        None
+    }
+}
+
+#[test]
+fn args_cfg_and_modes() {
+    let mut cfg =
+        json!({"server_name":"Varde CS2", "password":"secret", "max_players":12, "bots":3});
+    let expected =
+        "hostname \"Varde CS2\"\nsv_password \"secret\"\nbot_quota_mode normal\nbot_quota 3\n";
+    assert_eq!(Cs2Driver::cfg(&cfg).unwrap(), expected);
+    for (name, kind, mode) in [
+        ("casual", 0, 0),
+        ("competitive", 0, 1),
+        ("wingman", 0, 2),
+        ("arms_race", 1, 0),
+        ("deathmatch", 1, 2),
+    ] {
+        cfg["game_mode"] = json!(name);
+        assert_eq!(Cs2Driver::mode(&cfg).unwrap(), (kind, mode));
+        let args = Cs2Driver::args(&cfg, 32123).unwrap();
+        let expected: Vec<OsString> = [
+            "-dedicated",
+            "-port",
+            "32123",
+            "-maxplayers",
+            "12",
+            "+game_type",
+            &kind.to_string(),
+            "+game_mode",
+            &mode.to_string(),
+            "+exec",
+            "varde.cfg",
+            "+map",
+            "de_dust2",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(args, expected);
+    }
+    cfg["gslt"] = json!("0123456789abcdef0123456789abcdef");
+    let args = Cs2Driver::args(&cfg, PORT).unwrap();
+    assert_eq!(
+        &args[args.len() - 2..],
+        &[
+            OsString::from("+sv_setsteamaccount"),
+            OsString::from("0123456789abcdef0123456789abcdef")
+        ]
+    );
+    assert!(!Cs2Driver::cfg(&cfg).unwrap().contains("0123456789"));
+}
+
+#[test]
+fn dashboard_null_optional_config_uses_defaults() {
+    let driver = Cs2Driver::new();
+    let cfg = json!({"server_name":"Varde"});
+    let dashboard = json!({"server_name":"Varde","password":null,"gslt":null,"game_mode":"competitive","map":"de_dust2","max_players":10,"bots":0});
+    driver.validate(&dashboard).unwrap();
+    assert_eq!(
+        Cs2Driver::cfg(&dashboard).unwrap(),
+        Cs2Driver::cfg(&cfg).unwrap()
+    );
+    assert_eq!(
+        Cs2Driver::args(&dashboard, PORT).unwrap(),
+        Cs2Driver::args(&cfg, PORT).unwrap()
+    );
+    let mut nulls = cfg.clone();
+    for key in [
+        "password",
+        "gslt",
+        "game_mode",
+        "map",
+        "max_players",
+        "bots",
+    ] {
+        nulls[key] = Value::Null;
+    }
+    driver.validate(&nulls).unwrap();
+    assert_eq!(
+        Cs2Driver::cfg(&nulls).unwrap(),
+        Cs2Driver::cfg(&cfg).unwrap()
+    );
+    assert_eq!(
+        Cs2Driver::args(&nulls, PORT).unwrap(),
+        Cs2Driver::args(&cfg, PORT).unwrap()
+    );
+}
+
+#[test]
+fn validation_defaults_bounds_and_injection() {
+    let driver = Cs2Driver::new();
+    let cfg = json!({"server_name":"Varde"});
+    driver.validate(&cfg).unwrap();
+    assert_eq!(Cs2Driver::mode(&cfg).unwrap(), (0, 1));
+    assert_eq!(
+        Cs2Driver::cfg(&cfg).unwrap(),
+        "hostname \"Varde\"\nsv_password \"\"\nbot_quota_mode normal\nbot_quota 0\n"
+    );
+    assert!(driver.validate(&json!({})).is_err());
+    for (key, value) in [
+        ("server_name", json!("")),
+        ("server_name", json!(" \t")),
+        ("server_name", json!(4)),
+        ("server_name", json!(null)),
+        ("password", json!("x\";quit")),
+        ("password", json!("x\nquit")),
+        ("password", json!(true)),
+        ("map", json!("")),
+        ("map", json!("../de_dust2")),
+        ("map", json!("+quit")),
+        ("max_players", json!(1)),
+        ("max_players", json!(65)),
+        ("max_players", json!(2.5)),
+        ("bots", json!(-1)),
+        ("bots", json!(65)),
+        ("bots", json!(true)),
+        ("game_mode", json!("unknown")),
+        ("gslt", json!("+quit")),
+        ("gslt", json!(false)),
+    ] {
+        let mut invalid = cfg.clone();
+        invalid[key] = value;
+        assert!(driver.validate(&invalid).is_err(), "accepted {invalid}");
+    }
+    for n in [2, 64] {
+        let mut cfg = cfg.clone();
+        cfg["max_players"] = json!(n);
+        driver.validate(&cfg).unwrap();
+    }
+    for n in [0, 64] {
+        let mut cfg = cfg.clone();
+        cfg["bots"] = json!(n);
+        driver.validate(&cfg).unwrap();
+    }
+}
+
+#[test]
+fn incomplete_install_disk_budget() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("steamapps")).unwrap();
+    let manifest = root.path().join("steamapps/appmanifest_730.acf");
+    for state in [None, Some("incomplete"), Some("0"), Some("1026")] {
+        if let Some(state) = state {
+            std::fs::write(&manifest, format!("\"StateFlags\" \"{state}\"")).unwrap();
+        }
+        assert!(check_install_space(root.path(), 0).is_err(), "{state:?}");
+    }
+    std::fs::create_dir_all(root.path().join("game")).unwrap();
+    std::fs::write(root.path().join("game/partial.bin"), vec![1; 65536]).unwrap();
+    let installed = allocated_install_bytes(root.path()).unwrap();
+    assert!(installed > 0);
+    check_install_space(root.path(), MIN_DISK_BYTES - installed).unwrap();
+    assert!(check_install_space(root.path(), MIN_DISK_BYTES - installed - 1).is_err());
+    std::fs::write(&manifest, "\"StateFlags\" \"4\"").unwrap();
+    check_install_space(root.path(), 0).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn install_disk_budget_ignores_sparse_bytes_and_symlinks() {
+    let root = tempfile::tempdir().unwrap();
+    let sparse = std::fs::File::create(root.path().join("partial.bin")).unwrap();
+    sparse.set_len(MIN_DISK_BYTES).unwrap();
+    assert!(allocated_install_bytes(root.path()).unwrap() < MIN_DISK_BYTES);
+    assert!(check_install_space(root.path(), 0).is_err());
+    std::os::unix::fs::symlink(root.path(), root.path().join("loop")).unwrap();
+    assert!(check_install_space(root.path(), 0).is_err());
+}
+
+#[test]
+fn disk_and_persistence() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(check_install_space(root.path(), 0).is_err());
+    assert!(check_install_space(root.path(), MIN_DISK_BYTES - 1)
+        .unwrap_err()
+        .to_string()
+        .contains("75 GB"));
+    check_install_space(root.path(), MIN_DISK_BYTES).unwrap();
+    let driver = Cs2Driver::new();
+    assert_eq!(driver.id(), "cs2");
+    assert_eq!(
+        driver.ports(&json!({})),
+        vec![PortSpec {
+            port: 27015,
+            protocol: GameProtocol::Udp
+        }]
+    );
+    let paths = driver.persistent_paths(&json!({}));
+    assert_eq!(
+        paths,
+        vec![
+            PathPattern::new("game/csgo/cfg/banned_user.cfg"),
+            PathPattern::new("game/csgo/cfg/banned_ip.cfg")
+        ]
+    );
+    assert!(!paths
+        .iter()
+        .any(|p| p.matches("game/csgo/cfg/varde.cfg", true)));
+    assert!(!driver.snapshot_after_stop());
+}
+
+#[test]
+fn captured_a2s_and_malformed_packets() {
+    let packet = info();
+    assert_eq!(
+        parse_reply(CHALLENGE),
+        Some(QueryReply::Challenge([0xc9, 0xa4, 0x2b, 0x90]))
+    );
+    assert_eq!(
+        parse_reply(&packet),
+        Some(QueryReply::Info {
+            map: "de_dust2",
+            max_players: 64
+        })
+    );
+    for n in 0..70 {
+        assert_eq!(parse_reply(&packet[..n]), None, "prefix {n}");
+    }
+    for n in 0..9 {
+        assert_eq!(parse_reply(&CHALLENGE[..n]), None);
+    }
+    assert_eq!(parse_reply(b""), None);
+    assert_eq!(parse_reply(b"\xff\xff\xff\xfeI"), None);
+    assert_eq!(parse_reply(b"\xff\xff\xff\xffZ"), None);
+    assert_eq!(parse_reply(b"\xfe\xff\xff\xffI"), None);
+}
+
+#[tokio::test]
+async fn udp_challenge_readiness_and_rejections() {
+    for (map, zero_capacity, malformed, expected) in [
+        ("de_dust2", false, false, true),
+        ("de_inferno", false, false, false),
+        ("de_dust2", true, false, false),
+        ("de_dust2", false, true, false),
+    ] {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let mut buf = [0; 256];
+            let (n, addr) = socket.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], INFO_REQUEST);
+            socket.send_to(CHALLENGE, addr).await.unwrap();
+            let (n, addr) = socket.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], [INFO_REQUEST, &CHALLENGE[5..]].concat());
+            let mut packet = info();
+            if zero_capacity {
+                packet[57] = 0;
+            }
+            if malformed {
+                packet.truncate(7);
+            }
+            socket.send_to(&packet, addr).await.unwrap();
+        });
+        assert_eq!(a2s_ready(port, map).await.unwrap(), expected);
+        task.await.unwrap();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifecycle_configs_bans_and_stop_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let cfg = json!({"server_name":"Varde"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(root.path(), &cfg, &deployment);
+    let bindings = [PortBinding {
+        service_port: PORT,
+        local_port: 32123,
+        protocol: GameProtocol::Udp,
+    }];
+    ctx.ports = &bindings;
+    let driver = Cs2Driver::new();
+    driver.configure(&ctx).await.unwrap();
+    let spec = driver.process_spec(&ctx).unwrap();
+    assert!(spec.stdin);
+    assert_eq!(spec.args[2], "32123");
+    assert_eq!(spec.cwd, root.path().join("server"));
+    #[cfg(target_os = "linux")]
+    assert!(spec.env.iter().any(|(key, value)| key == "LD_LIBRARY_PATH"
+        && std::env::split_paths(value).next().unwrap() == spec.program.parent().unwrap()));
+    let bans = root.path().join("server/game/csgo/cfg/banned_user.cfg");
+    tokio::fs::write(&bans, "banid 0 STEAM_0:1:123\n")
+        .await
+        .unwrap();
+    let p = Process::default();
+    assert_eq!(
+        driver.prepare_snapshot(&ctx, &p).await.unwrap(),
+        SnapshotBarrier::Live
+    );
+    let persisted = root.path().join("game/csgo/cfg/banned_user.cfg");
+    assert_eq!(
+        tokio::fs::read(&persisted).await.unwrap(),
+        tokio::fs::read(&bans).await.unwrap()
+    );
+    tokio::fs::remove_file(&bans).await.unwrap();
+    driver.configure(&ctx).await.unwrap();
+    assert!(bans.is_file());
+    let config = tokio::fs::read_to_string(bans.with_file_name("varde.cfg"))
+        .await
+        .unwrap();
+    assert!(config.contains("exec banned_user.cfg\n"));
+    tokio::fs::remove_file(&bans).await.unwrap();
+    driver.prepare_snapshot(&ctx, &p).await.unwrap();
+    assert!(!persisted.exists());
+    driver.resume_after_snapshot(&ctx, &p).await.unwrap();
+    for (fail_stdin, stall, interrupts) in [(false, false, 0), (true, false, 1), (false, true, 1)] {
+        let p = Process {
+            fail_stdin,
+            stall,
+            ..Default::default()
+        };
+        driver.graceful_stop(&ctx, &p).await.unwrap();
+        assert_eq!(p.interrupts.load(Ordering::SeqCst), interrupts);
+    }
+}
+
+#[tokio::test]
+async fn probe_handles_closed_port_and_missing_install() {
+    let root = tempfile::tempdir().unwrap();
+    let cfg = json!({"server_name":"Varde"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(root.path(), &cfg, &deployment);
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let bindings = [PortBinding {
+        service_port: PORT,
+        local_port: socket.local_addr().unwrap().port().into(),
+        protocol: GameProtocol::Udp,
+    }];
+    ctx.ports = &bindings;
+    drop(socket);
+    assert_eq!(
+        Cs2Driver.probe(&ctx, &Process::default()).await.unwrap(),
+        GameHealth::Starting
+    );
+    tokio::fs::create_dir_all(root.path().join("server/steamapps"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        root.path().join("server/steamapps/appmanifest_730.acf"),
+        "\"StateFlags\" \"4\"",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        Cs2Driver.prepare(&ctx).await.unwrap_err().to_string(),
+        "runtime provider cannot fetch"
+    );
+}

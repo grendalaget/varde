@@ -1,0 +1,24 @@
+[package]
+name = "game-cs2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+executor-api = { path = "../../crates/executor-api" }
+game-driver-api = { path = "../../crates/game-driver-api" }
+fs2 = "0.4"
+serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[dev-dependencies]
+executor-native = { path = "../../crates/executor-native" }
+runtimes = { path = "../../crates/runtimes" }
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }

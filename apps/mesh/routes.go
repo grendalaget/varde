@@ -351,8 +351,10 @@ func (f *udpFlow) send(payload []byte) {
 	if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(f.id, payload)); err != nil {
 		f.peer.bytesTx.Add(uint64(len(payload)))
 		// oversize datagrams are dropped (and counted) per spec
-		if errors.Is(err, &quic.DatagramTooLargeError{}) {
+		var tooLarge *quic.DatagramTooLargeError
+		if errors.As(err, &tooLarge) {
 			rtMetricDrop(f.rt.n)
+			f.rt.n.log.Debug("oversized UDP datagram dropped", "service", f.rt.serviceID, "direction", "client_to_host", "bytes", len(payload), "max_datagram_payload", tooLarge.MaxDatagramPayloadSize)
 			return
 		}
 		f.close()

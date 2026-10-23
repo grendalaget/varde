@@ -162,7 +162,11 @@ Drivers are compiled into the agent and registered in a `DriverRegistry` by id; 
   memory. Barrier: stdin `save-off`, `save-all flush`, wait for `Saved the game`; resume: `save-on`; stop: `stop`.
   Health: log `Done (` + TCP connect. Persistent paths: `world*/`, `server.properties`, `ops.json`, `whitelist.json`,
   `banned-*.json`.
-* **valheim**: SteamCMD app 896660 (`+force_install_dir … +login anonymous +app_update 896660 validate +quit`); start
+* **cs2**: SteamCMD app 730, UDP 27015 only; generated hostname/password/bot config,
+  optional GSLT, A2S map/capacity readiness, stdin `quit` with interrupt fallback.
+  Only ban configs are persisted; snapshots remain live. See [game notes](../games/README.md).
+* **valheim**: SteamCMD app 896660 (`+force_install_dir … +login anonymous +app_update 896660 +quit`,
+  adding `validate` for missing/incomplete installations); start
   `valheim_server(.x86_64|.exe) -nographics -batchmode -name -port 2456 -world -password -public 0
   -saveinterval 300 -backups 0 -savedir <server_dir>/saves`, plus `-preset <Normal|Casual|Easy|Hard|Hardcore|Immersive|Hammer>`
   when `modifiers` is configured; ports 2456–2457/udp; password ≥ 5 chars; world names are non-empty and exclude

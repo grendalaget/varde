@@ -36,6 +36,26 @@
     ]
   },
   {
+    "id": "cs2",
+    "name": "Counter-Strike 2 Dedicated",
+    "ports": [{ "port": 27015, "protocol": "udp" }],
+    "os": ["linux", "windows"],
+    "arch": ["x86_64"],
+    "min_memory_mb": 4096,
+    "min_disk_mb": 75000,
+    "steam_app": 730,
+    "runtimes": ["steamcmd"],
+    "config_fields": [
+      { "name": "server_name", "type": "string", "required": true },
+      { "name": "password", "type": "secret", "secret": true, "required": false },
+      { "name": "game_mode", "type": "select", "options": ["casual", "competitive", "wingman", "arms_race", "deathmatch"], "default": "competitive" },
+      { "name": "map", "type": "string", "default": "de_dust2" },
+      { "name": "max_players", "type": "int", "default": 10, "min": 2, "max": 64 },
+      { "name": "bots", "type": "int", "default": 0, "min": 0, "max": 64, "help": "bot quota (0 disables bots)" },
+      { "name": "gslt", "type": "secret", "secret": true, "required": false, "help": "Steam Game Server Login Token; without it the server is LAN-only (connections through Varde count as local)" }
+    ]
+  },
+  {
     "id": "valheim",
     "name": "Valheim Dedicated",
     "ports": [

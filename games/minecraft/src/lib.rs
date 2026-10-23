@@ -495,12 +495,35 @@ mod tests {
         assert!(props.contains("accepts-transfers=true"), "{props}");
         assert_eq!(ctx.local_port(PORT), 31234);
         assert_eq!(ctx.local_port(12345), 12345, "unmapped port unchanged");
+        let nulls = serde_json::json!({
+            "eula_accepted": true,
+            "online_mode": null,
+            "motd": null,
+            "max_players": null,
+            "difficulty": null,
+            "gamemode": null,
+            "view_distance": null,
+            "seed": null
+        });
+        let ctx = DriverContext {
+            config: &nulls,
+            ..ctx
+        };
+        MinecraftDriver::new().validate(&nulls).unwrap();
+        MinecraftDriver::new().configure(&ctx).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(server_dir.join("server.properties")).unwrap(),
+            props
+        );
     }
 
     #[test]
     fn eula_gate() {
         let d = MinecraftDriver::new();
         assert!(d.validate(&serde_json::json!({})).is_err());
+        assert!(d
+            .validate(&serde_json::json!({"eula_accepted": null}))
+            .is_err());
         assert!(d
             .validate(&serde_json::json!({"eula_accepted": false}))
             .is_err());

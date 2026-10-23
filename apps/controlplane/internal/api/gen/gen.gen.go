@@ -770,6 +770,7 @@ type Capabilities struct {
 	OnBattery         *bool                     `json:"on_battery,omitempty"`
 	Os                *string                   `json:"os,omitempty"`
 	Runtimes          *[]string                 `json:"runtimes,omitempty"`
+	SteamApps         *[]int64                  `json:"steam_apps,omitempty"`
 	UptimeS           *int                      `json:"uptime_s,omitempty"`
 	UserActive        *bool                     `json:"user_active,omitempty"`
 }
@@ -1085,11 +1086,15 @@ type Game struct {
 	Arch         []string          `json:"arch"`
 	ConfigFields []GameConfigField `json:"config_fields"`
 	Id           string            `json:"id"`
+	MinDiskMb    *int64            `json:"min_disk_mb,omitempty"`
 	MinMemoryMb  int               `json:"min_memory_mb"`
 	Name         string            `json:"name"`
 	Os           []GameOs          `json:"os"`
 	Ports        []GamePort        `json:"ports"`
 	Runtimes     *[]string         `json:"runtimes,omitempty"`
+
+	// SteamApp Prefer a complete installed Steam app; otherwise provision using the catalog runtimes and min_disk_mb.
+	SteamApp *int64 `json:"steam_app,omitempty"`
 }
 
 // GameOs defines model for Game.Os.

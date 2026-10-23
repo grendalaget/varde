@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -87,6 +88,13 @@ func (s *sharedSock) LocalAddr() net.Addr                      { return s.udp.Lo
 func (s *sharedSock) SetDeadline(t time.Time) error            { return s.udp.SetDeadline(t) }
 func (s *sharedSock) SetReadDeadline(t time.Time) error        { return s.udp.SetReadDeadline(t) }
 func (s *sharedSock) SetWriteDeadline(t time.Time) error       { return s.udp.SetWriteDeadline(t) }
+
+// Expose DF support so quic-go can probe the direct path above its initial MTU.
+// Keep packet I/O on WriteTo: relay demultiplexing and the direct-path test hook
+// must not be bypassed by an OOB or batched writer.
+func (s *sharedSock) SyscallConn() (syscall.RawConn, error) { return s.udp.SyscallConn() }
+func (s *sharedSock) SetReadBuffer(bytes int) error         { return s.udp.SetReadBuffer(bytes) }
+func (s *sharedSock) SetWriteBuffer(bytes int) error        { return s.udp.SetWriteBuffer(bytes) }
 
 // Node is the whole mesh state for this process.
 type Node struct {

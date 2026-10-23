@@ -515,6 +515,7 @@ async fn run_linked(
     drivers.register(Box::new(tg));
     drivers.register(Box::new(game_minecraft::MinecraftDriver::new()));
     drivers.register(Box::new(game_valheim::ValheimDriver::new()));
+    drivers.register(Box::new(game_cs2::Cs2Driver::new()));
     let runtimes = Arc::new(runtimes::HttpRuntimes::new(data_dir.join("runtimes")));
 
     // mesh

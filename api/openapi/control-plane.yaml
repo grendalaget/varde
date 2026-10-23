@@ -1472,6 +1472,8 @@ components:
           type: array
           items: { type: string }
         min_memory_mb: { type: integer }
+        min_disk_mb: { type: integer, format: int64 }
+        steam_app: { type: integer, format: int64, description: "Prefer a complete installed Steam app; otherwise provision using the catalog runtimes and min_disk_mb." }
         runtimes:
           type: array
           items: { type: string }
@@ -1672,6 +1674,9 @@ components:
         cached_deployments:
           type: array
           items: { type: string }
+        steam_apps:
+          type: array
+          items: { type: integer, format: int64 }
         drivers:
           type: array
           items: { type: string }

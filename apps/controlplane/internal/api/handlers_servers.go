@@ -43,10 +43,17 @@ func genGame(g *catalog.Game) gen.Game {
 	for _, o := range g.OS {
 		oss = append(oss, gen.GameOs(o))
 	}
-	return gen.Game{
+	out := gen.Game{
 		Id: g.ID, Name: g.Name, Ports: ports, Os: oss, Arch: g.Arch,
 		MinMemoryMb: int(g.MinMemoryMB), Runtimes: &g.Runtimes, ConfigFields: fields,
 	}
+	if g.MinDiskMB > 0 {
+		out.MinDiskMb = &g.MinDiskMB
+	}
+	if g.SteamApp > 0 {
+		out.SteamApp = &g.SteamApp
+	}
+	return out
 }
 
 func crossplayEnabled(gameID string, cfg map[string]any) bool {

@@ -2,6 +2,60 @@ package catalog
 
 import "testing"
 
+func TestCS2Config(t *testing.T) {
+	game := Get("cs2")
+	if game == nil {
+		t.Fatal("cs2 catalog entry missing")
+	}
+	if game.MinDiskMB != 75000 {
+		t.Fatalf("cs2 min_disk_mb = %d, want 75000", game.MinDiskMB)
+	}
+	if game.SteamApp != 730 || Get("valheim").SteamApp != 0 {
+		t.Fatal("CS2 must prefer Steam app 730, other games default to no installed-app policy")
+	}
+	if Get("valheim").MinDiskMB != 0 {
+		t.Fatal("omitted min_disk_mb must default to zero")
+	}
+	for _, tc := range []struct {
+		key     string
+		value   any
+		wantErr bool
+	}{
+		{"max_players", float64(1), true}, {"max_players", float64(2), false},
+		{"max_players", float64(64), false}, {"max_players", float64(65), true},
+		{"max_players", 10.5, true}, {"bots", float64(-1), true},
+		{"bots", float64(0), false}, {"bots", float64(64), false}, {"bots", float64(65), true},
+		{"game_mode", "competitive", false}, {"game_mode", "casual", false},
+		{"game_mode", "wingman", false}, {"game_mode", "arms_race", false},
+		{"game_mode", "deathmatch", false}, {"game_mode", "unknown", true},
+		{"password", "", false}, {"gslt", "", false}, {"server_name", "", true},
+	} {
+		cfg := map[string]any{"server_name": "Varde"}
+		cfg[tc.key] = tc.value
+		errs := game.ValidateConfig(cfg)
+		if (len(errs) > 0) != tc.wantErr {
+			t.Errorf("%s=%v: errors=%v wantErr=%v", tc.key, tc.value, errs, tc.wantErr)
+		}
+	}
+	if errs := game.ValidateConfig(map[string]any{"server_name": "Varde"}); len(errs) > 0 {
+		t.Fatalf("minimal config: %v", errs)
+	}
+	if errs := game.ValidateConfig(map[string]any{}); len(errs) == 0 {
+		t.Fatal("missing server_name accepted")
+	}
+	for _, name := range []string{"password", "gslt"} {
+		found := false
+		for _, field := range game.ConfigFields {
+			if field.Name == name {
+				found = field.Secret && field.Type == "secret" && !field.Required
+			}
+		}
+		if !found {
+			t.Errorf("%s must be an optional secret", name)
+		}
+	}
+}
+
 func TestValheimSaveIntervalBounds(t *testing.T) {
 	game := Get("valheim")
 	if game == nil {

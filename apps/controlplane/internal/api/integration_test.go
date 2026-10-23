@@ -301,7 +301,7 @@ type directives struct {
 
 func caps() map[string]any {
 	return map[string]any{
-		"drivers": []string{"testgame", "minecraft", "valheim"},
+		"drivers": []string{"testgame", "minecraft", "valheim", "cs2"},
 		"os":      "linux", "arch": "x86_64",
 		"memory_available_mb": 8192, "disk_free_bytes": 1 << 40,
 		"runtimes": []string{"native"},

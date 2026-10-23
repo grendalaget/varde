@@ -28,6 +28,13 @@ pub fn capabilities(
                 .collect(),
         ),
         cached_deployments: Some(vec![]),
+        steam_apps: Some(
+            if game_cs2::steam::detect(Some(&data_dir.join("deployments"))).is_some() {
+                vec![game_cs2::APP_ID.into()]
+            } else {
+                vec![]
+            },
+        ),
         drivers: Some(drivers.iter().map(|d| d.to_string()).collect()),
         uptime_s: Some(uptime()),
         agent_started_at: Some(started_at_ms),
