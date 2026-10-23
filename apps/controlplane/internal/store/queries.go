@@ -84,6 +84,21 @@ func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName s
 	return err
 }
 
+func (s *Store) UpdateUserProfile(ctx context.Context, id string, displayName *string, steamID **string) error {
+	if displayName != nil {
+		if _, err := s.q().ExecContext(ctx, s.Rebind(
+			`UPDATE users SET display_name=? WHERE id=?`), *displayName, id); err != nil {
+			return err
+		}
+	}
+	if steamID != nil {
+		_, err := s.q().ExecContext(ctx, s.Rebind(
+			`UPDATE users SET steam_id=? WHERE id=?`), *steamID, id)
+		return err
+	}
+	return nil
+}
+
 // BindWebsiteUserID links an existing account to a varde.games identity,
 // refreshing its mirrored profile fields in the same write.
 func (s *Store) BindWebsiteUserID(ctx context.Context, id, websiteUserID, email, displayName string) error {
@@ -144,6 +159,36 @@ func (s *Store) GetGroup(ctx context.Context, id string) (*Group, error) {
 	return &g, err
 }
 
+func (s *Store) GroupIntegration(ctx context.Context, groupID, kind string) (*GroupIntegration, error) {
+	var integration GroupIntegration
+	err := s.q().GetContext(ctx, &integration, s.Rebind(
+		`SELECT * FROM group_integrations WHERE group_id=? AND kind=?`), groupID, kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &integration, err
+}
+
+func (s *Store) UpsertGroupIntegration(ctx context.Context, integration *GroupIntegration) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO group_integrations
+		 (group_id,kind,base_url,api_token_sealed,fleet_key_sealed,created_by,created_at,updated_at)
+		 VALUES (?,?,?,?,?,?,?,?)
+		 ON CONFLICT(group_id,kind) DO UPDATE SET base_url=excluded.base_url,
+		 api_token_sealed=excluded.api_token_sealed,fleet_key_sealed=excluded.fleet_key_sealed,
+		 created_by=excluded.created_by,updated_at=excluded.updated_at`),
+		integration.GroupID, integration.Kind, integration.BaseURL,
+		integration.APITokenSealed, integration.FleetKeySealed, integration.CreatedBy,
+		integration.CreatedAt, integration.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteGroupIntegration(ctx context.Context, groupID, kind string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`DELETE FROM group_integrations WHERE group_id=? AND kind=?`), groupID, kind)
+	return err
+}
+
 func (s *Store) UpdateGroup(ctx context.Context, g *Group) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`UPDATE groups SET name=?, settings_json=? WHERE id=?`),
@@ -177,7 +222,7 @@ func (s *Store) MemberRole(ctx context.Context, groupID, userID string) (string,
 func (s *Store) ListMembers(ctx context.Context, groupID string) ([]Member, error) {
 	var ms []Member
 	err := s.q().SelectContext(ctx, &ms, s.Rebind(
-		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name
+		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name, u.steam_id
 		 FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=?`), groupID)
 	return ms, err
 }

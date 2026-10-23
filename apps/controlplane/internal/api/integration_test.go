@@ -25,6 +25,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/enroll"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/identity"
 )
@@ -80,12 +81,17 @@ func newBareEnv(t *testing.T) *env {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	recon := reconciler.New(st, testTimings, log)
+	secretManager, err := secrets.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, relayPriv, _ := ed25519.GenerateKey(rand.Reader)
 	srv := &api.Server{
-		Store: st,
-		Auth:  &auth.Local{Store: st, Policy: auth.SignupOpen},
-		Cfg:   api.Config{Timings: testTimings, Version: "test"},
-		Recon: recon, RelayKey: relayPriv, Log: log,
+		Store:   st,
+		Secrets: secretManager,
+		Auth:    &auth.Local{Store: st, Policy: auth.SignupOpen},
+		Cfg:     api.Config{Timings: testTimings, Version: "test"},
+		Recon:   recon, RelayKey: relayPriv, Log: log,
 	}
 	e := &env{t: t, clk: clk, st: st, recon: recon, srv: srv}
 	e.http = httptest.NewServer(api.NewHandler(srv, nil))
@@ -1916,6 +1922,36 @@ func TestCookieSession(t *testing.T) {
 	}
 	if r := e.rawDo("GET", "/v1/me", nil, nil, c); r.StatusCode != 401 {
 		t.Fatalf("revoked session still works: %d", r.StatusCode)
+	}
+}
+
+func TestUpdateMeSteamID(t *testing.T) {
+	e := newEnv(t)
+	validID := "76561198000000001"
+	updated := e.do("PATCH", "/v1/me", map[string]any{"steam_id": validID}, e.token)
+	if updated.Status != http.StatusOK {
+		t.Fatalf("PATCH valid Steam ID: status=%d body=%s", updated.Status, updated.Raw)
+	}
+	user := updated.Body["user"].(map[string]any)
+	if got := user["steam_id"]; got != validID {
+		t.Fatalf("steam_id = %#v, want %q", got, validID)
+	}
+
+	invalid := e.do("PATCH", "/v1/me", map[string]any{"steam_id": "7656119800000000x"}, e.token)
+	if invalid.Status != http.StatusBadRequest || invalid.Body["message"] != "invalid steam id" {
+		t.Fatalf("PATCH invalid Steam ID: status=%d body=%s", invalid.Status, invalid.Raw)
+	}
+
+	unchanged := e.do("PATCH", "/v1/me", map[string]any{"display_name": "renamed"}, e.token)
+	if unchanged.Status != http.StatusOK ||
+		unchanged.Body["user"].(map[string]any)["steam_id"] != validID {
+		t.Fatalf("PATCH without steam_id changed profile: status=%d body=%s", unchanged.Status, unchanged.Raw)
+	}
+
+	cleared := e.do("PATCH", "/v1/me", map[string]any{"steam_id": nil}, e.token)
+	if cleared.Status != http.StatusOK ||
+		cleared.Body["user"].(map[string]any)["steam_id"] != nil {
+		t.Fatalf("PATCH null Steam ID did not clear it: status=%d body=%s", cleared.Status, cleared.Raw)
 	}
 }
 

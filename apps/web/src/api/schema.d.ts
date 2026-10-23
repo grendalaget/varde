@@ -152,7 +152,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["updateMe"];
         trace?: never;
     };
     "/v1/groups": {
@@ -185,6 +185,38 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["updateGroup"];
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/integrations/autotournament": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAutoTournamentLink"];
+        put: operations["putAutoTournamentLink"];
+        post?: never;
+        delete: operations["deleteAutoTournamentLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/tournaments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getGroupTournaments"];
+        put?: never;
+        post: operations["createGroupTournament"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/groups/{groupId}/members": {
@@ -773,7 +805,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal";
+            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "auto_tournament_unavailable";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -820,6 +852,7 @@ export interface components {
             is_operator: boolean;
             /** Format: int64 */
             created_at: number;
+            steam_id?: string | null;
         };
         Me: {
             user: components["schemas"]["User"];
@@ -861,9 +894,61 @@ export interface components {
             user_id: string;
             email: string;
             display_name: string;
+            steam_id?: string | null;
             role: components["schemas"]["Role"];
             /** Format: int64 */
             created_at: number;
+        };
+        AutoTournamentLink: {
+            linked: boolean;
+            base_url?: string;
+            /** Format: int64 */
+            linked_at?: number;
+        };
+        AutoTournamentLinkRequest: {
+            base_url: string;
+            api_token: string;
+        };
+        AutoTournamentTournament: {
+            id: string;
+            name: string;
+            type: string;
+            status: string;
+            url: string;
+        };
+        CreateGroupTournamentRequest: {
+            name: string;
+            /**
+             * @default shuffle
+             * @enum {string}
+             */
+            format: "shuffle" | "single_elimination" | "double_elimination" | "round_robin" | "swiss";
+            /** @default 5 */
+            team_size: number;
+            /**
+             * @default [
+             *       "de_mirage",
+             *       "de_inferno",
+             *       "de_nuke"
+             *     ]
+             */
+            maps: string[];
+            /**
+             * @default bo1
+             * @enum {string}
+             */
+            match_format: "bo1" | "bo3" | "bo5";
+            user_ids?: string[];
+            /** @default true */
+            start: boolean;
+        };
+        CreateGroupTournamentResponse: {
+            tournament_id: string;
+            url: string;
+            bracket_url: string;
+            started: boolean;
+            players: number;
+            skipped: string[];
         };
         Invite: {
             code: string;
@@ -1672,6 +1757,35 @@ export interface operations {
             401: components["responses"]["Error"];
         };
     };
+    updateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    display_name?: string;
+                    steam_id?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated current user profile. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
     listGroups: {
         parameters: {
             query?: never;
@@ -1799,6 +1913,139 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    getAutoTournamentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration status without credentials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTournamentLink"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    putAutoTournamentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoTournamentLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Linked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTournamentLink"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+        };
+    };
+    deleteAutoTournamentLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    getGroupTournaments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tournaments in the linked Auto Tournament instance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTournamentTournament"][];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+        };
+    };
+    createGroupTournament: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGroupTournamentRequest"];
+            };
+        };
+        responses: {
+            /** @description Tournament created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateGroupTournamentResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            502: components["responses"]["Error"];
         };
     };
     listMembers: {

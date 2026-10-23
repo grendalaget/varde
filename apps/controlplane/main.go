@@ -28,6 +28,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/api"
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
+	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/apps/controlplane/internal/webui"
 )
@@ -100,6 +101,7 @@ func (r *relayFlags) Set(v string) error {
 type serveCfg struct {
 	listen         string
 	dbURL          string
+	secretsKeyFile string
 	publicURL      string
 	signup         string
 	authMode       string
@@ -123,6 +125,7 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs := flag.NewFlagSet("varde-control-plane", flag.ExitOnError)
 	fs.StringVar(&cfg.listen, "listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
+	fs.StringVar(&cfg.secretsKeyFile, "secrets-key-file", envOr("VARDE_SECRETS_KEY_FILE", ""), "file containing the 32-byte secrets encryption key")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
 	fs.StringVar(&cfg.signup, "signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
 	fs.StringVar(&cfg.authMode, "auth-mode", envOr("VARDE_AUTH_MODE", "local"), "auth mode: local|federated (federated trusts varde.games tokens on /v1/auth/external)")
@@ -179,6 +182,14 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = st.Close() }()
+
+	secretManager, secretKeyPath, err := secrets.Load(os.Getenv("VARDE_SECRETS_KEY"), cfg.secretsKeyFile, cfg.dbURL)
+	if err != nil {
+		return fmt.Errorf("secrets key: %w", err)
+	}
+	if secretKeyPath != "" {
+		log.Info("loaded secrets encryption key", "path", secretKeyPath)
+	}
 
 	// CP signing key for relay tokens, persisted in kv.
 	relayKey, err := loadOrCreateRelayKey(context.Background(), st)
@@ -266,6 +277,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		Cfg:        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
 		Recon:      recon,
 		RelayKey:   relayKey,
+		Secrets:    secretManager,
 		Log:        log,
 	}
 

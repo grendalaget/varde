@@ -318,6 +318,10 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		}
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+		if cfg == nil {
+			cfg = make(map[string]any)
+		}
+		s.addAutoTournamentDirective(ctx, srv, cfg)
 		ed.Config = &cfg
 		if srv.DeploymentID != nil {
 			if dep, err := s.getDeployment(ctx, *srv.DeploymentID); err == nil {

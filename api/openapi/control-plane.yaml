@@ -158,6 +158,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateMe
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                steam_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated current user profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
 
   /v1/groups:
     get:
@@ -244,6 +265,88 @@ paths:
         "204": { description: Deleted (owner only). }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/integrations/autotournament:
+    get:
+      operationId: getAutoTournamentLink
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Integration status without credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoTournamentLink" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putAutoTournamentLink
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutoTournamentLinkRequest" }
+      responses:
+        "200":
+          description: Linked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoTournamentLink" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAutoTournamentLink
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "204": { description: Unlinked. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/tournaments:
+    get:
+      operationId: getGroupTournaments
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Tournaments in the linked Auto Tournament instance.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AutoTournamentTournament" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createGroupTournament
+      tags: [groups]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateGroupTournamentRequest" }
+      responses:
+        "201":
+          description: Tournament created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateGroupTournamentResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/members:
     get:
       operationId: listMembers
@@ -1215,7 +1318,7 @@ components:
           type: string
           enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
                  limit_exceeded, validation, unauthorized, conflict,
-                 unschedulable, internal]
+                 unschedulable, internal, auto_tournament_unavailable]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:
@@ -1275,6 +1378,7 @@ components:
         display_name: { type: string }
         is_operator: { type: boolean }
         created_at: { type: integer, format: int64 }
+        steam_id: { type: string, nullable: true }
     Me:
       type: object
       required: [user, groups]
@@ -1321,8 +1425,64 @@ components:
         user_id: { type: string }
         email: { type: string }
         display_name: { type: string }
+        steam_id: { type: string, nullable: true }
         role: { $ref: "#/components/schemas/Role" }
         created_at: { type: integer, format: int64 }
+    AutoTournamentLink:
+      type: object
+      required: [linked]
+      properties:
+        linked: { type: boolean }
+        base_url: { type: string }
+        linked_at: { type: integer, format: int64 }
+    AutoTournamentLinkRequest:
+      type: object
+      required: [base_url, api_token]
+      properties:
+        base_url: { type: string }
+        api_token: { type: string }
+    AutoTournamentTournament:
+      type: object
+      required: [id, name, type, status, url]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string }
+        status: { type: string }
+        url: { type: string }
+    CreateGroupTournamentRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        format:
+          type: string
+          enum: [shuffle, single_elimination, double_elimination, round_robin, swiss]
+          default: shuffle
+        team_size: { type: integer, minimum: 1, maximum: 5, default: 5 }
+        maps:
+          type: array
+          minItems: 1
+          maxItems: 7
+          items: { type: string }
+          default: [de_mirage, de_inferno, de_nuke]
+        match_format: { type: string, enum: [bo1, bo3, bo5], default: bo1 }
+        user_ids:
+          type: array
+          items: { type: string }
+        start: { type: boolean, default: true }
+    CreateGroupTournamentResponse:
+      type: object
+      required: [tournament_id, url, bracket_url, started, players, skipped]
+      properties:
+        tournament_id: { type: string }
+        url: { type: string }
+        bracket_url: { type: string }
+        started: { type: boolean }
+        players: { type: integer }
+        skipped:
+          type: array
+          items: { type: string }
     Invite:
       type: object
       required: [code, group_id, group_name, role, expires_at, max_uses, uses]

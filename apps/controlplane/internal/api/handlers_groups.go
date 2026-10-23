@@ -146,7 +146,8 @@ func (s *Server) ListMembers(ctx context.Context, req gen.ListMembersRequestObje
 	for _, m := range ms {
 		out = append(out, gen.Member{
 			UserId: m.UserID, Email: m.Email, DisplayName: m.DisplayName,
-			Role: gen.Role(m.Role), CreatedAt: m.CreatedAt,
+			SteamId: m.SteamID,
+			Role:    gen.Role(m.Role), CreatedAt: m.CreatedAt,
 		})
 	}
 	return gen.ListMembers200JSONResponse{Members: out}, nil
