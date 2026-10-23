@@ -1579,7 +1579,7 @@ components:
         values: { type: object, additionalProperties: true }
     PluginActionResponse:
       type: object
-      required: [message, notes]
+      required: [message]
       properties:
         message: { type: string }
         href: { type: string }

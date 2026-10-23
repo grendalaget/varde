@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -89,14 +88,21 @@ func apiPluginField(field plugins.Field) gen.PluginField {
 }
 
 func (s *Server) ListGroupPlugins(ctx context.Context, req gen.ListGroupPluginsRequestObject) (gen.ListGroupPluginsResponseObject, error) {
-	if s.Secrets == nil {
-		return nil, errResp(gen.SecretsUnconfigured, "set VARDE_SECRETS_KEY (same value on every control plane replica) to use plugins", nil)
+	if serviceFrom(ctx) != nil {
+		return nil, errResp(gen.Forbidden, "service tokens cannot access plugin endpoints", nil)
 	}
 	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
 		return nil, err
 	}
 	result := gen.ListGroupPlugins200JSONResponse{Plugins: []gen.GroupPlugin{}}
-	for _, plugin := range s.Plugins.All() {
+	loaded := s.Plugins.All()
+	if len(loaded) == 0 {
+		return result, nil
+	}
+	if s.Secrets == nil {
+		return nil, errResp(gen.SecretsUnconfigured, "set VARDE_SECRETS_KEY (same value on every control plane replica) to use plugins", nil)
+	}
+	for _, plugin := range loaded {
 		row, err := s.Store.GroupPlugin(ctx, req.GroupId, plugin.ID)
 		if errors.Is(err, sql.ErrNoRows) {
 			result.Plugins = append(result.Plugins, groupPluginResponse(plugin, false, nil, nil))
@@ -193,7 +199,7 @@ func (s *Server) PutGroupPlugin(ctx context.Context, req gen.PutGroupPluginReque
 		if !found || !field.Hidden {
 			return nil, pluginUnavailable(plugin)
 		}
-		if err := validateFieldValue(field, value); err != nil {
+		if err := field.Validate(value); err != nil {
 			return nil, pluginUnavailable(plugin)
 		}
 		merged[key] = value
@@ -298,8 +304,12 @@ func (s *Server) InvokePluginAction(ctx context.Context, req gen.InvokePluginAct
 		return nil, err
 	}
 	var response gen.PluginActionResponse
-	if err := json.Unmarshal(reply, &response); err != nil || response.Message == "" || response.Notes == nil {
+	if err := json.Unmarshal(reply, &response); err != nil || response.Message == "" {
 		return nil, pluginUnavailable(plugin)
+	}
+	if response.Notes == nil {
+		notes := []string{}
+		response.Notes = &notes
 	}
 	if response.Href != nil && !validHTTPURL(*response.Href) {
 		return nil, pluginUnavailable(plugin)
@@ -353,14 +363,8 @@ func (s *Server) pluginCallContext(ctx context.Context, groupID string, plugin *
 }
 
 func (s *Server) authorizePluginGroup(ctx context.Context, groupID string, plugin *plugins.Plugin, minRole string) (*store.User, string, error) {
-	if token := serviceFrom(ctx); token != nil {
-		if plugin.ServiceToken == "" || token.Name != plugin.ServiceToken {
-			return nil, "", errResp(gen.Forbidden, "service token is not bound to this plugin", nil)
-		}
-		if !token.AllowsGroup(groupID) {
-			return nil, "", errResp(gen.Forbidden, "service token not bound to group", nil)
-		}
-		return &store.User{ID: "service:" + token.Name, DisplayName: token.Name}, "member", nil
+	if serviceFrom(ctx) != nil {
+		return nil, "", errResp(gen.Forbidden, "service tokens cannot access plugin endpoints", nil)
 	}
 	return s.requireRole(ctx, groupID, minRole)
 }
@@ -530,17 +534,24 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 				continue
 			}
 		}
-		if err := validateFieldValue(field, value); err != nil {
+		if err := field.Validate(value); err != nil {
 			return nil, err
 		}
 		merged[field.Name] = value
 	}
 	for _, field := range plugin.Settings {
-		if field.Required && !field.Hidden {
-			value, ok := merged[field.Name]
-			if !ok || value == nil || value == "" {
-				return nil, fmt.Errorf("%s is required", field.Name)
+		if field.Hidden {
+			continue
+		}
+		value, ok := merged[field.Name]
+		if !ok {
+			if err := field.Validate(nil); err != nil {
+				return nil, err
 			}
+			continue
+		}
+		if err := field.Validate(value); err != nil {
+			return nil, err
 		}
 	}
 	return merged, nil
@@ -553,51 +564,6 @@ func findPluginField(fields []plugins.Field, name string) (plugins.Field, bool) 
 		}
 	}
 	return plugins.Field{}, false
-}
-
-func validateFieldValue(field plugins.Field, value any) error {
-	fail := func() error { return fmt.Errorf("%s has an invalid value", field.Name) }
-	switch field.Type {
-	case "string", "secret":
-		if _, ok := value.(string); !ok {
-			return fail()
-		}
-	case "int":
-		number, ok := value.(float64)
-		if !ok || math.Trunc(number) != number {
-			return fail()
-		}
-	case "bool":
-		if _, ok := value.(bool); !ok {
-			return fail()
-		}
-	case "select":
-		text, ok := value.(string)
-		if !ok || !contains(field.Options, text) {
-			return fail()
-		}
-	case "multiselect", "member_multiselect":
-		items, ok := value.([]any)
-		if !ok {
-			return fail()
-		}
-		for _, item := range items {
-			text, ok := item.(string)
-			if !ok || (field.Type == "multiselect" && !contains(field.Options, text)) {
-				return fail()
-			}
-		}
-	}
-	return nil
-}
-
-func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 func validateActionValues(ctx context.Context, st *store.Store, groupID string, fields []plugins.Field, input map[string]any) (map[string]any, error) {
@@ -618,12 +584,12 @@ func validateActionValues(ctx context.Context, st *store.Store, groupID string, 
 	for _, field := range fields {
 		value, supplied := input[field.Name]
 		if !supplied {
-			if field.Required {
-				return nil, fmt.Errorf("%s is required", field.Name)
+			if err := field.Validate(nil); err != nil {
+				return nil, err
 			}
 			continue
 		}
-		if err := validateFieldValue(field, value); err != nil {
+		if err := field.Validate(value); err != nil {
 			return nil, err
 		}
 		if field.Type != "member_multiselect" {

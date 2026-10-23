@@ -84,6 +84,7 @@ function PluginSettings({
     else {
       setMessage("Saved");
       await refresh();
+      window.dispatchEvent(new Event("varde:plugins-changed"));
     }
   }
 
@@ -99,6 +100,7 @@ function PluginSettings({
     else {
       setMessage("Disabled");
       await refresh();
+      window.dispatchEvent(new Event("varde:plugins-changed"));
     }
   }
 
@@ -124,7 +126,7 @@ function PluginSettings({
             value={settings[field.name]}
             onChange={(value) => setSettings((current) => ({ ...current, [field.name]: value }))}
             members={members}
-            disabled={!canEdit || !record?.enabled && !canEdit}
+            disabled={!canEdit}
           />
         ))}
         <ErrorNote>{error}</ErrorNote>

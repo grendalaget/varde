@@ -173,9 +173,6 @@ func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (g
 			*steamID = value
 		}
 	}
-	if req.Body.SteamId != nil && *req.Body.SteamId != "" && !validSteamID(*req.Body.SteamId) {
-		return nil, errResp(gen.Validation, "invalid steam id", nil)
-	}
 	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName, steamID); err != nil {
 		return nil, err
 	}

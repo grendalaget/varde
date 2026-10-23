@@ -1,6 +1,6 @@
 import { Checkbox } from "@heroui/react";
 import type { GameConfigField, Schemas } from "../api/client";
-import { Field, inputClass } from "./ui";
+import { Field, inputClass, Toggle } from "./ui";
 
 type ConfigField = GameConfigField | Schemas["PluginField"];
 
@@ -22,16 +22,10 @@ export function ConfigInput({
     .replace(/^\w/, (c) => c.toUpperCase());
   if (f.type === "bool") {
     return (
-      <div className="flex items-start gap-3">
-        <Checkbox
-          isSelected={!!value}
-          isDisabled={disabled}
-          onChange={(selected) => onChange(selected)}
-        >
-          <span className="text-sm text-foreground">{label}</span>
-        </Checkbox>
+      <Toggle checked={!!value} disabled={disabled} onChange={onChange} label={label}>
+        <span className="text-sm text-foreground">{label}</span>
         {f.help && <span className="text-xs text-muted">{f.help}</span>}
-      </div>
+      </Toggle>
     );
   }
   if (f.type === "multiselect") {
@@ -94,7 +88,9 @@ export function ConfigInput({
               >
                 <span className="flex w-full items-center justify-between gap-2 text-sm">
                   <span>{member.display_name}</span>
-                  {disabled && <span className="text-xs text-muted">no Steam ID</span>}
+                  {requiresSteam && !member.steam_id && (
+                    <span className="text-xs text-muted">no Steam ID</span>
+                  )}
                 </span>
               </Checkbox>
             );

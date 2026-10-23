@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,6 +30,95 @@ type Field struct {
 	Options  []string `json:"options,omitempty"`
 	Help     string   `json:"help,omitempty"`
 	Requires string   `json:"requires,omitempty"`
+}
+
+func contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (f Field) Validate(value any) error {
+	invalid := func() error { return fmt.Errorf("%s has an invalid value", f.Name) }
+	if value == nil {
+		if f.Required {
+			return fmt.Errorf("%s is required", f.Name)
+		}
+		return nil
+	}
+	switch f.Type {
+	case "string", "secret", "select":
+		text, ok := value.(string)
+		if !ok {
+			return invalid()
+		}
+		if f.Required && strings.TrimSpace(text) == "" {
+			return fmt.Errorf("%s is required", f.Name)
+		}
+		if text == "" && !f.Required {
+			return nil
+		}
+		if f.Type == "select" && !contains(f.Options, text) {
+			return invalid()
+		}
+	case "int":
+		var number float64
+		switch v := value.(type) {
+		case float64:
+			number = v
+		case float32:
+			number = float64(v)
+		case int:
+			number = float64(v)
+		case int32:
+			number = float64(v)
+		case int64:
+			number = float64(v)
+		case uint:
+			number = float64(v)
+		case uint32:
+			number = float64(v)
+		case uint64:
+			number = float64(v)
+		default:
+			return invalid()
+		}
+		if math.IsNaN(number) || math.IsInf(number, 0) || math.Trunc(number) != number {
+			return invalid()
+		}
+	case "bool":
+		if _, ok := value.(bool); !ok {
+			return invalid()
+		}
+	case "multiselect", "member_multiselect":
+		var items []any
+		switch v := value.(type) {
+		case []any:
+			items = v
+		case []string:
+			items = make([]any, len(v))
+			for i := range v {
+				items[i] = v[i]
+			}
+		default:
+			return invalid()
+		}
+		if f.Required && len(items) == 0 {
+			return fmt.Errorf("%s is required", f.Name)
+		}
+		for _, item := range items {
+			text, ok := item.(string)
+			if !ok || (f.Type == "multiselect" && !contains(f.Options, text)) {
+				return invalid()
+			}
+		}
+	default:
+		return invalid()
+	}
+	return nil
 }
 
 type Action struct {
@@ -205,6 +295,11 @@ func validateFields(fields []Field, setting bool) error {
 		if !setting && field.Hidden {
 			return fmt.Errorf("%s: hidden is only supported for settings", field.Name)
 		}
+		if field.Default != nil {
+			if err := field.Validate(field.Default); err != nil {
+				return fmt.Errorf("%s default: %w", field.Name, err)
+			}
+		}
 	}
 	return nil
 }
@@ -244,7 +339,7 @@ func loadSecret(manifestPath, secretEnv, secretFile string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read secret_file %s: %w", secretFile, err)
 		}
-		secret = value
+		secret = []byte(strings.TrimRight(string(value), "\r\n"))
 	}
 	if len(secret) < 32 {
 		return nil, errors.New("plugin secret must contain at least 32 bytes")

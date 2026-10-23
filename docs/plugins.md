@@ -32,7 +32,7 @@ Provide a manifest with `--plugin /path/to/plugin.json` (repeatable) or a comma-
 }
 ```
 
-Exactly one of `secret_env` and `secret_file` is required; the resolved value must contain at least 32 bytes. `base_url` must be HTTP(S), without a query or fragment; trailing slashes are removed. List and action endpoints must begin with `/`, contain no `..`, and be relative paths. Fields follow the game-config shape (`string`, `int`, `bool`, `select`, `secret`); `multiselect` requires options and accepts selected strings, while `member_multiselect` accepts group user IDs and may declare `"requires":"steam_id"`. Mark service-generated settings with `"hidden":true`; users cannot submit them.
+Exactly one of `secret_env` and `secret_file` is required; the resolved value must contain at least 32 bytes. Trailing `\r` and `\n` bytes are ignored when reading `secret_file`; plugins loading that file must do the same. `base_url` must be HTTP(S), without a query or fragment; trailing slashes are removed. List and action endpoints must begin with `/`, contain no `..`, and be relative paths. Fields follow the game-config shape (`string`, `int`, `bool`, `select`, `secret`); `multiselect` requires options and accepts selected strings, while `member_multiselect` accepts group user IDs and may declare `"requires":"steam_id"`. Mark service-generated settings with `"hidden":true`; users cannot submit them.
 
 The control plane sends requests to the configured base URL, so operators should bind plugin services only to trusted networks and configure firewall access accordingly. The plugin's secret is used only for request signing; Varde does not pass it in the envelope.
 

@@ -124,7 +124,7 @@ function PluginActionForm({
           <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-sm">
             <p className="font-medium">{result.message}</p>
             {result.href && <a className="mt-1 inline-block underline" href={result.href} target="_blank" rel="noreferrer">Open result</a>}
-            {result.notes.map((note, index) => <p key={index} className="mt-1 text-muted">{note}</p>)}
+            {(result.notes ?? []).map((note, index) => <p key={index} className="mt-1 text-muted">{note}</p>)}
           </div>
         )}
         <div className="flex justify-end">

@@ -308,12 +308,19 @@ function Layout() {
   const p = loc.pathname;
   const pluginCatalog = useLoad(() => api.GET("/v1/plugins"), []);
   const groupPlugins = useLoad(
-    () =>
-      api.GET("/v1/groups/{groupId}/plugins", {
+    () => pluginCatalog.data?.plugins.length
+      ? api.GET("/v1/groups/{groupId}/plugins", {
         params: { path: { groupId: group.group_id } },
-      }),
-    [group.group_id],
+      })
+      : Promise.resolve({ data: { plugins: [] } }),
+    [group.group_id, pluginCatalog.data?.plugins.length],
   );
+  const refreshGroupPlugins = groupPlugins.refresh;
+  useEffect(() => {
+    const refreshPlugins = () => void refreshGroupPlugins();
+    window.addEventListener("varde:plugins-changed", refreshPlugins);
+    return () => window.removeEventListener("varde:plugins-changed", refreshPlugins);
+  }, [refreshGroupPlugins]);
   const pluginNav =
     pluginCatalog.data?.plugins
       .filter((plugin) =>

@@ -1011,7 +1011,7 @@ export interface components {
         PluginActionResponse: {
             message: string;
             href?: string;
-            notes: string[];
+            notes?: string[];
         };
         Invite: {
             code: string;

@@ -1323,9 +1323,9 @@ type PluginActionRequest struct {
 
 // PluginActionResponse defines model for PluginActionResponse.
 type PluginActionResponse struct {
-	Href    *string  `json:"href,omitempty"`
-	Message string   `json:"message"`
-	Notes   []string `json:"notes"`
+	Href    *string   `json:"href,omitempty"`
+	Message string    `json:"message"`
+	Notes   *[]string `json:"notes,omitempty"`
 }
 
 // PluginField defines model for PluginField.

@@ -64,15 +64,84 @@ func TestLoadManifestNormalizesAndReadsSecret(t *testing.T) {
 
 func TestLoadManifestReadsRelativeSecretFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "secret"), []byte(strings.Repeat("f", 32)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "secret"), []byte(strings.Repeat("f", 32)+"\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifest := validManifest()
 	manifest.SecretEnv = ""
 	manifest.SecretFile = "secret"
 	path := writeManifest(t, dir, "plugin.json", manifest)
-	if _, err := Load([]string{path}); err != nil {
+	registry, err := Load([]string{path})
+	if err != nil {
 		t.Fatalf("Load(%q) error = %v", path, err)
+	}
+	plugin, ok := registry.Get(manifest.ID)
+	if !ok || string(plugin.Secret) != strings.Repeat("f", 32) {
+		t.Fatalf("Load(%q) secret = %q, want trailing CR/LF removed", path, plugin.Secret)
+	}
+}
+
+func TestLoadManifestRejectsInvalidDefaults(t *testing.T) {
+	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
+	tests := []struct {
+		name  string
+		field Field
+	}{
+		{name: "wrong type", field: Field{Name: "port", Type: "int", Default: "27015"}},
+		{name: "option not declared", field: Field{Name: "region", Type: "select", Default: "ap", Options: []string{"eu", "us"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			manifest.Settings = append(manifest.Settings, tt.field)
+			path := writeManifest(t, t.TempDir(), "plugin.json", manifest)
+			if _, err := Load([]string{path}); err == nil || !strings.Contains(err.Error(), "default") {
+				t.Fatalf("Load(%q) error = %v, want invalid default error", path, err)
+			}
+		})
+	}
+}
+
+func TestFieldValidateRequiredValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		field Field
+		value any
+		valid bool
+	}{
+		{
+			name:  "required string whitespace",
+			field: Field{Name: "title", Type: "string", Required: true},
+			value: " \t",
+		},
+		{
+			name:  "required select empty",
+			field: Field{Name: "region", Type: "select", Required: true, Options: []string{"eu"}},
+			value: "",
+		},
+		{
+			name:  "required multiselect empty",
+			field: Field{Name: "modes", Type: "multiselect", Required: true, Options: []string{"a"}},
+			value: []any{},
+		},
+		{
+			name:  "required members empty",
+			field: Field{Name: "members", Type: "member_multiselect", Required: true},
+			value: []any{},
+		},
+		{
+			name:  "optional multiselect empty",
+			field: Field{Name: "modes", Type: "multiselect", Options: []string{"a"}},
+			value: []any{}, valid: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.field.Validate(tt.value)
+			if gotValid := err == nil; gotValid != tt.valid {
+				t.Errorf("Field.Validate(%v) error = %v, want valid=%t", tt.value, err, tt.valid)
+			}
+		})
 	}
 }
 

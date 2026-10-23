@@ -202,8 +202,13 @@ func (s *Store) UpdateGroup(ctx context.Context, g *Group) error {
 }
 
 func (s *Store) DeleteGroup(ctx context.Context, id string) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
-	return err
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM group_plugins WHERE group_id=?`), id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
+		return err
+	})
 }
 
 func (s *Store) GroupsForUser(ctx context.Context, userID string) ([]Member, error) {
