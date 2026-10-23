@@ -116,7 +116,7 @@ func Load(envKey, keyFile, dbURL string) (*Manager, string, error) {
 		return nil, "", fmt.Errorf("secrets: read key file: %w", err)
 	}
 	if len(key) != 32 {
-		return nil, "", fmt.Errorf("secrets: key file %q must contain exactly 32 raw bytes; restore it from backup or delete it only if no Auto Tournament integrations are linked", keyFile)
+		return nil, "", fmt.Errorf("secrets: key file %s must contain exactly 32 raw bytes; restore it from backup or delete it only if no Auto Tournament integrations are linked", keyFile)
 	}
 	if err := os.Chmod(keyFile, 0o600); err != nil {
 		return nil, "", fmt.Errorf("secrets: set key file permissions: %w", err)
