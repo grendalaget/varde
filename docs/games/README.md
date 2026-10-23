@@ -5,11 +5,49 @@ include/exclude lists) land here as each driver is implemented.
 
 ## Counter-Strike 2 Dedicated
 
-CS2 installs SteamCMD app 730 on Linux/Windows x86_64. A first install needs
-at least 75 GB free; routine updates skip Steam's full-content validation.
-Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
-The driver copies SteamCMD's `linux64/steamclient.so` next to the server binary
-and prepends that directory to `LD_LIBRARY_PATH`; no home-directory symlink is needed.
+CS2 runs the dedicated binary included in an existing Steam app 730 client
+installation on Linux/Windows x86_64. No second 69 GB download is needed.
+Discovery reads complete (`StateFlags == 4`) app manifests and
+`steamapps/libraryfolders.vdf`, including additional Steam libraries.
+Linux roots are `~/.local/share/Steam`, `~/.steam/steam`, and Flatpak's
+`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`. Active systemd login
+sessions also supply desktop users' homes when visible to the agent.
+Windows checks HKCU/HKLM `Software\Valve\Steam` (`SteamPath`/`InstallPath`,
+both registry views) and `C:\Program Files (x86)\Steam`. macOS is unsupported.
+Set `VARDE_CS2_DIR` to a game install to override discovery, or
+`VARDE_STEAM_DIR` to add a Steam root (useful for nonstandard installations).
+
+The packaged Linux service runs as `varde` with `ProtectHome=true`; it cannot
+read desktop home directories by default. Run the agent as the desktop user,
+or have an administrator expose the game and Steam libraries read-only outside
+the protected home (e.g. a service `BindReadOnlyPaths` override), then set the
+override in that service's environment. The driver never relaxes permissions.
+
+Heartbeats report generic `steam_apps` IDs, not deployment-cache IDs. The
+agent also recognizes complete SteamCMD installations in previous local
+deployment directories and can reuse them. The catalog's optional `steam_app`
+policy prefers installed nodes (+120 score) and removes the `min_disk_mb`
+install budget and SteamCMD runtime requirement for those nodes. Restore and
+deployment artifact space checks still apply. Other nodes retain the SteamCMD
+fallback and 75 GB install budget; incomplete downloads count allocated bytes
+already on disk, and routine complete-install updates skip full validation.
+Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
+
+The driver launches the original binary with
+`-game <deployment>/cs2-runtime/csgo`. A private `gameinfo.gi` mounts the
+installed content while configuration, bans, logs and runtime writes stay in
+that deployment. Private empty `autoexec.cfg`/`server.cfg` prevent execution
+of the player's own startup configuration. Driver-generated files stay outside
+steamapps, so there is no shared config to clean up on stop. CS2 itself creates
+or rewrites `steam_appid.txt` beside its executable and rewrites
+`game/csgo/cfg/boot.vcfg` without changing its content. The gated test seeds
+nonempty client-style boot settings and requires byte-identical content after
+both servers stop. It also verifies that the app-ID marker contains `730` and
+that all other installed files retain their sizes and modification times.
+Linux library search uses
+the binary directory plus an existing `steamclient.so` from that directory,
+Steam's `linux64`, or `~/.steam/sdk64`. No library is copied into the client
+install. The SteamCMD fallback retains its deployment-local library copy.
 
 In CS2 open the console and run `connect <address>` using the Varde address.
 Only UDP 27015 is exposed through the mesh, not RCON or SourceTV. CS2's UDP
@@ -19,7 +57,7 @@ mesh and gameplay packet sizes still need client validation.
 
 Modes: casual, competitive (default), wingman, arms_race and deathmatch.
 The default map is `de_dust2`, player limit 10 (2–64), and bot quota 0 (0–64).
-Hostname, password and bot quota are written to generated `varde.cfg`, not
+Hostname, password and bot quota are written to private generated `varde.cfg`, not
 process arguments. Optional GSLT is passed via `+sv_setsteamaccount`, so it is
 visible to local process inspection. Catalog secret fields mask inputs, not
 stored/API configuration. Without a GSLT the server reports LAN-only operation.
@@ -30,18 +68,22 @@ five seconds (or immediately if stdin is unavailable).
 There is no world save: only `game/csgo/cfg/banned_user.cfg` and `banned_ip.cfg`
 are snapshotted. The live snapshot hook copies these files into the state
 directory without stopping the game; configure restores and executes them.
+For shared installs these are the private runtime's ban files, never the
+player's files. As with standalone CS2, `writeid`/`writeip` save in-memory bans;
+the driver snapshots those saved files rather than issuing administrative commands.
 Generated configuration, Steam content, logs, demos and plugins are excluded.
 
-Real Linux smoke test (the reused install's generated configuration is replaced):
+Real Linux test (two concurrently healthy instances, separate ports, no
+SteamCMD calls, and an assertion that the shared installation is unchanged):
 
 ```sh
 VARDE_NET_TESTS=1 VARDE_CS2_TEST=1 \
-VARDE_CS2_INSTALL=/path/to/install \
-VARDE_CS2_STEAMCMD=/path/to/steamcmd.sh \
+VARDE_STEAM_DIR=/path/to/Steam \
 cargo test -p game-cs2 --test net -- --nocapture
 ```
 
-Omit the reuse variables to install afresh through the runtime provider.
+Alternatively use `VARDE_CS2_DIR=/path/to/install`. The gated test requires an
+existing install; normal driver operation still supports SteamCMD fallback.
 
 ## Valheim Dedicated
 

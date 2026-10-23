@@ -37,6 +37,7 @@ type Game struct {
 	Arch         []string      `json:"arch"`
 	MinMemoryMB  int64         `json:"min_memory_mb"`
 	MinDiskMB    int64         `json:"min_disk_mb,omitempty"`
+	SteamApp     int64         `json:"steam_app,omitempty"`
 	Runtimes     []string      `json:"runtimes"`
 	ConfigFields []ConfigField `json:"config_fields"`
 }

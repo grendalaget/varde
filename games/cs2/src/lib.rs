@@ -7,6 +7,9 @@ use executor_api::{ProcessHandle, ProcessSpec};
 use game_driver_api::*;
 use serde_json::Value;
 
+pub mod steam;
+mod vdf;
+
 pub const APP_ID: u32 = 730;
 pub const PORT: u32 = 27015;
 const MIN_DISK_BYTES: u64 = 75_000_000_000;
@@ -61,12 +64,68 @@ impl Cs2Driver {
         ctx.deployment_dir.join("server")
     }
 
-    fn binary(ctx: &DriverContext<'_>) -> PathBuf {
-        Self::install_dir(ctx).join(if cfg!(windows) {
-            "game/bin/win64/cs2.exe"
+    fn selected(ctx: &DriverContext<'_>) -> Result<Option<steam::Install>> {
+        match std::fs::read(ctx.deployment_dir.join("cs2-install.json")) {
+            Ok(contents) => Ok(Some(serde_json::from_slice(&contents)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn binary(ctx: &DriverContext<'_>) -> Result<PathBuf> {
+        Ok(steam::binary(
+            &Self::selected(ctx)?.map_or_else(|| Self::install_dir(ctx), |s| s.dir),
+        ))
+    }
+
+    fn game_dir(ctx: &DriverContext<'_>) -> Result<PathBuf> {
+        Ok(if Self::selected(ctx)?.is_some() {
+            ctx.deployment_dir.join("cs2-runtime/csgo")
         } else {
-            "game/bin/linuxsteamrt64/cs2"
+            Self::install_dir(ctx).join("game/csgo")
         })
+    }
+
+    fn prepare_shared(ctx: &DriverContext<'_>, install: &steam::Install) -> Result<()> {
+        let game = ctx.deployment_dir.join("cs2-runtime/csgo");
+        std::fs::create_dir_all(game.join("cfg"))?;
+        let mut info = vdf::parse(&std::fs::read_to_string(
+            install.dir.join("game/csgo/gameinfo.gi"),
+        )?)?;
+        let paths = info
+            .get_mut("GameInfo")
+            .and_then(|v| v.get_mut("FileSystem"))
+            .and_then(|v| v.get_mut("SearchPaths"))
+            .ok_or("cs2: gameinfo has no SearchPaths")?;
+        let Some(entries) = paths.entries() else {
+            return Err("cs2: invalid SearchPaths".into());
+        };
+        fn engine_path(path: &Path) -> String {
+            path.to_string_lossy()
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&path.to_string_lossy())
+                .replace('\\', "/")
+        }
+        let mut isolated = vec![("Game".to_owned(), vdf::Value::Text(engine_path(&game)))];
+        for (key, value) in entries {
+            let path = value.text().ok_or("cs2: invalid game search path")?;
+            let path = if key.eq_ignore_ascii_case("Mod") {
+                game.clone()
+            } else {
+                install.dir.join("game").join(path)
+            };
+            isolated.push((key.clone(), vdf::Value::Text(engine_path(&path))));
+        }
+        *paths = vdf::Value::Object(isolated);
+        std::fs::write(game.join("gameinfo.gi"), info.render())?;
+        for name in ["autoexec.cfg", "server.cfg"] {
+            std::fs::write(game.join("cfg").join(name), "")?;
+        }
+        std::fs::write(
+            ctx.deployment_dir.join("cs2-install.json"),
+            serde_json::to_vec(install)?,
+        )?;
+        Ok(())
     }
 
     fn string<'a>(cfg: &'a Value, key: &str, default: &'a str) -> Result<&'a str> {
@@ -157,7 +216,7 @@ impl Cs2Driver {
 
     async fn sync_bans(ctx: &DriverContext<'_>, restoring: bool) -> Result<()> {
         let state = ctx.server_dir.join("game/csgo/cfg");
-        let installed = Self::install_dir(ctx).join("game/csgo/cfg");
+        let installed = Self::game_dir(ctx)?.join("cfg");
         let (from, to) = if restoring {
             (state, installed)
         } else {
@@ -271,12 +330,21 @@ impl GameDriver for Cs2Driver {
         Ok(())
     }
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
+        if let Some(install) = steam::detect(ctx.deployment_dir.parent()) {
+            Self::prepare_shared(ctx, &install)?;
+            return Ok(());
+        }
+        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-install.json")).await {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
         let dir = Self::install_dir(ctx);
         tokio::fs::create_dir_all(&dir).await?;
         check_install_space(&dir, fs2::available_space(&dir)?)
             .map_err(|e| format!("{e} at {}", dir.display()))?;
         ctx.runtimes.steam_app_install(APP_ID, &dir).await?;
-        if !Self::binary(ctx).is_file() {
+        if !Self::binary(ctx)?.is_file() {
             return Err("cs2: installed server binary is missing".into());
         }
         #[cfg(target_os = "linux")]
@@ -286,14 +354,14 @@ impl GameDriver for Cs2Driver {
                 .parent()
                 .ok_or("cs2: steamcmd path has no parent")?
                 .join("linux64/steamclient.so");
-            tokio::fs::copy(library, Self::binary(ctx).with_file_name("steamclient.so")).await?;
+            tokio::fs::copy(library, Self::binary(ctx)?.with_file_name("steamclient.so")).await?;
         }
         Ok(())
     }
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
         self.validate(ctx.config)?;
         Self::sync_bans(ctx, true).await?;
-        let path = Self::install_dir(ctx).join("game/csgo/cfg/varde.cfg");
+        let path = Self::game_dir(ctx)?.join("cfg/varde.cfg");
         let mut cfg = Self::cfg(ctx.config)?;
         for name in BANS {
             if path.with_file_name(name).is_file() {
@@ -319,19 +387,36 @@ impl GameDriver for Cs2Driver {
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
         let mut env = Vec::new();
+        let selected = Self::selected(ctx)?;
+        let program = Self::binary(ctx)?;
+        let mut args = Self::args(ctx.config, ctx.local_port(PORT))?;
+        let cwd = if selected.is_some() {
+            let game = Self::game_dir(ctx)?;
+            args.splice(1..1, [OsString::from("-game"), game.into_os_string()]);
+            ctx.deployment_dir.join("cs2-runtime")
+        } else {
+            Self::install_dir(ctx)
+        };
         if cfg!(target_os = "linux") {
-            let dir = Self::binary(ctx).parent().unwrap().to_path_buf();
+            let dir = program.parent().unwrap().to_path_buf();
             let mut paths = vec![dir];
+            if let Some(library) = selected
+                .as_ref()
+                .and_then(|s| s.steamclient.as_ref())
+                .and_then(|p| p.parent())
+            {
+                paths.push(library.to_path_buf());
+            }
             if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
                 paths.extend(std::env::split_paths(&old));
             }
             env.push(("LD_LIBRARY_PATH".into(), std::env::join_paths(paths)?));
         }
         Ok(ProcessSpec {
-            program: Self::binary(ctx),
-            args: Self::args(ctx.config, ctx.local_port(PORT))?,
+            program,
+            args,
             env,
-            cwd: Self::install_dir(ctx),
+            cwd,
             stdin: true,
         })
     }

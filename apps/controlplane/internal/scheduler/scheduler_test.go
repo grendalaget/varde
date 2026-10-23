@@ -62,6 +62,46 @@ func TestPlaceMinimumDisk(t *testing.T) {
 	}
 }
 
+func TestPlaceInstalledSteamApp(t *testing.T) {
+	game := testGame
+	game.SteamApp, game.MinDiskMB, game.Runtimes = 730, 75000, []string{"steamcmd"}
+	for _, tc := range []struct {
+		name     string
+		apps     []int64
+		runtimes []string
+		free     int64
+		restore  int64
+		wantErr  bool
+	}{
+		{name: "complete client or previous SteamCMD install on restart or failover", apps: []int64{730}, free: 1_000_000},
+		{name: "installed still needs restore space", apps: []int64{730}, free: 1999, restore: 1000, wantErr: true},
+		{name: "installed restore exact", apps: []int64{730}, free: 2000, restore: 1000},
+		{name: "fallback disk gate", runtimes: []string{"steamcmd"}, free: 74_999_999_999, wantErr: true},
+		{name: "fallback allowed", runtimes: []string{"steamcmd"}, free: 75_000_000_000},
+		{name: "fallback needs runtime", free: 75_000_000_000, wantErr: true},
+		{name: "wrong app not sufficient", apps: []int64{896660}, free: 1_000_000, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := okNode("node_a")
+			node.SteamApps, node.Runtimes, node.DiskFreeBytes = tc.apps, tc.runtimes, tc.free
+			_, err := Place(testSrv, game, []NodeView{node}, SnapView{RestoreBytes: tc.restore})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Place() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+	fallback, installed := okNode("node_a"), okNode("node_z")
+	fallback.Runtimes = []string{"steamcmd"}
+	installed.SteamApps, installed.DiskFreeBytes = []int64{730}, 1_000_000
+	d, err := Place(testSrv, game, []NodeView{fallback, installed}, SnapView{})
+	if err != nil || d.NodeID != installed.ID {
+		t.Fatalf("installed app should win: %v %v", d, err)
+	}
+	if !slices.Contains(d.Reasons, "Steam app 730 already installed") {
+		t.Fatalf("missing reason: %v", d.Reasons)
+	}
+}
+
 func TestPlaceDeterministic(t *testing.T) {
 	nodes := []NodeView{okNode("node_c"), okNode("node_a"), okNode("node_b")}
 	for i := 0; i < 5; i++ {

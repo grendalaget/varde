@@ -43,6 +43,7 @@
     "arch": ["x86_64"],
     "min_memory_mb": 4096,
     "min_disk_mb": 75000,
+    "steam_app": 730,
     "runtimes": ["steamcmd"],
     "config_fields": [
       { "name": "server_name", "type": "string", "required": true },

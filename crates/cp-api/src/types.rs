@@ -89,6 +89,8 @@ pub struct Capabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_deployments: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub steam_apps: Option<Vec<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub drivers: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_s: Option<i64>,

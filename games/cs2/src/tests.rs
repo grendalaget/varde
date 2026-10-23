@@ -15,6 +15,169 @@ fn info() -> Vec<u8> {
 }
 
 struct NoRuntimes;
+
+fn fake_steam_install(root: &Path) -> PathBuf {
+    let dir = root.join("steamapps/common/Counter-Strike Global Offensive");
+    std::fs::create_dir_all(steam::binary(&dir).parent().unwrap()).unwrap();
+    std::fs::write(steam::binary(&dir), "binary").unwrap();
+    std::fs::create_dir_all(dir.join("game/csgo/cfg")).unwrap();
+    std::fs::write(
+        dir.join("game/csgo/gameinfo.gi"),
+        "GameInfo { FileSystem { SearchPaths { Game csgo Game core Mod csgo } } }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("steamapps/appmanifest_730.acf"),
+        "\"AppState\" { \"StateFlags\" \"4\" \"installdir\" \"Counter-Strike Global Offensive\" }",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn steam_library_discovery_and_vdf() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(steam::in_root(root.path()).is_none());
+    let library = root.path().join("another library");
+    let dir = fake_steam_install(&library);
+    std::fs::create_dir_all(root.path().join("steamapps")).unwrap();
+    let path = library.to_string_lossy().replace('\\', "\\\\");
+    let fixture = include_str!("../tests/libraryfolders.vdf").replace("@LIBRARY@", &path);
+    std::fs::write(root.path().join("steamapps/libraryfolders.vdf"), &fixture).unwrap();
+    let parsed = vdf::parse(&fixture).unwrap();
+    assert_eq!(
+        parsed
+            .get("libraryfolders")
+            .unwrap()
+            .get("0")
+            .unwrap()
+            .get("path")
+            .unwrap()
+            .text(),
+        Some(r"C:\Program Files (x86)\Steam")
+    );
+    assert_eq!(
+        steam::in_root(root.path()).unwrap().dir,
+        std::fs::canonicalize(&dir).unwrap()
+    );
+    let manifest = library.join("steamapps/appmanifest_730.acf");
+    for flags in ["0", "6", "1026"] {
+        std::fs::write(
+            &manifest,
+            format!(
+                "AppState {{ StateFlags {flags} installdir \"Counter-Strike Global Offensive\" }}"
+            ),
+        )
+        .unwrap();
+        assert!(steam::in_root(root.path()).is_none());
+    }
+    for contents in [
+        "AppState {",
+        "AppState { StateFlags 4 }",
+        "AppState { StateFlags 4 installdir ../escape }",
+        "AppState { StateFlags 4 installdir \"\" }",
+    ] {
+        std::fs::write(&manifest, contents).unwrap();
+        assert!(steam::in_root(root.path()).is_none());
+    }
+    for input in ["\"unterminated", "a { b", "}", "a", "a { b }"] {
+        assert!(vdf::parse(input).is_err(), "{input}");
+    }
+    let info = vdf::parse(
+        "GameInfo { game \"Counter Strike\" FileSystem { SearchPaths { Game csgo Game core } } }",
+    )
+    .unwrap();
+    let roundtrip = vdf::parse(&info.render()).unwrap();
+    assert_eq!(
+        roundtrip
+            .get("GameInfo")
+            .unwrap()
+            .get("FileSystem")
+            .unwrap()
+            .get("SearchPaths")
+            .unwrap()
+            .entries()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn shared_install_config_and_bans_are_private() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = fake_steam_install(root.path());
+    let user_bans = dir.join("game/csgo/cfg/banned_user.cfg");
+    std::fs::write(&user_bans, "user bans must not change").unwrap();
+    let config = json!({"server_name":"Private server", "password":"secret"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    for name in ["first", "second"] {
+        let private = root.path().join(name);
+        std::fs::create_dir_all(&private).unwrap();
+        let ctx = context(&private, &config, &deployment);
+        let install = steam::in_root(root.path()).unwrap();
+        Cs2Driver::prepare_shared(&ctx, &install).unwrap();
+        assert_eq!(
+            Cs2Driver::binary(&ctx).unwrap(),
+            steam::binary(&std::fs::canonicalize(&dir).unwrap())
+        );
+        let state = private.join("game/csgo/cfg");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("banned_user.cfg"), "banid 0 STEAM_0:1:123\n").unwrap();
+        Cs2Driver.configure(&ctx).await.unwrap();
+        let game = Cs2Driver::game_dir(&ctx).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(game.join("cfg/banned_user.cfg")).unwrap(),
+            "banid 0 STEAM_0:1:123\n"
+        );
+        let cfg = std::fs::read_to_string(game.join("cfg/varde.cfg")).unwrap();
+        assert!(cfg.contains("exec banned_user.cfg"));
+        assert!(cfg.contains("Private server"));
+        assert!(std::fs::read_to_string(game.join("gameinfo.gi"))
+            .unwrap()
+            .contains("cs2-runtime"));
+        let spec = Cs2Driver.process_spec(&ctx).unwrap();
+        assert_eq!(
+            &spec.args[..3],
+            &[
+                OsString::from("-dedicated"),
+                OsString::from("-game"),
+                game.into_os_string()
+            ]
+        );
+        assert_eq!(
+            Cs2Driver
+                .prepare_snapshot(&ctx, &Process::default())
+                .await
+                .unwrap(),
+            SnapshotBarrier::Live
+        );
+        assert_eq!(
+            std::fs::read_to_string(&user_bans).unwrap(),
+            "user bans must not change"
+        );
+    }
+    assert!(!dir.join("game/csgo/cfg/varde.cfg").exists());
+}
+
+#[test]
+fn complete_steamcmd_deployments_are_reusable() {
+    let root = tempfile::tempdir().unwrap();
+    let server = root.path().join("dep_previous/server");
+    std::fs::create_dir_all(server.join("steamapps")).unwrap();
+    std::fs::create_dir_all(steam::binary(&server).parent().unwrap()).unwrap();
+    std::fs::write(steam::binary(&server), "binary").unwrap();
+    let manifest = server.join("steamapps/appmanifest_730.acf");
+    std::fs::write(&manifest, "\"AppState\" { \"StateFlags\" \"6\" }").unwrap();
+    assert!(steam::in_deployments(root.path()).is_none());
+    std::fs::write(&manifest, "\"AppState\" { \"StateFlags\" \"4\" }").unwrap();
+    assert_eq!(
+        steam::in_deployments(root.path()).unwrap().dir,
+        std::fs::canonicalize(&server).unwrap()
+    );
+    std::fs::remove_file(steam::binary(&server)).unwrap();
+    assert!(steam::in_deployments(root.path()).is_none());
+}
 #[async_trait]
 impl RuntimeProvider for NoRuntimes {
     fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {

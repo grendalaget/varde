@@ -1,0 +1,7 @@
+// Steam's current format, including escaped Windows paths and nested apps.
+"libraryfolders"
+{
+    "contentstatsid" "123"
+    "0" { "path" "C:\\Program Files (x86)\\Steam" "apps" { "440" "123" } }
+    "1" { "path" "@LIBRARY@" "label" "Games" "apps" { "730" "69000000000" } }
+}

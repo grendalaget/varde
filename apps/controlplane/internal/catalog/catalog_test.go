@@ -10,6 +10,9 @@ func TestCS2Config(t *testing.T) {
 	if game.MinDiskMB != 75000 {
 		t.Fatalf("cs2 min_disk_mb = %d, want 75000", game.MinDiskMB)
 	}
+	if game.SteamApp != 730 || Get("valheim").SteamApp != 0 {
+		t.Fatal("CS2 must prefer Steam app 730, other games default to no installed-app policy")
+	}
 	if Get("valheim").MinDiskMB != 0 {
 		t.Fatal("omitted min_disk_mb must default to zero")
 	}

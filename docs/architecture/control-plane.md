@@ -96,7 +96,7 @@ Request `AgentHeartbeat`:
   "agent_version": "0.1.0",
   "capabilities": {"os":"linux","arch":"x86_64","cpu_cores":8,"memory_total_mb":32000,"memory_available_mb":20000,
                     "disk_free_bytes":..., "on_battery":false, "user_active":false,
-                    "runtimes":["native","java","steamcmd"], "cached_deployments":["dep_…"], "drivers":["testgame","minecraft"]},
+                    "runtimes":["native","java","steamcmd"], "cached_deployments":["dep_…"], "steam_apps":[730], "drivers":["testgame","minecraft","cs2"]},
   "mesh": {"listen_port":41641, "local_endpoints":["192.168.1.5:41641"], "observed_endpoints":["84.1.2.3:41641"],
            "relay_ids":["eu-1"], "peers":[{"node_id":"node_…","path":"direct","rtt_us":12000}]},
   "executions": [{"execution_id":"exec_…","server_id":"srv_…","epoch":7,"state":"running","health":"ok",

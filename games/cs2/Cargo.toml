@@ -11,7 +11,11 @@ executor-api = { path = "../../crates/executor-api" }
 game-driver-api = { path = "../../crates/game-driver-api" }
 fs2 = "0.4"
 serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 
 [dev-dependencies]
 executor-native = { path = "../../crates/executor-native" }
