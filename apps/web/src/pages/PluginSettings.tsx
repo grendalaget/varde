@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage, type Schemas } from "../api/client";
 import { ConfigInput } from "../components/ConfigInput";
+import { initialFieldValue, updateFieldValue } from "../lib/configField";
 import { Button, Card, CardHeader, ErrorNote } from "../components/ui";
 import { useLoad } from "../lib/data";
 import { canAdmin, useSession } from "../lib/session";
@@ -64,9 +65,11 @@ function PluginSettings({
     const initial: Record<string, unknown> = {};
     for (const field of plugin.settings) {
       if (field.hidden) continue;
-      if (field.type === "secret" || field.secret) initial[field.name] = "";
-      else initial[field.name] = record?.settings[field.name] ?? field.default ??
-        (field.type === "multiselect" || field.type === "member_multiselect" ? [] : "");
+      const stored = field.type === "secret" || field.secret
+        ? undefined
+        : record?.settings[field.name];
+      const value = initialFieldValue(field, stored);
+      if (value !== undefined) initial[field.name] = value;
     }
     setSettings(initial);
   }, [plugin, record]);
@@ -124,7 +127,9 @@ function PluginSettings({
                 : field.help,
             }}
             value={settings[field.name]}
-            onChange={(value) => setSettings((current) => ({ ...current, [field.name]: value }))}
+            onChange={(value) =>
+              setSettings((current) => updateFieldValue(current, field.name, value))
+            }
             members={members}
             disabled={!canEdit}
           />

@@ -4,6 +4,7 @@ import { ConfigInput } from "../components/ConfigInput";
 import { Badge, Button, Card, CardHeader, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
+import { initialFieldValue, updateFieldValue } from "../lib/configField";
 import { useSession } from "../lib/session";
 
 export default function PluginPage({ pluginId, pageId }: { pluginId: string; pageId: string }) {
@@ -28,8 +29,11 @@ export default function PluginPage({ pluginId, pageId }: { pluginId: string; pag
       : Promise.resolve({ data: undefined, error: undefined }),
     [group.group_id, pluginId, pageId, page?.list_endpoint],
   );
-  if (!plugin || !page || enabled === undefined) return <PageLoader />;
-  if (!enabled) return <ErrorNote>This plugin is not enabled for this group.</ErrorNote>;
+  if (catalog.loading || groupPlugins.loading) return <PageLoader />;
+  if (catalog.error) return <ErrorNote>{errorMessage(catalog.error)}</ErrorNote>;
+  if (groupPlugins.error) return <ErrorNote>{errorMessage(groupPlugins.error)}</ErrorNote>;
+  if (!plugin || !page) return <ErrorNote>Plugin page not found</ErrorNote>;
+  if (enabled !== true) return <ErrorNote>This plugin is not enabled for this group.</ErrorNote>;
   return (
     <>
       <PageHeader title={page.title} subtitle={plugin.name} />
@@ -86,8 +90,8 @@ function PluginActionForm({
   useEffect(() => {
     const initial: Record<string, unknown> = {};
     for (const field of action.fields) {
-      initial[field.name] = field.default ??
-        (field.type === "multiselect" || field.type === "member_multiselect" ? [] : "");
+      const value = initialFieldValue(field);
+      if (value !== undefined) initial[field.name] = value;
     }
     setValues(initial);
   }, [action]);
@@ -115,7 +119,9 @@ function PluginActionForm({
             key={field.name}
             f={field}
             value={values[field.name]}
-            onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))}
+            onChange={(value) =>
+              setValues((current) => updateFieldValue(current, field.name, value))
+            }
             members={members}
           />
         ))}

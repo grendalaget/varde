@@ -110,8 +110,12 @@ func TestPluginSettingsListActionAndErrorMapping(t *testing.T) {
 	e.srv.PluginHTTP = outbound.NewClient(time.Second)
 
 	memberID := "plugin-member"
-	if _, err := e.st.DB.Exec(`INSERT INTO users (id,email,display_name,password_hash,is_operator,steam_id,created_at)
-		VALUES(?,?,?,?,?,?,?)`, memberID, "plugin-member@example.test", "Plugin Member", "unused", 0, "76561198000000000", e.clk.ms); err != nil {
+	if _, err := e.st.DB.Exec(`INSERT INTO users (id,email,display_name,password_hash,is_operator,created_at)
+		VALUES(?,?,?,?,?,?)`, memberID, "plugin-member@example.test", "Plugin Member", "unused", 0, e.clk.ms); err != nil {
+		t.Fatal(err)
+	}
+	memberSteamID := "76561198000000000"
+	if err := e.st.SetUserSteam(t.Context(), memberID, &memberSteamID, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	memberToken := e.signup("session-member@example.test", "password123")
@@ -386,6 +390,62 @@ func TestPluginSettingsListActionAndErrorMapping(t *testing.T) {
 		t.Errorf("failed settings PUT stored %d plugin rows, want 0", stored)
 	}
 	failStatus.Store(0)
+}
+
+func TestPluginSettingsAcceptOptionalFalseBoolAndMissingInt(t *testing.T) {
+	e := newEnv(t)
+	t.Setenv("OPTIONAL_PLUGIN_SECRET", strings.Repeat("optional-secret-", 3))
+	pluginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer pluginServer.Close()
+	manifest := map[string]any{
+		"id": "optional-plugin", "name": "Optional plugin", "version": "1",
+		"base_url": pluginServer.URL, "secret_env": "OPTIONAL_PLUGIN_SECRET",
+		"settings": []any{
+			map[string]any{"name": "enabled", "type": "bool"},
+			map[string]any{"name": "count", "type": "int"},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "optional-plugin.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := plugins.Load([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Plugins = registry
+	e.srv.Secrets, err = secrets.New(bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.PluginHTTP = outbound.NewClient(time.Second)
+
+	response := e.do(http.MethodPut, "/v1/groups/"+e.group+"/plugins/optional-plugin",
+		map[string]any{"settings": map[string]any{"enabled": false}}, e.token)
+	if response.Status != http.StatusOK {
+		t.Fatalf("PUT optional plugin settings = %d %s, want 200", response.Status, response.Raw)
+	}
+	record, err := e.st.GroupPlugin(t.Context(), e.group, "optional-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal([]byte(record.SettingsJSON), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["enabled"] != false {
+		t.Errorf("stored optional bool = %v, want false", stored["enabled"])
+	}
+	if _, exists := stored["count"]; exists {
+		t.Errorf("stored optional int = %v, want omitted", stored["count"])
+	}
 }
 
 func TestEmptyPluginCatalogDoesNotNeedSecrets(t *testing.T) {
