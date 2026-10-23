@@ -13,6 +13,7 @@ servers:
 tags:
   - name: meta
   - name: auth
+  - name: plugins
   - name: groups
   - name: nodes
   - name: servers
@@ -158,6 +159,46 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateMe
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                steam_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated current user profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/plugins:
+    get:
+      operationId: listPlugins
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Loaded plugins and their declarative UI metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plugins]
+                properties:
+                  plugins:
+                    type: array
+                    items: { $ref: "#/components/schemas/Plugin" }
+        "401": { $ref: "#/components/responses/Error" }
 
   /v1/groups:
     get:
@@ -212,6 +253,7 @@ paths:
               schema: { $ref: "#/components/schemas/Group" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
     patch:
       operationId: updateGroup
@@ -300,6 +342,113 @@ paths:
         "204": { description: Removed. }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins:
+    get:
+      operationId: listGroupPlugins
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/GroupId" }]
+      responses:
+        "200":
+          description: Plugin enablement and non-secret settings for the group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plugins]
+                properties:
+                  plugins:
+                    type: array
+                    items: { $ref: "#/components/schemas/GroupPlugin" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}:
+    put:
+      operationId: putGroupPlugin
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GroupPluginRequest" }
+      responses:
+        "200":
+          description: Enabled plugin and merged settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GroupPlugin" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteGroupPlugin
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+      responses:
+        "204": { description: Plugin disabled. }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list:
+    post:
+      operationId: listPluginPage
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+        - { $ref: "#/components/parameters/PageId" }
+      responses:
+        "200":
+          description: Declarative items supplied by the plugin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginListResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId}:
+    post:
+      operationId: invokePluginAction
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+        - { $ref: "#/components/parameters/PageId" }
+        - { $ref: "#/components/parameters/ActionId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PluginActionRequest" }
+      responses:
+        "200":
+          description: Action result supplied by the plugin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginActionResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/invites:
     post:
       operationId: createInvite
@@ -1163,6 +1312,21 @@ components:
       in: path
       required: true
       schema: { type: string }
+    PluginId:
+      name: pluginId
+      in: path
+      required: true
+      schema: { type: string }
+    PageId:
+      name: pageId
+      in: path
+      required: true
+      schema: { type: string }
+    ActionId:
+      name: actionId
+      in: path
+      required: true
+      schema: { type: string }
     UserId:
       name: userId
       in: path
@@ -1186,10 +1350,11 @@ components:
         Either a user session token or a `vst_…` service token.
         Service tokens are operator-minted machine credentials
         (`varde-control-plane service-token create --scopes …`) that carry
-        named scopes instead of group membership; currently `enroll`
-        (enrollment-token CRUD on any group), `members` (member read),
-        and `nodes` (node read/delete). `--groups` may bind a token to
-        specific group ids; unbound tokens act infrastructure-wide.
+        named scopes instead of group membership: `enroll`, `members`,
+        `steam_ids`, `servers`, `events`, and `nodes`. `--groups` may bind
+        a token to specific group ids; unbound tokens act infrastructure-wide.
+        A plugin manifest may bind a token name with `service_token`; such
+        requests also require that plugin to be enabled in the group.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -1215,7 +1380,8 @@ components:
           type: string
           enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
                  limit_exceeded, validation, unauthorized, conflict,
-                 unschedulable, internal]
+                 unschedulable, internal, plugin_unavailable,
+                 secrets_unconfigured]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:
@@ -1273,6 +1439,7 @@ components:
         id: { type: string }
         email: { type: string }
         display_name: { type: string }
+        steam_id: { type: string, nullable: true }
         is_operator: { type: boolean }
         created_at: { type: integer, format: int64 }
     Me:
@@ -1321,8 +1488,104 @@ components:
         user_id: { type: string }
         email: { type: string }
         display_name: { type: string }
+        steam_id: { type: string, nullable: true }
         role: { $ref: "#/components/schemas/Role" }
         created_at: { type: integer, format: int64 }
+    Plugin:
+      type: object
+      required: [id, name, version, settings, pages]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        settings:
+          type: array
+          items: { $ref: "#/components/schemas/PluginField" }
+        pages:
+          type: array
+          items: { $ref: "#/components/schemas/PluginPage" }
+    PluginField:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [string, int, bool, select, secret, multiselect, member_multiselect]
+        default: {}
+        required: { type: boolean, default: false }
+        secret: { type: boolean, default: false }
+        hidden: { type: boolean, default: false }
+        options:
+          type: array
+          items: { type: string }
+        help: { type: string }
+        requires:
+          type: string
+          enum: [steam_id]
+    PluginPage:
+      type: object
+      required: [id, title, actions]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        list_endpoint: { type: string }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/PluginAction" }
+    PluginAction:
+      type: object
+      required: [id, title, endpoint, fields]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        endpoint: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/PluginField" }
+    GroupPlugin:
+      type: object
+      required: [id, enabled, settings, secrets_set]
+      properties:
+        id: { type: string }
+        enabled: { type: boolean }
+        settings: { type: object, additionalProperties: true }
+        secrets_set:
+          type: array
+          items: { type: string }
+    GroupPluginRequest:
+      type: object
+      required: [settings]
+      properties:
+        settings: { type: object, additionalProperties: true }
+    PluginListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [title]
+            properties:
+              title: { type: string }
+              subtitle: { type: string }
+              status: { type: string }
+              href: { type: string }
+    PluginActionRequest:
+      type: object
+      required: [values]
+      properties:
+        values: { type: object, additionalProperties: true }
+    PluginActionResponse:
+      type: object
+      required: [message, notes]
+      properties:
+        message: { type: string }
+        href: { type: string }
+        notes:
+          type: array
+          items: { type: string }
     Invite:
       type: object
       required: [code, group_id, group_name, role, expires_at, max_uses, uses]

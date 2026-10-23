@@ -32,6 +32,7 @@ func genUser(u *store.User) gen.User {
 		Id:          u.ID,
 		Email:       u.Email,
 		DisplayName: u.DisplayName,
+		SteamId:     u.SteamID,
 		IsOperator:  u.IsOperator == 1,
 		CreatedAt:   u.CreatedAt,
 	}
@@ -148,4 +149,73 @@ func (s *Server) GetMe(ctx context.Context, _ gen.GetMeRequestObject) (gen.GetMe
 		User:   genUser(u),
 		Groups: groups,
 	}, nil
+}
+
+func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (gen.UpdateMeResponseObject, error) {
+	u, err := s.requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		return nil, errResp(gen.Validation, "missing body", nil)
+	}
+	if req.Body.DisplayName != nil && u.WebsiteUserID != nil {
+		return nil, errResp(gen.Validation, "display name is managed by varde.games", nil)
+	}
+	var steamID **string
+	if provided, _ := ctx.Value(profileSteamIDProvidedKey{}).(bool); provided {
+		steamID = new(*string)
+		value := req.Body.SteamId
+		if value != nil && *value != "" {
+			if !validSteamID(*value) {
+				return nil, errResp(gen.Validation, "invalid steam id", nil)
+			}
+			*steamID = value
+		}
+	}
+	if req.Body.SteamId != nil && *req.Body.SteamId != "" && !validSteamID(*req.Body.SteamId) {
+		return nil, errResp(gen.Validation, "invalid steam id", nil)
+	}
+	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName, steamID); err != nil {
+		return nil, err
+	}
+	if req.Body.DisplayName != nil {
+		u.DisplayName = *req.Body.DisplayName
+	}
+	if steamID != nil {
+		u.SteamID = *steamID
+	}
+	ms, err := s.Store.GroupsForUser(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]struct {
+		GroupId string   `json:"group_id"`
+		Name    string   `json:"name"`
+		Role    gen.Role `json:"role"`
+	}, 0, len(ms))
+	for _, m := range ms {
+		g, err := s.Store.GetGroup(ctx, m.GroupID)
+		if err != nil {
+			continue
+		}
+		groups = append(groups, struct {
+			GroupId string   `json:"group_id"`
+			Name    string   `json:"name"`
+			Role    gen.Role `json:"role"`
+		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
+	}
+	return gen.UpdateMe200JSONResponse(gen.Me{User: genUser(u), Groups: groups}), nil
+}
+
+func validSteamID(value string) bool {
+	if len(value) != 17 || !strings.HasPrefix(value, "7656119") {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

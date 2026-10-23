@@ -15,11 +15,12 @@ import { useLoad } from "../lib/data";
 import { navigate, useLocation } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
 import CreateGroup from "./CreateGroup";
+import PluginSettingsPanel from "./PluginSettings";
 
 type GroupSettings = Schemas["GroupSettings"];
 
 export default function Settings() {
-  const { group, refreshMe, selectGroup } = useSession();
+  const { group, me, refreshMe, selectGroup } = useSession();
   const loc = useLocation();
   const admin = canAdmin(group.role);
   const g = useLoad(
@@ -34,6 +35,10 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [steamId, setSteamId] = useState(me.user.steam_id ?? "");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   useEffect(() => {
     if (g.data) {
@@ -162,6 +167,61 @@ export default function Settings() {
           </div>
         )}
       </form>
+      <Card className="mt-6">
+        <CardHeader title="Your profile" />
+        <form
+          className="space-y-4 p-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setProfileBusy(true);
+            setProfileError(null);
+            setProfileMessage(null);
+            const { error } = await api.PATCH("/v1/me", {
+              body: { steam_id: steamId },
+            });
+            setProfileBusy(false);
+            if (error) setProfileError(errorMessage(error));
+            else {
+              setProfileMessage("Saved");
+              await refreshMe();
+            }
+          }}
+        >
+          <Field
+            label="SteamID64"
+            help={
+              <>
+                17-digit SteamID64. Find yours at{" "}
+                <a
+                  href="https://steamid.io"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  steamid.io
+                </a>
+                .
+              </>
+            }
+          >
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              maxLength={17}
+              value={steamId}
+              onChange={(e) => setSteamId(e.target.value)}
+            />
+          </Field>
+          <ErrorNote>{profileError}</ErrorNote>
+          <div className="flex items-center justify-end gap-3">
+            {profileMessage && <span className="text-sm text-emerald-400">{profileMessage}</span>}
+            <Button variant="primary" type="submit" busy={profileBusy}>
+              Save profile
+            </Button>
+          </div>
+        </form>
+      </Card>
+      <PluginSettingsPanel className="mt-6" />
       {group.role === "owner" && (
         <Card className="mt-10 border-rose-900/60">
           <CardHeader

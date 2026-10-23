@@ -100,6 +100,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	cols := []col{
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
 		{"users", "website_user_id", "TEXT"},
+		{"users", "steam_id", "TEXT"},
 		{"server_executions", "role", "TEXT NOT NULL DEFAULT 'serving'"},
 		{"migrations", "mode", "TEXT NOT NULL DEFAULT 'serial'"},
 		{"migrations", "to_execution_id", "TEXT"},

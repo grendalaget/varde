@@ -134,6 +134,8 @@ const (
 	LatestSaveUnavailable ErrorCode = "latest_save_unavailable"
 	LimitExceeded         ErrorCode = "limit_exceeded"
 	NotFound              ErrorCode = "not_found"
+	PluginUnavailable     ErrorCode = "plugin_unavailable"
+	SecretsUnconfigured   ErrorCode = "secrets_unconfigured"
 	StaleEpoch            ErrorCode = "stale_epoch"
 	Unauthorized          ErrorCode = "unauthorized"
 	Unschedulable         ErrorCode = "unschedulable"
@@ -154,6 +156,10 @@ func (e ErrorCode) Valid() bool {
 	case LimitExceeded:
 		return true
 	case NotFound:
+		return true
+	case PluginUnavailable:
+		return true
+	case SecretsUnconfigured:
 		return true
 	case StaleEpoch:
 		return true
@@ -311,25 +317,25 @@ func (e GameOs) Valid() bool {
 
 // Defines values for GameConfigFieldType.
 const (
-	Bool   GameConfigFieldType = "bool"
-	Int    GameConfigFieldType = "int"
-	Secret GameConfigFieldType = "secret"
-	Select GameConfigFieldType = "select"
-	String GameConfigFieldType = "string"
+	GameConfigFieldTypeBool   GameConfigFieldType = "bool"
+	GameConfigFieldTypeInt    GameConfigFieldType = "int"
+	GameConfigFieldTypeSecret GameConfigFieldType = "secret"
+	GameConfigFieldTypeSelect GameConfigFieldType = "select"
+	GameConfigFieldTypeString GameConfigFieldType = "string"
 )
 
 // Valid indicates whether the value is a known member of the GameConfigFieldType enum.
 func (e GameConfigFieldType) Valid() bool {
 	switch e {
-	case Bool:
+	case GameConfigFieldTypeBool:
 		return true
-	case Int:
+	case GameConfigFieldTypeInt:
 		return true
-	case Secret:
+	case GameConfigFieldTypeSecret:
 		return true
-	case Select:
+	case GameConfigFieldTypeSelect:
 		return true
-	case String:
+	case GameConfigFieldTypeString:
 		return true
 	default:
 		return false
@@ -483,6 +489,54 @@ func (e ObservedState) Valid() bool {
 	case ObservedStateStopped:
 		return true
 	case ObservedStateStopping:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PluginFieldRequires.
+const (
+	SteamId PluginFieldRequires = "steam_id"
+)
+
+// Valid indicates whether the value is a known member of the PluginFieldRequires enum.
+func (e PluginFieldRequires) Valid() bool {
+	switch e {
+	case SteamId:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PluginFieldType.
+const (
+	PluginFieldTypeBool              PluginFieldType = "bool"
+	PluginFieldTypeInt               PluginFieldType = "int"
+	PluginFieldTypeMemberMultiselect PluginFieldType = "member_multiselect"
+	PluginFieldTypeMultiselect       PluginFieldType = "multiselect"
+	PluginFieldTypeSecret            PluginFieldType = "secret"
+	PluginFieldTypeSelect            PluginFieldType = "select"
+	PluginFieldTypeString            PluginFieldType = "string"
+)
+
+// Valid indicates whether the value is a known member of the PluginFieldType enum.
+func (e PluginFieldType) Valid() bool {
+	switch e {
+	case PluginFieldTypeBool:
+		return true
+	case PluginFieldTypeInt:
+		return true
+	case PluginFieldTypeMemberMultiselect:
+		return true
+	case PluginFieldTypeMultiselect:
+		return true
+	case PluginFieldTypeSecret:
+		return true
+	case PluginFieldTypeSelect:
+		return true
+	case PluginFieldTypeString:
 		return true
 	default:
 		return false
@@ -1099,6 +1153,19 @@ type GroupLimits struct {
 	MaxStorageBytes    *int64 `json:"max_storage_bytes,omitempty"`
 }
 
+// GroupPlugin defines model for GroupPlugin.
+type GroupPlugin struct {
+	Enabled    bool                   `json:"enabled"`
+	Id         string                 `json:"id"`
+	SecretsSet []string               `json:"secrets_set"`
+	Settings   map[string]interface{} `json:"settings"`
+}
+
+// GroupPluginRequest defines model for GroupPluginRequest.
+type GroupPluginRequest struct {
+	Settings map[string]interface{} `json:"settings"`
+}
+
 // GroupSettings defines model for GroupSettings.
 type GroupSettings struct {
 	DefaultMinCommitReplicas *int  `json:"default_min_commit_replicas,omitempty"`
@@ -1155,11 +1222,12 @@ type Me struct {
 
 // Member defines model for Member.
 type Member struct {
-	CreatedAt   int64  `json:"created_at"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
-	Role        Role   `json:"role"`
-	UserId      string `json:"user_id"`
+	CreatedAt   int64   `json:"created_at"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Role        Role    `json:"role"`
+	SteamId     *string `json:"steam_id,omitempty"`
+	UserId      string  `json:"user_id"`
 }
 
 // MeshReport defines model for MeshReport.
@@ -1230,6 +1298,72 @@ type NodeConnectionPath string
 
 // ObservedState defines model for ObservedState.
 type ObservedState string
+
+// Plugin defines model for Plugin.
+type Plugin struct {
+	Id       string        `json:"id"`
+	Name     string        `json:"name"`
+	Pages    []PluginPage  `json:"pages"`
+	Settings []PluginField `json:"settings"`
+	Version  string        `json:"version"`
+}
+
+// PluginAction defines model for PluginAction.
+type PluginAction struct {
+	Endpoint string        `json:"endpoint"`
+	Fields   []PluginField `json:"fields"`
+	Id       string        `json:"id"`
+	Title    string        `json:"title"`
+}
+
+// PluginActionRequest defines model for PluginActionRequest.
+type PluginActionRequest struct {
+	Values map[string]interface{} `json:"values"`
+}
+
+// PluginActionResponse defines model for PluginActionResponse.
+type PluginActionResponse struct {
+	Href    *string  `json:"href,omitempty"`
+	Message string   `json:"message"`
+	Notes   []string `json:"notes"`
+}
+
+// PluginField defines model for PluginField.
+type PluginField struct {
+	Default  interface{}          `json:"default,omitempty"`
+	Help     *string              `json:"help,omitempty"`
+	Hidden   *bool                `json:"hidden,omitempty"`
+	Name     string               `json:"name"`
+	Options  *[]string            `json:"options,omitempty"`
+	Required *bool                `json:"required,omitempty"`
+	Requires *PluginFieldRequires `json:"requires,omitempty"`
+	Secret   *bool                `json:"secret,omitempty"`
+	Type     PluginFieldType      `json:"type"`
+}
+
+// PluginFieldRequires defines model for PluginField.Requires.
+type PluginFieldRequires string
+
+// PluginFieldType defines model for PluginField.Type.
+type PluginFieldType string
+
+// PluginListResponse defines model for PluginListResponse.
+type PluginListResponse struct {
+	Items []struct {
+		Href     *string `json:"href,omitempty"`
+		Status   *string `json:"status,omitempty"`
+		Subtitle *string `json:"subtitle,omitempty"`
+		Title    string  `json:"title"`
+	} `json:"items"`
+}
+
+// PluginPage defines model for PluginPage.
+type PluginPage struct {
+	Actions      []PluginAction `json:"actions"`
+	Id           string         `json:"id"`
+	ListEndpoint *string        `json:"list_endpoint,omitempty"`
+	Title        string         `json:"title"`
+}
 
 // Protocol defines model for Protocol.
 type Protocol string
@@ -1380,11 +1514,12 @@ type TokenEnrollRequest struct {
 
 // User defines model for User.
 type User struct {
-	CreatedAt   int64  `json:"created_at"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
-	Id          string `json:"id"`
-	IsOperator  bool   `json:"is_operator"`
+	CreatedAt   int64   `json:"created_at"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Id          string  `json:"id"`
+	IsOperator  bool    `json:"is_operator"`
+	SteamId     *string `json:"steam_id,omitempty"`
 }
 
 // Version defines model for Version.
@@ -1392,11 +1527,20 @@ type Version struct {
 	Version string `json:"version"`
 }
 
+// ActionId defines model for ActionId.
+type ActionId = string
+
 // GroupId defines model for GroupId.
 type GroupId = string
 
 // NodeId defines model for NodeId.
 type NodeId = string
+
+// PageId defines model for PageId.
+type PageId = string
+
+// PluginId defines model for PluginId.
+type PluginId = string
 
 // ServerId defines model for ServerId.
 type ServerId = string
@@ -1493,6 +1637,12 @@ type CreateServerJSONBody struct {
 	PreferredNodeId   *string                 `json:"preferred_node_id,omitempty"`
 	ReplicationFactor *int                    `json:"replication_factor,omitempty"`
 	SnapshotIntervalS *int                    `json:"snapshot_interval_s,omitempty"`
+}
+
+// UpdateMeJSONBody defines parameters for UpdateMe.
+type UpdateMeJSONBody struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	SteamId     *string `json:"steam_id,omitempty"`
 }
 
 // UpdateNodeJSONBody defines parameters for UpdateNode.
@@ -1598,8 +1748,17 @@ type CreateInviteJSONRequestBody CreateInviteJSONBody
 // UpdateMemberJSONRequestBody defines body for UpdateMember for application/json ContentType.
 type UpdateMemberJSONRequestBody UpdateMemberJSONBody
 
+// PutGroupPluginJSONRequestBody defines body for PutGroupPlugin for application/json ContentType.
+type PutGroupPluginJSONRequestBody = GroupPluginRequest
+
+// InvokePluginActionJSONRequestBody defines body for InvokePluginAction for application/json ContentType.
+type InvokePluginActionJSONRequestBody = PluginActionRequest
+
 // CreateServerJSONRequestBody defines body for CreateServer for application/json ContentType.
 type CreateServerJSONRequestBody CreateServerJSONBody
+
+// UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
+type UpdateMeJSONRequestBody UpdateMeJSONBody
 
 // UpdateNodeJSONRequestBody defines body for UpdateNode for application/json ContentType.
 type UpdateNodeJSONRequestBody UpdateNodeJSONBody
@@ -1730,6 +1889,21 @@ type ServerInterface interface {
 	// (GET /v1/groups/{groupId}/nodes)
 	ListNodes(w http.ResponseWriter, r *http.Request, groupId GroupId)
 
+	// (GET /v1/groups/{groupId}/plugins)
+	ListGroupPlugins(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
+	// (DELETE /v1/groups/{groupId}/plugins/{pluginId})
+	DeleteGroupPlugin(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
+
+	// (PUT /v1/groups/{groupId}/plugins/{pluginId})
+	PutGroupPlugin(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId})
+	InvokePluginAction(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId, pageId PageId, actionId ActionId)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list)
+	ListPluginPage(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId, pageId PageId)
+
 	// (GET /v1/groups/{groupId}/servers)
 	ListServers(w http.ResponseWriter, r *http.Request, groupId GroupId)
 
@@ -1745,6 +1919,9 @@ type ServerInterface interface {
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
 
+	// (PATCH /v1/me)
+	UpdateMe(w http.ResponseWriter, r *http.Request)
+
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(w http.ResponseWriter, r *http.Request, nodeId NodeId)
 
@@ -1753,6 +1930,9 @@ type ServerInterface interface {
 
 	// (PATCH /v1/nodes/{nodeId})
 	UpdateNode(w http.ResponseWriter, r *http.Request, nodeId NodeId)
+
+	// (GET /v1/plugins)
+	ListPlugins(w http.ResponseWriter, r *http.Request)
 	// GetRelayPublicKey ed25519 public key used to sign relay tokens
 	// (GET /v1/relay/public-key)
 	GetRelayPublicKey(w http.ResponseWriter, r *http.Request)
@@ -2642,6 +2822,199 @@ func (siw *ServerInterfaceWrapper) ListNodes(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListGroupPlugins operation middleware
+func (siw *ServerInterfaceWrapper) ListGroupPlugins(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGroupPlugins(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteGroupPlugin operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGroupPlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGroupPlugin(w, r, groupId, pluginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutGroupPlugin operation middleware
+func (siw *ServerInterfaceWrapper) PutGroupPlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutGroupPlugin(w, r, groupId, pluginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InvokePluginAction operation middleware
+func (siw *ServerInterfaceWrapper) InvokePluginAction(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pageId" -------------
+	var pageId PageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pageId", r.PathValue("pageId"), &pageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pageId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "actionId" -------------
+	var actionId ActionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "actionId", r.PathValue("actionId"), &actionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "actionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InvokePluginAction(w, r, groupId, pluginId, pageId, actionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPluginPage operation middleware
+func (siw *ServerInterfaceWrapper) ListPluginPage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pageId" -------------
+	var pageId PageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pageId", r.PathValue("pageId"), &pageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPluginPage(w, r, groupId, pluginId, pageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListServers operation middleware
 func (siw *ServerInterfaceWrapper) ListServers(w http.ResponseWriter, r *http.Request) {
 
@@ -2760,6 +3133,20 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateMe operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteNode operation middleware
 func (siw *ServerInterfaceWrapper) DeleteNode(w http.ResponseWriter, r *http.Request) {
 
@@ -2829,6 +3216,20 @@ func (siw *ServerInterfaceWrapper) UpdateNode(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateNode(w, r, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPlugins operation middleware
+func (siw *ServerInterfaceWrapper) ListPlugins(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPlugins(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3297,6 +3698,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/external", wrapper.ExternalLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/me", wrapper.UpdateMe)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/plugins", wrapper.ListPlugins)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups", wrapper.ListGroups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups", wrapper.CreateGroup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}", wrapper.DeleteGroup)
@@ -3305,6 +3708,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/members", wrapper.ListMembers)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}/members/{userId}", wrapper.RemoveMember)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/groups/{groupId}/members/{userId}", wrapper.UpdateMember)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/plugins", wrapper.ListGroupPlugins)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}", wrapper.DeleteGroupPlugin)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}", wrapper.PutGroupPlugin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list", wrapper.ListPluginPage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId}", wrapper.InvokePluginAction)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/invites", wrapper.CreateInvite)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/invites/{code}", wrapper.GetInvite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/invites/{code}/accept", wrapper.AcceptInvite)
@@ -4542,6 +4950,20 @@ func (response GetGroup404JSONResponse) VisitGetGroupResponse(w http.ResponseWri
 	return err
 }
 
+type GetGroup503JSONResponse Error
+
+func (response GetGroup503JSONResponse) VisitGetGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type UpdateGroupRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 	Body    *UpdateGroupJSONRequestBody
@@ -5257,6 +5679,471 @@ func (response ListNodes403JSONResponse) VisitListNodesResponse(w http.ResponseW
 	return err
 }
 
+type ListGroupPluginsRequestObject struct {
+	GroupId GroupId `json:"groupId"`
+}
+
+type ListGroupPluginsResponseObject interface {
+	VisitListGroupPluginsResponse(w http.ResponseWriter) error
+}
+
+type ListGroupPlugins200JSONResponse struct {
+	Plugins []GroupPlugin `json:"plugins"`
+}
+
+func (response ListGroupPlugins200JSONResponse) VisitListGroupPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListGroupPlugins401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListGroupPlugins401JSONResponse) VisitListGroupPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListGroupPlugins403JSONResponse Error
+
+func (response ListGroupPlugins403JSONResponse) VisitListGroupPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListGroupPlugins503JSONResponse Error
+
+func (response ListGroupPlugins503JSONResponse) VisitListGroupPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteGroupPluginRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+}
+
+type DeleteGroupPluginResponseObject interface {
+	VisitDeleteGroupPluginResponse(w http.ResponseWriter) error
+}
+
+type DeleteGroupPlugin204Response struct {
+}
+
+func (response DeleteGroupPlugin204Response) VisitDeleteGroupPluginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteGroupPlugin401JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteGroupPlugin401JSONResponse) VisitDeleteGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteGroupPlugin403JSONResponse Error
+
+func (response DeleteGroupPlugin403JSONResponse) VisitDeleteGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteGroupPlugin404JSONResponse Error
+
+func (response DeleteGroupPlugin404JSONResponse) VisitDeleteGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteGroupPlugin503JSONResponse Error
+
+func (response DeleteGroupPlugin503JSONResponse) VisitDeleteGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPluginRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+	Body     *PutGroupPluginJSONRequestBody
+}
+
+type PutGroupPluginResponseObject interface {
+	VisitPutGroupPluginResponse(w http.ResponseWriter) error
+}
+
+type PutGroupPlugin200JSONResponse GroupPlugin
+
+func (response PutGroupPlugin200JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutGroupPlugin400JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin401JSONResponse Error
+
+func (response PutGroupPlugin401JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin403JSONResponse Error
+
+func (response PutGroupPlugin403JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin404JSONResponse Error
+
+func (response PutGroupPlugin404JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin502JSONResponse Error
+
+func (response PutGroupPlugin502JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutGroupPlugin503JSONResponse Error
+
+func (response PutGroupPlugin503JSONResponse) VisitPutGroupPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginActionRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+	PageId   PageId   `json:"pageId"`
+	ActionId ActionId `json:"actionId"`
+	Body     *InvokePluginActionJSONRequestBody
+}
+
+type InvokePluginActionResponseObject interface {
+	VisitInvokePluginActionResponse(w http.ResponseWriter) error
+}
+
+type InvokePluginAction200JSONResponse PluginActionResponse
+
+func (response InvokePluginAction200JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction400JSONResponse struct{ ErrorJSONResponse }
+
+func (response InvokePluginAction400JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction401JSONResponse Error
+
+func (response InvokePluginAction401JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction403JSONResponse Error
+
+func (response InvokePluginAction403JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction404JSONResponse Error
+
+func (response InvokePluginAction404JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction502JSONResponse Error
+
+func (response InvokePluginAction502JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InvokePluginAction503JSONResponse Error
+
+func (response InvokePluginAction503JSONResponse) VisitInvokePluginActionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPageRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+	PageId   PageId   `json:"pageId"`
+}
+
+type ListPluginPageResponseObject interface {
+	VisitListPluginPageResponse(w http.ResponseWriter) error
+}
+
+type ListPluginPage200JSONResponse PluginListResponse
+
+func (response ListPluginPage200JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListPluginPage400JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage401JSONResponse Error
+
+func (response ListPluginPage401JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage403JSONResponse Error
+
+func (response ListPluginPage403JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage404JSONResponse Error
+
+func (response ListPluginPage404JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage502JSONResponse Error
+
+func (response ListPluginPage502JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginPage503JSONResponse Error
+
+func (response ListPluginPage503JSONResponse) VisitListPluginPageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListServersRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 }
@@ -5525,6 +6412,56 @@ func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 	return err
 }
 
+type UpdateMeRequestObject struct {
+	Body *UpdateMeJSONRequestBody
+}
+
+type UpdateMeResponseObject interface {
+	VisitUpdateMeResponse(w http.ResponseWriter) error
+}
+
+type UpdateMe200JSONResponse Me
+
+func (response UpdateMe200JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMe400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateMe400JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMe401JSONResponse Error
+
+func (response UpdateMe401JSONResponse) VisitUpdateMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteNodeRequestObject struct {
 	NodeId NodeId `json:"nodeId"`
 }
@@ -5666,6 +6603,43 @@ func (response UpdateNode403JSONResponse) VisitUpdateNodeResponse(w http.Respons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPluginsRequestObject struct {
+}
+
+type ListPluginsResponseObject interface {
+	VisitListPluginsResponse(w http.ResponseWriter) error
+}
+
+type ListPlugins200JSONResponse struct {
+	Plugins []Plugin `json:"plugins"`
+}
+
+func (response ListPlugins200JSONResponse) VisitListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPlugins401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListPlugins401JSONResponse) VisitListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6383,6 +7357,21 @@ type StrictServerInterface interface {
 	// (GET /v1/groups/{groupId}/nodes)
 	ListNodes(ctx context.Context, request ListNodesRequestObject) (ListNodesResponseObject, error)
 
+	// (GET /v1/groups/{groupId}/plugins)
+	ListGroupPlugins(ctx context.Context, request ListGroupPluginsRequestObject) (ListGroupPluginsResponseObject, error)
+
+	// (DELETE /v1/groups/{groupId}/plugins/{pluginId})
+	DeleteGroupPlugin(ctx context.Context, request DeleteGroupPluginRequestObject) (DeleteGroupPluginResponseObject, error)
+
+	// (PUT /v1/groups/{groupId}/plugins/{pluginId})
+	PutGroupPlugin(ctx context.Context, request PutGroupPluginRequestObject) (PutGroupPluginResponseObject, error)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId})
+	InvokePluginAction(ctx context.Context, request InvokePluginActionRequestObject) (InvokePluginActionResponseObject, error)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list)
+	ListPluginPage(ctx context.Context, request ListPluginPageRequestObject) (ListPluginPageResponseObject, error)
+
 	// (GET /v1/groups/{groupId}/servers)
 	ListServers(ctx context.Context, request ListServersRequestObject) (ListServersResponseObject, error)
 
@@ -6398,6 +7387,9 @@ type StrictServerInterface interface {
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
 
+	// (PATCH /v1/me)
+	UpdateMe(ctx context.Context, request UpdateMeRequestObject) (UpdateMeResponseObject, error)
+
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(ctx context.Context, request DeleteNodeRequestObject) (DeleteNodeResponseObject, error)
 
@@ -6406,6 +7398,9 @@ type StrictServerInterface interface {
 
 	// (PATCH /v1/nodes/{nodeId})
 	UpdateNode(ctx context.Context, request UpdateNodeRequestObject) (UpdateNodeResponseObject, error)
+
+	// (GET /v1/plugins)
+	ListPlugins(ctx context.Context, request ListPluginsRequestObject) (ListPluginsResponseObject, error)
 	// GetRelayPublicKey ed25519 public key used to sign relay tokens
 	// (GET /v1/relay/public-key)
 	GetRelayPublicKey(ctx context.Context, request GetRelayPublicKeyRequestObject) (GetRelayPublicKeyResponseObject, error)
@@ -7553,6 +8548,157 @@ func (sh *strictHandler) ListNodes(w http.ResponseWriter, r *http.Request, group
 	}
 }
 
+// ListGroupPlugins operation middleware
+func (sh *strictHandler) ListGroupPlugins(w http.ResponseWriter, r *http.Request, groupId GroupId) {
+	var request ListGroupPluginsRequestObject
+
+	request.GroupId = groupId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListGroupPlugins(ctx, request.(ListGroupPluginsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListGroupPlugins")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListGroupPluginsResponseObject); ok {
+		if err := validResponse.VisitListGroupPluginsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteGroupPlugin operation middleware
+func (sh *strictHandler) DeleteGroupPlugin(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId) {
+	var request DeleteGroupPluginRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteGroupPlugin(ctx, request.(DeleteGroupPluginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteGroupPlugin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteGroupPluginResponseObject); ok {
+		if err := validResponse.VisitDeleteGroupPluginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutGroupPlugin operation middleware
+func (sh *strictHandler) PutGroupPlugin(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId) {
+	var request PutGroupPluginRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+
+	var body PutGroupPluginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutGroupPlugin(ctx, request.(PutGroupPluginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutGroupPlugin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutGroupPluginResponseObject); ok {
+		if err := validResponse.VisitPutGroupPluginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// InvokePluginAction operation middleware
+func (sh *strictHandler) InvokePluginAction(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId, pageId PageId, actionId ActionId) {
+	var request InvokePluginActionRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+	request.PageId = pageId
+	request.ActionId = actionId
+
+	var body InvokePluginActionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.InvokePluginAction(ctx, request.(InvokePluginActionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "InvokePluginAction")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(InvokePluginActionResponseObject); ok {
+		if err := validResponse.VisitInvokePluginActionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListPluginPage operation middleware
+func (sh *strictHandler) ListPluginPage(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId, pageId PageId) {
+	var request ListPluginPageRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+	request.PageId = pageId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPluginPage(ctx, request.(ListPluginPageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPluginPage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPluginPageResponseObject); ok {
+		if err := validResponse.VisitListPluginPageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListServers operation middleware
 func (sh *strictHandler) ListServers(w http.ResponseWriter, r *http.Request, groupId GroupId) {
 	var request ListServersRequestObject
@@ -7688,6 +8834,37 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// UpdateMe operation middleware
+func (sh *strictHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	var request UpdateMeRequestObject
+
+	var body UpdateMeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateMe(ctx, request.(UpdateMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateMeResponseObject); ok {
+		if err := validResponse.VisitUpdateMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // DeleteNode operation middleware
 func (sh *strictHandler) DeleteNode(w http.ResponseWriter, r *http.Request, nodeId NodeId) {
 	var request DeleteNodeRequestObject
@@ -7766,6 +8943,30 @@ func (sh *strictHandler) UpdateNode(w http.ResponseWriter, r *http.Request, node
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateNodeResponseObject); ok {
 		if err := validResponse.VisitUpdateNodeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListPlugins operation middleware
+func (sh *strictHandler) ListPlugins(w http.ResponseWriter, r *http.Request) {
+	var request ListPluginsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPlugins(ctx, request.(ListPluginsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPlugins")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPluginsResponseObject); ok {
+		if err := validResponse.VisitListPluginsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

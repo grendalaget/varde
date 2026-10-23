@@ -84,6 +84,56 @@ func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName s
 	return err
 }
 
+func (s *Store) UpdateUserProfile(ctx context.Context, id string, displayName *string, steamID **string) error {
+	if displayName != nil {
+		if _, err := s.q().ExecContext(ctx, s.Rebind(
+			`UPDATE users SET display_name=? WHERE id=?`), *displayName, id); err != nil {
+			return err
+		}
+	}
+	if steamID != nil {
+		_, err := s.q().ExecContext(ctx, s.Rebind(
+			`UPDATE users SET steam_id=? WHERE id=?`), *steamID, id)
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GroupPlugin(ctx context.Context, groupID, pluginID string) (*GroupPlugin, error) {
+	var row GroupPlugin
+	err := s.q().GetContext(ctx, &row, s.Rebind(
+		`SELECT group_id, plugin_id, settings_json, enabled_by, created_at, updated_at
+		 FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (s *Store) ListGroupPlugins(ctx context.Context, groupID string) ([]GroupPlugin, error) {
+	var rows []GroupPlugin
+	err := s.q().SelectContext(ctx, &rows, s.Rebind(
+		`SELECT group_id, plugin_id, settings_json, enabled_by, created_at, updated_at
+		 FROM group_plugins WHERE group_id=? ORDER BY plugin_id`), groupID)
+	return rows, err
+}
+
+func (s *Store) UpsertGroupPlugin(ctx context.Context, row GroupPlugin) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO group_plugins(group_id, plugin_id, settings_json, enabled_by, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(group_id, plugin_id) DO UPDATE SET
+		   settings_json=excluded.settings_json, enabled_by=excluded.enabled_by, updated_at=excluded.updated_at`),
+		row.GroupID, row.PluginID, row.SettingsJSON, row.EnabledBy, row.CreatedAt, row.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteGroupPlugin(ctx context.Context, groupID, pluginID string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`DELETE FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
+	return err
+}
+
 // BindWebsiteUserID links an existing account to a varde.games identity,
 // refreshing its mirrored profile fields in the same write.
 func (s *Store) BindWebsiteUserID(ctx context.Context, id, websiteUserID, email, displayName string) error {
@@ -177,7 +227,7 @@ func (s *Store) MemberRole(ctx context.Context, groupID, userID string) (string,
 func (s *Store) ListMembers(ctx context.Context, groupID string) ([]Member, error) {
 	var ms []Member
 	err := s.q().SelectContext(ctx, &ms, s.Rebind(
-		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name
+		`SELECT m.group_id, m.user_id, m.role, m.created_at, u.email, u.display_name, u.steam_id
 		 FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=?`), groupID)
 	return ms, err
 }

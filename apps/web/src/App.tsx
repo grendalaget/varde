@@ -17,6 +17,8 @@ import NewServer from "./pages/NewServer";
 import ServerDetail from "./pages/ServerDetail";
 import Servers from "./pages/Servers";
 import Settings from "./pages/Settings";
+import PluginPage from "./pages/PluginPage";
+import { useLoad } from "./lib/data";
 
 const GROUP_KEY = "varde.group";
 // The site's federated sign-in bounce mints a token and hands it back in the
@@ -304,6 +306,29 @@ function Layout() {
   const { connected } = useGroupEvents();
   const loc = useLocation();
   const p = loc.pathname;
+  const pluginCatalog = useLoad(() => api.GET("/v1/plugins"), []);
+  const groupPlugins = useLoad(
+    () =>
+      api.GET("/v1/groups/{groupId}/plugins", {
+        params: { path: { groupId: group.group_id } },
+      }),
+    [group.group_id],
+  );
+  const pluginNav =
+    pluginCatalog.data?.plugins
+      .filter((plugin) =>
+        groupPlugins.data?.plugins.some(
+          (enabled) => enabled.id === plugin.id && enabled.enabled,
+        ),
+      )
+      .flatMap((plugin) =>
+        plugin.pages.map((page) => ({
+          to: `/plugins/${plugin.id}/${page.id}`,
+          label: page.title,
+          active: (path: string) => path === `/plugins/${plugin.id}/${page.id}`,
+        })),
+      ) ?? [];
+  const nav = [...NAV, ...pluginNav];
 
   let page;
   let m: Record<string, string> | null;
@@ -318,6 +343,8 @@ function Layout() {
   else if (p === "/members") page = <Members />;
   else if (p === "/activity") page = <Activity />;
   else if (p === "/settings") page = <Settings />;
+  else if ((m = match("/plugins/:pluginId/:pageId", p)))
+    page = <PluginPage pluginId={m.pluginId} pageId={m.pageId} />;
   else page = <p className="text-muted">Page not found.</p>;
 
   return (
@@ -355,7 +382,7 @@ function Layout() {
             </select>
           </label>
           <nav className="vd-stagger flex flex-col gap-0.5">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <Link
                 key={n.to}
                 to={n.to}

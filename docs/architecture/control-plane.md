@@ -1,5 +1,7 @@
 # Control plane
 
+See [Plugins](../plugins.md) for the out-of-tree HTTP plugin contract.
+
 Single Go binary `varde-control-plane serve`. Modules (packages under `apps/controlplane/internal/`):
 `store` (SQL), `auth`, `api` (public, OpenAPI-generated server), `agentapi`, `scheduler` (pure, deterministic),
 `reconciler` (the only writer of lease/execution state transitions besides agent reports), `events` (durable log +
