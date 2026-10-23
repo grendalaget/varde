@@ -296,6 +296,9 @@ func validateFields(fields []Field, setting bool) error {
 			return fmt.Errorf("%s: hidden is only supported for settings", field.Name)
 		}
 		if field.Default != nil {
+			if field.Type == "secret" || field.Secret {
+				return fmt.Errorf("%s: secret fields cannot have a default", field.Name)
+			}
 			if err := field.Validate(field.Default); err != nil {
 				return fmt.Errorf("%s default: %w", field.Name, err)
 			}

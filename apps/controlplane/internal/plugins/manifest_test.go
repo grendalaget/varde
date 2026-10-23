@@ -102,6 +102,23 @@ func TestLoadManifestRejectsInvalidDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadManifestRejectsSecretDefaults(t *testing.T) {
+	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
+	for _, field := range []Field{
+		{Name: "other_secret", Type: "secret", Default: "not-secret"},
+		{Name: "token", Type: "string", Secret: true, Default: "not-secret"},
+	} {
+		manifest := validManifest()
+		manifest.Settings = append(manifest.Settings, field)
+		path := writeManifest(t, t.TempDir(), "plugin.json", manifest)
+		_, err := Load([]string{path})
+		want := field.Name + ": secret fields cannot have a default"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load(%q) error = %v, want %q", path, err, want)
+		}
+	}
+}
+
 func TestFieldValidateRequiredValues(t *testing.T) {
 	tests := []struct {
 		name  string
