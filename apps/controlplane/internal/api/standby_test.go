@@ -143,7 +143,11 @@ func TestReplacementStandbyGetsExistingSave(t *testing.T) {
 	for _, ag := range []*agent{a, b, c} {
 		ag.heartbeatCaps(nil, javaCaps())
 	}
-	srv := e.createServer("minecraft", "mc", map[string]any{"preferred_node_id": a.nodeID})
+	// factor 1: only the standby gets a copy, so a later standby can only
+	// get this save by being seeded
+	srv := e.createServer("minecraft", "mc", map[string]any{
+		"preferred_node_id": a.nodeID, "replication_factor": 1, "min_commit_replicas": 1,
+	})
 	_, execA, epA := e.startToRunning(srv, a, b, c)
 	e.reconcile()
 	first, next := b, c
