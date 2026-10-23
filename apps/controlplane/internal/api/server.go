@@ -7,9 +7,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"database/sql"
-	"errors"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,10 +29,11 @@ import (
 
 // Config carries the flag/env configuration used by handlers.
 type Config struct {
-	PublicURL string
-	Timings   reconciler.Timings
-	Relays    []RelayConf
-	Version   string
+	PublicURL   string
+	SteamAPIKey string
+	Timings     reconciler.Timings
+	Relays      []RelayConf
+	Version     string
 }
 
 // RelayConf is one --relay id=…,addr=… entry.
@@ -46,14 +47,16 @@ type Server struct {
 	Store *store.Store
 	Auth  auth.Provider
 	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
-	Federation *auth.Federation
-	Cfg        Config
-	Secrets    *secrets.Manager
-	Plugins    *plugins.Registry
-	PluginHTTP *http.Client
-	Recon      *reconciler.Reconciler
-	RelayKey   ed25519.PrivateKey // CP signing key for relay tokens
-	Log        *slog.Logger
+	Federation     *auth.Federation
+	Cfg            Config
+	Secrets        *secrets.Manager
+	Plugins        *plugins.Registry
+	PluginHTTP     *http.Client
+	SteamOpenIDURL string
+	SteamAPIBase   string
+	Recon          *reconciler.Reconciler
+	RelayKey       ed25519.PrivateKey // CP signing key for relay tokens
+	Log            *slog.Logger
 }
 
 type ctxKey int

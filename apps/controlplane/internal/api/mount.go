@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -42,6 +41,7 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+		r = r.WithContext(withRequestBase(r.Context(), r))
 		if r.Method == http.MethodPatch && p == "/v1/me" {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			raw, err := io.ReadAll(r.Body)
@@ -49,17 +49,13 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 				writeErr(w, http.StatusRequestEntityTooLarge, "validation", "request body too large", nil)
 				return
 			}
-			var fields map[string]json.RawMessage
-			steamIDProvided := false
-			if json.Unmarshal(raw, &fields) == nil {
-				_, steamIDProvided = fields["steam_id"]
-			}
 			r.Body = io.NopCloser(bytes.NewReader(raw))
-			r = r.WithContext(context.WithValue(r.Context(), profileSteamIDProvidedKey{}, steamIDProvided))
 		} else if (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.Contains(p, "/plugins") {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		}
 		switch {
+		case p == "/v1/auth/steam/callback" && r.Method == http.MethodGet:
+			s.userAuth(http.HandlerFunc(s.steamCallback)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/agent/"):
 			// crash reports carry base64 minidumps; cap the request before
 			// the strict decoder reads it (the field-level cap runs later).
@@ -85,8 +81,6 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		}
 	})
 }
-
-type profileSteamIDProvidedKey struct{}
 
 type requestBaseKey struct{}
 

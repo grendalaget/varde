@@ -22,6 +22,7 @@ type Querier interface {
 // helpers we wrap the store.
 
 var ErrNotFound = errors.New("store: not found")
+var ErrSteamIDTaken = errors.New("store: steam id already linked")
 
 func (s *Store) q() *sqlx.DB { return s.DB }
 
@@ -84,19 +85,57 @@ func (s *Store) UpdateUserIdentity(ctx context.Context, id, email, displayName s
 	return err
 }
 
-func (s *Store) UpdateUserProfile(ctx context.Context, id string, displayName *string, steamID **string) error {
+func (s *Store) UpdateUserProfile(ctx context.Context, id string, displayName *string) error {
 	if displayName != nil {
 		if _, err := s.q().ExecContext(ctx, s.Rebind(
 			`UPDATE users SET display_name=? WHERE id=?`), *displayName, id); err != nil {
 			return err
 		}
 	}
-	if steamID != nil {
-		_, err := s.q().ExecContext(ctx, s.Rebind(
-			`UPDATE users SET steam_id=? WHERE id=?`), *steamID, id)
-		return err
-	}
 	return nil
+}
+
+func (s *Store) CreateSteamLinkState(ctx context.Context, nonce, userID string, expiresAt int64) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`INSERT INTO steam_link_states(nonce, user_id, expires_at) VALUES(?, ?, ?)`),
+		nonce, userID, expiresAt)
+	return err
+}
+
+func (s *Store) ConsumeSteamLinkState(ctx context.Context, nonce string, now int64) (string, error) {
+	var userID string
+	missing := false
+	err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM steam_link_states WHERE expires_at <= ?`), now); err != nil {
+			return err
+		}
+		err := tx.GetContext(ctx, &userID, s.Rebind(
+			`DELETE FROM steam_link_states WHERE nonce=? AND expires_at>? RETURNING user_id`),
+			nonce, now)
+		if errors.Is(err, sql.ErrNoRows) {
+			missing = true
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		return "", sql.ErrNoRows
+	}
+	return userID, err
+}
+
+func (s *Store) SetUserSteam(ctx context.Context, userID string, steamID, persona, avatar *string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE users SET steam_id=?, steam_persona_name=?, steam_avatar_url=? WHERE id=?`),
+		steamID, persona, avatar, userID)
+	if IsUniqueViolation(err) {
+		return ErrSteamIDTaken
+	}
+	return err
 }
 
 func (s *Store) GroupPlugin(ctx context.Context, groupID, pluginID string) (*GroupPlugin, error) {

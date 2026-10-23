@@ -16,9 +16,11 @@ type User struct {
 	PasswordHash string `db:"password_hash"`
 	IsOperator   int64  `db:"is_operator"`
 	// varde.games user id when the account came in through federation.
-	WebsiteUserID *string `db:"website_user_id"`
-	SteamID       *string `db:"steam_id"`
-	CreatedAt     int64   `db:"created_at"`
+	WebsiteUserID    *string `db:"website_user_id"`
+	SteamID          *string `db:"steam_id"`
+	SteamPersonaName *string `db:"steam_persona_name"`
+	SteamAvatarURL   *string `db:"steam_avatar_url"`
+	CreatedAt        int64   `db:"created_at"`
 }
 
 type Session struct {

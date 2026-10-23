@@ -171,7 +171,6 @@ paths:
               type: object
               properties:
                 display_name: { type: string }
-                steam_id: { type: string, nullable: true }
       responses:
         "200":
           description: Updated current user profile.
@@ -179,6 +178,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/me/steam/link:
+    post:
+      operationId: createSteamLink
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Steam OpenID sign-in URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [redirect_url]
+                properties:
+                  redirect_url: { type: string, format: uri }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/me/steam:
+    delete:
+      operationId: unlinkSteam
+      tags: [auth]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "204": { description: Steam account unlinked. }
         "401": { $ref: "#/components/responses/Error" }
 
   /v1/plugins:
@@ -1440,6 +1464,8 @@ components:
         email: { type: string }
         display_name: { type: string }
         steam_id: { type: string, nullable: true }
+        steam_persona_name: { type: string, nullable: true }
+        steam_avatar_url: { type: string, nullable: true }
         is_operator: { type: boolean }
         created_at: { type: integer, format: int64 }
     Me:

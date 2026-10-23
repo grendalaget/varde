@@ -1,29 +1,33 @@
 package api_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
 
-func TestUpdateMeSteamIDAndValidation(t *testing.T) {
+func TestPatchMeSteamIDDoesNotChangeLinkedIdentity(t *testing.T) {
 	e := newEnv(t)
-	valid := "76561198000000000"
-	response := e.do("PATCH", "/v1/me", map[string]any{"steam_id": valid}, e.token)
-	if response.Status != 200 {
-		t.Fatalf("PATCH /v1/me valid steam_id status = %d, want 200: %s", response.Status, response.Raw)
+	me := e.do("GET", "/v1/me", nil, e.token)
+	if me.Status != 200 {
+		t.Fatalf("GET /v1/me status = %d, want 200", me.Status)
 	}
-	user := response.Body["user"].(map[string]any)
-	if user["steam_id"] != valid {
-		t.Errorf("PATCH /v1/me returned steam_id = %v, want %q", user["steam_id"], valid)
+	userID := me.Body["user"].(map[string]any)["id"].(string)
+	linkedSteamID := "76561198000000000"
+	if err := e.st.SetUserSteam(context.Background(), userID, &linkedSteamID, nil, nil); err != nil {
+		t.Fatal(err)
 	}
 
-	response = e.do("PATCH", "/v1/me", map[string]any{"steam_id": ""}, e.token)
+	response := e.do("PATCH", "/v1/me", map[string]any{"steam_id": "76561198000000001"}, e.token)
 	if response.Status != 200 {
-		t.Fatalf("PATCH /v1/me empty steam_id status = %d, want 200: %s", response.Status, response.Raw)
+		t.Fatalf("PATCH /v1/me with steam_id status = %d, want 200: %s", response.Status, response.Raw)
 	}
-	response = e.do("PATCH", "/v1/me", map[string]any{"steam_id": "123"}, e.token)
-	if response.Status != 400 || response.Body["message"] != "invalid steam id" {
-		t.Fatalf("PATCH /v1/me invalid steam_id = %d %v, want 400 invalid steam id", response.Status, response.Body)
+	updated := e.do("GET", "/v1/me", nil, e.token)
+	if updated.Status != 200 {
+		t.Fatalf("GET /v1/me after PATCH status = %d, want 200", updated.Status)
+	}
+	if got := updated.Body["user"].(map[string]any)["steam_id"]; got != linkedSteamID {
+		t.Errorf("PATCH /v1/me changed steam_id to %v, want %q", got, linkedSteamID)
 	}
 }
 
@@ -40,10 +44,6 @@ func TestFederatedProfileDisplayNameIsManaged(t *testing.T) {
 	response := e.do("PATCH", "/v1/me", map[string]any{"display_name": "changed"}, e.token)
 	if response.Status != 400 || response.Body["message"] != "display name is managed by varde.games" {
 		t.Fatalf("PATCH /v1/me federated display_name = %d %v, want managed-name validation", response.Status, response.Body)
-	}
-	response = e.do("PATCH", "/v1/me", map[string]any{"steam_id": "76561198000000001"}, e.token)
-	if response.Status != 200 {
-		t.Fatalf("PATCH /v1/me federated steam_id status = %d, want 200: %s", response.Status, response.Raw)
 	}
 }
 

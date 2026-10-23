@@ -29,12 +29,14 @@ func apiErrFromMsg(err error) error {
 
 func genUser(u *store.User) gen.User {
 	return gen.User{
-		Id:          u.ID,
-		Email:       u.Email,
-		DisplayName: u.DisplayName,
-		SteamId:     u.SteamID,
-		IsOperator:  u.IsOperator == 1,
-		CreatedAt:   u.CreatedAt,
+		Id:               u.ID,
+		Email:            u.Email,
+		DisplayName:      u.DisplayName,
+		SteamId:          u.SteamID,
+		SteamPersonaName: u.SteamPersonaName,
+		SteamAvatarUrl:   u.SteamAvatarURL,
+		IsOperator:       u.IsOperator == 1,
+		CreatedAt:        u.CreatedAt,
 	}
 }
 
@@ -162,25 +164,11 @@ func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (g
 	if req.Body.DisplayName != nil && u.WebsiteUserID != nil {
 		return nil, errResp(gen.Validation, "display name is managed by varde.games", nil)
 	}
-	var steamID **string
-	if provided, _ := ctx.Value(profileSteamIDProvidedKey{}).(bool); provided {
-		steamID = new(*string)
-		value := req.Body.SteamId
-		if value != nil && *value != "" {
-			if !validSteamID(*value) {
-				return nil, errResp(gen.Validation, "invalid steam id", nil)
-			}
-			*steamID = value
-		}
-	}
-	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName, steamID); err != nil {
+	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName); err != nil {
 		return nil, err
 	}
 	if req.Body.DisplayName != nil {
 		u.DisplayName = *req.Body.DisplayName
-	}
-	if steamID != nil {
-		u.SteamID = *steamID
 	}
 	ms, err := s.Store.GroupsForUser(ctx, u.ID)
 	if err != nil {
@@ -203,16 +191,4 @@ func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (g
 		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
 	}
 	return gen.UpdateMe200JSONResponse(gen.Me{User: genUser(u), Groups: groups}), nil
-}
-
-func validSteamID(value string) bool {
-	if len(value) != 17 || !strings.HasPrefix(value, "7656119") {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }

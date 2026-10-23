@@ -35,10 +35,35 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [steamId, setSteamId] = useState(me.user.steam_id ?? "");
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const steam = loc.search.get("steam");
+    const error = loc.search.get("steam_error");
+    if (steam === "linked") {
+      setProfileMessage("Steam account linked.");
+      void refreshMe();
+    }
+    if (error) {
+      const messages: Record<string, string> = {
+        session: "Link expired, try again",
+        expired: "Link expired, try again",
+        cancelled: "Cancelled on Steam",
+        invalid: "Steam couldn't verify the sign-in",
+        unavailable: "Steam couldn't verify the sign-in",
+        taken: "That Steam account is linked to another Varde user",
+      };
+      setProfileError(messages[error] ?? "Steam couldn't verify the sign-in");
+    }
+    if (steam || error) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("steam");
+      url.searchParams.delete("steam_error");
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  }, [loc.search, refreshMe]);
 
   useEffect(() => {
     if (g.data) {
@@ -169,57 +194,67 @@ export default function Settings() {
       </form>
       <Card className="mt-6">
         <CardHeader title="Your profile" />
-        <form
-          className="space-y-4 p-4"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setProfileBusy(true);
-            setProfileError(null);
-            setProfileMessage(null);
-            const { error } = await api.PATCH("/v1/me", {
-              body: { steam_id: steamId },
-            });
-            setProfileBusy(false);
-            if (error) setProfileError(errorMessage(error));
-            else {
-              setProfileMessage("Saved");
-              await refreshMe();
-            }
-          }}
-        >
-          <Field
-            label="SteamID64"
-            help={
-              <>
-                17-digit SteamID64. Find yours at{" "}
-                <a
-                  href="https://steamid.io"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline"
-                >
-                  steamid.io
-                </a>
-                .
-              </>
-            }
-          >
-            <input
-              className={inputClass}
-              inputMode="numeric"
-              maxLength={17}
-              value={steamId}
-              onChange={(e) => setSteamId(e.target.value)}
-            />
-          </Field>
-          <ErrorNote>{profileError}</ErrorNote>
-          <div className="flex items-center justify-end gap-3">
-            {profileMessage && <span className="text-sm text-emerald-400">{profileMessage}</span>}
-            <Button variant="primary" type="submit" busy={profileBusy}>
-              Save profile
+        <div className="space-y-4 p-4">
+          {me.user.steam_id ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                {me.user.steam_avatar_url && (
+                  <img
+                    src={me.user.steam_avatar_url}
+                    alt=""
+                    className="h-6 w-6 shrink-0 rounded-full object-cover"
+                  />
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {me.user.steam_persona_name || me.user.steam_id}
+                  </p>
+                  <p className="break-all text-xs text-muted">{me.user.steam_id}</p>
+                </div>
+              </div>
+              <Button
+                variant="secondary"
+                className="w-full sm:w-auto"
+                type="button"
+                busy={profileBusy}
+                onClick={async () => {
+                  setProfileBusy(true);
+                  setProfileError(null);
+                  setProfileMessage(null);
+                  const { error } = await api.DELETE("/v1/me/steam");
+                  setProfileBusy(false);
+                  if (error) setProfileError(errorMessage(error));
+                  else {
+                    setProfileMessage("Steam account unlinked.");
+                    await refreshMe();
+                  }
+                }}
+              >
+                Unlink
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="primary"
+              className="w-full sm:w-auto"
+              type="button"
+              busy={profileBusy}
+              onClick={async () => {
+                setProfileBusy(true);
+                setProfileError(null);
+                setProfileMessage(null);
+                const { data, error } = await api.POST("/v1/me/steam/link");
+                setProfileBusy(false);
+                if (error) setProfileError(errorMessage(error));
+                else if (data) window.location.href = data.redirect_url;
+              }}
+            >
+              Sign in through Steam
             </Button>
-          </div>
-        </form>
+          )}
+          <ErrorNote>{profileError}</ErrorNote>
+          {profileMessage && <p className="text-sm text-emerald-400">{profileMessage}</p>}
+        </div>
       </Card>
       <PluginSettingsPanel className="mt-6" />
       {group.role === "owner" && (

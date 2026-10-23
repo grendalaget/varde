@@ -86,6 +86,10 @@ execution_logs(execution_id, seq, at, stream{stdout,stderr,agent}, line)   -- ca
 
 Group limits (`max_nodes`) are checked at approval/enrollment.
 
+## Steam linking
+
+Users link Steam with `POST /v1/me/steam/link`; Steam returns to `/v1/auth/steam/callback`, and `DELETE /v1/me/steam` unlinks the account. Set `VARDE_STEAM_API_KEY` optionally to populate the persona name and avatar; without it, Varde stores only the verified SteamID64. The control plane's `--public-url` must be reachable by the user's browser for the Steam redirect and callback.
+
 ## Agent protocol: heartbeat = reconciliation
 
 Agents run a single loop: `POST /v1/agent/heartbeat` every `heartbeat_interval_ms` (default 5000). The request

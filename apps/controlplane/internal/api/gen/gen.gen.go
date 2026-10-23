@@ -1514,12 +1514,14 @@ type TokenEnrollRequest struct {
 
 // User defines model for User.
 type User struct {
-	CreatedAt   int64   `json:"created_at"`
-	DisplayName string  `json:"display_name"`
-	Email       string  `json:"email"`
-	Id          string  `json:"id"`
-	IsOperator  bool    `json:"is_operator"`
-	SteamId     *string `json:"steam_id,omitempty"`
+	CreatedAt        int64   `json:"created_at"`
+	DisplayName      string  `json:"display_name"`
+	Email            string  `json:"email"`
+	Id               string  `json:"id"`
+	IsOperator       bool    `json:"is_operator"`
+	SteamAvatarUrl   *string `json:"steam_avatar_url,omitempty"`
+	SteamId          *string `json:"steam_id,omitempty"`
+	SteamPersonaName *string `json:"steam_persona_name,omitempty"`
 }
 
 // Version defines model for Version.
@@ -1642,7 +1644,6 @@ type CreateServerJSONBody struct {
 // UpdateMeJSONBody defines parameters for UpdateMe.
 type UpdateMeJSONBody struct {
 	DisplayName *string `json:"display_name,omitempty"`
-	SteamId     *string `json:"steam_id,omitempty"`
 }
 
 // UpdateNodeJSONBody defines parameters for UpdateNode.
@@ -1921,6 +1922,12 @@ type ServerInterface interface {
 
 	// (PATCH /v1/me)
 	UpdateMe(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /v1/me/steam)
+	UnlinkSteam(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/me/steam/link)
+	CreateSteamLink(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(w http.ResponseWriter, r *http.Request, nodeId NodeId)
@@ -3147,6 +3154,34 @@ func (siw *ServerInterfaceWrapper) UpdateMe(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// UnlinkSteam operation middleware
+func (siw *ServerInterfaceWrapper) UnlinkSteam(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnlinkSteam(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSteamLink operation middleware
+func (siw *ServerInterfaceWrapper) CreateSteamLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSteamLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteNode operation middleware
 func (siw *ServerInterfaceWrapper) DeleteNode(w http.ResponseWriter, r *http.Request) {
 
@@ -3699,6 +3734,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/me", wrapper.UpdateMe)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/steam/link", wrapper.CreateSteamLink)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me/steam", wrapper.UnlinkSteam)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/plugins", wrapper.ListPlugins)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups", wrapper.ListGroups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups", wrapper.CreateGroup)
@@ -6462,6 +6499,72 @@ func (response UpdateMe401JSONResponse) VisitUpdateMeResponse(w http.ResponseWri
 	return err
 }
 
+type UnlinkSteamRequestObject struct {
+}
+
+type UnlinkSteamResponseObject interface {
+	VisitUnlinkSteamResponse(w http.ResponseWriter) error
+}
+
+type UnlinkSteam204Response struct {
+}
+
+func (response UnlinkSteam204Response) VisitUnlinkSteamResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type UnlinkSteam401JSONResponse struct{ ErrorJSONResponse }
+
+func (response UnlinkSteam401JSONResponse) VisitUnlinkSteamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSteamLinkRequestObject struct {
+}
+
+type CreateSteamLinkResponseObject interface {
+	VisitCreateSteamLinkResponse(w http.ResponseWriter) error
+}
+
+type CreateSteamLink200JSONResponse struct {
+	RedirectUrl string `json:"redirect_url"`
+}
+
+func (response CreateSteamLink200JSONResponse) VisitCreateSteamLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSteamLink401JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateSteamLink401JSONResponse) VisitCreateSteamLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteNodeRequestObject struct {
 	NodeId NodeId `json:"nodeId"`
 }
@@ -7389,6 +7492,12 @@ type StrictServerInterface interface {
 
 	// (PATCH /v1/me)
 	UpdateMe(ctx context.Context, request UpdateMeRequestObject) (UpdateMeResponseObject, error)
+
+	// (DELETE /v1/me/steam)
+	UnlinkSteam(ctx context.Context, request UnlinkSteamRequestObject) (UnlinkSteamResponseObject, error)
+
+	// (POST /v1/me/steam/link)
+	CreateSteamLink(ctx context.Context, request CreateSteamLinkRequestObject) (CreateSteamLinkResponseObject, error)
 
 	// (DELETE /v1/nodes/{nodeId})
 	DeleteNode(ctx context.Context, request DeleteNodeRequestObject) (DeleteNodeResponseObject, error)
@@ -8858,6 +8967,54 @@ func (sh *strictHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateMeResponseObject); ok {
 		if err := validResponse.VisitUpdateMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UnlinkSteam operation middleware
+func (sh *strictHandler) UnlinkSteam(w http.ResponseWriter, r *http.Request) {
+	var request UnlinkSteamRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UnlinkSteam(ctx, request.(UnlinkSteamRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UnlinkSteam")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UnlinkSteamResponseObject); ok {
+		if err := validResponse.VisitUnlinkSteamResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSteamLink operation middleware
+func (sh *strictHandler) CreateSteamLink(w http.ResponseWriter, r *http.Request) {
+	var request CreateSteamLinkRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSteamLink(ctx, request.(CreateSteamLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSteamLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSteamLinkResponseObject); ok {
+		if err := validResponse.VisitCreateSteamLinkResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

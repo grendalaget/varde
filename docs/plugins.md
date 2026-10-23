@@ -2,6 +2,8 @@
 
 Varde plugins are independently hosted HTTP services. The control plane reads a JSON manifest at startup, renders its declared settings and pages with native Varde UI, and calls the service over HTTP. A plugin does not run JavaScript in a Varde user session. Plugin rows for manifests that are not loaded remain in the database and are ignored.
 
+Steam IDs shown to plugins are verified through Steam sign-in; users cannot set them by typing an ID.
+
 ## Running a plugin
 
 Provide a manifest with `--plugin /path/to/plugin.json` (repeatable) or a comma-separated `VARDE_PLUGINS` environment variable. Invalid manifests stop startup and identify the file. Plugin IDs are lowercase ASCII letters/digits/hyphens, start with a letter, and are 2–32 characters.

@@ -105,6 +105,7 @@ type serveCfg struct {
 	dbURL           string
 	secretsKeyFile  string
 	publicURL       string
+	steamAPIKey     string
 	signup          string
 	authMode        string
 	fedSecret       string
@@ -130,6 +131,7 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
 	fs.StringVar(&cfg.secretsKeyFile, "secrets-key-file", envOr("VARDE_SECRETS_KEY_FILE", ""), "file containing the 32-byte secrets encryption key")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
+	fs.StringVar(&cfg.steamAPIKey, "steam-api-key", envOr("VARDE_STEAM_API_KEY", ""), "optional Steam Web API key for profile details")
 	fs.StringVar(&cfg.signup, "signup", envOr("VARDE_SIGNUP", ""), "signup policy: open|invite|closed (empty = open until first user, then invite)")
 	fs.StringVar(&cfg.authMode, "auth-mode", envOr("VARDE_AUTH_MODE", "local"), "auth mode: local|federated (federated trusts varde.games tokens on /v1/auth/external)")
 	fs.StringVar(&cfg.fedSecret, "federation-secret", envOr("VARDE_FEDERATION_SECRET", ""), "shared secret for varde.games federation tokens (required with --auth-mode=federated)")
@@ -305,7 +307,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		Secrets:    secretManager,
 		Plugins:    pluginRegistry,
 		PluginHTTP: outbound.NewClient(10 * time.Second),
-		Cfg:        api.Config{PublicURL: cfg.publicURL, Timings: timings, Relays: cfg.relays, Version: version},
+		Cfg:        api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Timings: timings, Relays: cfg.relays, Version: version},
 		Recon:      recon,
 		RelayKey:   relayKey,
 		Log:        log,

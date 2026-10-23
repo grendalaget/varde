@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_operator     INTEGER NOT NULL DEFAULT 0,
     website_user_id TEXT,
     steam_id        TEXT,
+    steam_persona_name TEXT,
+    steam_avatar_url TEXT,
     created_at      BIGINT NOT NULL
 );
 
@@ -22,6 +24,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id    TEXT NOT NULL REFERENCES users(id),
     created_at BIGINT NOT NULL,
     expires_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS steam_link_states (
+    nonce      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS groups (
