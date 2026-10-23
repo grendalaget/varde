@@ -40,10 +40,11 @@ type RelayConf struct {
 
 // Server implements gen.StrictServerInterface.
 type Server struct {
-	Store              *store.Store
-	Secrets            *secrets.Manager
-	AutoTournamentHTTP *http.Client
-	Auth               auth.Provider
+	Store                      *store.Store
+	Secrets                    *secrets.Manager
+	AutoTournamentHTTP         *http.Client
+	AutoTournamentAllowPrivate bool
+	Auth                       auth.Provider
 	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
 	Federation *auth.Federation
 	Cfg        Config

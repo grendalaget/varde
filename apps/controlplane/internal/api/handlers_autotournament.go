@@ -240,11 +240,13 @@ func (s *Server) CreateGroupTournament(ctx context.Context, req gen.CreateGroupT
 }
 
 func (s *Server) autoTournamentClient(baseURL, token string) (*autotournament.Client, error) {
-	client, err := autotournament.NewClient(baseURL, token)
+	client, err := autotournament.NewClientWithOptions(baseURL, token, s.AutoTournamentAllowPrivate)
 	if err != nil {
 		return nil, err
 	}
-	client.HTTP = s.AutoTournamentHTTP
+	if s.AutoTournamentHTTP != nil {
+		client.HTTP = s.AutoTournamentHTTP
+	}
 	return client, nil
 }
 

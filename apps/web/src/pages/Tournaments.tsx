@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Checkbox } from "@heroui/react";
 import { api, errorMessage, type Schemas } from "../api/client";
 import { Button, Card, CardHeader, ErrorNote, Field, inputClass, PageHeader } from "../components/ui";
 import { useLoad } from "../lib/data";
@@ -239,22 +240,28 @@ export default function Tournaments() {
                 {groupMembers.map((member) => {
                   const disabled = !member.steam_id;
                   return (
-                    <label key={member.user_id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        disabled={disabled}
-                        checked={selected.includes(member.user_id)}
-                        onChange={(e) =>
-                          setSelected(
-                            e.target.checked
-                              ? [...selected, member.user_id]
-                              : selected.filter((id) => id !== member.user_id),
-                          )
-                        }
-                      />
-                      <span>{member.display_name}</span>
-                      {disabled && <span className="text-xs text-muted">no Steam ID</span>}
-                    </label>
+                    <Checkbox
+                      key={member.user_id}
+                      isSelected={selected.includes(member.user_id)}
+                      isDisabled={disabled}
+                      onChange={(checked) =>
+                        setSelected((current) =>
+                          checked
+                            ? [...current, member.user_id]
+                            : current.filter((id) => id !== member.user_id),
+                        )
+                      }
+                      variant="primary"
+                      className="w-full"
+                    >
+                      <Checkbox.Content className="flex items-center gap-2 text-sm">
+                        <Checkbox.Control>
+                          <Checkbox.Indicator />
+                        </Checkbox.Control>
+                        <span>{member.display_name}</span>
+                        {disabled && <span className="text-xs text-muted">no Steam ID</span>}
+                      </Checkbox.Content>
+                    </Checkbox>
                   );
                 })}
               </div>

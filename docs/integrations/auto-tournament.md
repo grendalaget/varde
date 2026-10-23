@@ -23,6 +23,15 @@ AT.
 AT match and bracket pages may require participants to sign in to the AT
 instance separately.
 
+## Control-plane network policy
+
+The control plane does not follow redirects from AT; enter the final instance
+URL directly. Private, loopback, link-local, unspecified, and shared
+carrier-grade NAT addresses are allowed by default in local auth mode and
+blocked in federated mode. Set `--autotournament-allow-private` or
+`VARDE_AUTOTOURNAMENT_ALLOW_PRIVATE` to override this policy. Hosted control
+planes should keep private-address access disabled.
+
 ## CS2 agent directive
 
 For a linked group, Varde adds a transient `_autotournament` object to the

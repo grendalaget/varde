@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -178,3 +180,132 @@ func TestUnauthorizedIsSentinelAndSurfacesATError(t *testing.T) {
 		t.Fatalf("Ping() error = %v", err)
 	}
 }
+
+func TestPrivateAddressPolicy(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"tournaments":[]}`))
+	}))
+	defer server.Close()
+
+	blocked, err := NewClientWithOptions(server.URL, "token", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := blocked.Ping(context.Background()); err == nil || err.Error() != privateNetworkError {
+		t.Fatalf("Ping() error = %v, want private-address policy error", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("blocked request reached the server %d times", got)
+	}
+
+	allowed, err := NewClientWithOptions(server.URL, "token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := allowed.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping() with private addresses enabled: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("allowed request reached the server %d times, want 1", got)
+	}
+}
+
+func TestRedirectIsNotFollowed(t *testing.T) {
+	var destinationRequests atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationRequests.Add(1)
+		_, _ = w.Write([]byte(`{"tournaments":[]}`))
+	}))
+	defer destination.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer redirect.Close()
+
+	client, err := NewClientWithOptions(redirect.URL, "token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.Ping(context.Background())
+	if err == nil || err.Error() != "auto tournament redirected; use the final URL" {
+		t.Fatalf("Ping() error = %v, want redirect error", err)
+	}
+	if got := destinationRequests.Load(); got != 0 {
+		t.Fatalf("redirect destination received %d requests, want 0", got)
+	}
+}
+
+func TestIsPrivateAddress(t *testing.T) {
+	for _, test := range []struct {
+		address string
+		want    bool
+	}{
+		{address: "127.0.0.1", want: true},
+		{address: "10.1.2.3", want: true},
+		{address: "192.168.1.1", want: true},
+		{address: "172.31.1.1", want: true},
+		{address: "fc00::1", want: true},
+		{address: "fe80::1", want: true},
+		{address: "0.0.0.0", want: true},
+		{address: "::", want: true},
+		{address: "100.64.0.1", want: true},
+		{address: "100.127.255.254", want: true},
+		{address: "::ffff:127.0.0.1", want: true},
+		{address: "100.63.255.255", want: false},
+		{address: "100.128.0.1", want: false},
+		{address: "8.8.8.8", want: false},
+		{address: "2606:4700:4700::1111", want: false},
+	} {
+		t.Run(test.address, func(t *testing.T) {
+			addr, err := netip.ParseAddr(test.address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := isPrivateAddress(addr); got != test.want {
+				t.Errorf("isPrivateAddress(%s) = %t, want %t", addr, got, test.want)
+			}
+		})
+	}
+}
+
+func TestListTournamentsResponseBodyIsLimited(t *testing.T) {
+	body := &countingBody{
+		reader: strings.NewReader(`{"tournaments":[]}` + strings.Repeat(" ", maxResponseBodyBytes)),
+	}
+	client, err := NewClientWithOptions("https://at.example.test", "token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.HTTP = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: request,
+		}, nil
+	})}
+	if _, err := client.ListTournaments(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if body.read != maxResponseBodyBytes {
+		t.Fatalf("read %d response bytes, want limit %d", body.read, maxResponseBodyBytes)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type countingBody struct {
+	reader io.Reader
+	read   int
+}
+
+func (b *countingBody) Read(buffer []byte) (int, error) {
+	n, err := b.reader.Read(buffer)
+	b.read += n
+	return n, err
+}
+
+func (*countingBody) Close() error { return nil }

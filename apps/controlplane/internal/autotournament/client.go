@@ -7,18 +7,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
 var ErrUnauthorized = errors.New("auto tournament unauthorized")
 
+const maxResponseBodyBytes = 1 << 20
+
+const privateNetworkError = "auto tournament address is on a private network; this control plane doesn't allow that"
+
+var errPrivateNetwork = errors.New(privateNetworkError)
+
 type Client struct {
-	BaseURL string
-	Token   string
-	HTTP    *http.Client
+	BaseURL      string
+	Token        string
+	HTTP         *http.Client
+	allowPrivate bool
 }
 
 type Player struct {
@@ -83,15 +93,69 @@ func NormalizeBaseURL(raw string) (string, error) {
 }
 
 func NewClient(baseURL, token string) (*Client, error) {
+	return NewClientWithOptions(baseURL, token, true)
+}
+
+// NewClientWithOptions constructs an AT client with an explicit private-network policy.
+func NewClientWithOptions(baseURL, token string, allowPrivate bool) (*Client, error) {
 	normalized, err := NormalizeBaseURL(baseURL)
 	if err != nil {
 		return nil, err
 	}
 	return &Client{
-		BaseURL: normalized,
-		Token:   token,
-		HTTP:    &http.Client{Timeout: 10 * time.Second},
+		BaseURL:      normalized,
+		Token:        token,
+		HTTP:         newHTTPClient(allowPrivate),
+		allowPrivate: allowPrivate,
 	}, nil
+}
+
+func newHTTPClient(allowPrivate bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	if !allowPrivate {
+		dialer.Control = rejectPrivateAddress
+	}
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             nil,
+			DialContext:       dialer.DialContext,
+			ForceAttemptHTTP2: true,
+		},
+		CheckRedirect: rejectRedirect,
+	}
+}
+
+func rejectRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func rejectPrivateAddress(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errPrivateNetwork
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil || isPrivateAddress(addr) {
+		return errPrivateNetwork
+	}
+	return nil
+}
+
+func isPrivateAddress(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return true
+	}
+	addr = addr.Unmap()
+	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
+		return true
+	}
+	if addr.Is4() {
+		octets := addr.As4()
+		return octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127
+	}
+	return false
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -282,14 +346,22 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, heade
 	}
 	client := c.HTTP
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = newHTTPClient(c.allowPrivate)
 	}
-	response, err := client.Do(req)
+	clientCopy := *client
+	clientCopy.CheckRedirect = rejectRedirect
+	response, err := clientCopy.Do(req)
 	if err != nil {
+		if errors.Is(err, errPrivateNetwork) {
+			return nil, 0, errPrivateNetwork
+		}
 		return nil, 0, fmt.Errorf("auto tournament request: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
+		return nil, response.StatusCode, errors.New("auto tournament redirected; use the final URL")
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBodyBytes))
 	if err != nil {
 		return nil, response.StatusCode, fmt.Errorf("auto tournament read response: %w", err)
 	}
