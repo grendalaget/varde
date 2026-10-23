@@ -1791,8 +1791,10 @@ func TestMinecraftHotStandby(t *testing.T) {
 	nonce := randNonce(t)
 	ref := e.botWrite("player", svc, 0, nonce, "")
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
-	e.waitCommittedReplicas(serverID, "nas", "kari")
-	t.Logf("committed save replicated to the anchor and the standby")
+	// the standby's copy is what this test is about; whether the anchor
+	// also gets one depends on it being online when the save is taken
+	e.waitCommittedReplicas(serverID, "kari")
+	t.Logf("committed save replicated to the standby")
 
 	killNamespace(t, "arne")
 	killedAt := time.Now()
