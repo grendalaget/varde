@@ -186,6 +186,8 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         v.node_name = d.node.name.clone();
         v.group_name = d.node.group_name.clone().unwrap_or_default();
         v.heartbeat_interval_ms = d.heartbeat_interval_ms;
+        v.lease_ttl_ms = d.lease_ttl_ms;
+        v.lease_renew_interval_ms = d.lease_renew_interval_ms;
         v.latest_safe_save = d
             .executions
             .iter()
@@ -579,6 +581,87 @@ async fn sleep_or_stop(stop: &mut tokio::sync::watch::Receiver<bool>, duration: 
 }
 
 const SHUTDOWN_HEARTBEAT: Duration = Duration::from_secs(1);
+
+/// Fast lease channel: while hosting, renew every lease the CP asked for at
+/// `lease_renew_interval_ms` with a tiny request, between full heartbeats.
+pub async fn lease_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    loop {
+        let every = agent.cp_view.lock().unwrap().lease_renew_interval_ms;
+        let wait = match every {
+            Some(ms) if ms > 0 => {
+                let t = Instant::now();
+                match renew_once(&agent).await {
+                    Err(e) => {
+                        warn!(error = %e, elapsed_ms = t.elapsed().as_millis() as u64, "lease renewal failed")
+                    }
+                    Ok(()) if t.elapsed() > Duration::from_millis(1000) => {
+                        warn!(
+                            elapsed_ms = t.elapsed().as_millis() as u64,
+                            "slow lease renewal"
+                        )
+                    }
+                    Ok(()) => {}
+                }
+                Duration::from_millis(ms.clamp(200, 10_000) as u64)
+            }
+            _ => Duration::from_secs(1),
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {},
+            _ = stop.changed() => return,
+        }
+    }
+}
+
+async fn renew_once(agent: &Arc<Agent>) -> Result<()> {
+    let held: Vec<Arc<ExecCtl>> = agent
+        .execs
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|c| !c.is_finished() && !c.is_fenced())
+        .cloned()
+        .collect();
+    if held.is_empty() {
+        return Ok(());
+    }
+    let req = cp_api::RenewLeasesRequest {
+        executions: held
+            .iter()
+            .map(|c| cp_api::LeaseRef {
+                execution_id: c.dir.execution_id.clone(),
+                server_id: c.dir.server_id.clone(),
+                epoch: c.dir.epoch,
+            })
+            .collect(),
+    };
+    // fencing math depends on the send instant, captured before the request
+    let sent = Instant::now();
+    let r: cp_api::RenewLeasesResponse = agent
+        .cp
+        .json("POST", "/v1/agent/leases", Some(&req))
+        .await?;
+    let lease_ttl_ms = agent.cp_view.lock().unwrap().lease_ttl_ms;
+    for l in &r.leases {
+        let Some(c) = held.iter().find(|c| c.dir.execution_id == l.execution_id) else {
+            continue;
+        };
+        let window_ms = l.lease_expires_at_unix_ms - r.server_time_unix_ms;
+        let (deadline, margin_ms) = fence_deadline(
+            sent,
+            window_ms,
+            agent.cfg.effective_fence_margin_ms(),
+            lease_ttl_ms,
+        );
+        c.set_fence_margin_ms(margin_ms);
+        let mut d = c.deadline.lock().unwrap();
+        if d.map(|cur| deadline > cur).unwrap_or(true) {
+            *d = Some(deadline);
+        }
+    }
+    agent.cp_view.lock().unwrap().last_contact_unix_ms = crate::now_ms();
+    Ok(())
+}
 
 /// Fencing watchdog: deadline expiry ⇒ graceful stop bounded to
 /// fence_margin/2, then kill; mark fenced; drop hosted services; never upload.

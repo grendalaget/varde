@@ -30,11 +30,15 @@ type Timings struct {
 	LeaseTTLMs               int64
 	ShortHeartbeatIntervalMs int64
 	ShortLeaseTTLMs          int64
-	StartGraceMs             int64 // extra lease while preparing/restoring
-	SuspectAfterMs           int64
-	OfflineAfterMs           int64
-	UnschedulableRetry       int64
-	TickInterval             time.Duration
+	// FastLeaseTTLMs is the lease for agents advertising fast_lease, which
+	// renew every LeaseRenewIntervalMs; 0 disables fast leases.
+	FastLeaseTTLMs       int64
+	LeaseRenewIntervalMs int64
+	StartGraceMs         int64 // extra lease while preparing/restoring
+	SuspectAfterMs       int64
+	OfflineAfterMs       int64
+	UnschedulableRetry   int64
+	TickInterval         time.Duration
 }
 
 type NodeTimings struct {
@@ -72,6 +76,8 @@ func DefaultTimings() Timings {
 		OfflineAfterMs:           30000,
 		UnschedulableRetry:       15000,
 		TickInterval:             time.Second,
+		FastLeaseTTLMs:           8000,
+		LeaseRenewIntervalMs:     1000,
 	}
 }
 
@@ -568,8 +574,18 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 		return fmt.Errorf("unknown game %q", srv.GameID)
 	}
 	var views []scheduler.NodeView
+	var silent map[string]bool
+	if recovery {
+		silent = r.silentSinceLost(ctx, srv.ID, nodes)
+	}
 	for i := range nodes {
-		views = append(views, r.placementView(ctx, srv, &nodes[i], restore, sources))
+		v := r.placementView(ctx, srv, &nodes[i], restore, sources)
+		if silent[nodes[i].ID] {
+			// Its lease just ran out and it hasn't checked in since: it may
+			// still look online, but it's the machine that died.
+			v.Online = false
+		}
+		views = append(views, v)
 	}
 	preferred := preferredOverride
 	if preferred == "" && srv.PreferredNodeID != nil {
@@ -1079,3 +1095,27 @@ func mustJSON(v any) string {
 }
 
 func strptr(s string) *string { return &s }
+
+// silentSinceLost returns nodes that lost a lease on this server and have
+// not been seen since, so recovery doesn't place straight back onto them.
+func (r *Reconciler) silentSinceLost(ctx context.Context, serverID string, nodes []store.Node) map[string]bool {
+	var lost []struct {
+		NodeID  string `db:"node_id"`
+		EndedAt int64  `db:"ended_at"`
+	}
+	if err := r.Store.DB.SelectContext(ctx, &lost, r.Store.Rebind(
+		`SELECT node_id, ended_at FROM server_executions
+		 WHERE server_id=? AND end_reason='lost' AND ended_at IS NOT NULL`), serverID); err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, l := range lost {
+		for i := range nodes {
+			n := &nodes[i]
+			if n.ID == l.NodeID && (n.LastSeenAt == nil || *n.LastSeenAt <= l.EndedAt) {
+				out[n.ID] = true
+			}
+		}
+	}
+	return out
+}

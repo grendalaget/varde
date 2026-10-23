@@ -216,6 +216,7 @@ type agent struct {
 	priv   ed25519.PrivateKey
 	pub    ed25519.PublicKey
 	nodeID string
+	fast   bool // advertises fast_lease
 }
 
 func (e *env) newAgent(hostname string) *agent {
@@ -264,10 +265,11 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
-	DirectivesDigest    string `json:"directives_digest"`
-	HeartbeatIntervalMs int    `json:"heartbeat_interval_ms"`
-	LeaseTtlMs          int    `json:"lease_ttl_ms"`
-	Node                struct {
+	DirectivesDigest     string `json:"directives_digest"`
+	HeartbeatIntervalMs  int    `json:"heartbeat_interval_ms"`
+	LeaseTtlMs           int    `json:"lease_ttl_ms"`
+	LeaseRenewIntervalMs *int64 `json:"lease_renew_interval_ms"`
+	Node                 struct {
 		Name      string  `json:"name"`
 		GroupName *string `json:"group_name"`
 	} `json:"node"`
@@ -319,7 +321,11 @@ func caps() map[string]any {
 // heartbeat sends a heartbeat with optional execution reports; returns the
 // parsed directives.
 func (a *agent) heartbeat(execReports []map[string]any) (directives, apiResp) {
-	return a.heartbeatCaps(execReports, caps())
+	c := caps()
+	if a.fast {
+		c["fast_lease"] = true
+	}
+	return a.heartbeatCaps(execReports, c)
 }
 
 // heartbeatCaps is heartbeat with a caller-supplied capabilities body.

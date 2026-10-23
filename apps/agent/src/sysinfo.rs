@@ -33,6 +33,7 @@ pub fn capabilities(
         agent_started_at: Some(started_at_ms),
         draining: Some(draining),
         lease_profile: Some(lease_profile.to_string()),
+        fast_lease: Some(true),
     }
 }
 

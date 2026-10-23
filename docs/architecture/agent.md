@@ -73,7 +73,8 @@ contact, the pending code, and each server this machine hosts with its phase and
   Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots. A separate
   signed directives wait long-poll only wakes this loop; complete directives still arrive exclusively in the
   heartbeat response.
-  Heartbeat failures back off (1 s → 5 s) but never block fencing.
+  Heartbeat failures back off (1 s → 5 s) but never block fencing. When the CP grants fast leases, a separate lease
+  loop renews held leases via `/v1/agent/leases` every `lease_renew_interval_ms` (1 s).
 * **Fencing watchdog**: per execution, deadline per `control-plane.md#leases-epochs-fencing`, checked on a monotonic
   clock every 250 ms. Expired ⇒ stop game (bounded graceful, then kill), mark `fenced`, drop from `SetHostedServices`,
   never upload its snapshots. On agent restart, executions found in `state/` are not resumed: running orphan game
