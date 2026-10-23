@@ -58,20 +58,47 @@ type Reconciler struct {
 
 	wake chan struct{}
 
+	changedMu sync.Mutex
+	changed   chan struct{}
+
 	lvMu sync.Mutex
 	lv   map[string]string // last emitted liveness state per node
 }
 
 func New(s *store.Store, t Timings, log *slog.Logger) *Reconciler {
-	return &Reconciler{Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1), lv: map[string]string{}}
+	return &Reconciler{
+		Store: s, Timings: t, Log: log, wake: make(chan struct{}, 1),
+		changed: make(chan struct{}), lv: map[string]string{},
+	}
 }
 
 // Wake asks for an immediate pass (API mutation, heartbeat).
 func (r *Reconciler) Wake() {
+	r.notifyChanged()
 	select {
 	case r.wake <- struct{}{}:
 	default:
 	}
+}
+
+// Changed returns the current change generation channel.
+func (r *Reconciler) Changed() <-chan struct{} {
+	r.changedMu.Lock()
+	defer r.changedMu.Unlock()
+	if r.changed == nil {
+		r.changed = make(chan struct{})
+	}
+	return r.changed
+}
+
+func (r *Reconciler) notifyChanged() {
+	r.changedMu.Lock()
+	defer r.changedMu.Unlock()
+	if r.changed == nil {
+		r.changed = make(chan struct{})
+	}
+	close(r.changed)
+	r.changed = make(chan struct{})
 }
 
 // Run loops until ctx is cancelled.
@@ -100,6 +127,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 // Pass processes nodes (liveness) then servers (table from control-plane.md).
 func (r *Reconciler) Pass(ctx context.Context) error {
+	defer r.notifyChanged()
 	if err := r.nodeLiveness(ctx); err != nil {
 		return err
 	}

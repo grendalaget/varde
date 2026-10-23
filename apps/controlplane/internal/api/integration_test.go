@@ -237,8 +237,8 @@ func (e *env) newAgent(hostname string) *agent {
 // the signature headers to simulate attack cases.
 func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper func(h http.Header)) apiResp {
 	ts := a.e.clk.ms + tsDelta
-	sig := identity.SignRequest(a.priv, method, path, ts, body)
 	req, _ := http.NewRequest(method, a.e.http.URL+path, bytes.NewReader(body))
+	sig := identity.SignRequest(a.priv, method, req.URL.Path, ts, body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Varde-Node", a.nodeID)
 	req.Header.Set("X-Varde-Timestamp", fmt.Sprint(ts))
@@ -258,7 +258,8 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
-	Node struct {
+	DirectivesDigest string `json:"directives_digest"`
+	Node             struct {
 		Name      string  `json:"name"`
 		GroupName *string `json:"group_name"`
 	} `json:"node"`

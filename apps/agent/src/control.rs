@@ -65,6 +65,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
         cp_clock_offset_ms(d.server_time_unix_ms, crate::now_ms(), posted.elapsed());
     acknowledge_delete_acks(&agent.pending_delete_acks, &deleted_snapshots);
     apply(agent, &d, sent).await?;
+    agent.directives_digest.send_replace(d.directives_digest);
     let elapsed_ms = sent.elapsed().as_millis() as u64;
     if elapsed_ms > 1000 {
         warn!(elapsed_ms, "slow heartbeat");
@@ -362,17 +363,116 @@ async fn report_absent_stopped_msg(agent: &Agent, e: &cp_api::ExecutionDirective
 pub async fn control_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
     let mut interval = Duration::from_millis(1000);
     loop {
-        match heartbeat_once(&agent).await {
-            Ok(ms) => interval = Duration::from_millis(ms.clamp(100, 60_000) as u64),
+        let heartbeat_succeeded = match heartbeat_once(&agent).await {
+            Ok(ms) => {
+                interval = Duration::from_millis(ms.clamp(100, 60_000) as u64);
+                true
+            }
             Err(e) => {
                 warn!(error = %e, "heartbeat failed");
                 interval = (interval * 2).min(Duration::from_secs(5));
+                false
             }
-        }
+        };
         tokio::select! {
             _ = tokio::time::sleep(interval) => {},
             _ = stop.changed() => return,
+            _ = agent.heartbeat_now.notified(), if heartbeat_succeeded => {},
         }
+    }
+}
+
+pub async fn wake_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    let mut digest = agent.directives_digest.subscribe();
+    let mut backoff = Duration::from_secs(1);
+
+    loop {
+        if *stop.borrow() {
+            return;
+        }
+        let current_digest = loop {
+            if let Some(value) = digest.borrow().clone() {
+                break value;
+            }
+            tokio::select! {
+                changed = digest.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+                _ = stop.changed() => return,
+            }
+        };
+
+        let path = format!("/v1/agent/directives/wait?digest={current_digest}&timeout_ms=20000");
+        let request = agent
+            .cp
+            .json::<serde_json::Value, cp_api::AgentDirectivesWait>("GET", &path, None);
+        let result = tokio::select! {
+            result = request => result,
+            _ = stop.changed() => return,
+        };
+        match result {
+            Ok(response) => {
+                backoff = Duration::from_secs(1);
+                if response.changed {
+                    agent.heartbeat_now.notify_one();
+                    if !wait_for_digest_change(&mut digest, &mut stop, &current_digest).await {
+                        return;
+                    }
+                }
+            }
+            Err(error) if is_legacy_directives_wait_error(&error) => {
+                if !sleep_or_stop(&mut stop, Duration::from_secs(5 * 60)).await {
+                    return;
+                }
+            }
+            Err(error) => {
+                warn!(error = %error, "directive wait failed");
+                if !sleep_or_stop(&mut stop, backoff).await {
+                    return;
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(30));
+            }
+        }
+    }
+}
+
+fn is_legacy_directives_wait_error(error: &cp_api::Error) -> bool {
+    matches!(error.status(), Some(404 | 405))
+}
+
+async fn wait_for_digest_change(
+    digest: &mut tokio::sync::watch::Receiver<Option<String>>,
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+    previous: &str,
+) -> bool {
+    if *stop.borrow() {
+        return false;
+    }
+    let changed = async {
+        loop {
+            if digest.borrow().as_deref() != Some(previous) {
+                return;
+            }
+            if digest.changed().await.is_err() {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        _ = tokio::time::timeout(Duration::from_secs(5), changed) => true,
+        _ = stop.changed() => false,
+    }
+}
+
+async fn sleep_or_stop(stop: &mut tokio::sync::watch::Receiver<bool>, duration: Duration) -> bool {
+    if *stop.borrow() {
+        return false;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => true,
+        _ = stop.changed() => false,
     }
 }
 
@@ -450,7 +550,10 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_delete_acks, cp_clock_offset_ms, pending_delete_ack_ids};
+    use super::{
+        acknowledge_delete_acks, cp_clock_offset_ms, is_legacy_directives_wait_error,
+        pending_delete_ack_ids,
+    };
     use crate::agent::CpView;
     use std::collections::BTreeSet;
     use std::sync::Mutex;
@@ -479,5 +582,23 @@ mod tests {
         acknowledge_delete_acks(&pending, &sent);
 
         assert_eq!(pending_delete_ack_ids(&pending), vec!["snap_c".to_string()]);
+    }
+
+    #[test]
+    fn directive_wait_response_and_legacy_statuses_are_recognized() {
+        let response: cp_api::AgentDirectivesWait =
+            serde_json::from_str(r#"{"digest":"abc","changed":true}"#).unwrap();
+        assert_eq!(response.digest, "abc");
+        assert!(response.changed);
+
+        let error = |status| cp_api::Error::Api {
+            status,
+            code: "http_error".into(),
+            message: "not found".into(),
+            details: None,
+        };
+        assert!(is_legacy_directives_wait_error(&error(404)));
+        assert!(is_legacy_directives_wait_error(&error(405)));
+        assert!(!is_legacy_directives_wait_error(&error(500)));
     }
 }

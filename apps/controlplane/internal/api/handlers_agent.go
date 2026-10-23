@@ -117,6 +117,17 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	if err != nil {
 		return nil, err
 	}
+	resp.DirectivesDigest = ptr(directivesDigest(resp))
+	if resp.Executions != nil {
+		for _, execution := range *resp.Executions {
+			if execution.SnapshotRequests == nil {
+				continue
+			}
+			for _, request := range *execution.SnapshotRequests {
+				_ = s.Store.ClaimSnapshotRequest(ctx, request.RequestId)
+			}
+		}
+	}
 	s.Recon.Wake()
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
 }
@@ -358,7 +369,6 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 				sr = append(sr, gen.SnapshotRequest{
 					RequestId: rq.ID, Reason: gen.SnapshotRequestReason(rq.Reason),
 				})
-				_ = s.Store.ClaimSnapshotRequest(ctx, rq.ID)
 			}
 			ed.SnapshotRequests = &sr
 		}
