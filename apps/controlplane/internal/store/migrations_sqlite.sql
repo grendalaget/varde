@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     arch            TEXT NOT NULL DEFAULT '',
     agent_version   TEXT NOT NULL DEFAULT '',
     update_available TEXT NOT NULL DEFAULT '',
+    lease_profile   TEXT NOT NULL DEFAULT 'standard',
     hosting_enabled INTEGER NOT NULL DEFAULT 1,
     anchor          INTEGER NOT NULL DEFAULT 0,
     priority        BIGINT NOT NULL DEFAULT 0,
@@ -205,6 +206,7 @@ CREATE TABLE IF NOT EXISTS server_executions (
 CREATE UNIQUE INDEX IF NOT EXISTS one_active
     ON server_executions(server_id) WHERE ended_at IS NULL AND role='serving';
 CREATE INDEX IF NOT EXISTS idx_exec_node ON server_executions(node_id) WHERE ended_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exec_open_server ON server_executions(server_id) WHERE ended_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS execution_info (
     execution_id TEXT PRIMARY KEY REFERENCES server_executions(id),
@@ -226,6 +228,8 @@ CREATE TABLE IF NOT EXISTS migrations (
     created_at         BIGINT NOT NULL,
     finished_at        BIGINT
 );
+CREATE INDEX IF NOT EXISTS idx_migrations_open_server
+    ON migrations(server_id) WHERE finished_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS snapshots (
     id              TEXT PRIMARY KEY,

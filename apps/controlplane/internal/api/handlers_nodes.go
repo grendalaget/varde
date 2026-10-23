@@ -276,6 +276,7 @@ func (s *Server) ApproveDeviceLink(ctx context.Context, req gen.ApproveDeviceLin
 	if err := s.Store.CreateNode(ctx, n); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(req.Body.GroupId)
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.Body.GroupId, "user", u.ID, "device_link.approve", nodeID, nil)
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, req.Body.GroupId, nil, &nodeID, "node.enrolled", map[string]any{"name": req.Body.Name})
 	return gen.ApproveDeviceLink200JSONResponse{
@@ -388,6 +389,7 @@ func (s *Server) AgentEnrollToken(ctx context.Context, req gen.AgentEnrollTokenR
 		}
 		return nil, err
 	}
+	s.Recon.WakeGroup(t.GroupID)
 	pub := s.RelayKey.Public().(ed25519.PublicKey)
 	_ = s.Store.Audit(ctx, s.Store.DB, &t.GroupID, "node", n.ID, "node.enroll", n.ID, map[string]any{"token_id": t.ID})
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, t.GroupID, nil, &n.ID, "node.enrolled", map[string]any{"name": n.Name})
@@ -511,6 +513,7 @@ func (s *Server) UpdateNode(ctx context.Context, req gen.UpdateNodeRequestObject
 	if err := s.Store.UpdateNode(ctx, n); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(n.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &n.GroupID, "user", u.ID, "node.update", n.ID, nil)
 	gn, err := genNode(s, ctx, n)
 	if err != nil {
@@ -531,6 +534,7 @@ func (s *Server) DeleteNode(ctx context.Context, req gen.DeleteNodeRequestObject
 	if err := s.Store.DeleteNode(ctx, req.NodeId); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(n.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &n.GroupID, actorType, actorID, "node.delete", n.ID, nil)
 	return gen.DeleteNode204Response{}, nil
 }

@@ -99,6 +99,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	type col struct{ table, name, ddl string }
 	cols := []col{
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
+		{"nodes", "lease_profile", "TEXT NOT NULL DEFAULT 'standard'"},
 		{"users", "website_user_id", "TEXT"},
 		{"users", "steam_id", "TEXT"},
 		{"users", "steam_persona_name", "TEXT"},
@@ -130,6 +131,10 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 				return err
 			}
 		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_drain_server
+		ON migrations(drain_until, server_id) WHERE drain_until IS NOT NULL`); err != nil {
+		return err
 	}
 	// UNIQUE on the federated id; sqlite can't add UNIQUE columns via ALTER,
 	// so both dialects get it through the index (NULLs don't collide).

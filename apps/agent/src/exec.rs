@@ -64,6 +64,7 @@ pub struct ExecCtl {
     join_code: Mutex<Option<String>>,
     /// fencing deadline; refreshed each heartbeat
     pub deadline: Mutex<Option<Instant>>,
+    fence_margin_ms: AtomicI64,
     fenced: AtomicBool,
     stop: watch::Sender<Option<StopKind>>,
     pgid: Mutex<u32>,
@@ -98,6 +99,7 @@ impl ExecCtl {
             message: Mutex::new(String::new()),
             join_code: Mutex::new(None),
             deadline: Mutex::new(None),
+            fence_margin_ms: AtomicI64::new(0),
             fenced: AtomicBool::new(false),
             stop: tx,
             pgid: Mutex::new(0),
@@ -168,6 +170,12 @@ impl ExecCtl {
     }
     pub fn is_fenced(&self) -> bool {
         self.fenced.load(Ordering::SeqCst)
+    }
+    pub fn set_fence_margin_ms(&self, margin_ms: i64) {
+        self.fence_margin_ms.store(margin_ms, Ordering::SeqCst);
+    }
+    pub fn fence_margin_ms(&self) -> i64 {
+        self.fence_margin_ms.load(Ordering::SeqCst)
     }
     pub fn mark_fenced(&self) {
         self.fenced.store(true, Ordering::SeqCst);
@@ -1443,6 +1451,8 @@ mod requires_stop_tests {
     }
 
     fn test_agent(cp: String, tmp: &Path) -> Agent {
+        let (directives_digest, _) = tokio::sync::watch::channel(None);
+        let (heartbeat_sequence, _) = tokio::sync::watch::channel(0);
         Agent {
             cfg: crate::config::Config {
                 control_plane_url: cp.clone(),
@@ -1453,7 +1463,8 @@ mod requires_stop_tests {
                 mesh_bin: None,
                 testgame_bin: None,
                 loopback_prefix: None,
-                fence_margin_ms: 5000,
+                lease_profile: "standard".into(),
+                fence_margin_ms: Some(5000),
                 shutdown_replication_timeout_s: 1,
                 shutdown_handoff_timeout_s: 45,
                 force_relay: false,
@@ -1474,11 +1485,13 @@ mod requires_stop_tests {
             pending_delete_acks: Mutex::new(std::collections::BTreeSet::new()),
             chunk_tracker: Arc::new(chunks::ServeTracker::default()),
             started_at_ms: 0,
-            repl: Mutex::new(crate::agent::ReplQueue::default()),
-            repl_notify: tokio::sync::Notify::new(),
+            repl: Arc::new(Mutex::new(crate::agent::ReplQueue::default())),
+            repl_notify: Arc::new(tokio::sync::Notify::new()),
             last_heartbeat_ok: Mutex::new(None),
-            shutting_down: AtomicBool::new(false),
+            directives_digest,
+            heartbeat_sequence,
             heartbeat_now: tokio::sync::Notify::new(),
+            shutting_down: AtomicBool::new(false),
             cp_view: Mutex::new(Default::default()),
             update: Mutex::new(crate::update::UpdateState::default()),
         }

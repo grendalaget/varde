@@ -1211,6 +1211,29 @@ paths:
               schema: { $ref: "#/components/schemas/AgentDirectives" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/agent/directives/wait:
+    get:
+      operationId: agentDirectivesWait
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      parameters:
+        - name: digest
+          in: query
+          required: true
+          schema: { type: string }
+        - name: timeout_ms
+          in: query
+          required: false
+          description: Long-poll duration; defaults to 20000 ms and is clamped to 1000–25000 ms.
+          schema: { type: integer, default: 20000 }
+      responses:
+        "200":
+          description: Reports whether the node's directives changed; directives are delivered only by heartbeat.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentDirectivesWait" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
   /v1/agent/executions/{executionId}/status:
     post:
       operationId: agentExecutionStatus
@@ -1946,6 +1969,10 @@ components:
         # true while the agent drains executions on shutdown; scheduler must
         # not place new work on it
         draining: { type: boolean }
+        lease_profile:
+          type: string
+          enum: [standard, short]
+          description: Optional lease timing profile; absent or unknown values use standard.
     MeshReport:
       type: object
       properties:
@@ -2134,6 +2161,9 @@ components:
       type: object
       required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]
       properties:
+        directives_digest:
+          type: string
+          description: Stable digest of desired state, excluding per-call timestamps and credentials.
         server_time_unix_ms: { type: integer, format: int64 }
         heartbeat_interval_ms: { type: integer }
         lease_ttl_ms: { type: integer }
@@ -2168,6 +2198,12 @@ components:
         delete_snapshots:
           type: array
           items: { type: string }
+    AgentDirectivesWait:
+      type: object
+      required: [digest, changed]
+      properties:
+        digest: { type: string }
+        changed: { type: boolean }
     DeviceEnrollRequest:
       type: object
       required: [public_key]

@@ -798,6 +798,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent/directives/wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["agentDirectivesWait"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent/executions/{executionId}/status": {
         parameters: {
             query?: never;
@@ -1316,6 +1332,11 @@ export interface components {
             /** Format: int64 */
             agent_started_at?: number;
             draining?: boolean;
+            /**
+             * @description Optional lease timing profile; absent or unknown values use standard.
+             * @enum {string}
+             */
+            lease_profile?: "standard" | "short";
         };
         MeshReport: {
             listen_port?: number;
@@ -1442,6 +1463,8 @@ export interface components {
             latest_save_on?: components["schemas"]["SaveHolder"][];
         };
         AgentDirectives: {
+            /** @description Stable digest of desired state, excluding per-call timestamps and credentials. */
+            directives_digest?: string;
             /** Format: int64 */
             server_time_unix_ms: number;
             heartbeat_interval_ms: number;
@@ -1461,6 +1484,10 @@ export interface components {
             relays?: components["schemas"]["DirectiveRelay"][];
             replication_tasks?: components["schemas"]["ReplicationTask"][];
             delete_snapshots?: string[];
+        };
+        AgentDirectivesWait: {
+            digest: string;
+            changed: boolean;
         };
         DeviceEnrollRequest: {
             /** @description base64 ed25519 */
@@ -3316,6 +3343,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentDirectives"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    agentDirectivesWait: {
+        parameters: {
+            query: {
+                digest: string;
+                /** @description Long-poll duration; defaults to 20000 ms and is clamped to 1000–25000 ms. */
+                timeout_ms?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reports whether the node's directives changed; directives are delivered only by heartbeat. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDirectivesWait"];
                 };
             };
             401: components["responses"]["Error"];

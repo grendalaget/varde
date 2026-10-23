@@ -576,6 +576,12 @@ func (s *Store) TouchNodeSeen(ctx context.Context, nodeID string, now int64) err
 	return err
 }
 
+func (s *Store) SetNodeLeaseProfile(ctx context.Context, nodeID, profile string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE nodes SET lease_profile=? WHERE id=?`), profile, nodeID)
+	return err
+}
+
 func (s *Store) PutNodeStatus(ctx context.Context, st *NodeStatus) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`INSERT INTO node_status (node_id,status_json,mesh_json,updated_at) VALUES (?,?,?,?)
@@ -1160,4 +1166,54 @@ func (s *Store) GetCrashReport(ctx context.Context, groupID, id string) (*CrashR
 		return nil, err
 	}
 	return &r, nil
+}
+
+// DirectiveFingerprintData returns the compact state used to detect
+// reconciler-driven changes to agent directives.
+func (s *Store) DirectiveFingerprintData(ctx context.Context) (DirectiveFingerprintData, error) {
+	var data DirectiveFingerprintData
+	if err := s.DB.SelectContext(ctx, &data.Groups, `SELECT id FROM groups ORDER BY id`); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Executions, s.Rebind(
+		`SELECT sv.group_id, e.id, e.node_id, e.state, e.action, e.epoch, e.role, e.stop_reason
+		 FROM server_executions e
+		 JOIN servers sv ON sv.id = e.server_id
+		 WHERE e.ended_at IS NULL
+		 ORDER BY sv.group_id, e.id`)); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Migrations, s.Rebind(
+		`SELECT sv.group_id, m.id, m.server_id, m.from_execution_id, m.to_node_id, m.state,
+		        m.mode, m.to_execution_id, m.drain_until, m.final_snapshot_id, m.created_at, m.finished_at
+		 FROM migrations m
+		 JOIN servers sv ON sv.id = m.server_id
+		 WHERE m.finished_at IS NULL OR m.drain_until > ?
+		 ORDER BY sv.group_id, m.id`), s.NowMs()); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Nodes, s.Rebind(
+		`SELECT id, group_id, lease_profile, admin_state, hosting_enabled, anchor, last_seen_at
+		 FROM nodes ORDER BY group_id, id`)); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Replicas, s.Rebind(
+		`SELECT sn.group_id, r.snapshot_id, r.node_id, r.state
+		 FROM snapshot_replicas r
+		 JOIN snapshots sn ON sn.id = r.snapshot_id
+		 WHERE r.state IN ('assigned', 'ready', 'deleting')
+		 ORDER BY sn.group_id, r.snapshot_id, r.node_id`)); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Events, s.Rebind(
+		`SELECT group_id, COALESCE(MAX(id), 0) AS max_id
+		 FROM events GROUP BY group_id ORDER BY group_id`)); err != nil {
+		return data, err
+	}
+	if err := s.DB.SelectContext(ctx, &data.Servers, s.Rebind(
+		`SELECT group_id, id, desired_state, observed_state, epoch
+		 FROM servers ORDER BY group_id, id`)); err != nil {
+		return data, err
+	}
+	return data, nil
 }
