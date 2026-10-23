@@ -82,9 +82,17 @@ func (s *Server) renewLease(ctx context.Context, node *store.Node, execID, serve
 		// never shorten (start grace covers preparing/restoring)
 		return exec.LeaseExpiresAt, true
 	}
-	exec.LeaseExpiresAt = exp
-	if err := s.Store.UpdateExecutionState(ctx, s.Store.DB, exec); err != nil {
+	ok, err := s.Store.ExtendLease(ctx, exec.ID, node.ID, epoch, now, exp)
+	if err != nil {
 		return 0, false
+	}
+	if !ok {
+		// lost a race: report the lease only if it is still live and as long
+		cur, err := s.Store.GetExecution(ctx, execID)
+		if err != nil || cur.EndedAt != nil || cur.Epoch != epoch || cur.LeaseExpiresAt < exp {
+			return 0, false
+		}
+		return cur.LeaseExpiresAt, true
 	}
 	return exp, true
 }

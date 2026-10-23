@@ -64,6 +64,9 @@ pub struct ExecCtl {
     join_code: Mutex<Option<String>>,
     /// fencing deadline; refreshed each heartbeat
     pub deadline: Mutex<Option<Instant>>,
+    /// Send instant of the CP response that set `deadline`; responses may
+    /// arrive out of order, and only the newest-sent one may set it.
+    pub deadline_sent: Mutex<Option<Instant>>,
     fence_margin_ms: AtomicI64,
     fenced: AtomicBool,
     stop: watch::Sender<Option<StopKind>>,
@@ -99,6 +102,7 @@ impl ExecCtl {
             message: Mutex::new(String::new()),
             join_code: Mutex::new(None),
             deadline: Mutex::new(None),
+            deadline_sent: Mutex::new(None),
             fence_margin_ms: AtomicI64::new(0),
             fenced: AtomicBool::new(false),
             stop: tx,

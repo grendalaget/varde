@@ -53,6 +53,23 @@ fn fence_deadline(
     )
 }
 
+/// Set a fencing deadline unless a later-sent CP response already did: a
+/// delayed heartbeat must not roll back a newer lease renewal. Not a max —
+/// the CP may legitimately shorten a lease (start grace → running).
+fn apply_deadline(
+    slot: &Mutex<Option<Instant>>,
+    sent_slot: &Mutex<Option<Instant>>,
+    sent: Instant,
+    deadline: Instant,
+) {
+    let mut last = sent_slot.lock().unwrap();
+    if last.is_some_and(|l| sent < l) {
+        return;
+    }
+    *last = Some(sent);
+    *slot.lock().unwrap() = Some(deadline);
+}
+
 struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
 
 impl Drop for HeartbeatCompletionGuard<'_> {
@@ -304,7 +321,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
         match existing {
             Some(ctl) => {
-                *ctl.deadline.lock().unwrap() = Some(deadline);
+                apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
                 ctl.set_fence_margin_ms(margin_ms);
                 // stop reason first: the shutdown drain reads an unfreeze
                 // without a 'handoff' stop as an aborted migration
@@ -335,7 +352,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                 let ctl = ExecCtl::new(e.clone());
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
                 ctl.set_fence_margin_ms(margin_ms);
-                *ctl.deadline.lock().unwrap() = Some(deadline);
+                apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -656,10 +673,7 @@ async fn renew_once(agent: &Arc<Agent>) -> Result<()> {
             lease_ttl_ms,
         );
         c.set_fence_margin_ms(margin_ms);
-        let mut d = c.deadline.lock().unwrap();
-        if d.map(|cur| deadline > cur).unwrap_or(true) {
-            *d = Some(deadline);
-        }
+        apply_deadline(&c.deadline, &c.deadline_sent, sent, deadline);
     }
     agent.cp_view.lock().unwrap().last_contact_unix_ms = crate::now_ms();
     Ok(())
@@ -759,6 +773,20 @@ mod tests {
         };
         assert_eq!(v.to_local_ms(1_025_000), 995_000);
         assert_eq!(v.to_local_ms(0), 0);
+    }
+
+    #[test]
+    fn only_the_newest_sent_response_sets_the_deadline() {
+        let t0 = std::time::Instant::now();
+        let (slot, sent) = (Mutex::new(None), Mutex::new(None));
+        let at = |s| t0 + Duration::from_secs(s);
+        super::apply_deadline(&slot, &sent, at(2), at(8));
+        // delayed heartbeat sent before the renewal: ignored
+        super::apply_deadline(&slot, &sent, at(1), at(4));
+        assert_eq!(*slot.lock().unwrap(), Some(at(8)));
+        // a newer response may shorten it (start grace → running)
+        super::apply_deadline(&slot, &sent, at(3), at(6));
+        assert_eq!(*slot.lock().unwrap(), Some(at(6)));
     }
 
     #[test]
