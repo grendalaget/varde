@@ -302,6 +302,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                     sha256: Some(addon.sha256.clone()),
                     sha1: None,
                     archive,
+                    untrusted: true,
                 },
             )
             .await

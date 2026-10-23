@@ -257,6 +257,7 @@ mod tests {
                     ),
                     sha1: None,
                     archive: ArchiveKind::Zip,
+                    untrusted: false,
                 },
             )
             .await

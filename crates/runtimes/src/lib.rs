@@ -6,7 +6,8 @@
 //! (sha256 and/or sha1) are verified before the cache is populated.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Seek, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
@@ -24,6 +25,27 @@ const UA: &str = concat!("varde-agent/", env!("CARGO_PKG_VERSION"));
 /// connect is short, the whole request generous (JREs are ~200 MB).
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+const UNTRUSTED_DOWNLOAD_LIMIT: u64 = 512 * 1024 * 1024;
+const UNTRUSTED_ENTRY_LIMIT: usize = 20_000;
+const UNTRUSTED_UNPACKED_LIMIT: u64 = 1024 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct Limits {
+    download_bytes: u64,
+    entries: usize,
+    unpacked_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            download_bytes: UNTRUSTED_DOWNLOAD_LIMIT,
+            entries: UNTRUSTED_ENTRY_LIMIT,
+            unpacked_bytes: UNTRUSTED_UNPACKED_LIMIT,
+        }
+    }
+}
 
 /// Runtime ids the provider can fetch on this host. Reported in node
 /// capabilities so the scheduler can place games whose runtime isn't
@@ -249,6 +271,7 @@ async fn steamcmd(rt: &HttpRuntimes) -> game_driver_api::Result<PathBuf> {
                     sha256: Some(STEAMCMD_ZIP_SHA256.into()),
                     sha1: None,
                     archive: ArchiveKind::Zip,
+                    untrusted: false,
                 },
             )
             .await?;
@@ -267,6 +290,7 @@ async fn steamcmd(rt: &HttpRuntimes) -> game_driver_api::Result<PathBuf> {
                     sha256: Some(STEAMCMD_TGZ_SHA256.into()),
                     sha1: None,
                     archive: ArchiveKind::Tgz,
+                    untrusted: false,
                 },
             )
             .await?;
@@ -307,6 +331,14 @@ fn tls_config() -> game_driver_api::Result<Arc<rustls::ClientConfig>> {
 
 /// GET `url` following ≤ `redirs` redirects; returns the final body bytes.
 async fn http_get(url: &str, redirs: u32) -> game_driver_api::Result<Vec<u8>> {
+    http_get_limited(url, redirs, None).await
+}
+
+async fn http_get_limited(
+    url: &str,
+    redirs: u32,
+    max_bytes: Option<u64>,
+) -> game_driver_api::Result<Vec<u8>> {
     let uri: Uri = url.parse()?;
     let host = uri.host().ok_or("url has no host")?.to_string();
     let https = uri.scheme_str() == Some("https");
@@ -361,12 +393,25 @@ async fn http_get(url: &str, redirs: u32) -> game_driver_api::Result<Vec<u8>> {
         } else {
             loc.to_string()
         };
-        return Box::pin(http_get(&next, redirs - 1)).await;
+        return Box::pin(http_get_limited(&next, redirs - 1, max_bytes)).await;
     }
     if !(200..300).contains(&status) {
         return Err(format!("GET {url} -> {status}").into());
     }
-    Ok(resp.into_body().collect().await?.to_bytes().to_vec())
+    let mut body = resp.into_body();
+    let mut bytes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame?;
+        if let Ok(data) = frame.into_data() {
+            if max_bytes
+                .is_some_and(|limit| (bytes.len() as u64).saturating_add(data.len() as u64) > limit)
+            {
+                return Err(format!("download exceeds {} byte limit", max_bytes.unwrap()).into());
+            }
+            bytes.extend_from_slice(&data);
+        }
+    }
+    Ok(bytes)
 }
 
 /// Blocking filesystem/CPU work (hashing, archive unpack, writes, renames)
@@ -383,31 +428,66 @@ async fn spawn_fs<T: Send + 'static>(
 /// Download + unpack `spec` into an existing staging dir. Network stays on
 /// the async worker; hashing, writes and archive extraction are blocking.
 async fn fetch_into(staging: &Path, spec: &FetchSpec) -> game_driver_api::Result<()> {
+    fetch_into_with_limits(staging, spec, Limits::default()).await
+}
+
+async fn fetch_into_with_limits(
+    staging: &Path,
+    spec: &FetchSpec,
+    limits: Limits,
+) -> game_driver_api::Result<()> {
+    let result = fetch_into_inner(staging, spec, limits).await;
+    if spec.untrusted && result.is_err() {
+        let path = staging.to_path_buf();
+        let _ = spawn_fs(move || match std::fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        })
+        .await;
+    }
+    result
+}
+
+async fn fetch_into_inner(
+    staging: &Path,
+    spec: &FetchSpec,
+    limits: Limits,
+) -> game_driver_api::Result<()> {
     let blob = staging.join(&spec.file_name);
     download_verified(
         &spec.url,
         &blob,
         spec.sha256.as_deref(),
         spec.sha1.as_deref(),
+        spec.untrusted.then_some(limits.download_bytes),
     )
     .await?;
     match spec.archive {
         ArchiveKind::File => {}
         ArchiveKind::Tgz => {
-            let (b, s) = (blob.clone(), staging.to_path_buf());
+            let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
             spawn_fs(move || {
                 let f = std::fs::File::open(&b)?;
-                tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&s)?;
+                if untrusted {
+                    extract_tar_strict(flate2::read::GzDecoder::new(f), &s, limits)?;
+                } else {
+                    tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&s)?;
+                }
                 let _ = std::fs::remove_file(&b);
                 Ok(())
             })
             .await?;
         }
         ArchiveKind::Zip => {
-            let (b, s) = (blob.clone(), staging.to_path_buf());
+            let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
             spawn_fs(move || {
                 let f = std::fs::File::open(&b)?;
-                zip::ZipArchive::new(f)?.extract(&s)?;
+                if untrusted {
+                    extract_zip_strict(f, &s, limits)?;
+                } else {
+                    zip::ZipArchive::new(f)?.extract(&s)?;
+                }
                 let _ = std::fs::remove_file(&b);
                 Ok(())
             })
@@ -423,9 +503,10 @@ async fn download_verified(
     file: &Path,
     sha256: Option<&str>,
     sha1: Option<&str>,
+    max_bytes: Option<u64>,
 ) -> game_driver_api::Result<()> {
     tracing::info!(url, dest = %file.display(), "runtime download");
-    let body = tokio::time::timeout(REQUEST_TIMEOUT, http_get(url, 8))
+    let body = tokio::time::timeout(REQUEST_TIMEOUT, http_get_limited(url, 8, max_bytes))
         .await
         .map_err(|_| "download timed out")??;
     let (s256, s1) = (sha256.map(String::from), sha1.map(String::from));
@@ -448,6 +529,158 @@ async fn download_verified(
         Ok(())
     })
     .await
+}
+
+fn safe_archive_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+fn copy_limited<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    remaining: u64,
+    entry_name: &str,
+) -> game_driver_api::Result<u64> {
+    let written = {
+        let mut limited = (&mut *reader).take(remaining);
+        io::copy(&mut limited, writer)?
+    };
+    if written == remaining {
+        let mut extra = [0u8; 1];
+        if reader.read(&mut extra)? != 0 {
+            return Err(format!(
+                "untrusted archive exceeds unpacked byte limit at entry {entry_name:?}"
+            )
+            .into());
+        }
+    }
+    Ok(written)
+}
+
+fn extract_zip_strict<R: Read + Seek>(
+    reader: R,
+    destination: &Path,
+    limits: Limits,
+) -> game_driver_api::Result<()> {
+    let mut archive = zip::ZipArchive::new(reader)?;
+    if archive.len() > limits.entries {
+        return Err(format!(
+            "untrusted archive exceeds entry limit of {}",
+            limits.entries
+        )
+        .into());
+    }
+    let mut unpacked = 0u64;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let entry_name = entry.name().to_string();
+        let path = entry.enclosed_name().ok_or_else(|| {
+            format!("unsafe ZIP archive entry {entry_name:?}: path is not enclosed")
+        })?;
+        if !safe_archive_path(&path) {
+            return Err(format!("unsafe ZIP archive entry {entry_name:?}").into());
+        }
+        let mode = entry.unix_mode().unwrap_or_default();
+        let file_type = mode & 0o170000;
+        if entry.is_symlink() {
+            return Err(format!("untrusted ZIP archive entry {entry_name:?} is a symlink").into());
+        }
+        if file_type != 0 && file_type != 0o100000 && file_type != 0o040000 {
+            return Err(format!(
+                "untrusted ZIP archive entry {entry_name:?} has an unsupported file type"
+            )
+            .into());
+        }
+        let is_dir = entry.is_dir() || file_type == 0o040000;
+        if file_type == 0o100000 && entry.is_dir() {
+            return Err(format!(
+                "untrusted ZIP archive entry {entry_name:?} has inconsistent file type"
+            )
+            .into());
+        }
+        let output = destination.join(&path);
+        if is_dir {
+            std::fs::create_dir_all(output)?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output)?;
+        let remaining = limits.unpacked_bytes.saturating_sub(unpacked);
+        unpacked =
+            unpacked.saturating_add(copy_limited(&mut entry, &mut file, remaining, &entry_name)?);
+    }
+    Ok(())
+}
+
+fn extract_tar_strict<R: Read>(
+    reader: R,
+    destination: &Path,
+    limits: Limits,
+) -> game_driver_api::Result<()> {
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive.entries()?;
+    let mut unpacked = 0u64;
+    let mut count = 0usize;
+    for entry in entries {
+        let mut entry = entry?;
+        count = count.saturating_add(1);
+        let entry_name = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
+        if count > limits.entries {
+            return Err(format!(
+                "untrusted archive exceeds entry limit of {} at entry {entry_name:?}",
+                limits.entries
+            )
+            .into());
+        }
+        let path = entry
+            .path()
+            .map_err(|error| format!("invalid tar archive entry {entry_name:?}: {error}"))?
+            .into_owned();
+        if !safe_archive_path(&path) {
+            return Err(format!("unsafe tar archive entry {entry_name:?}").into());
+        }
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() {
+            return Err(format!("untrusted tar archive entry {entry_name:?} is a symlink").into());
+        }
+        if entry_type.is_hard_link() {
+            return Err(
+                format!("untrusted tar archive entry {entry_name:?} is a hard link").into(),
+            );
+        }
+        if entry_type.is_dir() {
+            std::fs::create_dir_all(destination.join(path))?;
+            continue;
+        }
+        if !entry_type.is_file() {
+            return Err(format!(
+                "untrusted tar archive entry {entry_name:?} has an unsupported type"
+            )
+            .into());
+        }
+        let output = destination.join(path);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output)?;
+        let remaining = limits.unpacked_bytes.saturating_sub(unpacked);
+        unpacked =
+            unpacked.saturating_add(copy_limited(&mut entry, &mut file, remaining, &entry_name)?);
+    }
+    Ok(())
 }
 
 /// Find `bin/java` (or `bin/java.exe`) under a fetched runtime dir; Temurin
@@ -580,6 +813,7 @@ mod tests {
             sha256: None,
             sha1: None,
             archive: ArchiveKind::Tgz,
+            untrusted: false,
         };
         let (a, b) = (rt.clone(), rt.clone());
         let (r1, r2) = tokio::join!(a.fetch("kind", "id", &spec), b.fetch("kind", "id", &spec));
@@ -612,5 +846,225 @@ mod zip_tests {
             .unwrap();
         let got = std::fs::read_to_string(tmp.path().join("bin").join("file.txt")).unwrap();
         assert_eq!(got, "hello zip runtime");
+    }
+}
+
+#[cfg(test)]
+mod untrusted_archive_tests {
+    use super::*;
+    use std::io::Cursor;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn zip(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, contents, mode) in entries {
+            let options = zip::write::SimpleFileOptions::default().unix_permissions(*mode);
+            if mode & 0o170000 == 0o120000 {
+                writer
+                    .add_symlink(*name, String::from_utf8_lossy(contents), options)
+                    .unwrap();
+            } else {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(contents).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn gzip(archive: Vec<u8>) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&archive).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn tgz(entries: &[(&str, tar::EntryType, &[u8], Option<&str>)]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, entry_type, contents, link_name) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(*entry_type);
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            if let Some(link_name) = link_name {
+                header.set_link_name(link_name).unwrap();
+            }
+            header.set_cksum();
+            builder.append_data(&mut header, *name, *contents).unwrap();
+        }
+        gzip(builder.into_inner().unwrap())
+    }
+
+    async fn serve_body(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request).await;
+            let header = format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        });
+        (format!("http://{address}/addon"), task)
+    }
+
+    #[test]
+    fn rejects_zip_symlink_entries() {
+        let archive = zip(&[("link", b"target", 0o120777)]);
+        let destination = tempfile::tempdir().unwrap();
+        let error = extract_zip_strict(Cursor::new(archive), destination.path(), Limits::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("link"));
+        assert!(error.to_string().contains("symlink"));
+    }
+
+    #[test]
+    fn rejects_tar_symlink_entries() {
+        let archive = tgz(&[("link", tar::EntryType::symlink(), b"", Some("target"))]);
+        let destination = tempfile::tempdir().unwrap();
+        let error = extract_tar_strict(
+            flate2::read::GzDecoder::new(Cursor::new(archive)),
+            destination.path(),
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("link"));
+        assert!(error.to_string().contains("symlink"));
+    }
+
+    #[test]
+    fn rejects_tar_parent_path_entries() {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::file());
+        header.set_size(3);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "x", &b"bad"[..]).unwrap();
+        let mut tar_bytes = builder.into_inner().unwrap();
+        let header = &mut tar_bytes[..512];
+        header[..100].fill(0);
+        header[..4].copy_from_slice(b"../x");
+        header[148..156].fill(b' ');
+        let checksum: usize = header.iter().map(|byte| usize::from(*byte)).sum();
+        let checksum = format!("{checksum:06o}\0 ");
+        header[148..156].copy_from_slice(checksum.as_bytes());
+        let archive = gzip(tar_bytes);
+        let destination = tempfile::tempdir().unwrap();
+        let error = extract_tar_strict(
+            flate2::read::GzDecoder::new(Cursor::new(archive)),
+            destination.path(),
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("../x"));
+        assert!(error.to_string().contains("unsafe"));
+    }
+
+    #[test]
+    fn rejects_archives_over_entry_limit() {
+        let archive = zip(&[("one.txt", b"1", 0o100644), ("two.txt", b"2", 0o100644)]);
+        let destination = tempfile::tempdir().unwrap();
+        let limits = Limits {
+            entries: 1,
+            ..Limits::default()
+        };
+        let error =
+            extract_zip_strict(Cursor::new(archive), destination.path(), limits).unwrap_err();
+        assert!(error.to_string().contains("entry limit"));
+    }
+
+    #[test]
+    fn rejects_archives_over_unpacked_byte_limit() {
+        let archive = zip(&[("file.txt", b"12345", 0o100644)]);
+        let destination = tempfile::tempdir().unwrap();
+        let limits = Limits {
+            unpacked_bytes: 4,
+            ..Limits::default()
+        };
+        let error =
+            extract_zip_strict(Cursor::new(archive), destination.path(), limits).unwrap_err();
+        assert!(error.to_string().contains("unpacked byte limit"));
+        assert_eq!(
+            std::fs::metadata(destination.path().join("file.txt"))
+                .unwrap()
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn extracts_valid_zip_and_tgz() {
+        let zip_destination = tempfile::tempdir().unwrap();
+        let zip_archive = zip(&[("cfg/addon.cfg", b"zip addon", 0o100644)]);
+        extract_zip_strict(
+            Cursor::new(zip_archive),
+            zip_destination.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(zip_destination.path().join("cfg/addon.cfg")).unwrap(),
+            "zip addon"
+        );
+
+        let tgz_destination = tempfile::tempdir().unwrap();
+        let tgz_archive = tgz(&[("cfg/addon.cfg", tar::EntryType::file(), b"tgz addon", None)]);
+        extract_tar_strict(
+            flate2::read::GzDecoder::new(Cursor::new(tgz_archive)),
+            tgz_destination.path(),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tgz_destination.path().join("cfg/addon.cfg")).unwrap(),
+            "tgz addon"
+        );
+    }
+
+    #[tokio::test]
+    async fn untrusted_download_is_capped_while_streaming() {
+        let (url, server) = serve_body(b"12345".to_vec()).await;
+        let temporary = tempfile::tempdir().unwrap();
+        let staging = temporary.path().join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        let spec = FetchSpec {
+            url,
+            file_name: "addon.zip".into(),
+            sha256: None,
+            sha1: None,
+            archive: ArchiveKind::File,
+            untrusted: true,
+        };
+        let limits = Limits {
+            download_bytes: 4,
+            ..Limits::default()
+        };
+        let error = fetch_into_with_limits(&staging, &spec, limits)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("4 byte limit"));
+        assert!(!staging.exists());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_untrusted_fetch_removes_staging_directory() {
+        let (url, server) = serve_body(zip(&[("link", b"target", 0o120777)])).await;
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("runtimes");
+        let runtimes = HttpRuntimes::new(root.clone());
+        let spec = FetchSpec {
+            url,
+            file_name: "addon.zip".into(),
+            sha256: None,
+            sha1: None,
+            archive: ArchiveKind::Zip,
+            untrusted: true,
+        };
+        let error = runtimes.fetch("addons", "test", &spec).await.unwrap_err();
+        assert!(error.to_string().contains("symlink"));
+        assert!(!root.join("addons").join("test").exists());
+        assert_eq!(std::fs::read_dir(root.join("addons")).unwrap().count(), 0);
+        server.await.unwrap();
     }
 }

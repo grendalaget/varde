@@ -99,6 +99,7 @@ impl MinecraftDriver {
                     sha256: Some(checksum),
                     sha1: None,
                     archive,
+                    untrusted: false,
                 },
             )
             .await?;
@@ -161,6 +162,7 @@ impl MinecraftDriver {
                     sha256: None,
                     sha1: Some(sha1),
                     archive: ArchiveKind::File,
+                    untrusted: false,
                 },
             )
             .await?;

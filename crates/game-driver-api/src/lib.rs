@@ -100,6 +100,7 @@ pub struct FetchSpec {
     pub sha256: Option<String>,
     pub sha1: Option<String>,
     pub archive: ArchiveKind,
+    pub untrusted: bool,
 }
 
 #[derive(Debug, Clone)]
