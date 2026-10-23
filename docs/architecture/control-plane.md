@@ -196,6 +196,7 @@ One goroutine, tick 1 s (and woken by API mutations / heartbeats), processes ser
 | desired running, no active exec | `scheduler.Place(recovery = previous exec lost)`; create exec | `starting` / `recovering` |
 | desired running, placement impossible | emit `server.unschedulable` with reasons (rate-limited) | `failed` w/ message, retried every 15 s |
 | desired stopped, active exec action=run | set `action=stop, stop_reason=user` | `stopping` |
+| server running (serving exec `running`) | keep a hot standby: the scheduler's recovery pick excluding the host (restore size + holders, deployment cached bonus), sticky while still eligible; cleared when not running. Directives tell the standby to pre-install the deployment (`standby[]`), and every snapshot replicates there. Shutdown handoffs target it first | — |
 | server running on a `draining` node, driver can hand off (Minecraft), no open migration | open a warm migration to the scheduler's pick (source excluded); emit `server.handoff_requested`. No target ⇒ nothing; the agent's fallback stop + normal recovery apply | `migrating` |
 | warm migration whose source ended after saving past the staged snapshot, before the flip | abort (incoming exec ended); recovery restarts from the newer save | `recovering` |
 | migration requested | old exec `action=stop, stop_reason=migration`; after its final snapshot is `ready` on target and old exec ended → new exec on target restoring from it | `migrating` |

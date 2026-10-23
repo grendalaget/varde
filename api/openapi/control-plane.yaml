@@ -1909,6 +1909,26 @@ components:
         delete_snapshots:
           type: array
           items: { type: string }
+        standby:
+          description: >-
+            Servers this node is the hot standby for: pre-install the
+            deployment (runtime + game files) so a failover or shutdown
+            handoff skips the download. Snapshots already replicate here.
+          type: array
+          items: { $ref: "#/components/schemas/StandbyDirective" }
+    StandbyDirective:
+      type: object
+      required: [server_id, deployment]
+      properties:
+        server_id: { type: string }
+        deployment:
+          type: object
+          required: [id, game_id, spec]
+          properties:
+            id: { type: string }
+            game_id: { type: string }
+            spec: { type: object, additionalProperties: true }
+        config: { type: object, additionalProperties: true }
     AgentDirectivesWait:
       type: object
       required: [digest, changed]

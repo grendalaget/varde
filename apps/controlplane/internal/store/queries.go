@@ -554,6 +554,13 @@ func (s *Store) UpdateServerDesired(ctx context.Context, id, desired string, now
 	return err
 }
 
+// SetServerStandby records the server's hot standby node (nil clears it).
+func (s *Store) SetServerStandby(ctx context.Context, id string, nodeID *string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE servers SET standby_node_id=? WHERE id=?`), nodeID, id)
+	return err
+}
+
 func (s *Store) UpdateServerMeta(ctx context.Context, srv *Server) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`UPDATE servers SET name=?, config_json=?, replication_factor=?, min_commit_replicas=?,

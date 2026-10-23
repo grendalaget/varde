@@ -362,6 +362,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
 
     // ---- replication + deletes ----
     agent.replace_replication_tasks(&d.replication_tasks);
+    crate::standby::apply(agent, &d.standby);
     for id in &d.delete_snapshots {
         if let Some(sid) = snapshot_store::SnapshotId::parse(id) {
             match agent.store.delete_snapshot(&sid) {

@@ -329,6 +329,17 @@ pub struct AgentDirectives {
     pub replication_tasks: Vec<ReplicationTask>,
     #[serde(default, deserialize_with = "null_vec")]
     pub delete_snapshots: Vec<String>,
+    /// Servers this node is the hot standby for (pre-install their deployment).
+    #[serde(default, deserialize_with = "null_vec")]
+    pub standby: Vec<StandbyDirective>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandbyDirective {
+    pub server_id: String,
+    pub deployment: Deployment,
+    #[serde(default)]
+    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

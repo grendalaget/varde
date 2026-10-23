@@ -222,7 +222,7 @@ impl ExecCtl {
 }
 
 /// executor/driver APIs return Box<dyn Error>; anyhow can't `?` them.
-fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
+pub(crate) fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
 }
 
@@ -307,7 +307,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     // ---- prepare ----
     ctl.set_phase(Phase::Preparing);
     report(&agent, &ctl).await;
-    driver.prepare(&ctx).await.map_err(dyn_err)?;
+    crate::standby::prepare_locked(&agent, driver, &ctx).await?;
     ensure_live(&ctl)?;
 
     // ---- restore ----
@@ -1492,6 +1492,8 @@ mod requires_stop_tests {
             heartbeat_sequence,
             heartbeat_now: tokio::sync::Notify::new(),
             shutting_down: AtomicBool::new(false),
+            prepare_locks: Mutex::new(Default::default()),
+            standby_inflight: Mutex::new(Default::default()),
             cp_view: Mutex::new(Default::default()),
             update: Mutex::new(crate::update::UpdateState::default()),
         }
@@ -1654,6 +1656,35 @@ mod requires_stop_tests {
             "abort was not noticed"
         );
         assert_eq!(ctl.stop_reason(), None);
+    }
+
+    #[tokio::test]
+    async fn standby_pre_installs_each_deployment_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        agent.drivers.register(Box::new(StopDriver::new(true)));
+        let agent = Arc::new(agent);
+        let sd = cp_api::StandbyDirective {
+            server_id: "srv_s".into(),
+            deployment: cp_api::Deployment {
+                id: "dep_s".into(),
+                game_id: "stopgame".into(),
+                spec: serde_json::json!({}),
+            },
+            config: Some(serde_json::json!({"version": "1.21.4"})),
+        };
+        crate::standby::apply(&agent, &[sd.clone(), sd.clone()]);
+        crate::standby::apply(&agent, &[sd]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while crate::standby::prepared_deployments(tmp.path()).is_empty() {
+            assert!(Instant::now() < deadline, "standby never prepared dep_s");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            crate::standby::prepared_deployments(tmp.path()),
+            vec!["dep_s"]
+        );
+        assert_eq!(agent.standby_inflight.lock().unwrap().len(), 1);
     }
 
     fn test_ctl() -> Arc<ExecCtl> {

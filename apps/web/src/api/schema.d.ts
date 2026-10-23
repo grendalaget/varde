@@ -1302,6 +1302,21 @@ export interface components {
             relays?: components["schemas"]["DirectiveRelay"][];
             replication_tasks?: components["schemas"]["ReplicationTask"][];
             delete_snapshots?: string[];
+            /** @description Servers this node is the hot standby for: pre-install the deployment (runtime + game files) so a failover or shutdown handoff skips the download. Snapshots already replicate here. */
+            standby?: components["schemas"]["StandbyDirective"][];
+        };
+        StandbyDirective: {
+            server_id: string;
+            deployment: {
+                id: string;
+                game_id: string;
+                spec: {
+                    [key: string]: unknown;
+                };
+            };
+            config?: {
+                [key: string]: unknown;
+            };
         };
         AgentDirectivesWait: {
             digest: string;

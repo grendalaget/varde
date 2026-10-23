@@ -87,6 +87,8 @@ The CP decides targets; agents move bytes.
   nodes by score: already has parent snapshot +50 (dedup) · hosting enabled +20 · free disk headroom · node_id
   tie-break. Nodes that come online later are assigned retroactively until `replication_factor` ready replicas exist
   for the newest committed snapshot (and for any newer not-yet-committed one).
+* The server's **hot standby** (`servers.standby_node_id`, see `control-plane.md#reconciler`) is always a target too,
+  on top of `replication_factor`, so the node a failover or shutdown handoff picks restores from local chunks.
 * Targets receive `replication_tasks` in their heartbeat directives. A task is idempotent: the agent fetches the
   manifest, computes `missing_chunks`, downloads them from any `source_node_ids` (round-robin, resume = just ask for
   what's still missing), verifies, then reports `ready`. Parent-first is not required: dedup is chunk-level.

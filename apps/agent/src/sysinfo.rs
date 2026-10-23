@@ -27,7 +27,7 @@ pub fn capabilities(
                 .chain(runtimes::provisionable().into_iter().map(String::from))
                 .collect(),
         ),
-        cached_deployments: Some(vec![]),
+        cached_deployments: Some(crate::standby::prepared_deployments(data_dir)),
         drivers: Some(drivers.iter().map(|d| d.to_string()).collect()),
         uptime_s: Some(uptime()),
         agent_started_at: Some(started_at_ms),

@@ -46,7 +46,7 @@ func (e *env) startMinecraft(a, b *agent) (string, *agent, *agent, string, int64
 	e.t.Helper()
 	a.heartbeatCaps(nil, javaCaps())
 	b.heartbeatCaps(nil, javaCaps())
-	srv := e.createServer("minecraft", "mc", nil)
+	srv := e.createServer("minecraft", "mc", map[string]any{"config": map[string]any{"eula_accepted": true}})
 	host, execID, epoch := e.startToRunning(srv, a, b)
 	other := b
 	if host == b {

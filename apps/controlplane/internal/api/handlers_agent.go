@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -527,6 +528,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		delIDs = append(delIDs, r.SnapshotID)
 	}
 	d.DeleteSnapshots = &delIDs
+	d.Standby = s.standbyDirectives(ctx, node)
 
 	return d, nil
 }
@@ -739,6 +741,14 @@ func (s *Server) assignReplication(ctx context.Context, srv *store.Server, snap 
 	}
 	_ = parentNode
 	targets := scheduler.SelectReplicationTargets(snap.NodeID, int(srv.ReplicationFactor), cands)
+	// the hot standby always gets a copy, on top of the replication factor
+	if sb := srv.StandbyNodeID; sb != nil && *sb != snap.NodeID && !slices.Contains(targets, *sb) {
+		for _, c := range cands {
+			if c.NodeID == *sb && c.Online {
+				targets = append(targets, *sb)
+			}
+		}
+	}
 	now := s.Store.NowMs()
 	for _, t := range targets {
 		if err := s.Store.UpsertReplica(ctx, s.Store.DB, &store.Replica{
@@ -947,4 +957,31 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	}
 	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentReplicaReady204Response{}, nil
+}
+
+// standbyDirectives lists the running servers this node is the hot standby
+// for, with what the agent needs to pre-install their deployment.
+func (s *Server) standbyDirectives(ctx context.Context, node *store.Node) *[]gen.StandbyDirective {
+	out := []gen.StandbyDirective{}
+	srvs, err := s.Store.ListServers(ctx, node.GroupID)
+	if err != nil {
+		return &out
+	}
+	for i := range srvs {
+		sv := &srvs[i]
+		if sv.DesiredState != "running" || sv.StandbyNodeID == nil || *sv.StandbyNodeID != node.ID || sv.DeploymentID == nil {
+			continue
+		}
+		dep, err := s.getDeployment(ctx, *sv.DeploymentID)
+		if err != nil {
+			continue
+		}
+		var spec, cfg map[string]any
+		_ = json.Unmarshal([]byte(dep.SpecJSON), &spec)
+		_ = json.Unmarshal([]byte(sv.ConfigJSON), &cfg)
+		sd := gen.StandbyDirective{ServerId: sv.ID, Config: &cfg}
+		sd.Deployment.Id, sd.Deployment.GameId, sd.Deployment.Spec = dep.ID, dep.GameID, spec
+		out = append(out, sd)
+	}
+	return &out
 }

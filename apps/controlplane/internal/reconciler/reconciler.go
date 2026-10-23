@@ -189,6 +189,9 @@ func (r *Reconciler) Pass(ctx context.Context) (passErr error) {
 			r.Log.Error("reconcile server", "server", srv.ID, "error", err)
 		}
 	}
+	if err := r.standbys(ctx, servers); err != nil {
+		return err
+	}
 	if err := r.shutdownHandoffs(ctx, servers); err != nil {
 		return err
 	}
@@ -566,8 +569,7 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	}
 	var views []scheduler.NodeView
 	for i := range nodes {
-		n := &nodes[i]
-		views = append(views, r.nodeView(ctx, n, restore, sources))
+		views = append(views, r.placementView(ctx, srv, &nodes[i], restore, sources))
 	}
 	preferred := preferredOverride
 	if preferred == "" && srv.PreferredNodeID != nil {
@@ -577,12 +579,24 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	if restore != nil {
 		snapSize = restore.StoredBytes
 	}
-	dec, err := scheduler.Place(
-		scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred},
-		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
-		views,
-		scheduler.SnapView{RestoreBytes: snapSize, DeploymentSize: depSize},
-	)
+	sv := scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred}
+	gv := scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes}
+	snapView := scheduler.SnapView{RestoreBytes: snapSize, DeploymentSize: depSize}
+	var dec *scheduler.Decision
+	// recovery goes to the hot standby while it can take the server: it
+	// holds the deployment and a replica of the save
+	if recovery && srv.StandbyNodeID != nil {
+		for _, v := range views {
+			if v.ID == *srv.StandbyNodeID {
+				if d, perr := scheduler.Place(sv, gv, []scheduler.NodeView{v}, snapView); perr == nil {
+					dec = d
+				}
+			}
+		}
+	}
+	if dec == nil {
+		dec, err = scheduler.Place(sv, gv, views, snapView)
+	}
 	if err != nil {
 		var serr *scheduler.Error
 		if errors.As(err, &serr) {
