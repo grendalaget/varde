@@ -119,12 +119,22 @@ func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourc
 	if err != nil {
 		return "", err
 	}
+	// size and holders of the save a recovery would restore, so the
+	// scheduler checks the target's disk and prefers nodes that hold it
+	restore, sources, err := r.chooseRestore(ctx, srv, true, nil)
+	if err != nil {
+		restore, sources = nil, nil
+	}
+	var snap scheduler.SnapView
+	if restore != nil {
+		snap.RestoreBytes = restore.StoredBytes
+	}
 	var views []scheduler.NodeView
 	for i := range nodes {
 		if nodes[i].ID == sourceNodeID {
 			continue
 		}
-		views = append(views, r.nodeView(ctx, &nodes[i], nil, nil))
+		views = append(views, r.nodeView(ctx, &nodes[i], restore, sources))
 	}
 	preferred := ""
 	if srv.PreferredNodeID != nil {
@@ -134,7 +144,7 @@ func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourc
 		scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred},
 		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
 		views,
-		scheduler.SnapView{},
+		snap,
 	)
 	if err != nil {
 		return "", err
@@ -142,17 +152,23 @@ func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourc
 	return dec.NodeID, nil
 }
 
-// warmSourceSuperseded reports whether a warm migration's source ended after
-// saving past the snapshot the target stages from (e.g. its host gave up on
-// the handoff and stopped with a final save). Finishing the move would roll
-// players back to the older migration snapshot.
+// warmSourceSuperseded reports whether a warm migration's source is leaving
+// on its own before the flip: it began a graceful stop (its host gave up on
+// the handoff — the final save and replication hold follow, so it reports
+// 'stopping' long before it ends), or it ended after saving past the snapshot
+// the target stages from. Finishing the move would roll players back to the
+// older migration snapshot; aborting lets recovery restart from the newer
+// save once the source ends.
 func (r *Reconciler) warmSourceSuperseded(ctx context.Context, m *store.Migration) bool {
 	if m.Mode != "warm" || m.FinalSnapshotID == nil {
 		return false
 	}
 	src, err := r.Store.GetExecution(ctx, m.FromExecutionID)
-	if err != nil || src.EndedAt == nil {
+	if err != nil {
 		return false
+	}
+	if src.EndedAt == nil {
+		return src.State == "stopping"
 	}
 	snaps, err := r.Store.SnapshotsForServer(ctx, m.ServerID)
 	if err != nil {
