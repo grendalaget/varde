@@ -84,14 +84,18 @@ export function ConfigInput({
                       : selected.filter((id) => id !== member.user_id),
                   )
                 }
+                variant="primary"
                 className="w-full rounded-md px-2 py-1 hover:bg-default/30"
               >
-                <span className="flex w-full items-center justify-between gap-2 text-sm">
-                  <span>{member.display_name}</span>
+                <Checkbox.Content className="flex w-full items-center gap-2 text-sm">
+                  <Checkbox.Control>
+                    <Checkbox.Indicator />
+                  </Checkbox.Control>
+                  <span className="min-w-0 flex-1 truncate">{member.display_name}</span>
                   {requiresSteam && !member.steam_id && (
                     <span className="text-xs text-muted">no Steam ID</span>
                   )}
-                </span>
+                </Checkbox.Content>
               </Checkbox>
             );
           })}
