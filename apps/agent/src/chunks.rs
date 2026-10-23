@@ -547,6 +547,9 @@ async fn batch_get(
 
 /// Crude HTTP response parser: returns (status code, body).
 fn parse_http(buf: &[u8]) -> Result<(u16, Vec<u8>)> {
+    if buf.is_empty() {
+        bail!("empty response from peer (connection closed before any data)");
+    }
     let sep = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -565,6 +568,20 @@ fn parse_http(buf: &[u8]) -> Result<(u16, Vec<u8>)> {
         }
     }
     Ok((status, body))
+}
+
+#[cfg(test)]
+mod parse_http_tests {
+    use super::parse_http;
+
+    #[test]
+    fn empty_peer_response_has_clear_error() {
+        let error = parse_http(&[]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "empty response from peer (connection closed before any data)"
+        );
+    }
 }
 
 #[cfg(test)]
