@@ -178,6 +178,7 @@ type Node struct {
 	Arch            string  `db:"arch"`
 	AgentVersion    string  `db:"agent_version"`
 	UpdateAvailable string  `db:"update_available"`
+	LeaseProfile    string  `db:"lease_profile"`
 	HostingEnabled  int64   `db:"hosting_enabled"`
 	Anchor          int64   `db:"anchor"`
 	Priority        int64   `db:"priority"`
@@ -318,6 +319,72 @@ type Event struct {
 	Type      string  `db:"type"`
 	DataJSON  string  `db:"data_json"`
 	CreatedAt int64   `db:"created_at"`
+}
+
+type DirectiveFingerprintData struct {
+	Groups     []string
+	Executions []DirectiveExecutionFingerprint
+	Migrations []DirectiveMigrationFingerprint
+	Nodes      []DirectiveNodeFingerprint
+	Replicas   []DirectiveReplicaFingerprint
+	Events     []DirectiveEventFingerprint
+	Servers    []DirectiveServerFingerprint
+}
+
+type DirectiveExecutionFingerprint struct {
+	GroupID    string  `db:"group_id" json:"group_id"`
+	ID         string  `db:"id" json:"id"`
+	NodeID     string  `db:"node_id" json:"node_id"`
+	State      string  `db:"state" json:"state"`
+	Action     string  `db:"action" json:"action"`
+	Epoch      int64   `db:"epoch" json:"epoch"`
+	Role       string  `db:"role" json:"role"`
+	StopReason *string `db:"stop_reason" json:"stop_reason"`
+}
+
+type DirectiveMigrationFingerprint struct {
+	GroupID         string  `db:"group_id" json:"group_id"`
+	ID              string  `db:"id" json:"id"`
+	ServerID        string  `db:"server_id" json:"server_id"`
+	FromExecutionID string  `db:"from_execution_id" json:"from_execution_id"`
+	ToNodeID        string  `db:"to_node_id" json:"to_node_id"`
+	State           string  `db:"state" json:"state"`
+	Mode            string  `db:"mode" json:"mode"`
+	ToExecutionID   *string `db:"to_execution_id" json:"to_execution_id"`
+	DrainUntil      *int64  `db:"drain_until" json:"drain_until"`
+	FinalSnapshotID *string `db:"final_snapshot_id" json:"final_snapshot_id"`
+	CreatedAt       int64   `db:"created_at" json:"created_at"`
+	FinishedAt      *int64  `db:"finished_at" json:"finished_at"`
+}
+
+type DirectiveNodeFingerprint struct {
+	ID             string `db:"id"`
+	GroupID        string `db:"group_id"`
+	LeaseProfile   string `db:"lease_profile"`
+	AdminState     string `db:"admin_state"`
+	HostingEnabled int64  `db:"hosting_enabled"`
+	Anchor         int64  `db:"anchor"`
+	LastSeenAt     *int64 `db:"last_seen_at"`
+}
+
+type DirectiveReplicaFingerprint struct {
+	GroupID    string `db:"group_id" json:"group_id"`
+	SnapshotID string `db:"snapshot_id" json:"snapshot_id"`
+	NodeID     string `db:"node_id" json:"node_id"`
+	State      string `db:"state" json:"state"`
+}
+
+type DirectiveEventFingerprint struct {
+	GroupID string `db:"group_id"`
+	MaxID   int64  `db:"max_id"`
+}
+
+type DirectiveServerFingerprint struct {
+	GroupID       string `db:"group_id" json:"group_id"`
+	ID            string `db:"id" json:"id"`
+	DesiredState  string `db:"desired_state" json:"desired_state"`
+	ObservedState string `db:"observed_state" json:"observed_state"`
+	Epoch         int64  `db:"epoch" json:"epoch"`
 }
 
 type AuditEntry struct {

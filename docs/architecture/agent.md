@@ -70,7 +70,9 @@ contact, the pending code, and each server this machine hosts with its phase and
 ## Main loops
 
 * **Control loop**: heartbeat (`control-plane.md`) → apply directives: `SetPeers / SetRoutes / SetHostedServices /
-  Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots.
+  Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots. A separate
+  signed directives wait long-poll only wakes this loop; complete directives still arrive exclusively in the
+  heartbeat response.
   Heartbeat failures back off (1 s → 5 s) but never block fencing.
 * **Fencing watchdog**: per execution, deadline per `control-plane.md#leases-epochs-fencing`, checked on a monotonic
   clock every 250 ms. Expired ⇒ stop game (bounded graceful, then kill), mark `fenced`, drop from `SetHostedServices`,
@@ -82,9 +84,24 @@ contact, the pending code, and each server this machine hosts with its phase and
 * **Mesh supervisor**: spawn, restart with backoff, re-apply all `Set*` state after restart.
 * **Replication workers** (storage.md) and **chunk server**.
 
+**Lease profile.** `lease_profile` is `standard` by default; use `--lease-profile short` on enrollment/run or set it in
+`config.toml` for an embedded or mobile host. The control plane supplies each heartbeat interval. Standard uses a
+5 s heartbeat and 20 s lease; short uses a 1 s heartbeat and 5 s lease. An unset `fence_margin_ms` defaults to 5 s for
+standard and 2 s for short; an explicit margin overrides either default.
+Short trades availability for faster handoff: losing network contact for about 3 s fences the host and stops its
+executions. The lease/epoch fencing guarantee still prevents two hosts from serving the same execution.
+
 On shutdown the agent first drains executions (graceful stop, final snapshot, replication hold) while heartbeats,
 the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
 as a snapshot source and refuses new executions — and only then signals the loops to stop.
+
+**Shutdown handoff.** Running servers whose driver `can_handoff()` (Minecraft) are not stopped straight away: the
+heartbeat advertises `draining`, the agent heartbeats every 1 s, and the control plane opens a warm migration to the
+node the scheduler would pick (see `control-plane.md#reconciler`). The agent treats the source being frozen as the
+acknowledgement and keeps serving until the flip's `handoff` stop transfers players to the replacement. It falls back
+to the graceful stop above when no freeze arrives within 10 s, the CP unfreezes without a `handoff` stop (migration
+aborted), or `shutdown_handoff_timeout_s` (default 45 s, 0 disables) runs out. Service stop budgets cover the
+handoff wait plus the fallback: systemd `TimeoutStopSec=150`, Windows preshutdown 150 s, launchd `ExitTimeout=180`.
 
 ## Executor API (`crates/executor-api`)
 

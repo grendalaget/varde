@@ -87,6 +87,7 @@ fn check<T: serde::de::DeserializeOwned + serde::Serialize>(schema_name: &str) {
 fn agent_schemas_in_sync() {
     check::<cp_api::AgentHeartbeat>("AgentHeartbeat");
     check::<cp_api::AgentDirectives>("AgentDirectives");
+    check::<cp_api::AgentDirectivesWait>("AgentDirectivesWait");
     check::<cp_api::ExecutionDirective>("ExecutionDirective");
     check::<cp_api::DirectivePeer>("DirectivePeer");
     check::<cp_api::DirectiveRoute>("DirectiveRoute");
@@ -98,6 +99,35 @@ fn agent_schemas_in_sync() {
     check::<cp_api::EnrollResult>("EnrollResult");
     check::<cp_api::DeviceEnrollResponse>("DeviceEnrollResponse");
     check::<cp_api::Service>("Service");
+}
+
+#[test]
+fn directives_digest_is_backward_compatible() {
+    let old_response = json!({
+        "server_time_unix_ms": 1,
+        "heartbeat_interval_ms": 5000,
+        "lease_ttl_ms": 20000,
+        "node": {
+            "name": "node",
+            "hosting_enabled": true,
+            "anchor": false,
+            "admin_state": "active"
+        }
+    });
+    let parsed: cp_api::AgentDirectives = serde_json::from_value(old_response).unwrap();
+    assert_eq!(parsed.directives_digest, None);
+}
+
+#[test]
+fn short_lease_profile_capability_serializes() {
+    let capabilities = cp_api::Capabilities {
+        lease_profile: Some("short".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(capabilities).unwrap()["lease_profile"],
+        "short"
+    );
 }
 
 /// Request-side types must accept (and reserialize) every declared field.

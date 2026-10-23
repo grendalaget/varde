@@ -34,10 +34,16 @@ pub struct Agent {
     pub chunk_tracker: Arc<ServeTracker>,
     pub started_at_ms: i64,
     /// replication queue + in-flight set
-    pub repl: Mutex<ReplQueue>,
-    pub repl_notify: tokio::sync::Notify,
+    pub repl: Arc<Mutex<ReplQueue>>,
+    pub repl_notify: Arc<tokio::sync::Notify>,
     /// last successful heartbeat apply; diagnostics for fencing stalls
     pub last_heartbeat_ok: Mutex<Option<std::time::Instant>>,
+    /// Digest of the directives returned by the latest successful heartbeat.
+    pub directives_digest: tokio::sync::watch::Sender<Option<String>>,
+    /// Completion sequence for heartbeat attempts, including failures.
+    pub heartbeat_sequence: tokio::sync::watch::Sender<u64>,
+    /// Wakes the control loop for an immediate heartbeat after a directive change.
+    pub heartbeat_now: tokio::sync::Notify,
     /// shutdown requested: drain executions while heartbeats, the mesh, the
     /// chunk server and replication keep running; refuse new work
     pub shutting_down: AtomicBool,
@@ -81,6 +87,118 @@ impl CpView {
 pub struct ReplQueue {
     tasks: Vec<cp_api::ReplicationTask>,
     in_flight: std::collections::HashSet<String>,
+    attempts: HashMap<String, u32>,
+    wanted: HashMap<String, cp_api::ReplicationTask>,
+}
+
+impl ReplQueue {
+    fn replace_tasks(&mut self, tasks: &[cp_api::ReplicationTask]) {
+        self.wanted = tasks
+            .iter()
+            .map(|task| (task.snapshot_id.clone(), task.clone()))
+            .collect();
+        self.tasks
+            .retain(|task| self.wanted.contains_key(&task.snapshot_id));
+        self.attempts
+            .retain(|snapshot_id, _| self.wanted.contains_key(snapshot_id));
+
+        for task in tasks {
+            if self.in_flight.contains(&task.snapshot_id) {
+                continue;
+            }
+            if let Some(queued) = self
+                .tasks
+                .iter_mut()
+                .find(|queued| queued.snapshot_id == task.snapshot_id)
+            {
+                *queued = task.clone();
+            } else {
+                self.tasks.push(task.clone());
+            }
+        }
+    }
+
+    fn take_next(&mut self) -> Option<cp_api::ReplicationTask> {
+        let task = self.tasks.pop()?;
+        self.in_flight.insert(task.snapshot_id.clone());
+        Some(task)
+    }
+
+    fn failed(&mut self, task: &cp_api::ReplicationTask) -> Option<std::time::Duration> {
+        if !self.wanted.contains_key(&task.snapshot_id) {
+            self.in_flight.remove(&task.snapshot_id);
+            self.attempts.remove(&task.snapshot_id);
+            return None;
+        }
+
+        let attempts = self.attempts.entry(task.snapshot_id.clone()).or_default();
+        *attempts = attempts.saturating_add(1);
+        Some(replication_retry_delay(*attempts))
+    }
+
+    fn requeue_retry(&mut self, task: cp_api::ReplicationTask) -> bool {
+        let Some(latest) = self.wanted.get(&task.snapshot_id).cloned() else {
+            self.in_flight.remove(&task.snapshot_id);
+            self.attempts.remove(&task.snapshot_id);
+            return false;
+        };
+
+        self.in_flight.remove(&task.snapshot_id);
+        if let Some(queued) = self
+            .tasks
+            .iter_mut()
+            .find(|queued| queued.snapshot_id == task.snapshot_id)
+        {
+            *queued = latest;
+            return false;
+        }
+        self.tasks.push(latest);
+        true
+    }
+
+    fn completed(&mut self, snapshot_id: &str) {
+        self.in_flight.remove(snapshot_id);
+        self.attempts.remove(snapshot_id);
+    }
+}
+
+fn replication_retry_delay(attempt: u32) -> std::time::Duration {
+    let millis = match attempt {
+        0 | 1 => 250,
+        2 => 500,
+        3 => 1000,
+        _ => 2000,
+    };
+    std::time::Duration::from_millis(millis)
+}
+
+fn schedule_replication_retry(
+    repl: Arc<Mutex<ReplQueue>>,
+    notify: Arc<tokio::sync::Notify>,
+    task: cp_api::ReplicationTask,
+    delay: std::time::Duration,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        if *stop.borrow() {
+            return;
+        }
+        let sleep = tokio::time::sleep(delay);
+        tokio::pin!(sleep);
+        loop {
+            tokio::select! {
+                _ = &mut sleep => break,
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return;
+                    }
+                }
+            }
+        }
+        if repl.lock().unwrap().requeue_retry(task) {
+            notify.notify_one();
+        }
+    });
 }
 
 impl Agent {
@@ -184,14 +302,8 @@ impl Agent {
         }
     }
 
-    pub fn enqueue_replication(&self, t: cp_api::ReplicationTask) {
-        let mut q = self.repl.lock().unwrap();
-        if q.in_flight.contains(&t.snapshot_id)
-            || q.tasks.iter().any(|x| x.snapshot_id == t.snapshot_id)
-        {
-            return; // dedup
-        }
-        q.tasks.push(t);
+    pub fn replace_replication_tasks(&self, tasks: &[cp_api::ReplicationTask]) {
+        self.repl.lock().unwrap().replace_tasks(tasks);
         self.repl_notify.notify_one();
     }
 
@@ -204,12 +316,7 @@ impl Agent {
         loop {
             let task = {
                 let mut q = self.repl.lock().unwrap();
-                if let Some(t) = q.tasks.pop() {
-                    q.in_flight.insert(t.snapshot_id.clone());
-                    Some(t)
-                } else {
-                    None
-                }
+                q.take_next()
             };
             let Some(t) = task else {
                 tokio::select! {
@@ -217,10 +324,23 @@ impl Agent {
                     _ = stop.changed() => return,
                 }
             };
-            if let Err(e) = self.replicate_one(&t).await {
-                tracing::warn!(snap = %t.snapshot_id, error = %format!("{e:#}"), "replication failed");
+            match self.replicate_one(&t).await {
+                Ok(()) => self.repl.lock().unwrap().completed(&t.snapshot_id),
+                Err(e) => {
+                    tracing::warn!(snap = %t.snapshot_id, error = %format!("{e:#}"), "replication failed");
+                    let delay = self.repl.lock().unwrap().failed(&t);
+                    if let Some(delay) = delay {
+                        tracing::debug!(snap = %t.snapshot_id, delay_ms = delay.as_millis(), "scheduling replication retry");
+                        schedule_replication_retry(
+                            self.repl.clone(),
+                            self.repl_notify.clone(),
+                            t,
+                            delay,
+                            stop.clone(),
+                        );
+                    }
+                }
             }
-            self.repl.lock().unwrap().in_flight.remove(&t.snapshot_id);
         }
     }
 
@@ -260,5 +380,134 @@ fn proto_for(s: &str) -> i32 {
         "tcp" => mesh_ipc::pb::Protocol::Tcp as i32,
         "udp" => mesh_ipc::pb::Protocol::Udp as i32,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod replication_retry_tests {
+    use super::{schedule_replication_retry, ReplQueue};
+    use cp_api::ReplicationTask;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    use tokio::sync::{watch, Notify};
+
+    fn task() -> ReplicationTask {
+        task_with_source("node_source", "digest")
+    }
+
+    fn task_with_source(source_node_id: &str, manifest_digest: &str) -> ReplicationTask {
+        ReplicationTask {
+            snapshot_id: "snap_test".into(),
+            server_id: "srv_test".into(),
+            manifest_digest: manifest_digest.into(),
+            source_node_ids: vec![source_node_id.into()],
+        }
+    }
+
+    #[test]
+    fn queued_task_is_replaced_by_newer_directive() {
+        let queued = task_with_source("node_a", "digest_a");
+        let redelivered = task_with_source("node_b", "digest_b");
+        let mut q = ReplQueue::default();
+
+        q.replace_tasks(std::slice::from_ref(&queued));
+        q.replace_tasks(std::slice::from_ref(&redelivered));
+
+        let next = q.take_next().unwrap();
+        assert_eq!(next.source_node_ids, vec!["node_b".to_string()]);
+        assert_eq!(next.manifest_digest, "digest_b");
+    }
+
+    #[test]
+    fn in_flight_failure_requeues_latest_directive_without_resetting_attempts() {
+        let first = task_with_source("node_a", "digest_a");
+        let redelivered = task_with_source("node_b", "digest_b");
+        let mut q = ReplQueue::default();
+
+        q.replace_tasks(std::slice::from_ref(&first));
+        let in_flight = q.take_next().unwrap();
+        q.replace_tasks(std::slice::from_ref(&redelivered));
+
+        assert_eq!(q.failed(&in_flight), Some(Duration::from_millis(250)));
+        assert!(q.requeue_retry(in_flight));
+
+        let retry = q.take_next().unwrap();
+        assert_eq!(retry.source_node_ids, vec!["node_b".to_string()]);
+        assert_eq!(retry.manifest_digest, "digest_b");
+        assert_eq!(q.failed(&retry), Some(Duration::from_millis(500)));
+    }
+
+    #[tokio::test]
+    async fn failed_task_retries_without_new_enqueue_within_300ms() {
+        let task = task();
+        let repl = Arc::new(Mutex::new(ReplQueue::default()));
+        let notify = Arc::new(Notify::new());
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let delay = {
+            let mut q = repl.lock().unwrap();
+            q.replace_tasks(std::slice::from_ref(&task));
+            assert_eq!(q.take_next().unwrap().snapshot_id, task.snapshot_id);
+            q.failed(&task).unwrap()
+        };
+        assert_eq!(delay, Duration::from_millis(250));
+
+        let started = Instant::now();
+        schedule_replication_retry(repl.clone(), notify.clone(), task.clone(), delay, stop_rx);
+        tokio::time::timeout(Duration::from_millis(300), notify.notified())
+            .await
+            .expect("retry was not enqueued within 300 ms");
+
+        assert!(started.elapsed() < Duration::from_millis(300));
+        let q = repl.lock().unwrap();
+        assert_eq!(q.tasks.len(), 1);
+        assert_eq!(q.tasks[0].snapshot_id, task.snapshot_id);
+        assert!(!q.in_flight.contains(&task.snapshot_id));
+    }
+
+    #[tokio::test]
+    async fn retry_is_dropped_when_task_is_withdrawn() {
+        let task = task();
+        let repl = Arc::new(Mutex::new(ReplQueue::default()));
+        let notify = Arc::new(Notify::new());
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let delay = {
+            let mut q = repl.lock().unwrap();
+            q.replace_tasks(std::slice::from_ref(&task));
+            assert!(q.take_next().is_some());
+            q.failed(&task).unwrap()
+        };
+        schedule_replication_retry(repl.clone(), notify.clone(), task.clone(), delay, stop_rx);
+        repl.lock().unwrap().replace_tasks(&[]);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), notify.notified())
+                .await
+                .is_err()
+        );
+        let q = repl.lock().unwrap();
+        assert!(q.tasks.is_empty());
+        assert!(q.attempts.is_empty());
+        assert!(!q.in_flight.contains(&task.snapshot_id));
+    }
+
+    #[test]
+    fn repeated_failures_back_off_and_cap_at_two_seconds() {
+        let task = task();
+        let mut q = ReplQueue::default();
+        q.replace_tasks(std::slice::from_ref(&task));
+        assert!(q.take_next().is_some());
+        let delays = (0..6).map(|_| q.failed(&task).unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_millis(250),
+                Duration::from_millis(500),
+                Duration::from_millis(1000),
+                Duration::from_millis(2000),
+                Duration::from_millis(2000),
+                Duration::from_millis(2000),
+            ]
+        );
+        assert_eq!(q.attempts.get(&task.snapshot_id), Some(&6));
     }
 }

@@ -108,7 +108,7 @@ An anchor is a node with `anchor = true` (set from the dashboard or by its enrol
 3. **Graceful host shutdown** (agent stopping, OS shutdown, `stop` action): the host performs a final barrier +
    snapshot and actively *pushes* priority to replication: it holds the stop until an anchor (or, without one, any
    peer) reports the snapshot ready, bounded by `shutdown_replication_timeout` (default 60 s on Linux; on Windows the
-   service requests a pre-shutdown timeout of 120 s). If it times out the snapshot remains `local`, the UI shows
+   service requests a pre-shutdown timeout of 150 s). If it times out the snapshot remains `local`, the UI shows
    "Latest save only on Arne-PC" and replication resumes when that PC is back.
 4. Scheduler bonus +80 as host when hosting is enabled on it ("always-on").
 

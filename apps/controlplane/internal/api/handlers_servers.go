@@ -10,6 +10,7 @@ import (
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
+	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/services"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
@@ -53,13 +54,6 @@ func genGame(g *catalog.Game) gen.Game {
 		out.SteamApp = &g.SteamApp
 	}
 	return out
-}
-
-// driverSupportsHandoff reports whether the game's driver can hand connected
-// clients off to a replacement server (Minecraft `/transfer`, Java 1.20.5+).
-// Such servers take the warm, start-first move; others keep the serial move.
-func driverSupportsHandoff(gameID string) bool {
-	return gameID == "minecraft"
 }
 
 func crossplayEnabled(gameID string, cfg map[string]any) bool {
@@ -309,6 +303,7 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	if err := s.Store.CreateServer(ctx, srv, svc); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "server.create", srv.ID, map[string]any{"name": srv.Name, "game": srv.GameID})
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, req.GroupId, &srv.ID, nil, "server.created", map[string]any{"name": srv.Name, "game": srv.GameID})
 	v, err := s.serverView(ctx, srv)
@@ -389,6 +384,7 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 	if err := s.Store.UpdateServerMeta(ctx, srv); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.update", srv.ID, nil)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
@@ -409,6 +405,7 @@ func (s *Server) DeleteServer(ctx context.Context, req gen.DeleteServerRequestOb
 	if err := s.Store.DeleteServer(ctx, req.ServerId); err != nil {
 		return nil, err
 	}
+	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.delete", srv.ID, nil)
 	return gen.DeleteServer204Response{}, nil
 }
@@ -459,7 +456,7 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 		}
 		return nil, err
 	}
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	// re-read for the fresh epoch/observed state
 	srv2, err := s.Store.GetServer(ctx, srv.ID)
 	if err != nil {
@@ -493,7 +490,7 @@ func (s *Server) StopServer(ctx context.Context, req gen.StopServerRequestObject
 	}
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, srv.GroupID, &srv.ID, nil, "server.stop_requested", nil)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.stop", srv.ID, nil)
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -524,27 +521,21 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 	if target.ID == active.NodeID {
 		return nil, errResp(gen.Validation, "server is already on that node", nil)
 	}
-	now := s.Store.NowMs()
-	mode := "serial"
-	if driverSupportsHandoff(srv.GameID) {
-		mode = "warm"
-	}
-	m := &store.Migration{
-		ID: ids.Must("mig_"), ServerID: srv.ID, FromExecutionID: active.ID,
-		ToNodeID: target.ID, State: "stopping", Mode: mode, CreatedAt: now,
-	}
-	if err := s.Store.CreateMigration(ctx, m); err != nil {
-		return nil, err
-	}
-	if mode == "warm" {
+	if reconciler.SupportsHandoff(srv.GameID) {
 		// warm handoff: the source keeps serving — freeze + live snapshot,
 		// pre-stage the target, then flip routes and transfer clients.
-		if err := s.Store.CreateSnapshotRequest(ctx, &store.SnapshotRequest{
-			ID: ids.Must("snr_"), ServerID: srv.ID, Reason: "migration", CreatedAt: now,
-		}); err != nil {
+		if _, err := s.Recon.StartWarmMigration(ctx, srv, active, target.ID); err != nil {
 			return nil, err
 		}
 	} else {
+		now := s.Store.NowMs()
+		m := &store.Migration{
+			ID: ids.Must("mig_"), ServerID: srv.ID, FromExecutionID: active.ID,
+			ToNodeID: target.ID, State: "stopping", Mode: "serial", CreatedAt: now,
+		}
+		if err := s.Store.CreateMigration(ctx, m); err != nil {
+			return nil, err
+		}
 		// mark the active exec stop reason=migration
 		active.Action = "stop"
 		reason := "migration"
@@ -552,10 +543,10 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 		if err := s.Store.UpdateExecutionState(ctx, s.Store.DB, active); err != nil {
 			return nil, err
 		}
+		_ = s.Store.SetObservedState(ctx, s.Store.DB, srv.ID, "migrating", now)
 	}
-	_ = s.Store.SetObservedState(ctx, s.Store.DB, srv.ID, "migrating", now)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.move", srv.ID, map[string]any{"to": target.ID})
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	v, err := s.serverView(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -635,7 +626,7 @@ func (s *Server) RequestSnapshot(ctx context.Context, req gen.RequestSnapshotReq
 	}
 	_ = active
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "snapshot.request", srv.ID, nil)
-	s.Recon.Wake()
+	s.Recon.WakeGroup(srv.GroupID)
 	return gen.RequestSnapshot202JSONResponse{RequestId: r.ID}, nil
 }
 
