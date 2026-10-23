@@ -3,7 +3,7 @@
 //! compiled into the agent and registered in a `DriverRegistry` by id; the
 //! control plane's catalog lists the same ids.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,6 +117,12 @@ pub struct PreparedAddon {
 
 impl PreparedAddon {
     pub fn install_into(&self, dest: &Path) -> Result<Vec<PathBuf>> {
+        let mut installed = Installed::default();
+        self.install_recorded(dest, &mut installed)?;
+        Ok(installed.files)
+    }
+
+    fn install_recorded(&self, dest: &Path, installed: &mut Installed) -> Result<()> {
         fn valid_key(key: &str) -> bool {
             !key.is_empty()
                 && !key.starts_with('/')
@@ -128,15 +134,20 @@ impl PreparedAddon {
         }
 
         let dest = absolute_path(dest)?;
-        let mut written = Vec::new();
-        copy_tree(&self.root, &dest, &dest, &mut written)?;
+        ensure_directory(&dest, &dest, installed)?;
+        copy_tree(&self.root, &dest, &dest, installed)?;
         for (key, contents) in &self.files {
             if !valid_key(key) {
                 return Err(format!("invalid addon file key: {key}").into());
             }
             let path = dest.join(key);
-            ensure_directory(&dest, path.parent().expect("validated file key has parent"))?;
+            ensure_directory(
+                &dest,
+                path.parent().expect("validated file key has parent"),
+                installed,
+            )?;
             ensure_regular_target(&dest, &path)?;
+            installed.files.push(path.clone());
             let mut options = std::fs::OpenOptions::new();
             options.write(true).create(true).truncate(true);
             #[cfg(unix)]
@@ -144,16 +155,14 @@ impl PreparedAddon {
                 use std::os::unix::fs::OpenOptionsExt;
                 options.mode(0o600);
             }
-            use std::io::Write;
             options.open(&path)?.write_all(contents.as_bytes())?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
             }
-            written.push(path);
         }
-        Ok(written)
+        Ok(())
     }
 }
 
@@ -183,33 +192,55 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     Ok(absolute)
 }
 
-fn ensure_directory(root: &Path, path: &Path) -> Result<()> {
+fn ensure_directory(root: &Path, path: &Path, installed: &mut Installed) -> Result<()> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_| format!("addon path is outside its destination: {}", path.display()))?;
-    match std::fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return Err(format!("addon destination is not a directory: {}", root.display()).into());
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir_all(root)?;
-        }
-        Err(error) => return Err(error.into()),
-    }
+    ensure_directory_exists(root, installed)?;
     let mut current = root.to_path_buf();
     for component in relative.components() {
         let Component::Normal(name) = component else {
             return Err(format!("unsafe addon destination: {}", path.display()).into());
         };
         current.push(name);
+        ensure_directory_exists(&current, installed)?;
+    }
+    Ok(())
+}
+
+fn ensure_directory_exists(path: &Path, installed: &mut Installed) -> Result<()> {
+    let mut missing = Vec::new();
+    let mut current = path.to_path_buf();
+    loop {
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
                 return Err(format!("unsafe addon destination: {}", current.display()).into());
             }
-            Ok(_) => {}
+            Ok(_) => break,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current)?;
+                missing.push(current.clone());
+                current = current
+                    .parent()
+                    .ok_or_else(|| {
+                        format!(
+                            "addon destination has no existing ancestor: {}",
+                            path.display()
+                        )
+                    })?
+                    .to_path_buf();
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    for directory in missing.iter().rev() {
+        match std::fs::create_dir(directory) {
+            Ok(()) => installed.dirs.push(directory.clone()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = std::fs::symlink_metadata(directory)?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(format!("unsafe addon destination: {}", directory.display()).into());
+                }
             }
             Err(error) => return Err(error.into()),
         }
@@ -235,7 +266,7 @@ fn copy_tree(
     source: &Path,
     destination: &Path,
     root: &Path,
-    written: &mut Vec<PathBuf>,
+    installed: &mut Installed,
 ) -> Result<()> {
     let metadata = std::fs::symlink_metadata(source)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -245,7 +276,7 @@ fn copy_tree(
         )
         .into());
     }
-    ensure_directory(root, destination)?;
+    ensure_directory(root, destination, installed)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
@@ -259,10 +290,15 @@ fn copy_tree(
             .into());
         }
         if metadata.is_dir() {
-            copy_tree(&source_path, &target_path, root, written)?;
+            copy_tree(&source_path, &target_path, root, installed)?;
         } else if metadata.is_file() {
-            ensure_directory(root, target_path.parent().expect("file has parent"))?;
+            ensure_directory(
+                root,
+                target_path.parent().expect("file has parent"),
+                installed,
+            )?;
             ensure_regular_target(root, &target_path)?;
+            installed.files.push(target_path.clone());
             let mut options = std::fs::OpenOptions::new();
             options.write(true).create(true).truncate(true);
             #[cfg(unix)]
@@ -277,7 +313,6 @@ fn copy_tree(
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o600))?;
             }
-            written.push(target_path);
         } else {
             return Err(format!(
                 "addon archive contains a non-regular file: {}",
@@ -293,55 +328,72 @@ fn copy_tree(
 struct AddonState {
     #[serde(default)]
     files: Vec<PathBuf>,
+    #[serde(default)]
+    dirs: Vec<PathBuf>,
 }
 
-/// Installs `installs` and removes every file a previous call wrote that this call did not.
+#[derive(Default)]
+struct Installed {
+    files: Vec<PathBuf>,
+    dirs: Vec<PathBuf>,
+}
+
+/// Installs `installs` and removes stale files and empty directories from prior calls.
 pub fn sync_addons(state_file: &Path, installs: &[(&PreparedAddon, PathBuf)]) -> Result<()> {
     let state_file = absolute_path(state_file)?;
     let managed_root = state_file
         .parent()
         .ok_or_else(|| format!("state file has no parent: {}", state_file.display()))?;
     let managed_root = absolute_path(managed_root)?;
-    ensure_directory(&managed_root, &managed_root)?;
+    let mut state_directories = Installed::default();
+    ensure_directory(&managed_root, &managed_root, &mut state_directories)?;
     let previous = read_addon_state(&state_file)?;
-    let mut written = Vec::new();
     let mut destinations = Vec::new();
     for (addon, destination) in installs {
         let destination = absolute_path(destination)?;
-        if !destination.starts_with(&managed_root) {
+        if destination == managed_root || !destination.starts_with(&managed_root) {
             return Err(format!(
                 "addon destination is outside state directory: {}",
                 destination.display()
             )
             .into());
         }
-        destinations.push(destination.clone());
-        written.extend(addon.install_into(&destination)?);
+        destinations.push((*addon, destination));
     }
-    written.sort();
-    written.dedup();
-    let written_set: HashSet<_> = written.iter().cloned().collect();
-    for path in previous.files {
-        if !path.is_absolute() || absolute_path(&path)? != path {
-            return Err(format!("invalid addon state path: {}", path.display()).into());
-        }
-        if !path.starts_with(&managed_root) || path == managed_root {
-            return Err(format!(
-                "addon state path is outside state directory: {}",
-                path.display()
-            )
-            .into());
-        }
-        if !written_set.contains(&path) {
-            let cleanup_root = destinations
-                .iter()
-                .filter(|destination| path.starts_with(destination))
-                .max_by_key(|destination| destination.components().count())
-                .unwrap_or(&managed_root);
-            remove_stale_file(&path, &managed_root, cleanup_root)?;
-        }
+
+    for path in previous.files.iter().chain(&previous.dirs) {
+        validate_addon_state_path(path, &managed_root)?;
     }
-    write_addon_state(&state_file, written)
+    for path in &previous.files {
+        remove_stale_file(path, &managed_root)?;
+    }
+    let mut previous_dirs = previous.dirs;
+    previous_dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in &previous_dirs {
+        remove_stale_dir(path, &managed_root)?;
+    }
+
+    let mut installed = Installed::default();
+    let install_result: Result<()> = (|| {
+        for (addon, destination) in destinations {
+            ensure_directory(&managed_root, &destination, &mut installed)?;
+            addon.install_recorded(&destination, &mut installed)?;
+        }
+        Ok(())
+    })();
+    installed.files.sort();
+    installed.files.dedup();
+    installed.dirs.sort();
+    installed.dirs.dedup();
+    let state_result = write_addon_state(
+        &state_file,
+        AddonState {
+            files: installed.files,
+            dirs: installed.dirs,
+        },
+    );
+    install_result?;
+    state_result
 }
 
 fn read_addon_state(path: &Path) -> Result<AddonState> {
@@ -355,38 +407,59 @@ fn read_addon_state(path: &Path) -> Result<AddonState> {
     }
 }
 
-fn remove_stale_file(path: &Path, root: &Path, cleanup_root: &Path) -> Result<()> {
-    if !path.starts_with(cleanup_root) {
+fn validate_addon_state_path(path: &Path, root: &Path) -> Result<()> {
+    if !path.is_absolute() || absolute_path(path)? != path {
+        return Err(format!("invalid addon state path: {}", path.display()).into());
+    }
+    if path == root || !path.starts_with(root) {
         return Err(format!(
-            "addon state path is outside cleanup root: {}",
+            "addon state path is outside state directory: {}",
             path.display()
         )
         .into());
     }
+    Ok(())
+}
+
+fn validate_addon_state_parents(path: &Path, root: &Path) -> Result<()> {
     let relative = path.strip_prefix(root).map_err(|_| {
         format!(
             "addon state path is outside state directory: {}",
             path.display()
         )
     })?;
+    match std::fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(format!("unsafe addon state parent: {}", root.display()).into());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
     let mut current = root.to_path_buf();
     let mut components = relative.components().peekable();
     while let Some(component) = components.next() {
         let Component::Normal(name) = component else {
             return Err(format!("invalid addon state path: {}", path.display()).into());
         };
+        if components.peek().is_none() {
+            break;
+        }
         current.push(name);
-        if components.peek().is_some() {
-            match std::fs::symlink_metadata(&current) {
-                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                    return Err(format!("unsafe addon state parent: {}", current.display()).into());
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(format!("unsafe addon state parent: {}", current.display()).into());
             }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
         }
     }
+    Ok(())
+}
+
+fn remove_stale_file(path: &Path, root: &Path) -> Result<()> {
+    validate_addon_state_parents(path, root)?;
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(format!(
@@ -399,31 +472,37 @@ fn remove_stale_file(path: &Path, root: &Path, cleanup_root: &Path) -> Result<()
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let mut parent = path.parent();
-    while let Some(directory) = parent {
-        if directory == cleanup_root {
-            break;
+    Ok(())
+}
+
+fn remove_stale_dir(path: &Path, root: &Path) -> Result<()> {
+    validate_addon_state_parents(path, root)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(format!(
+                "refusing to remove non-directory addon path: {}",
+                path.display()
+            )
+            .into());
         }
-        match std::fs::symlink_metadata(directory) {
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                return Err(format!("unsafe addon state parent: {}", directory.display()).into());
+        Ok(_) => {
+            let mut entries = std::fs::read_dir(path)?;
+            if entries.next().is_some() {
+                return Ok(());
             }
-            Ok(_) => {
-                let mut entries = std::fs::read_dir(directory)?;
-                if entries.next().is_some() {
-                    break;
-                }
-                std::fs::remove_dir(directory)?;
+            match std::fs::remove_dir(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
         }
-        parent = directory.parent();
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(())
 }
 
-fn write_addon_state(path: &Path, files: Vec<PathBuf>) -> Result<()> {
+fn write_addon_state(path: &Path, state: AddonState) -> Result<()> {
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
@@ -447,7 +526,7 @@ fn write_addon_state(path: &Path, files: Vec<PathBuf>) -> Result<()> {
             options.mode(0o600);
         }
         let mut file = options.open(&temp)?;
-        file.write_all(&serde_json::to_vec(&AddonState { files })?)?;
+        file.write_all(&serde_json::to_vec(&state)?)?;
         file.sync_all()?;
         std::fs::rename(&temp, path)?;
         Ok(())
@@ -731,6 +810,136 @@ mod addon_tests {
         assert!(!destination.join("cfg/y").exists());
     }
 
+    #[test]
+    fn sync_addons_replaces_file_with_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v1_root = tmp.path().join("v1");
+        let v2_root = tmp.path().join("v2");
+        std::fs::create_dir_all(&v1_root).unwrap();
+        std::fs::create_dir_all(&v2_root).unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/plugin/addon");
+        let v1 = addon(v1_root, vec![("cfg".into(), "file".into())]);
+        sync_addons(&state_file, &[(&v1, destination.clone())]).unwrap();
+        assert!(destination.join("cfg").is_file());
+
+        let v2 = addon(v2_root, vec![("cfg/x.cfg".into(), "nested".into())]);
+        sync_addons(&state_file, &[(&v2, destination.clone())]).unwrap();
+        assert!(destination.join("cfg").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("cfg/x.cfg")).unwrap(),
+            "nested"
+        );
+    }
+
+    #[test]
+    fn sync_addons_replaces_directory_with_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v1_root = tmp.path().join("v1");
+        let v2_root = tmp.path().join("v2");
+        std::fs::create_dir_all(v1_root.join("cfg")).unwrap();
+        std::fs::create_dir_all(&v2_root).unwrap();
+        std::fs::write(v1_root.join("cfg/x.cfg"), "nested").unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/plugin/addon");
+        let v1 = addon(v1_root, vec![]);
+        sync_addons(&state_file, &[(&v1, destination.clone())]).unwrap();
+        assert!(destination.join("cfg").is_dir());
+
+        let v2 = addon(v2_root, vec![("cfg".into(), "file".into())]);
+        sync_addons(&state_file, &[(&v2, destination.clone())]).unwrap();
+        assert!(destination.join("cfg").is_file());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("cfg")).unwrap(),
+            "file"
+        );
+    }
+
+    #[test]
+    fn sync_addons_records_partial_install_for_cleanup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "archive").unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/plugin/addon");
+        let addon = addon(root, vec![("../x".into(), "invalid".into())]);
+
+        let error = sync_addons(&state_file, &[(&addon, destination.clone())]).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid addon file key"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("a.txt")).unwrap(),
+            "archive"
+        );
+        let state = read_addon_state(&state_file).unwrap();
+        assert!(state.files.contains(&destination.join("a.txt")));
+
+        sync_addons(&state_file, &[]).unwrap();
+        assert!(!destination.join("a.txt").exists());
+    }
+
+    #[test]
+    fn sync_addons_removes_empty_created_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("maps")).unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/p/a");
+        let addon = addon(root, vec![]);
+        assert!(!destination.exists());
+
+        sync_addons(&state_file, &[(&addon, destination.clone())]).unwrap();
+        assert!(destination.join("maps").is_dir());
+        sync_addons(&state_file, &[]).unwrap();
+
+        assert!(!destination.join("maps").exists());
+        assert!(!destination.exists());
+        assert!(!destination.parent().unwrap().exists());
+        assert!(!destination.parent().unwrap().parent().unwrap().exists());
+    }
+
+    #[test]
+    fn sync_addons_preserves_preexisting_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/p/a");
+        let preexisting = destination.join("cfg");
+        std::fs::create_dir_all(&preexisting).unwrap();
+        let addon = addon(root, vec![("cfg/x.cfg".into(), "addon".into())]);
+
+        sync_addons(&state_file, &[(&addon, destination.clone())]).unwrap();
+        let state = read_addon_state(&state_file).unwrap();
+        assert!(!state.dirs.contains(&destination));
+        assert!(!state.dirs.contains(&preexisting));
+
+        sync_addons(&state_file, &[]).unwrap();
+        assert!(preexisting.is_dir());
+        assert!(!preexisting.join("x.cfg").exists());
+    }
+
+    #[test]
+    fn sync_addons_preserves_recorded_directories_with_user_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("maps")).unwrap();
+        let state_file = tmp.path().join("server/.varde-addons.json");
+        let destination = tmp.path().join("server/addons/p/a");
+        let addon = addon(root, vec![]);
+
+        sync_addons(&state_file, &[(&addon, destination.clone())]).unwrap();
+        let user_file = destination.join("maps/user.txt");
+        std::fs::write(&user_file, "user data").unwrap();
+        sync_addons(&state_file, &[]).unwrap();
+
+        assert!(destination.join("maps").is_dir());
+        assert_eq!(std::fs::read_to_string(user_file).unwrap(), "user data");
+    }
+
     #[cfg(unix)]
     #[test]
     fn sync_addons_refuses_recorded_symlink_files() {
@@ -750,6 +959,7 @@ mod addon_tests {
         std::fs::remove_file(&managed).unwrap();
         symlink(&outside, &managed).unwrap();
 
+        let state_before = std::fs::read(&state_file).unwrap();
         let error = sync_addons(&state_file, &[]).unwrap_err();
         assert!(
             error.to_string().contains("non-regular addon file"),
@@ -757,5 +967,6 @@ mod addon_tests {
         );
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "untouched");
         assert_eq!(std::fs::read_link(&managed).unwrap(), outside);
+        assert_eq!(std::fs::read(&state_file).unwrap(), state_before);
     }
 }
