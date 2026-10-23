@@ -124,9 +124,14 @@ through a `RuntimeProvider` with checksum verification.
 ```rust
 pub struct DriverContext<'a> { pub server_dir: &'a Path, pub deployment_dir: &'a Path, pub runtimes: &'a dyn RuntimeProvider,
                                pub deployment: &'a DeploymentSpec, pub config: &'a serde_json::Value,
-                               pub ports: &'a [PortBinding], pub memory_mb: u32 }
+                               pub ports: &'a [PortBinding], pub memory_mb: u32, pub addons: &'a [PreparedAddon] }
+pub struct PreparedAddon {
+    pub plugin_id: String, pub addon_id: String, pub root: PathBuf, pub target: String,
+    pub driver_options: serde_json::Value, pub files: Vec<(String, String)>
+}
 #[async_trait] pub trait GameDriver: Send + Sync {
     fn id(&self) -> &'static str;
+    fn addon_targets(&self) -> &'static [&'static str]; // default: no supported addon targets
     fn ports(&self, config: &Value) -> Vec<PortSpec>;   // service ports; ctx.ports maps each to an agent-allocated local port (ctx.local_port(p))
     fn persistent_paths(&self, config: &Value) -> Vec<PathPattern>;
     fn validate(&self, config: &Value) -> Result<()>;
@@ -140,6 +145,9 @@ pub struct DriverContext<'a> { pub server_dir: &'a Path, pub deployment_dir: &'a
 }
 ```
 Drivers are compiled into the agent and registered in a `DriverRegistry` by id; the CP's catalog lists the same ids.
+The agent fetches execution addons into its runtime cache and rejects targets not advertised by the selected driver.
+`PreparedAddon::install_into` copies regular files from the fetched root, rejects symlinks and other non-regular entries,
+and overlays validated relative file keys with restrictive file permissions.
 
 ### Drivers
 

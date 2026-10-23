@@ -841,6 +841,74 @@ paths:
         "204": { description: Deleted (admin+). Snapshots are retained per policy. }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/addons:
+    get:
+      operationId: listServerAddons
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ServerId" }
+      responses:
+        "200":
+          description: Server addons. File contents and driver options are never returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerAddonList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/servers/{serverId}/addons/{pluginId}/{addonId}:
+    put:
+      operationId: putServerAddon
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ServerId" }
+        - name: pluginId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{1,31}$" }
+        - name: addonId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{1,31}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServerAddonSpec" }
+      responses:
+        "204":
+          description: >-
+            Saved. Addon changes apply on the next server start; this request
+            does not restart the server.
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteServerAddon
+      tags: [servers]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ServerId" }
+        - name: pluginId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{1,31}$" }
+        - name: addonId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{1,31}$" }
+      responses:
+        "204":
+          description: Addon deleted; no server restart is triggered.
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /v1/servers/{serverId}/start:
     post:
       operationId: startServer
@@ -1741,9 +1809,74 @@ components:
         runtimes:
           type: array
           items: { type: string }
+        addon_targets:
+          type: array
+          items: { type: string }
         config_fields:
           type: array
           items: { $ref: "#/components/schemas/GameConfigField" }
+    ServerAddonSpec:
+      type: object
+      required: [url, sha256, archive, target, driver_options, files]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL, or HTTP when the control plane is in dev mode or the host is loopback.
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        archive:
+          type: string
+          enum: [zip, tar_gz]
+        target:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{0,31}$"
+        driver_options:
+          type: object
+          description: Driver-defined options, limited to 4 KiB when serialized as JSON.
+          additionalProperties: true
+        files:
+          type: object
+          description: Relative file paths and contents; at most 32 entries, each no larger than 64 KiB.
+          additionalProperties:
+            type: string
+            maxLength: 65536
+    ServerAddon:
+      type: object
+      required: [plugin_id, addon_id, url, sha256, archive, target, driver_options, files]
+      properties:
+        plugin_id: { type: string }
+        addon_id: { type: string }
+        url: { type: string, format: uri }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        archive: { type: string, enum: [zip, tar_gz] }
+        target: { type: string }
+        driver_options: { type: object, additionalProperties: true }
+        files:
+          type: object
+          additionalProperties: { type: string }
+    ServerAddonSummary:
+      type: object
+      required: [plugin_id, addon_id, url, sha256, archive, target, file_names, updated_at]
+      properties:
+        plugin_id: { type: string }
+        addon_id: { type: string }
+        url: { type: string, format: uri }
+        sha256: { type: string }
+        archive: { type: string, enum: [zip, tar_gz] }
+        target: { type: string }
+        file_names:
+          type: array
+          items: { type: string }
+        updated_at: { type: integer, format: int64 }
+    ServerAddonList:
+      type: object
+      required: [addons]
+      properties:
+        addons:
+          type: array
+          items: { $ref: "#/components/schemas/ServerAddonSummary" }
 
     Protocol:
       type: string
@@ -2082,6 +2215,10 @@ components:
             game_id: { type: string }
             spec: { type: object, additionalProperties: true }
         config: { type: object, additionalProperties: true }
+        addons:
+          type: array
+          description: Server addons to prepare when action is run.
+          items: { $ref: "#/components/schemas/ServerAddon" }
         service: { $ref: "#/components/schemas/Service" }
         restore:
           type: object

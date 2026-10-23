@@ -251,6 +251,8 @@ pub struct ExecutionDirective {
     pub lease_expires_at_unix_ms: i64,
     pub action: String, // run|stop
     #[serde(default)]
+    pub addons: Vec<ServerAddon>,
+    #[serde(default)]
     pub stop_reason: Option<String>,
     #[serde(default)]
     pub deployment: Option<Deployment>,
@@ -281,6 +283,19 @@ pub struct ExecutionDirective {
     /// still be replicating (display only).
     #[serde(default, deserialize_with = "null_vec")]
     pub latest_save_on: Vec<SaveHolder>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerAddon {
+    pub plugin_id: String,
+    pub addon_id: String,
+    pub url: String,
+    pub sha256: String,
+    pub archive: String,
+    pub target: String,
+    pub driver_options: serde_json::Value,
+    #[serde(default)]
+    pub files: std::collections::HashMap<String, String>,
 }
 
 /// A node holding a ready copy of a save, as the control plane reports it.

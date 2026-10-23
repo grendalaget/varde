@@ -47,6 +47,15 @@ type GroupPlugin struct {
 	UpdatedAt    int64  `db:"updated_at"`
 }
 
+type ServerAddon struct {
+	ServerID  string `db:"server_id"`
+	PluginID  string `db:"plugin_id"`
+	AddonID   string `db:"addon_id"`
+	Spec      string `db:"spec"`
+	CreatedAt int64  `db:"created_at"`
+	UpdatedAt int64  `db:"updated_at"`
+}
+
 // GroupSettings is the JSON shape stored in groups.settings_json.
 type GroupSettings struct {
 	SnapshotIntervalS        int64 `json:"snapshot_interval_s"`

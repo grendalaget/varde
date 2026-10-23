@@ -10,6 +10,7 @@
     "arch": ["x86_64", "aarch64"],
     "min_memory_mb": 64,
     "runtimes": ["native"],
+    "addon_targets": ["server"],
     "config_fields": [
       { "name": "message", "type": "string", "default": "hello", "required": false, "help": "text the test server echoes" },
       { "name": "tick_rate", "type": "int", "default": 20, "required": false }

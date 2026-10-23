@@ -168,8 +168,40 @@ func (s *Store) UpsertGroupPlugin(ctx context.Context, row GroupPlugin) error {
 }
 
 func (s *Store) DeleteGroupPlugin(ctx context.Context, groupID, pluginID string) error {
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM server_addons WHERE plugin_id=? AND server_id IN
+			 (SELECT id FROM servers WHERE group_id=?)`), pluginID, groupID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
+		return err
+	})
+}
+
+func (s *Store) ListServerAddons(ctx context.Context, serverID string) ([]ServerAddon, error) {
+	var rows []ServerAddon
+	err := s.q().SelectContext(ctx, &rows, s.Rebind(
+		`SELECT server_id, plugin_id, addon_id, spec, created_at, updated_at
+		 FROM server_addons WHERE server_id=? ORDER BY plugin_id, addon_id`), serverID)
+	return rows, err
+}
+
+func (s *Store) UpsertServerAddon(ctx context.Context, row ServerAddon) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`DELETE FROM group_plugins WHERE group_id=? AND plugin_id=?`), groupID, pluginID)
+		`INSERT INTO server_addons(server_id, plugin_id, addon_id, spec, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(server_id, plugin_id, addon_id) DO UPDATE SET
+		   spec=excluded.spec, updated_at=excluded.updated_at`),
+		row.ServerID, row.PluginID, row.AddonID, row.Spec, row.CreatedAt, row.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteServerAddon(ctx context.Context, serverID, pluginID, addonID string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`DELETE FROM server_addons WHERE server_id=? AND plugin_id=? AND addon_id=?`),
+		serverID, pluginID, addonID)
 	return err
 }
 
@@ -242,6 +274,10 @@ func (s *Store) UpdateGroup(ctx context.Context, g *Group) error {
 
 func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM server_addons WHERE server_id IN (SELECT id FROM servers WHERE group_id=?)`), id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM group_plugins WHERE group_id=?`), id); err != nil {
 			return err
 		}
@@ -658,8 +694,14 @@ func (s *Store) SetObservedState(ctx context.Context, q Querier, id, state strin
 }
 
 func (s *Store) DeleteServer(ctx context.Context, id string) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(`DELETE FROM servers WHERE id=?`), id)
-	return err
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`DELETE FROM server_addons WHERE server_id=?`), id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM servers WHERE id=?`), id)
+		return err
+	})
 }
 
 func (s *Store) ServiceByServer(ctx context.Context, serverID string) (*Service, error) {

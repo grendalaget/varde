@@ -486,6 +486,7 @@ mod tests {
             config: &cfg,
             ports: &bindings,
             memory_mb: 2048,
+            addons: &[],
         };
         MinecraftDriver::new().configure(&ctx).await.unwrap();
         let props = std::fs::read_to_string(server_dir.join("server.properties")).unwrap();

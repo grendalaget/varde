@@ -174,6 +174,16 @@ CREATE TABLE IF NOT EXISTS servers (
     updated_at           BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS server_addons (
+    server_id  TEXT NOT NULL,
+    plugin_id  TEXT NOT NULL,
+    addon_id   TEXT NOT NULL,
+    spec       TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (server_id, plugin_id, addon_id)
+);
+
 CREATE TABLE IF NOT EXISTS services (
     id          TEXT PRIMARY KEY,
     server_id   TEXT NOT NULL UNIQUE REFERENCES servers(id),

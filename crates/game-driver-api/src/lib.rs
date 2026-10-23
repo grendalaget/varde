@@ -102,6 +102,108 @@ pub struct FetchSpec {
     pub archive: ArchiveKind,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedAddon {
+    pub plugin_id: String,
+    pub addon_id: String,
+    pub root: PathBuf,
+    pub target: String,
+    pub driver_options: serde_json::Value,
+    pub files: Vec<(String, String)>,
+}
+
+impl PreparedAddon {
+    pub fn install_into(&self, dest: &Path) -> Result<()> {
+        fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+            let metadata = std::fs::symlink_metadata(source)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(format!(
+                    "addon archive contains a non-directory path: {}",
+                    source.display()
+                )
+                .into());
+            }
+            std::fs::create_dir_all(destination)?;
+            for entry in std::fs::read_dir(source)? {
+                let entry = entry?;
+                let source_path = entry.path();
+                let target_path = destination.join(entry.file_name());
+                let metadata = std::fs::symlink_metadata(&source_path)?;
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "addon archive contains a symlink: {}",
+                        source_path.display()
+                    )
+                    .into());
+                }
+                if metadata.is_dir() {
+                    copy_tree(&source_path, &target_path)?;
+                } else if metadata.is_file() {
+                    std::fs::create_dir_all(target_path.parent().expect("file has parent"))?;
+                    let mut options = std::fs::OpenOptions::new();
+                    options.write(true).create(true).truncate(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        options.mode(0o600);
+                    }
+                    let mut output = options.open(&target_path)?;
+                    std::io::copy(&mut std::fs::File::open(&source_path)?, &mut output)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(
+                            &target_path,
+                            std::fs::Permissions::from_mode(0o600),
+                        )?;
+                    }
+                } else {
+                    return Err(format!(
+                        "addon archive contains a non-regular file: {}",
+                        source_path.display()
+                    )
+                    .into());
+                }
+            }
+            Ok(())
+        }
+
+        fn valid_key(key: &str) -> bool {
+            !key.is_empty()
+                && !key.starts_with('/')
+                && !key.contains('\\')
+                && !key.contains(':')
+                && key
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
+        }
+
+        copy_tree(&self.root, dest)?;
+        for (key, contents) in &self.files {
+            if !valid_key(key) {
+                return Err(format!("invalid addon file key: {key}").into());
+            }
+            let path = dest.join(key);
+            std::fs::create_dir_all(path.parent().expect("validated file key has parent"))?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            use std::io::Write;
+            options.open(&path)?.write_all(contents.as_bytes())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Runtimes drivers may request (java, steamcmd); implemented by the agent.
 /// All HTTP goes through the provider; drivers only see paths.
 #[async_trait]
@@ -134,6 +236,7 @@ pub struct DriverContext<'a> {
     /// execution must bind.
     pub ports: &'a [PortBinding],
     pub memory_mb: u32,
+    pub addons: &'a [PreparedAddon],
 }
 
 impl DriverContext<'_> {
@@ -157,6 +260,9 @@ pub trait GameDriver: Send + Sync {
     /// Server-dir-relative paths captured by snapshots.
     fn persistent_paths(&self, config: &serde_json::Value) -> Vec<PathPattern>;
     fn validate(&self, config: &serde_json::Value) -> Result<()>;
+    fn addon_targets(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// Install into `deployment_dir` (idempotent).
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()>;
     /// Write config files into `server_dir`.
@@ -231,5 +337,84 @@ impl DriverRegistry {
         let mut v: Vec<_> = self.drivers.keys().copied().collect();
         v.sort();
         v
+    }
+}
+
+#[cfg(test)]
+mod addon_tests {
+    use super::*;
+
+    fn addon(root: PathBuf, files: Vec<(String, String)>) -> PreparedAddon {
+        PreparedAddon {
+            plugin_id: "plugin".into(),
+            addon_id: "addon".into(),
+            root,
+            target: "server".into(),
+            driver_options: serde_json::json!({}),
+            files,
+        }
+    }
+
+    #[test]
+    fn install_copies_tree_and_overlay_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("tree/sub")).unwrap();
+        std::fs::write(root.join("tree/sub/file.txt"), "archive").unwrap();
+        let dest = tmp.path().join("dest");
+        addon(root, vec![("cfg/server.cfg".into(), "overlay".into())])
+            .install_into(&dest)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join("tree/sub/file.txt")).unwrap(),
+            "archive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("cfg/server.cfg")).unwrap(),
+            "overlay"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dest.join("cfg/server.cfg"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(tmp.path().join("outside"), "outside").unwrap();
+        symlink(tmp.path().join("outside"), root.join("link")).unwrap();
+        let err = addon(root, vec![])
+            .install_into(&tmp.path().join("dest"))
+            .unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+    }
+
+    #[test]
+    fn install_revalidates_file_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        for key in ["../escape", "/absolute", "a//b", r"a\b", "a:b"] {
+            let err = addon(root.clone(), vec![(key.into(), "x".into())])
+                .install_into(&tmp.path().join("dest"))
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("invalid addon file key"),
+                "{key}: {err}"
+            );
+        }
     }
 }

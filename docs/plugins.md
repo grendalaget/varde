@@ -75,3 +75,11 @@ Secret settings and hidden settings are sealed separately at rest using AES-256-
 Operators create service tokens with `varde-control-plane service-token create`. Available scopes include `servers`, `events`, and `steam_ids` in addition to existing scopes. If a loaded manifest declares `service_token`, the matching token can act only in groups where that plugin is enabled. Service tokens need `steam_ids` to see member Steam IDs; signed-in group members continue to see them.
 
 Plugins are out-of-tree services and are not bundled with Varde. Review each service and its network access before enabling it.
+
+## Server addons
+
+A plugin may manage typed server addons through the control-plane API. Each addon declares an HTTPS archive URL, lowercase SHA-256 digest, `zip` or `tar_gz` archive type, a driver target, JSON driver options (up to 4 KiB), and up to 32 small relative files (64 KiB each and 2 MiB total). File keys use slash-separated relative paths and cannot contain traversal segments, backslashes, or colons. HTTP archive URLs are accepted only in control-plane development mode or for loopback hosts.
+
+Listing addons requires membership in the server's group. Addon writes require a service token with the `server_addons` scope, bound to the same group, whose name matches the plugin's configured service token; the plugin must also be enabled in that group. A group owner or administrator may delete an addon. Stored specifications are encrypted with the control-plane secrets key. Disabling the plugin or deleting the server removes its addons.
+
+Addon changes take effect at the next server start; the control plane does not restart a running server. The agent verifies and fetches each archive through its runtime provider, then passes a `PreparedAddon` to a driver that advertises the corresponding target in `addon_targets`. Drivers install archive contents and supplied files into their target-specific location. Ready Up is a motivating example: an event plugin could manage a server-side rules bundle whose files are applied by the game driver at startup.

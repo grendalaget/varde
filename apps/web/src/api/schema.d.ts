@@ -523,6 +523,38 @@ export interface paths {
         patch: operations["updateServer"];
         trace?: never;
     };
+    "/v1/servers/{serverId}/addons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listServerAddons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/servers/{serverId}/addons/{pluginId}/{addonId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putServerAddon"];
+        post?: never;
+        delete: operations["deleteServerAddon"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/servers/{serverId}/start": {
         parameters: {
             query?: never;
@@ -1151,7 +1183,59 @@ export interface components {
             arch: string[];
             min_memory_mb: number;
             runtimes?: string[];
+            addon_targets?: string[];
             config_fields: components["schemas"]["GameConfigField"][];
+        };
+        ServerAddonSpec: {
+            /**
+             * Format: uri
+             * @description HTTPS URL, or HTTP when the control plane is in dev mode or the host is loopback.
+             */
+            url: string;
+            sha256: string;
+            /** @enum {string} */
+            archive: "zip" | "tar_gz";
+            target: string;
+            /** @description Driver-defined options, limited to 4 KiB when serialized as JSON. */
+            driver_options: {
+                [key: string]: unknown;
+            };
+            /** @description Relative file paths and contents; at most 32 entries, each no larger than 64 KiB. */
+            files: {
+                [key: string]: string;
+            };
+        };
+        ServerAddon: {
+            plugin_id: string;
+            addon_id: string;
+            /** Format: uri */
+            url: string;
+            sha256: string;
+            /** @enum {string} */
+            archive: "zip" | "tar_gz";
+            target: string;
+            driver_options: {
+                [key: string]: unknown;
+            };
+            files: {
+                [key: string]: string;
+            };
+        };
+        ServerAddonSummary: {
+            plugin_id: string;
+            addon_id: string;
+            /** Format: uri */
+            url: string;
+            sha256: string;
+            /** @enum {string} */
+            archive: "zip" | "tar_gz";
+            target: string;
+            file_names: string[];
+            /** Format: int64 */
+            updated_at: number;
+        };
+        ServerAddonList: {
+            addons: components["schemas"]["ServerAddonSummary"][];
         };
         /** @enum {string} */
         Protocol: "tcp" | "udp";
@@ -1416,6 +1500,8 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
+            /** @description Server addons to prepare when action is run. */
+            addons?: components["schemas"]["ServerAddon"][];
             service?: components["schemas"]["Service"];
             restore?: {
                 snapshot_id: string;
@@ -2823,6 +2909,89 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    listServerAddons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                serverId: components["parameters"]["ServerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server addons. File contents and driver options are never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerAddonList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    putServerAddon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                serverId: components["parameters"]["ServerId"];
+                pluginId: string;
+                addonId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerAddonSpec"];
+            };
+        };
+        responses: {
+            /** @description Saved. Addon changes apply on the next server start; this request does not restart the server. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deleteServerAddon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                serverId: components["parameters"]["ServerId"];
+                pluginId: string;
+                addonId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Addon deleted; no server restart is triggered. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     startServer: {
