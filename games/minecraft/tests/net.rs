@@ -47,6 +47,7 @@ async fn real_minecraft_end_to_end() {
         config: &cfg,
         ports: &bindings,
         memory_mb: 1024,
+        addons: &[],
     };
     d.prepare(&ctx).await.expect("download jre+jar");
     d.configure(&ctx).await.unwrap();

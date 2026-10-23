@@ -52,6 +52,7 @@ async fn real_valheim_install_and_start() {
         config: &cfg,
         ports: &bindings,
         memory_mb: 2048,
+        addons: &[],
     };
     d.prepare(&ctx).await.expect("steamcmd install");
     let binary = dep_dir.join("server/valheim_server.x86_64");

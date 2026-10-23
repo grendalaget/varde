@@ -37,6 +37,7 @@ type Game struct {
 	Arch         []string      `json:"arch"`
 	MinMemoryMB  int64         `json:"min_memory_mb"`
 	Runtimes     []string      `json:"runtimes"`
+	AddonTargets []string      `json:"addon_targets"`
 	ConfigFields []ConfigField `json:"config_fields"`
 }
 
