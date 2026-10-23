@@ -702,6 +702,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent/leases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Lightweight lease renewal for agents that advertise `fast_lease`: sent every `lease_renew_interval_ms` while hosting, between full heartbeats. Renews only; never changes execution state. */
+        post: operations["agentRenewLeases"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent/executions/{executionId}/status": {
         parameters: {
             query?: never;
@@ -1155,6 +1172,8 @@ export interface components {
              * @enum {string}
              */
             lease_profile?: "standard" | "short";
+            /** @description Agent renews leases via /v1/agent/leases (short TTL). */
+            fast_lease?: boolean;
         };
         MeshReport: {
             listen_port?: number;
@@ -1287,6 +1306,8 @@ export interface components {
             server_time_unix_ms: number;
             heartbeat_interval_ms: number;
             lease_ttl_ms: number;
+            /** @description Set when this node gets fast leases: renew via /v1/agent/leases at this interval while hosting. */
+            lease_renew_interval_ms?: number;
             node: {
                 name: string;
                 /** @description Display name of the node's group (tray/status). */
@@ -2954,6 +2975,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentDirectivesWait"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    agentRenewLeases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    executions: {
+                        execution_id: string;
+                        server_id: string;
+                        /** Format: int64 */
+                        epoch: number;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Renewed leases (rejected executions are omitted). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: int64 */
+                        server_time_unix_ms: number;
+                        leases: {
+                            execution_id: string;
+                            /** Format: int64 */
+                            lease_expires_at_unix_ms: number;
+                        }[];
+                    };
                 };
             };
             401: components["responses"]["Error"];

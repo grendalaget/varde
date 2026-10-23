@@ -63,6 +63,10 @@ pub struct CpView {
     pub node_name: String,
     pub group_name: String,
     pub heartbeat_interval_ms: i64,
+    /// Lease length the CP grants this node (shorter with fast leases).
+    pub lease_ttl_ms: i64,
+    /// Set when the CP wants /v1/agent/leases renewals at this interval.
+    pub lease_renew_interval_ms: Option<i64>,
     pub last_contact_unix_ms: i64,
     /// server_id -> latest committed snapshot created_at
     pub latest_safe_save: HashMap<String, i64>,

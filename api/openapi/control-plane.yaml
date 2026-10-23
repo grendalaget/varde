@@ -1061,6 +1061,52 @@ paths:
               schema: { $ref: "#/components/schemas/AgentDirectivesWait" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/agent/leases:
+    post:
+      operationId: agentRenewLeases
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      description: >-
+        Lightweight lease renewal for agents that advertise `fast_lease`:
+        sent every `lease_renew_interval_ms` while hosting, between full
+        heartbeats. Renews only; never changes execution state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [executions]
+              properties:
+                executions:
+                  type: array
+                  items:
+                    type: object
+                    required: [execution_id, server_id, epoch]
+                    properties:
+                      execution_id: { type: string }
+                      server_id: { type: string }
+                      epoch: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Renewed leases (rejected executions are omitted).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [server_time_unix_ms, leases]
+                properties:
+                  server_time_unix_ms: { type: integer, format: int64 }
+                  leases:
+                    type: array
+                    items:
+                      type: object
+                      required: [execution_id, lease_expires_at_unix_ms]
+                      properties:
+                        execution_id: { type: string }
+                        lease_expires_at_unix_ms: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
   /v1/agent/executions/{executionId}/status:
     post:
       operationId: agentExecutionStatus
@@ -1684,6 +1730,7 @@ components:
           type: string
           enum: [standard, short]
           description: Optional lease timing profile; absent or unknown values use standard.
+        fast_lease: { type: boolean, description: "Agent renews leases via /v1/agent/leases (short TTL)." }
     MeshReport:
       type: object
       properties:
@@ -1878,6 +1925,11 @@ components:
         server_time_unix_ms: { type: integer, format: int64 }
         heartbeat_interval_ms: { type: integer }
         lease_ttl_ms: { type: integer }
+        lease_renew_interval_ms:
+          description: >-
+            Set when this node gets fast leases: renew via /v1/agent/leases
+            at this interval while hosting.
+          type: integer
         node:
           type: object
           required: [name, hosting_enabled, anchor, admin_state]

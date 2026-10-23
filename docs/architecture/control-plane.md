@@ -148,6 +148,14 @@ node, with matching epoch and not `stopped/failed`, the CP extends `lease_expire
 writing the response. Executions the node reports but which are not in `executions` must be stopped immediately by the
 agent (the CP has already moved on).
 
+**Fast leases.** An agent that reports `capabilities.fast_lease` gets a short lease (`--fast-lease-ttl-ms`, default
+8 s) and `lease_renew_interval_ms` (default 1 s) in its directives. While hosting it renews every held lease via
+`POST /v1/agent/leases {executions: [{execution_id, server_id, epoch}]}` between full heartbeats; the CP applies the
+same checks as above (active, held by caller, epoch match, not ended, **lease not yet expired**), never shortens a
+lease, never changes state, and returns `{server_time_unix_ms, leases: [{execution_id, lease_expires_at_unix_ms}]}`
+(rejected executions are omitted, so their deadline simply runs out). Agents without the capability keep the 20 s
+lease, so mixed versions are safe. A dead host is detected in ~8 s instead of ~20 s.
+
 Immediate transitions use `POST /v1/agent/executions/{id}/status {server_id, epoch, state, health, message}` so the
 UI does not wait for the next heartbeat. Mismatched `(server_id, epoch, node_id)` ⇒ 409 `stale_epoch`.
 
@@ -172,7 +180,7 @@ unrecoverable prepare/restore error, with `message`).
 * A new execution is created only when the server has **no** active execution. An active execution ends only by
   (a) agent reporting `stopped`/`failed`, or (b) the reconciler observing `now > lease_expires_at` (`end_reason=lost`).
 * **Agent fencing deadline** = `local_monotonic_at_request_send + (lease_expires_at − server_time) − fence_margin`
-  (`fence_margin` default 5 s). Because the send time precedes the CP's receive time, the agent always stops *before*
+  (`fence_margin` default 5 s, or 2 s for short-profile and fast leases; always capped at half the lease TTL). Because the send time precedes the CP's receive time, the agent always stops *before*
   the CP considers the lease expired, without clock synchronisation. When the deadline passes the agent kills the game
   (graceful attempt bounded to `fence_margin/2`, then hard kill) and marks the execution `fenced` locally; it never
   uploads snapshots for it.
@@ -185,6 +193,9 @@ unrecoverable prepare/restore error, with `message`).
   to the first report — not the whole download window.
 * The short profile is an availability trade-off: if a short-profile host loses network contact for more than about
   3 s, it fences itself and loses hosting. Fencing still guarantees that only one host can serve an execution.
+* Agents that advertise `fast_lease` get `min(8 s, profile lease)` (`--fast-lease-ttl-ms`) and renew it every
+  `lease_renew_interval_ms` (1 s, `--lease-renew-interval-ms`) via `POST /v1/agent/leases` between heartbeats, so a
+  dead standard-profile host is detected in about 8 s instead of 20 s without raising the heartbeat rate.
 
 ## Reconciler
 
@@ -192,7 +203,7 @@ One goroutine, tick 1 s (and woken by API mutations / heartbeats), processes ser
 
 | Condition | Action | Observed state |
 |---|---|---|
-| active exec, lease expired | end exec `lost`; emit `lease.expired` | `recovering` (if desired running) |
+| active exec, lease expired | end exec `lost`; emit `lease.expired`. Recovery treats the lost node as offline until it checks in again (it can still look `online` for up to 15 s) | `recovering` (if desired running) |
 | desired running, no active exec | `scheduler.Place(recovery = previous exec lost)`; create exec | `starting` / `recovering` |
 | desired running, placement impossible | emit `server.unschedulable` with reasons (rate-limited) | `failed` w/ message, retried every 15 s |
 | desired stopped, active exec action=run | set `action=stop, stop_reason=user` | `stopping` |

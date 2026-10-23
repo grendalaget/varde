@@ -725,6 +725,22 @@ func (s *Store) RenewLease(ctx context.Context, id string, expiresAt int64) erro
 	return err
 }
 
+// ExtendLease raises an unexpired, unended lease held by nodeID at epoch to
+// expiresAt; it never shortens one and never touches state, so it cannot
+// race a concurrent stop or end. It reports whether a row matched.
+func (s *Store) ExtendLease(ctx context.Context, id, nodeID string, epoch, now, expiresAt int64) (bool, error) {
+	res, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE server_executions SET lease_expires_at=?
+		 WHERE id=? AND node_id=? AND epoch=? AND ended_at IS NULL
+		   AND lease_expires_at > ? AND lease_expires_at < ?`),
+		expiresAt, id, nodeID, epoch, now, expiresAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ---- migrations ----
 
 func (s *Store) CreateMigration(ctx context.Context, m *Migration) error {

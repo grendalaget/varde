@@ -239,7 +239,8 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 	if er.Message != nil {
 		exec.Message = er.Message
 	}
-	leaseExp := now + s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs
+	ttl, _ := s.leaseTTL(ctx, node)
+	leaseExp := now + ttl
 
 	return s.Store.Tx(ctx, func(tx *sqlx.Tx) error {
 		if er.JoinCode != nil {
@@ -301,16 +302,21 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 
 // buildDirectives composes the full desired-state response for the node.
 func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int64) (gen.AgentDirectives, error) {
+	leaseTTL, fastLease := s.leaseTTL(ctx, node)
 	d := gen.AgentDirectives{
 		ServerTimeUnixMs:    now,
 		HeartbeatIntervalMs: int(s.Cfg.Timings.ForProfile(node.LeaseProfile).HeartbeatIntervalMs),
-		LeaseTtlMs:          int(s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs),
+		LeaseTtlMs:          int(leaseTTL),
 		Executions:          &[]gen.ExecutionDirective{},
 		Peers:               &[]gen.DirectivePeer{},
 		Routes:              &[]gen.DirectiveRoute{},
 		Relays:              &[]gen.DirectiveRelay{},
 		ReplicationTasks:    &[]gen.ReplicationTask{},
 		DeleteSnapshots:     &[]string{},
+	}
+	if fastLease {
+		iv := int(s.Cfg.Timings.LeaseRenewIntervalMs)
+		d.LeaseRenewIntervalMs = &iv
 	}
 	d.Node.Name = node.Name
 	d.Node.HostingEnabled = node.HostingEnabled == 1

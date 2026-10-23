@@ -343,15 +343,39 @@ func (e *gameEnv) waitMinecraftFrom(serverID, wantHost, clientNS string, d time.
 
 // ---------- scenario 1 ----------
 
-func TestMinecraftFailover(t *testing.T) {
+func TestMinecraftFailover(t *testing.T) { runMinecraftFailover(t, nil) }
+
+// TestMinecraftFastLeaseFailover runs the hard-kill failover with production
+// timings (5 s heartbeat, 20 s classic lease, 5 s fence margin): agents renew
+// the 8 s fast lease every second, so the replacement must be playable well
+// before a classic lease could even expire.
+func TestMinecraftFastLeaseFailover(t *testing.T) {
+	runMinecraftFailover(t, &cpOpts{
+		LeaseTTLms:  20000,
+		HeartbeatMs: 5000,
+		SuspectMs:   15000,
+		OfflineMs:   30000,
+	})
+}
+
+func runMinecraftFailover(t *testing.T, prod *cpOpts) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
 	}
-	e := newGameEnv(t, mcNodeNames)
+	var e *gameEnv
+	if prod != nil {
+		e = newGameEnvOpts(t, mcNodeNames, *prod)
+	} else {
+		e = newGameEnv(t, mcNodeNames)
+	}
 	wd := startWatchdog(t, mcNodeNames, "server.jar")
 
 	for _, n := range mcNodeNames {
-		e.enroll(n, n == "nas")
+		if prod != nil {
+			e.enrollWithMargin(n, n == "nas", 5000)
+		} else {
+			e.enroll(n, n == "nas")
+		}
 	}
 	for _, n := range mcNodeNames {
 		e.startAgent(n)
@@ -402,6 +426,9 @@ func TestMinecraftFailover(t *testing.T) {
 		return ok
 	})
 	t.Logf("RTO (kill -> first successful read): %s", rto)
+	if prod != nil && rto > 25*time.Second {
+		t.Fatalf("RTO %s with fast leases; a classic 20 s lease alone would be ~20 s", rto)
+	}
 
 	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {

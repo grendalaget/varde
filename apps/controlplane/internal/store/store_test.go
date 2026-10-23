@@ -154,3 +154,55 @@ func TestKVRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestExtendLeaseNeverReopensOrShortens(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		mkUser(t, s, "usr_l"+name)
+		g := &Group{ID: "grp_l" + name, Name: "g", SettingsJSON: "{}", CreatedAt: 1}
+		if err := s.CreateGroup(ctx, g, "usr_l"+name); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		srv := &Server{ID: "srv_l" + name, GroupID: g.ID, Name: "s", GameID: "testgame",
+			DesiredState: "running", ObservedState: "stopped", ConfigJSON: "{}", CreatedAt: 1, UpdatedAt: 1}
+		svc := &Service{ID: "svc_l" + name, ServerID: srv.ID, GroupID: g.ID, LoopbackIP: "127.77.1.2", PortsJSON: "[]"}
+		if err := s.CreateServer(ctx, srv, svc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		n := &Node{ID: "node_l" + name, GroupID: g.ID, Name: "n", PublicKey: "k",
+			OS: "linux", Arch: "amd64", HostingEnabled: 1, AdminState: "active", CreatedAt: 1}
+		if err := s.CreateNode(ctx, n); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		id := "exec_l" + name
+		if err := s.BumpEpochAndCreateExecution(ctx, &Execution{
+			ID: id, ServerID: srv.ID, NodeID: n.ID, Epoch: 1,
+			Action: "run", State: "running", LeaseExpiresAt: 100, CreatedAt: 1,
+		}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		check := func(what string, epoch, now, exp int64, want bool, wantLease int64) {
+			t.Helper()
+			ok, err := s.ExtendLease(ctx, id, n.ID, epoch, now, exp)
+			if err != nil || ok != want {
+				t.Fatalf("%s %s: ok=%v err=%v, want %v", name, what, ok, err, want)
+			}
+			e, err := s.GetExecution(ctx, id)
+			if err != nil || e.LeaseExpiresAt != wantLease {
+				t.Fatalf("%s %s: lease %d (%v), want %d", name, what, e.LeaseExpiresAt, err, wantLease)
+			}
+		}
+		check("extend", 1, 50, 150, true, 150)
+		check("shorter", 1, 50, 120, false, 150)
+		check("stale epoch", 2, 50, 200, false, 150)
+		check("expired", 1, 150, 300, false, 150)
+		if err := s.EndExecution(ctx, s.DB, id, "stopped", 60); err != nil {
+			t.Fatal(err)
+		}
+		check("ended", 1, 60, 200, false, 150)
+		if e, _ := s.GetExecution(ctx, id); e.EndedAt == nil || e.State != "running" {
+			t.Fatalf("%s: renewal touched an ended execution: %+v", name, e)
+		}
+	}
+}

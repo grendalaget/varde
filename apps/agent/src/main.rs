@@ -589,6 +589,9 @@ async fn run_linked(
     tokio::spawn(async move { control::fence_watchdog(a, s).await });
     let a = agent.clone();
     let s = stop_rx.clone();
+    tokio::spawn(async move { control::lease_loop(a, s).await });
+    let a = agent.clone();
+    let s = stop_rx.clone();
     tokio::spawn(async move { a.replication_worker(s).await });
     let a = agent.clone();
     let s = stop_rx.clone();
