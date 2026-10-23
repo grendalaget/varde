@@ -1,7 +1,7 @@
 //! The `Agent` — shared state for the control loop, supervisors, chunk server
 //! and the replication worker.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -88,27 +88,33 @@ pub struct ReplQueue {
     tasks: Vec<cp_api::ReplicationTask>,
     in_flight: std::collections::HashSet<String>,
     attempts: HashMap<String, u32>,
-    wanted: HashSet<String>,
+    wanted: HashMap<String, cp_api::ReplicationTask>,
 }
 
 impl ReplQueue {
     fn replace_tasks(&mut self, tasks: &[cp_api::ReplicationTask]) {
-        self.wanted = tasks.iter().map(|task| task.snapshot_id.clone()).collect();
+        self.wanted = tasks
+            .iter()
+            .map(|task| (task.snapshot_id.clone(), task.clone()))
+            .collect();
         self.tasks
-            .retain(|task| self.wanted.contains(&task.snapshot_id));
+            .retain(|task| self.wanted.contains_key(&task.snapshot_id));
         self.attempts
-            .retain(|snapshot_id, _| self.wanted.contains(snapshot_id));
+            .retain(|snapshot_id, _| self.wanted.contains_key(snapshot_id));
 
         for task in tasks {
-            if self.in_flight.contains(&task.snapshot_id)
-                || self
-                    .tasks
-                    .iter()
-                    .any(|queued| queued.snapshot_id == task.snapshot_id)
-            {
+            if self.in_flight.contains(&task.snapshot_id) {
                 continue;
             }
-            self.tasks.push(task.clone());
+            if let Some(queued) = self
+                .tasks
+                .iter_mut()
+                .find(|queued| queued.snapshot_id == task.snapshot_id)
+            {
+                *queued = task.clone();
+            } else {
+                self.tasks.push(task.clone());
+            }
         }
     }
 
@@ -119,7 +125,7 @@ impl ReplQueue {
     }
 
     fn failed(&mut self, task: &cp_api::ReplicationTask) -> Option<std::time::Duration> {
-        if !self.wanted.contains(&task.snapshot_id) {
+        if !self.wanted.contains_key(&task.snapshot_id) {
             self.in_flight.remove(&task.snapshot_id);
             self.attempts.remove(&task.snapshot_id);
             return None;
@@ -131,21 +137,22 @@ impl ReplQueue {
     }
 
     fn requeue_retry(&mut self, task: cp_api::ReplicationTask) -> bool {
-        if !self.wanted.contains(&task.snapshot_id) {
+        let Some(latest) = self.wanted.get(&task.snapshot_id).cloned() else {
             self.in_flight.remove(&task.snapshot_id);
             self.attempts.remove(&task.snapshot_id);
             return false;
-        }
+        };
 
         self.in_flight.remove(&task.snapshot_id);
-        if self
+        if let Some(queued) = self
             .tasks
-            .iter()
-            .any(|queued| queued.snapshot_id == task.snapshot_id)
+            .iter_mut()
+            .find(|queued| queued.snapshot_id == task.snapshot_id)
         {
+            *queued = latest;
             return false;
         }
-        self.tasks.push(task);
+        self.tasks.push(latest);
         true
     }
 
@@ -385,12 +392,49 @@ mod replication_retry_tests {
     use tokio::sync::{watch, Notify};
 
     fn task() -> ReplicationTask {
+        task_with_source("node_source", "digest")
+    }
+
+    fn task_with_source(source_node_id: &str, manifest_digest: &str) -> ReplicationTask {
         ReplicationTask {
             snapshot_id: "snap_test".into(),
             server_id: "srv_test".into(),
-            manifest_digest: "digest".into(),
-            source_node_ids: vec!["node_source".into()],
+            manifest_digest: manifest_digest.into(),
+            source_node_ids: vec![source_node_id.into()],
         }
+    }
+
+    #[test]
+    fn queued_task_is_replaced_by_newer_directive() {
+        let queued = task_with_source("node_a", "digest_a");
+        let redelivered = task_with_source("node_b", "digest_b");
+        let mut q = ReplQueue::default();
+
+        q.replace_tasks(std::slice::from_ref(&queued));
+        q.replace_tasks(std::slice::from_ref(&redelivered));
+
+        let next = q.take_next().unwrap();
+        assert_eq!(next.source_node_ids, vec!["node_b".to_string()]);
+        assert_eq!(next.manifest_digest, "digest_b");
+    }
+
+    #[test]
+    fn in_flight_failure_requeues_latest_directive_without_resetting_attempts() {
+        let first = task_with_source("node_a", "digest_a");
+        let redelivered = task_with_source("node_b", "digest_b");
+        let mut q = ReplQueue::default();
+
+        q.replace_tasks(std::slice::from_ref(&first));
+        let in_flight = q.take_next().unwrap();
+        q.replace_tasks(std::slice::from_ref(&redelivered));
+
+        assert_eq!(q.failed(&in_flight), Some(Duration::from_millis(250)));
+        assert!(q.requeue_retry(in_flight));
+
+        let retry = q.take_next().unwrap();
+        assert_eq!(retry.source_node_ids, vec!["node_b".to_string()]);
+        assert_eq!(retry.manifest_digest, "digest_b");
+        assert_eq!(q.failed(&retry), Some(Duration::from_millis(500)));
     }
 
     #[tokio::test]
