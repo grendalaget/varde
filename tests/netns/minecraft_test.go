@@ -955,6 +955,7 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	}
 
 	moveStarted := time.Now()
+	wd.allowHandoff("arne", "kari")
 	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/move", e.tok,
 		map[string]any{"target_node_id": e.nodes["kari"].nodeID}, 200)
 	transfer, disconnected := hold.untilDisconnected(t, 2*time.Minute)
@@ -963,6 +964,8 @@ func TestMinecraftMoveAndRestart(t *testing.T) {
 	t.Logf("hold bot transferred to %v:%v, then disconnected: %v", transfer["host"], transfer["port"], disconnected["reason"])
 
 	svc = e.waitMinecraft(serverID, "kari", 6*time.Minute)
+	waitGone(t, "arne", "server.jar", 2*time.Minute)
+	wd.endHandoff()
 	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
 		t.Fatalf("col0 after move: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
@@ -1650,6 +1653,7 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
 	}
 	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
 	for _, name := range mcNodeNames {
 		e.enroll(name, name == "nas")
 	}
@@ -1675,6 +1679,7 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 	}
 
 	arneProc := e.nodes["arne"].proc
+	wd.allowHandoff("arne", "kari")
 	shutdownAt := time.Now()
 	if err := arneProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("SIGTERM arne agent: %v", err)
@@ -1715,6 +1720,8 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 		return arneProc.cmd.ProcessState != nil && arneProc.cmd.ProcessState.Exited()
 	})
 	t.Logf("arne agent exited %.1fs after SIGTERM", time.Since(shutdownAt).Seconds())
+	waitGone(t, "arne", "server.jar", 30*time.Second)
+	wd.endHandoff()
 
 	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if !ok || got != nonce {
@@ -1746,4 +1753,5 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 	if !requested {
 		t.Fatalf("missing server.handoff_requested event: %s", body)
 	}
+	wd.check(t)
 }

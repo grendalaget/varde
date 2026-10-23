@@ -23,8 +23,11 @@ type gameWatchdog struct {
 	violations   []string
 	last         string
 	transitions  []hostTransition
-	stop         chan struct{}
-	done         chan struct{}
+	// handoff: namespaces allowed to run the game at once during a warm
+	// handoff (start-first: the replacement boots before the source stops)
+	handoff map[string]bool
+	stop    chan struct{}
+	done    chan struct{}
 }
 
 type hostTransition struct {
@@ -69,7 +72,7 @@ func startWatchdog(t *testing.T, names []string, processMatch string) *gameWatch
 			case <-tick.C:
 				hosts := processHosts(names, w.processMatch)
 				w.mu.Lock()
-				if len(hosts) > 1 {
+				if len(hosts) > 1 && !w.handoffCovers(hosts) {
 					var ns []string
 					for h := range hosts {
 						ns = append(ns, h)
@@ -99,6 +102,46 @@ func startWatchdog(t *testing.T, names []string, processMatch string) *gameWatch
 		<-w.done
 	})
 	return w
+}
+
+// allowHandoff tolerates the given namespaces running the game together
+// until endHandoff: a warm migration's source keeps serving while its
+// replacement boots. Any other overlap is still a violation.
+func (w *gameWatchdog) allowHandoff(names ...string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.handoff = map[string]bool{}
+	for _, n := range names {
+		w.handoff[n] = true
+	}
+}
+
+func (w *gameWatchdog) endHandoff() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.handoff = nil
+}
+
+// handoffCovers reports whether every host is in the handoff set. Caller
+// holds w.mu.
+func (w *gameWatchdog) handoffCovers(hosts map[string]bool) bool {
+	if w.handoff == nil {
+		return false
+	}
+	for h := range hosts {
+		if !w.handoff[h] {
+			return false
+		}
+	}
+	return true
+}
+
+// waitGone waits until the game no longer runs in ns.
+func waitGone(t *testing.T, ns, processMatch string, d time.Duration) {
+	t.Helper()
+	waitFor(t, d, processMatch+" gone from "+ns, func() bool {
+		return !processHosts([]string{ns}, processMatch)[ns]
+	})
 }
 
 func (w *gameWatchdog) check(t *testing.T) {
