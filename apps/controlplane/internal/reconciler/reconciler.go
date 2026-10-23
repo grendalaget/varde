@@ -26,24 +26,52 @@ import (
 
 // Timings (all configurable on the control plane).
 type Timings struct {
+	HeartbeatIntervalMs      int64
+	LeaseTTLMs               int64
+	ShortHeartbeatIntervalMs int64
+	ShortLeaseTTLMs          int64
+	StartGraceMs             int64 // extra lease while preparing/restoring
+	SuspectAfterMs           int64
+	OfflineAfterMs           int64
+	UnschedulableRetry       int64
+	TickInterval             time.Duration
+}
+
+type NodeTimings struct {
 	HeartbeatIntervalMs int64
 	LeaseTTLMs          int64
-	StartGraceMs        int64 // extra lease while preparing/restoring
 	SuspectAfterMs      int64
 	OfflineAfterMs      int64
-	UnschedulableRetry  int64
-	TickInterval        time.Duration
+}
+
+func (t Timings) ForProfile(profile string) NodeTimings {
+	if profile == "short" {
+		return NodeTimings{
+			HeartbeatIntervalMs: t.ShortHeartbeatIntervalMs,
+			LeaseTTLMs:          t.ShortLeaseTTLMs,
+			SuspectAfterMs:      3 * t.ShortHeartbeatIntervalMs,
+			OfflineAfterMs:      6 * t.ShortHeartbeatIntervalMs,
+		}
+	}
+	return NodeTimings{
+		HeartbeatIntervalMs: t.HeartbeatIntervalMs,
+		LeaseTTLMs:          t.LeaseTTLMs,
+		SuspectAfterMs:      t.SuspectAfterMs,
+		OfflineAfterMs:      t.OfflineAfterMs,
+	}
 }
 
 func DefaultTimings() Timings {
 	return Timings{
-		HeartbeatIntervalMs: 5000,
-		LeaseTTLMs:          20000,
-		StartGraceMs:        30000,
-		SuspectAfterMs:      15000,
-		OfflineAfterMs:      30000,
-		UnschedulableRetry:  15000,
-		TickInterval:        time.Second,
+		HeartbeatIntervalMs:      5000,
+		LeaseTTLMs:               20000,
+		ShortHeartbeatIntervalMs: 1000,
+		ShortLeaseTTLMs:          5000,
+		StartGraceMs:             30000,
+		SuspectAfterMs:           15000,
+		OfflineAfterMs:           30000,
+		UnschedulableRetry:       15000,
+		TickInterval:             time.Second,
 	}
 }
 
@@ -178,6 +206,7 @@ type directiveGroupFingerprint struct {
 
 type directiveNodeFingerprint struct {
 	ID             string `json:"id"`
+	LeaseProfile   string `json:"lease_profile"`
 	Liveness       string `json:"liveness"`
 	AdminState     string `json:"admin_state"`
 	HostingEnabled int64  `json:"hosting_enabled"`
@@ -226,7 +255,8 @@ func (r *Reconciler) notifyChangedGroups(ctx context.Context) error {
 		group := groupFor(node.GroupID)
 		group.Nodes = append(group.Nodes, directiveNodeFingerprint{
 			ID:             node.ID,
-			Liveness:       r.Liveness(&store.Node{LastSeenAt: node.LastSeenAt}),
+			LeaseProfile:   node.LeaseProfile,
+			Liveness:       r.Liveness(&store.Node{LastSeenAt: node.LastSeenAt, LeaseProfile: node.LeaseProfile}),
 			AdminState:     node.AdminState,
 			HostingEnabled: node.HostingEnabled,
 			Anchor:         node.Anchor,
@@ -317,10 +347,11 @@ func (r *Reconciler) Liveness(n *store.Node) string {
 		return "offline"
 	}
 	delta := r.Store.NowMs() - *n.LastSeenAt
+	timings := r.Timings.ForProfile(n.LeaseProfile)
 	switch {
-	case delta <= r.Timings.SuspectAfterMs:
+	case delta <= timings.SuspectAfterMs:
 		return "online"
-	case delta <= r.Timings.OfflineAfterMs:
+	case delta <= timings.OfflineAfterMs:
 		return "suspect"
 	default:
 		return "offline"
@@ -566,6 +597,12 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 		return err
 	}
 
+	targetNode, err := s.GetNode(ctx, dec.NodeID)
+	if err != nil {
+		return err
+	}
+	leaseTTL := r.Timings.ForProfile(targetNode.LeaseProfile).LeaseTTLMs
+
 	// --- lease + execution in one transaction ---
 	exec := &store.Execution{
 		ID:             ids.Must(ids.Execution),
@@ -574,7 +611,7 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 		Epoch:          srv.Epoch + 1,
 		State:          "preparing",
 		Action:         "run",
-		LeaseExpiresAt: now + r.Timings.LeaseTTLMs + r.Timings.StartGraceMs,
+		LeaseExpiresAt: now + leaseTTL + r.Timings.StartGraceMs,
 		PlacementJSON:  mustJSON(map[string]any{"score": dec.Score, "reasons": dec.Reasons}),
 		CreatedAt:      now,
 	}
@@ -982,6 +1019,11 @@ func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev
 func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m *store.Migration) error {
 	s := r.Store
 	now := s.NowMs()
+	targetNode, err := s.GetNode(ctx, m.ToNodeID)
+	if err != nil {
+		return err
+	}
+	leaseTTL := r.Timings.ForProfile(targetNode.LeaseProfile).LeaseTTLMs
 	warm := m.Mode == "warm"
 	role := "serving"
 	if warm {
@@ -994,7 +1036,7 @@ func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m
 		Epoch:             srv.Epoch + 1,
 		State:             "preparing",
 		Action:            "run",
-		LeaseExpiresAt:    now + r.Timings.LeaseTTLMs + r.Timings.StartGraceMs,
+		LeaseExpiresAt:    now + leaseTTL + r.Timings.StartGraceMs,
 		RestoreSnapshotID: m.FinalSnapshotID,
 		PlacementJSON:     mustJSON(map[string]any{"reasons": []string{"migration to " + m.ToNodeID}}),
 		CreatedAt:         now,

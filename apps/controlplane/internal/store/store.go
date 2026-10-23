@@ -99,6 +99,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	type col struct{ table, name, ddl string }
 	cols := []col{
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
+		{"nodes", "lease_profile", "TEXT NOT NULL DEFAULT 'standard'"},
 		{"users", "website_user_id", "TEXT"},
 		{"server_executions", "role", "TEXT NOT NULL DEFAULT 'serving'"},
 		{"migrations", "mode", "TEXT NOT NULL DEFAULT 'serial'"},

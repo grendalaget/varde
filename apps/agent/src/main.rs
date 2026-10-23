@@ -55,7 +55,10 @@ enum Cmd {
         /// Test-only loopback prefix (e.g. 127.78.)
         #[arg(long)]
         loopback_prefix: Option<String>,
-        /// Fencing margin subtracted from the lease window (ms, default 5000).
+        /// Lease profile sent to the control plane (standard|short).
+        #[arg(long, value_parser = ["standard", "short"])]
+        lease_profile: Option<String>,
+        /// Fencing margin subtracted from the lease window (ms; defaults to 5000 standard, 2000 short).
         #[arg(long)]
         fence_margin_ms: Option<i64>,
     },
@@ -71,6 +74,9 @@ enum Cmd {
         /// Mark the node to only serve data to the mesh (force_relay).
         #[arg(long)]
         force_relay: bool,
+        /// Override the configured lease profile (standard|short).
+        #[arg(long, value_parser = ["standard", "short"])]
+        lease_profile: Option<String>,
         /// Override fencing margin from config (ms).
         #[arg(long)]
         fence_margin_ms: Option<i64>,
@@ -207,6 +213,7 @@ async fn main() -> Result<()> {
             data_dir,
             anchor,
             loopback_prefix,
+            lease_profile,
             fence_margin_ms,
         } => {
             let data_dir = data_dir.unwrap_or_else(default_data_dir);
@@ -219,6 +226,7 @@ async fn main() -> Result<()> {
                 data_dir,
                 anchor,
                 loopback_prefix,
+                lease_profile,
                 fence_margin_ms,
             )
             .await
@@ -228,6 +236,7 @@ async fn main() -> Result<()> {
             mesh_bin,
             anchor,
             force_relay,
+            lease_profile,
             fence_margin_ms,
         } => {
             run(
@@ -235,6 +244,7 @@ async fn main() -> Result<()> {
                 mesh_bin,
                 anchor,
                 force_relay,
+                lease_profile,
                 fence_margin_ms,
                 None,
             )
@@ -275,6 +285,7 @@ async fn enroll(
     data_dir: PathBuf,
     anchor: bool,
     loopback_prefix: Option<String>,
+    lease_profile: Option<String>,
     fence_margin_ms: Option<i64>,
 ) -> Result<()> {
     std::fs::create_dir_all(&data_dir)?;
@@ -333,7 +344,10 @@ async fn enroll(
     let mut cfg = link::enrolled_config(&server, &result, None);
     cfg.anchor = anchor;
     cfg.loopback_prefix = loopback_prefix;
-    cfg.fence_margin_ms = fence_margin_ms.unwrap_or(5000);
+    if let Some(profile) = lease_profile {
+        cfg.lease_profile = profile;
+    }
+    cfg.fence_margin_ms = fence_margin_ms;
     cfg.save(&data_dir)?;
     info!(node_id = %result.node_id, group = %result.group_id, "enrolled; wrote config.toml");
     Ok(())
@@ -384,6 +398,7 @@ async fn run(
     mesh_bin: Option<PathBuf>,
     anchor_flag: bool,
     force_relay: bool,
+    lease_profile: Option<String>,
     fence_margin_ms: Option<i64>,
     ext_stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<()> {
@@ -417,6 +432,7 @@ async fn run(
             mesh_bin.clone(),
             anchor_flag,
             force_relay,
+            lease_profile.clone(),
             fence_margin_ms,
             &hub,
             stop_rx.clone(),
@@ -462,6 +478,7 @@ async fn run_linked(
     mesh_bin: Option<PathBuf>,
     anchor_flag: bool,
     force_relay: bool,
+    lease_profile: Option<String>,
     fence_margin_ms: Option<i64>,
     hub: &local::Hub,
     mut ext_stop: tokio::sync::watch::Receiver<bool>,
@@ -473,8 +490,11 @@ async fn run_linked(
     if force_relay {
         cfg.force_relay = true;
     }
+    if let Some(profile) = lease_profile {
+        cfg.lease_profile = profile;
+    }
     if let Some(m) = fence_margin_ms {
-        cfg.fence_margin_ms = m;
+        cfg.fence_margin_ms = Some(m);
     }
     let key_path = link::key_path(&data_dir);
     let key: SigningKey = identity::load(&key_path)?;

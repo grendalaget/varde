@@ -482,6 +482,12 @@ func (s *Store) TouchNodeSeen(ctx context.Context, nodeID string, now int64) err
 	return err
 }
 
+func (s *Store) SetNodeLeaseProfile(ctx context.Context, nodeID, profile string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE nodes SET lease_profile=? WHERE id=?`), profile, nodeID)
+	return err
+}
+
 func (s *Store) PutNodeStatus(ctx context.Context, st *NodeStatus) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`INSERT INTO node_status (node_id,status_json,mesh_json,updated_at) VALUES (?,?,?,?)
@@ -1093,7 +1099,7 @@ func (s *Store) DirectiveFingerprintData(ctx context.Context) (DirectiveFingerpr
 		return data, err
 	}
 	if err := s.DB.SelectContext(ctx, &data.Nodes, s.Rebind(
-		`SELECT id, group_id, admin_state, hosting_enabled, anchor, last_seen_at
+		`SELECT id, group_id, lease_profile, admin_state, hosting_enabled, anchor, last_seen_at
 		 FROM nodes ORDER BY group_id, id`)); err != nil {
 		return data, err
 	}

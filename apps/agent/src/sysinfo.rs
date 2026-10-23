@@ -7,6 +7,7 @@ pub fn capabilities(
     drivers: &[&'static str],
     started_at_ms: i64,
     draining: bool,
+    lease_profile: &str,
 ) -> Capabilities {
     Capabilities {
         os: Some(std::env::consts::OS.to_string()),
@@ -31,6 +32,7 @@ pub fn capabilities(
         uptime_s: Some(uptime()),
         agent_started_at: Some(started_at_ms),
         draining: Some(draining),
+        lease_profile: Some(lease_profile.to_string()),
     }
 }
 
@@ -135,16 +137,23 @@ mod tests {
     #[test]
     fn capabilities_reflects_draining() {
         let dir = std::env::temp_dir();
-        let live = capabilities(&dir, &[], 0, false);
-        let draining = capabilities(&dir, &[], 0, true);
+        let live = capabilities(&dir, &[], 0, false, "standard");
+        let draining = capabilities(&dir, &[], 0, true, "standard");
         assert_eq!(live.draining, Some(false));
         assert_eq!(draining.draining, Some(true));
+    }
+
+    #[test]
+    fn lease_profile_is_serialized() {
+        let capabilities = capabilities(std::path::Path::new("."), &[], 1, false, "short");
+        let value = serde_json::to_value(capabilities).unwrap();
+        assert_eq!(value["lease_profile"], "short");
     }
 
     #[cfg(any(target_os = "linux", windows))]
     #[test]
     fn capabilities_report_memory_disk_and_uptime() {
-        let c = capabilities(&std::env::temp_dir(), &[], 0, false);
+        let c = capabilities(&std::env::temp_dir(), &[], 0, false, "standard");
         assert!(c.memory_total_mb.unwrap() > 0);
         assert!(c.memory_available_mb.unwrap() > 0);
         assert!(c.disk_free_bytes.unwrap() > 0);

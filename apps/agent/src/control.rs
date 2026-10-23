@@ -44,6 +44,7 @@ pub async fn heartbeat_once(agent: &Arc<Agent>) -> Result<i64> {
             agent
                 .shutting_down
                 .load(std::sync::atomic::Ordering::SeqCst),
+            &agent.cfg.lease_profile,
         )),
         mesh: Some(mesh_report(agent).await),
         executions: Some(agent.exec_reports()),
@@ -246,7 +247,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         .await?;
 
     // ---- executions ----
-    let margin = Duration::from_millis(agent.cfg.fence_margin_ms.max(0) as u64);
+    let margin = Duration::from_millis(agent.cfg.effective_fence_margin_ms().max(0) as u64);
     let mut wanted: HashSet<String> = HashSet::new();
     for e in &d.executions {
         wanted.insert(e.execution_id.clone());
@@ -583,7 +584,8 @@ pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Rec
             let a = agent.clone();
             let c = c.clone();
             tokio::spawn(async move {
-                let bound = Duration::from_millis((a.cfg.fence_margin_ms.max(0) as u64) / 2);
+                let bound =
+                    Duration::from_millis((a.cfg.effective_fence_margin_ms().max(0) as u64) / 2);
                 if let Some(p) = c.proc() {
                     if bound > Duration::ZERO {
                         let _ = p.terminate().await;

@@ -178,6 +178,7 @@ type Node struct {
 	Arch            string  `db:"arch"`
 	AgentVersion    string  `db:"agent_version"`
 	UpdateAvailable string  `db:"update_available"`
+	LeaseProfile    string  `db:"lease_profile"`
 	HostingEnabled  int64   `db:"hosting_enabled"`
 	Anchor          int64   `db:"anchor"`
 	Priority        int64   `db:"priority"`
@@ -359,6 +360,7 @@ type DirectiveMigrationFingerprint struct {
 type DirectiveNodeFingerprint struct {
 	ID             string `db:"id"`
 	GroupID        string `db:"group_id"`
+	LeaseProfile   string `db:"lease_profile"`
 	AdminState     string `db:"admin_state"`
 	HostingEnabled int64  `db:"hosting_enabled"`
 	Anchor         int64  `db:"anchor"`
