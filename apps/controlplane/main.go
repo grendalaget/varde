@@ -296,6 +296,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	}
 
 	go recon.Run(ctx)
+	go recon.RunRetention(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

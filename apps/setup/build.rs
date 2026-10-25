@@ -80,6 +80,13 @@ fn main() {
             std::fs::copy("placeholder.html", dist.join("index.html"))
                 .expect("copy ui placeholder");
         }
+        // The installer runs elevated from wherever it was downloaded or
+        // staged (Downloads, %LOCALAPPDATA%\Varde\update), folders the user
+        // can write. Resolve its DLL imports from System32 only, so a DLL
+        // planted next to the exe can't ride along on the UAC prompt.
+        if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+        }
         let attrs = tauri_build::Attributes::new()
             .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(MANIFEST));
         tauri_build::try_build(attrs).expect("tauri_build");

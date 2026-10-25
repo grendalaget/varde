@@ -129,7 +129,7 @@ func (s *Server) DeleteGroup(ctx context.Context, req gen.DeleteGroupRequestObje
 		return nil, err
 	}
 	if err := s.Store.DeleteGroup(ctx, req.GroupId); err != nil {
-		return nil, err
+		return nil, storeErr(err, "remove servers and machines first", "group not found")
 	}
 	s.Recon.WakeGroup(req.GroupId)
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "group.delete", req.GroupId, nil)
@@ -154,16 +154,29 @@ func (s *Server) ListMembers(ctx context.Context, req gen.ListMembersRequestObje
 	return gen.ListMembers200JSONResponse{Members: out}, nil
 }
 
+const lastOwner = "the group needs at least one owner"
+
+// UpdateMember: admins move members between admin and member; only owners
+// grant, change or revoke owner. The last owner can't be demoted (the store
+// refuses it).
 func (s *Server) UpdateMember(ctx context.Context, req gen.UpdateMemberRequestObject) (gen.UpdateMemberResponseObject, error) {
-	u, _, err := s.requireRole(ctx, req.GroupId, "owner")
+	u, callerRole, err := s.requireRole(ctx, req.GroupId, "admin")
 	if err != nil {
 		return nil, err
 	}
 	if req.Body == nil || req.Body.Role == "" {
 		return nil, errResp(gen.Validation, "role required", nil)
 	}
-	if err := s.Store.SetMemberRole(ctx, req.GroupId, req.UserId, string(req.Body.Role)); err != nil {
-		return nil, errResp(gen.NotFound, "member not found", nil)
+	newRole := string(req.Body.Role)
+	targetRole, err := s.Store.MemberRole(ctx, req.GroupId, req.UserId)
+	if err != nil {
+		return nil, storeErr(err, "", "member not found")
+	}
+	if (targetRole == "owner" || newRole == "owner") && callerRole != "owner" {
+		return nil, errResp(gen.Forbidden, "only owners can change owners", nil)
+	}
+	if err := s.Store.SetMemberRole(ctx, req.GroupId, req.UserId, newRole); err != nil {
+		return nil, storeErr(err, lastOwner, "member not found")
 	}
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "member.update", req.UserId, map[string]any{"role": req.Body.Role})
 	return gen.UpdateMember200JSONResponse{
@@ -171,18 +184,28 @@ func (s *Server) UpdateMember(ctx context.Context, req gen.UpdateMemberRequestOb
 	}, nil
 }
 
+// RemoveMember: anyone may leave; admins remove non-owners; only owners
+// remove owners. The last owner can't leave or be removed (the store refuses
+// it).
 func (s *Server) RemoveMember(ctx context.Context, req gen.RemoveMemberRequestObject) (gen.RemoveMemberResponseObject, error) {
-	u, _, err := s.requireRole(ctx, req.GroupId, "owner")
+	u, callerRole, err := s.requireRole(ctx, req.GroupId, "member")
 	if err != nil {
 		return nil, err
 	}
-	// members may remove themselves
-	role, _ := s.Store.MemberRole(ctx, req.GroupId, u.ID)
-	if req.UserId != u.ID && role != "owner" {
-		return nil, errResp(gen.Forbidden, "owner only", nil)
+	targetRole, err := s.Store.MemberRole(ctx, req.GroupId, req.UserId)
+	if err != nil {
+		return nil, storeErr(err, "", "member not found")
+	}
+	if req.UserId != u.ID {
+		if callerRole == "member" {
+			return nil, errResp(gen.Forbidden, "insufficient role", nil)
+		}
+		if targetRole == "owner" && callerRole != "owner" {
+			return nil, errResp(gen.Forbidden, "only owners can remove owners", nil)
+		}
 	}
 	if err := s.Store.RemoveMember(ctx, req.GroupId, req.UserId); err != nil {
-		return nil, errResp(gen.NotFound, "member not found", nil)
+		return nil, storeErr(err, lastOwner, "member not found")
 	}
 	_ = s.Store.Audit(ctx, s.Store.DB, &req.GroupId, "user", u.ID, "member.remove", req.UserId, nil)
 	return gen.RemoveMember204Response{}, nil

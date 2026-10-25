@@ -123,4 +123,5 @@ groups.
 Per server keep: the newest `snapshot_retention` (default 10) committed snapshots, all pinned ones, any snapshot newer
 than the newest committed, and the parent chain needed for nothing (chunks are shared, not deltas, so any snapshot is
 independently restorable). The CP lists others in `delete_snapshots` for the nodes holding them; agents delete the
-manifest and run `gc()` periodically. Agents **never** delete snapshots on their own initiative.
+manifest and run `gc()` periodically. Agents **never** delete snapshots on their own initiative. Deleting a server
+lists all of its snapshots for deletion on every node holding them.

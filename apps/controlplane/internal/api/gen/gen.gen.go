@@ -151,6 +151,7 @@ const (
 	Internal              ErrorCode = "internal"
 	LatestSaveUnavailable ErrorCode = "latest_save_unavailable"
 	LimitExceeded         ErrorCode = "limit_exceeded"
+	NoReachableSave       ErrorCode = "no_reachable_save"
 	NotFound              ErrorCode = "not_found"
 	StaleEpoch            ErrorCode = "stale_epoch"
 	Unauthorized          ErrorCode = "unauthorized"
@@ -170,6 +171,8 @@ func (e ErrorCode) Valid() bool {
 	case LatestSaveUnavailable:
 		return true
 	case LimitExceeded:
+		return true
+	case NoReachableSave:
 		return true
 	case NotFound:
 		return true
@@ -4725,6 +4728,20 @@ func (response DeleteGroup403JSONResponse) VisitDeleteGroupResponse(w http.Respo
 	return err
 }
 
+type DeleteGroup409JSONResponse Error
+
+func (response DeleteGroup409JSONResponse) VisitDeleteGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetGroupRequestObject struct {
 	GroupId GroupId `json:"groupId"`
 }
@@ -5978,6 +5995,20 @@ func (response DeleteServer403JSONResponse) VisitDeleteServerResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServer409JSONResponse Error
+
+func (response DeleteServer409JSONResponse) VisitDeleteServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }

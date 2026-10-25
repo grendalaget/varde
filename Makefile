@@ -68,6 +68,8 @@ lint:
 	bun run --filter "@varde/web" typecheck
 	bun run --filter "@varde/desktop-ui" lint
 	bun run --filter "@varde/desktop-ui" typecheck
+	bun run --filter "@varde/ui" lint
+	bun run --filter "@varde/ui" typecheck
 
 fmt:
 	@for m in $(GO_MODULES); do (cd $$m && gofmt -w .) || exit 1; done

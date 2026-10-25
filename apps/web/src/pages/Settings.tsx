@@ -34,6 +34,7 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (g.data) {
@@ -166,7 +167,7 @@ export default function Settings() {
         <Card className="mt-10 border-rose-900/60">
           <CardHeader
             title="Delete group"
-            subtitle="Removes servers and machine registrations. Saves on machines are not wiped."
+            subtitle="Only an empty group can be deleted: delete its servers and remove its machines first."
             actions={
               <Button
                 variant="danger"
@@ -177,10 +178,11 @@ export default function Settings() {
                     ) !== group.name
                   )
                     return;
+                  setDeleteErr(null);
                   const { error } = await api.DELETE("/v1/groups/{groupId}", {
                     params: { path: { groupId: group.group_id } },
                   });
-                  if (error) setErr(errorMessage(error));
+                  if (error) setDeleteErr(errorMessage(error));
                   else {
                     localStorage.removeItem("varde.group");
                     window.location.href = "/";
@@ -191,6 +193,11 @@ export default function Settings() {
               </Button>
             }
           />
+          {deleteErr && (
+            <div className="p-4">
+              <ErrorNote>{deleteErr}</ErrorNote>
+            </div>
+          )}
         </Card>
       )}
     </>

@@ -34,12 +34,12 @@ device_links(user_code PK, device_code_hash UNIQUE, public_key, hostname, os, ar
              state{pending,approved,consumed,expired}, group_id, node_id, approved_by, expires_at, created_at)
 nodes(id, group_id, name, public_key UNIQUE, os, arch, agent_version, lease_profile{standard,short}, hosting_enabled, anchor, priority,
       max_memory_mb, max_cpu_percent, max_storage_bytes, admin_state{active,draining,disabled},
-      last_seen_at, created_at)
+      last_seen_at, created_at, deleted_at)
 node_status(node_id PK, status_json, mesh_json, updated_at)   -- latest heartbeat payload (capabilities, endpoints, paths)
 deployments(id, group_id, game_id, spec_json, digest, created_at)          -- immutable
 servers(id, group_id, name, game_id, deployment_id, desired_state{running,stopped}, observed_state,
         replication_factor, min_commit_replicas, snapshot_interval_s, preferred_node_id, epoch BIGINT,
-        config_json, created_at, updated_at)
+        config_json, created_at, updated_at, deleted_at)
 services(id, server_id UNIQUE, group_id, loopback_ip, ports_json, UNIQUE(group_id, loopback_ip))
 server_executions(id, server_id, node_id, epoch, state, action{run,stop}, stop_reason,
                   lease_expires_at, restore_snapshot_id, placement_json, health, message,
@@ -218,7 +218,11 @@ Restore selection when activating:
 * **Normal start**: newest non-invalid snapshot of the server. If none of its replicas are online, refuse with
   `409 latest_save_unavailable {snapshot_id, created_at, nodes}` unless the request sets `allow_older_snapshot:true`,
   in which case use the newest available. (This is the "Alice shut down her PC with the latest save" case — we never
-  silently fork.)
+  silently fork.) If no save is reachable at all, `allow_older_snapshot` refuses with `409 no_reachable_save` instead
+  of starting an empty world: a fresh start happens only for a server with no saves. `/start` writes
+  `desired=running` in the same transaction as the epoch bump and new execution, so a refused start leaves desired
+  as it was. The reconciler also activates a desired-running server with these rules unless its previous serving
+  execution was lost; a refused activation there just waits.
 * `source_node_ids` = online nodes with a `ready` replica; the chosen host gets the snapshot as `restore`.
 
 An execution that reports `failed` while restoring ends with `end_reason=restore_failed` and is retried as a recovery
@@ -272,6 +276,18 @@ GET /healthz  GET /readyz  GET /metrics  GET /v1/version  GET /v1/relay/public-k
 Server views returned to the UI include a computed `summary`: `hosting_on {node_id,name}`, `latest_safe_save
 {snapshot_id, created_at, replicas:[{node_id,name,anchor}]}`, `latest_save` (may be newer & not yet safe),
 `only_on_one_machine: bool`, `address "127.77.12.34:25565"`, `connection` per node.
+
+Deletes (SQLite runs with `foreign_keys` on, so both dialects enforce delete order):
+* **Server**: `409 conflict` while it has an open execution or migration. Otherwise soft-deleted (`deleted_at`):
+  hidden from every lookup and the reconciler, its service/route removed, every replica of its snapshots marked
+  `deleting`. The delete ack for the last copy purges the server and its history (an hourly leader sweep catches
+  any left behind).
+* **Machine**: soft-deleted (`deleted_at`, public key released for re-enrolment); hidden from every lookup, so agent
+  calls are rejected. Its replica rows and status go; a snapshot left without a `ready` copy becomes `invalid`
+  (remaining partial copies are deleted). Its serving execution runs out its lease and ends `lost` (fencing), then
+  recovery restarts the server elsewhere; migrations onto it fail.
+* **Group**: `409 conflict` while it has servers or machines; otherwise it and every row referencing it go in one
+  transaction.
 
 Agent endpoints (`/v1/agent/*`) are in the same OpenAPI file under tag `agent`, so the Rust agent's request/response
 types can be checked against it.

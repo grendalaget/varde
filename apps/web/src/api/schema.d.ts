@@ -806,7 +806,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal";
+            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -1822,7 +1822,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted (owner only). */
+            /** @description Deleted (owner only). Refused while it still has servers or machines. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -1831,6 +1831,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     updateGroup: {
@@ -2409,7 +2410,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted (admin+). Snapshots are retained per policy. */
+            /** @description Deleted (admin+): every machine is told to delete its copies of the server's saves. Refused while it runs or migrates. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2418,6 +2419,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     updateServer: {

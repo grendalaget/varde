@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -24,7 +23,6 @@ type hostedService struct {
 type inboundFlow struct {
 	serviceID string
 	target    *net.UDPConn
-	dst       *net.UDPAddr
 	done      chan struct{}
 	closed    bool
 	mu        sync.Mutex
@@ -132,8 +130,7 @@ func (p *peerState) handleUDPFlowStream(st *quic.Stream, uf *meshv1.UdpFlow) {
 		rejectStream(st, reason, "not hosted here")
 		return
 	}
-	dst := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(target)}
-	c, err := net.DialUDP("udp", nil, dst)
+	c, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(target)})
 	if err != nil {
 		rejectStream(st, meshv1.RejectReason_REJECT_REASON_TARGET_UNREACHABLE, err.Error())
 		return
@@ -142,7 +139,7 @@ func (p *peerState) handleUDPFlowStream(st *quic.Stream, uf *meshv1.UdpFlow) {
 		_ = c.Close()
 		return
 	}
-	f := &inboundFlow{serviceID: uf.GetServiceId(), target: c, dst: dst, done: make(chan struct{})}
+	f := &inboundFlow{serviceID: uf.GetServiceId(), target: c, done: make(chan struct{})}
 	p.mu.Lock()
 	old := p.inboundFlows[uf.GetFlowId()]
 	p.inboundFlows[uf.GetFlowId()] = f
@@ -173,7 +170,7 @@ func (p *peerState) handleUDPFlowStream(st *quic.Stream, uf *meshv1.UdpFlow) {
 			if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(uf.GetFlowId()|flowReplyBit, buf[:nr])); err != nil {
 				// same policy as udpFlow.send: oversized datagrams are
 				// dropped and counted, the flow stays alive
-				if errors.Is(err, &quic.DatagramTooLargeError{}) {
+				if isDatagramTooLarge(err) {
 					rtMetricDrop(p.n)
 					continue
 				}

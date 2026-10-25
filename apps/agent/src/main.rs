@@ -610,7 +610,10 @@ async fn run_linked(
                 tokio::select! {
                     _ = tick.tick() => {
                         let store = agent.store.clone();
-                        let _ = tokio::task::spawn_blocking(move || store.gc()).await;
+                        // an aborted sweep deleted nothing; the next tick retries
+                        if let Ok(Err(e)) = tokio::task::spawn_blocking(move || store.gc()).await {
+                            tracing::warn!(error = %e, "store gc failed");
+                        }
                     }
                     _ = stop.changed() => return,
                 }

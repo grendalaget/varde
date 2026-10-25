@@ -97,12 +97,8 @@ func DecodeProtoDgram(dgram []byte, msg proto.Message) (byte, error) {
 	return dgram[0], proto.Unmarshal(dgram[1:], msg)
 }
 
-// EncodeData builds a node->relay DATA datagram: 0x03 [u8 len][dst][payload].
-func EncodeData(dstNodeID, payload string) []byte {
-	return EncodeDataBytes(dstNodeID, []byte(payload))
-}
-
-// EncodeDataBytes is EncodeData for arbitrary payloads.
+// EncodeDataBytes builds a DATA datagram: 0x03 [u8 len][node_id][payload].
+// The id is the dst when sent to the relay, the src when the relay forwards.
 func EncodeDataBytes(dstNodeID string, payload []byte) []byte {
 	out := make([]byte, 0, 2+len(dstNodeID)+len(payload))
 	out = append(out, DgramData, byte(len(dstNodeID)))

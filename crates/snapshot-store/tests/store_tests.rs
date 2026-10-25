@@ -274,6 +274,10 @@ fn bad_paths_rejected() {
         "data/trail ",
         "data//double",
         "data/a\0b",
+        "w\\..\\..\\escape.bat",
+        "data\\x",
+        "data/a:stream",
+        "data/tab\there",
     ] {
         assert!(validate_rel_path(bad).is_err(), "{bad} should fail");
     }
@@ -507,4 +511,127 @@ fn restore_keeps_excluded_files_from_old_snapshots_and_removed_dirs() {
         b"nether-live"
     );
     assert!(!dest.join("world_nether/region.mca").exists());
+}
+
+fn chunk_file(store: &Store, id: &str) -> std::path::PathBuf {
+    store.root().join("chunks").join(&id[..2]).join(id)
+}
+
+fn manifest_file(store: &Store, id: &SnapshotId) -> std::path::PathBuf {
+    store
+        .root()
+        .join("snapshots")
+        .join(format!("{}.json", id.0))
+}
+
+/// Snapshot one small file and age its chunk past the GC grace period.
+fn aged_snapshot(tmp: &Path, store: &Store) -> (SnapshotId, ChunkId) {
+    let base = tmp.join("server");
+    tree(&base, &[("data/a.bin", b"aaaa")]);
+    let info = store
+        .snapshot(&base, &[PathPattern::new("data/")], meta())
+        .unwrap();
+    let m = store.manifest(&info.id).unwrap();
+    let file = m.files.iter().find(|e| e.typ == "file").unwrap();
+    let cid = file.chunks.as_ref().unwrap()[0].clone();
+    filetime_back(&chunk_file(store, &cid), 2 * 60 * 60 * 1000);
+    (info.id, cid)
+}
+
+#[test]
+fn gc_aborts_when_a_manifest_is_unreadable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let (id, cid) = aged_snapshot(tmp.path(), &store);
+    // stand-in for EIO/EMFILE/a sharing violation: the manifest exists but
+    // the read fails
+    let mf = manifest_file(&store, &id);
+    let bytes = fs::read(&mf).unwrap();
+    fs::remove_file(&mf).unwrap();
+    fs::create_dir(&mf).unwrap();
+    assert!(
+        store.gc().is_err(),
+        "gc must not sweep past an unreadable manifest"
+    );
+    assert!(
+        store.has_chunk(&cid),
+        "chunk of the unreadable manifest kept"
+    );
+    // readable again: the chunk is referenced and survives a normal gc
+    fs::remove_dir(&mf).unwrap();
+    fs::write(&mf, bytes).unwrap();
+    let r = store.gc().unwrap();
+    assert_eq!(r.removed_chunks, 0);
+    assert!(store.has_chunk(&cid));
+}
+
+#[test]
+fn gc_skips_a_quarantined_corrupt_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let (id, cid) = aged_snapshot(tmp.path(), &store);
+    // bytes no longer match the id: known-corrupt, quarantined on read —
+    // gc must not stay stuck on it
+    let mf = manifest_file(&store, &id);
+    fs::write(&mf, b"{\"garbage\":true}").unwrap();
+    let r = store.gc().unwrap();
+    assert!(!mf.exists(), "corrupt manifest quarantined");
+    assert!(mf.with_extension("quarantine").exists());
+    assert_eq!(r.removed_chunks, 1, "its old chunk is no longer referenced");
+    assert!(!store.has_chunk(&cid));
+    assert!(store.gc().is_ok(), "later gcs run normally");
+}
+
+#[test]
+fn reused_chunk_mtime_is_refreshed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let plain = b"shared chunk";
+    let cid = blake3::hash(plain).to_hex().to_string();
+    let z = zstd::bulk::compress(plain, 3).unwrap();
+    store.put_chunk_compressed(&cid, &z).unwrap();
+    let cf = chunk_file(&store, &cid);
+    let age = |p: &Path| {
+        std::time::SystemTime::now()
+            .duration_since(fs::metadata(p).unwrap().modified().unwrap())
+            .unwrap_or_default()
+    };
+    let hour = std::time::Duration::from_secs(3600);
+
+    // replication path: re-receiving an old orphan
+    filetime_back(&cf, 2 * 60 * 60 * 1000);
+    assert!(age(&cf) > hour);
+    store.put_chunk_compressed(&cid, &z).unwrap();
+    assert!(age(&cf) < hour, "put of an existing chunk touches it");
+
+    // snapshot path: a new file whose content is the old orphan
+    filetime_back(&cf, 2 * 60 * 60 * 1000);
+    let base = tmp.path().join("server");
+    tree(&base, &[("data/x.bin", plain)]);
+    let info = store
+        .snapshot(&base, &[PathPattern::new("data/")], meta())
+        .unwrap();
+    assert_eq!(info.new_chunks, 0, "chunk was reused");
+    assert!(age(&cf) < hour, "snapshot reuse touches the chunk");
+
+    // replica check: a chunk it is about to rely on is refreshed too
+    filetime_back(&cf, 2 * 60 * 60 * 1000);
+    let m = store.manifest(&info.id).unwrap();
+    assert!(store.missing_or_corrupt_chunks(&m).unwrap().is_empty());
+    assert!(age(&cf) < hour, "verified reuse touches the chunk");
+
+    // a gc whose mark set predates that manifest now sees a young orphan
+    fs::remove_file(manifest_file(&store, &info.id)).unwrap();
+    let r = store.gc().unwrap();
+    assert_eq!(r.removed_chunks, 0);
+    assert_eq!(r.kept_young, 1);
+
+    // well inside the grace period the mtime is left alone (no inode write)
+    filetime_back(&cf, 10 * 60 * 1000);
+    let before = fs::metadata(&cf).unwrap().modified().unwrap();
+    store.put_chunk_compressed(&cid, &z).unwrap();
+    store
+        .snapshot(&base, &[PathPattern::new("data/")], meta())
+        .unwrap();
+    assert_eq!(fs::metadata(&cf).unwrap().modified().unwrap(), before);
 }

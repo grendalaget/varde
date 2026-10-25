@@ -1,5 +1,4 @@
-// Package auth: users (argon2id), sessions (hashed tokens), signup policy,
-// and the Provider seam OIDC can later implement.
+// Package auth: users (argon2id), sessions (hashed tokens) and signup policy.
 package auth
 
 import (
@@ -41,16 +40,7 @@ const (
 	SignupClosed SignupPolicy = "closed"
 )
 
-// Provider is the seam for future OIDC: everything user-facing goes through
-// it. The builtin provider is email+password.
-type Provider interface {
-	Signup(ctx context.Context, email, password, displayName, inviteCode string) (*store.User, string, error)
-	Login(ctx context.Context, email, password string) (*store.User, string, error)
-	SessionUser(ctx context.Context, token string) (*store.User, error)
-	Logout(ctx context.Context, token string) error
-}
-
-// Local is the builtin email+password Provider.
+// Local is the builtin email+password auth.
 type Local struct {
 	Store *store.Store
 	// Policy, effective value resolved at call time (open until first user).
@@ -161,19 +151,26 @@ func (l *Local) Signup(ctx context.Context, email, password, displayName, invite
 		PasswordHash: ph,
 		CreatedAt:    l.Store.NowMs(),
 	}
+	// Consume the invite before the account exists: an expired or used
+	// invite must not leave behind a user who can log in anyway.
+	if inv != nil {
+		if err := l.Store.ConsumeInvite(ctx, inv.Code); err != nil {
+			return nil, "", fmt.Errorf("forbidden: invite expired or exhausted")
+		}
+	}
 	// The operator bit is decided inside the INSERT (empty table ⇒
 	// operator), not by the earlier count, so concurrent first signups
 	// can't both take the role.
 	if err := l.Store.CreateUserFirstOperator(ctx, u); err != nil {
+		if inv != nil {
+			_ = l.Store.RefundInvite(ctx, inv.Code)
+		}
 		if store.IsUniqueViolation(err) {
 			return nil, "", fmt.Errorf("conflict: email already registered")
 		}
 		return nil, "", err
 	}
 	if inv != nil {
-		if err := l.Store.ConsumeInvite(ctx, inv.Code); err != nil {
-			return nil, "", fmt.Errorf("forbidden: invite expired or exhausted")
-		}
 		if err := l.Store.AddMember(ctx, inv.GroupID, u.ID, inv.Role, l.Store.NowMs()); err != nil {
 			return nil, "", err
 		}

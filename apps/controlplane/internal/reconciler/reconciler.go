@@ -461,7 +461,24 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 			}
 			return nil
 		}
-		return r.activate(ctx, srv, true)
+		// Recovery rules (committed only, falls back to an older save) are
+		// only for a lost host. Anything else uses the normal rules, so this
+		// loop never silently picks an older save.
+		if lastServingEndedLost(execs) {
+			return r.activate(ctx, srv, true)
+		}
+		err = r.activate(ctx, srv, false)
+		if ae := ActivationError(err); ae != nil &&
+			(ae.Code == "latest_save_unavailable" || ae.Code == "no_reachable_save") {
+			// Wait for the save's machine; the next pass retries. Only a
+			// stale exec-derived state is replaced — these already say the
+			// server isn't up.
+			if !slices.Contains([]string{"stopped", "failed", "recovering"}, srv.ObservedState) {
+				return s.SetObservedState(ctx, s.DB, srv.ID, "recovering", now)
+			}
+			return nil
+		}
+		return err
 	}
 
 	// 3. desired stopped, active run → mark stop (unless a migration manages it).
@@ -497,6 +514,19 @@ func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) err
 		}
 	}
 	return nil
+}
+
+// lastServingEndedLost reports whether the newest serving execution (execs
+// newest first) ended by lease expiry. Aborted warm-migration incoming execs
+// are skipped: they never served.
+func lastServingEndedLost(execs []store.Execution) bool {
+	for _, ex := range execs {
+		if ex.Role != "" && ex.Role != "serving" {
+			continue
+		}
+		return ex.EndReason != nil && *ex.EndReason == "lost"
+	}
+	return false
 }
 
 func observedFor(srv *store.Server, e *store.Execution) string {
@@ -537,11 +567,15 @@ func (r *Reconciler) activate(ctx context.Context, srv *store.Server, recovery b
 }
 
 // ActivateNormal is used by the start API: fresh start rules, not recovery.
-// allowOlderSnapshot relaxes the "newest save must be online" rule.
+// allowOlderSnapshot relaxes the "newest save must be online" rule. It sets
+// desired=running in the activation's own transaction, so a refused start
+// leaves desired untouched.
 func (r *Reconciler) ActivateNormal(ctx context.Context, srv *store.Server, preferredNodeID string, allowOlder bool) error {
 	return r.activateWith(ctx, srv, false, preferredNodeID, &allowOlder)
 }
 
+// activateWith places and activates srv. A non-nil allowOlder marks an
+// explicit start (ActivateNormal).
 func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recovery bool, preferredOverride string, allowOlder *bool) error {
 	s := r.Store
 	now := s.NowMs()
@@ -648,7 +682,11 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	if restore != nil {
 		exec.RestoreSnapshotID = &restore.ID
 	}
-	if err := s.BumpEpochAndCreateExecution(ctx, exec); err != nil {
+	create := s.BumpEpochAndCreateExecution
+	if allowOlder != nil {
+		create = s.StartExecution
+	}
+	if err := create(ctx, exec); err != nil {
 		return err
 	}
 	newObserved := "starting"
@@ -671,7 +709,8 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 // chooseRestore implements the restore rules:
 //   - recovery: newest committed snapshot with a ready replica on an online node
 //   - normal:   newest non-invalid snapshot; if none of its replicas are on
-//     online nodes → 409 latest_save_unavailable, unless allowOlder.
+//     online nodes → 409 latest_save_unavailable, unless allowOlder; with
+//     allowOlder and no save reachable at all → 409 no_reachable_save.
 func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recovery bool, allowOlder *bool) (*store.Snapshot, []string, error) {
 	s := r.Store
 	snaps, err := s.SnapshotsForServer(ctx, srv.ID)
@@ -757,7 +796,20 @@ func (r *Reconciler) chooseRestore(ctx context.Context, srv *store.Server, recov
 	if ae := blocked(); ae != nil {
 		return nil, nil, ae
 	}
-	return nil, nil, nil // no committed save yet: start fresh
+	if firstBlocker != nil {
+		// allow_older found nothing reachable either: a fresh world here
+		// would supersede the real save and retention would delete it.
+		return nil, nil, &activationError{
+			Code:    "no_reachable_save",
+			Message: "no save is reachable on an online machine",
+			Details: map[string]any{
+				"snapshot_id": firstBlocker.ID,
+				"created_at":  firstBlocker.CreatedAt,
+				"nodes":       firstBlockerOnline,
+			},
+		}
+	}
+	return nil, nil, nil // no save yet: start fresh
 }
 
 func (r *Reconciler) onlineNodeIDs(ctx context.Context, groupID string) (map[string]struct{}, error) {

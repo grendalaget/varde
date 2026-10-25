@@ -10,7 +10,7 @@ import {
   TextField,
 } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Logo, Mark } from "./Logo";
+import { Logo, Mark } from "@varde/ui/Logo";
 import {
   invoke,
   listen,
@@ -25,7 +25,7 @@ import {
   errorParts,
   Field,
   WarnNote,
-} from "./ui";
+} from "@varde/ui/ui";
 
 type ErrParts = { text: string; detail?: string };
 
