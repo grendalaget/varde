@@ -265,7 +265,9 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
           <ErrorNote>
             {err.code === "latest_save_unavailable"
               ? "The latest save is on a machine that's offline right now. Wait for it to come back, or start from the newest save that's available (recent progress may be lost)."
-              : err.msg}
+              : err.code === "no_reachable_save"
+                ? "No save is reachable right now. Wait for the machine holding it to come back online."
+                : err.msg}
           </ErrorNote>
           {err.code === "latest_save_unavailable" && (
             <Button variant="danger" onClick={() => void start(true)}>

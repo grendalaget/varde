@@ -218,13 +218,33 @@ func (s *Server) DeleteEnrollmentToken(ctx context.Context, req gen.DeleteEnroll
 
 // ---- device links (user side) ----
 
+// deviceLinkByCode looks up a device link by user code for u, refusing
+// callers (by user and by client IP) that recently failed too many lookups.
+func (s *Server) deviceLinkByCode(ctx context.Context, u *store.User, code string) (*store.DeviceLink, error) {
+	keys := []string{"user:" + u.ID}
+	if ip := clientIPFrom(ctx); ip != "" {
+		keys = append(keys, "ip:"+ip)
+	}
+	now := s.Store.NowMs()
+	if !s.linkFails.Allowed(now, keys...) {
+		return nil, errResp(gen.LimitExceeded, "too many unknown device codes; try again in a minute", nil)
+	}
+	d, err := s.Store.DeviceLinkByUserCode(ctx, enroll.NormalizeUserCode(code))
+	if err != nil {
+		s.linkFails.Fail(now, keys...)
+		return nil, errResp(gen.NotFound, "device link not found", nil)
+	}
+	return d, nil
+}
+
 func (s *Server) GetDeviceLink(ctx context.Context, req gen.GetDeviceLinkRequestObject) (gen.GetDeviceLinkResponseObject, error) {
-	if _, err := s.requireUser(ctx); err != nil {
+	u, err := s.requireUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	d, err := s.Store.DeviceLinkByUserCode(ctx, enroll.NormalizeUserCode(req.UserCode))
+	d, err := s.deviceLinkByCode(ctx, u, req.UserCode)
 	if err != nil {
-		return nil, errResp(gen.NotFound, "device link not found", nil)
+		return nil, err
 	}
 	return gen.GetDeviceLink200JSONResponse{
 		UserCode: d.UserCode, Hostname: d.Hostname, Os: d.OS, Arch: d.Arch,
@@ -234,16 +254,16 @@ func (s *Server) GetDeviceLink(ctx context.Context, req gen.GetDeviceLinkRequest
 }
 
 func (s *Server) ApproveDeviceLink(ctx context.Context, req gen.ApproveDeviceLinkRequestObject) (gen.ApproveDeviceLinkResponseObject, error) {
+	if req.Body == nil {
+		return nil, errResp(gen.Validation, "missing body", nil)
+	}
 	u, _, err := s.requireRole(ctx, req.Body.GroupId, "member")
 	if err != nil {
 		return nil, err
 	}
-	if req.Body == nil {
-		return nil, errResp(gen.Validation, "missing body", nil)
-	}
-	d, err := s.Store.DeviceLinkByUserCode(ctx, enroll.NormalizeUserCode(req.Body.UserCode))
+	d, err := s.deviceLinkByCode(ctx, u, req.Body.UserCode)
 	if err != nil {
-		return nil, errResp(gen.NotFound, "device link not found", nil)
+		return nil, err
 	}
 	if d.ExpiresAt <= s.Store.NowMs() {
 		return nil, errResp(gen.Validation, "device link expired", nil)
@@ -531,8 +551,8 @@ func (s *Server) DeleteNode(ctx context.Context, req gen.DeleteNodeRequestObject
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Store.DeleteNode(ctx, req.NodeId); err != nil {
-		return nil, err
+	if err := s.Store.DeleteNode(ctx, req.NodeId, s.Store.NowMs()); err != nil {
+		return nil, storeErr(err, "", "node not found")
 	}
 	s.Recon.WakeGroup(n.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &n.GroupID, actorType, actorID, "node.delete", n.ID, nil)

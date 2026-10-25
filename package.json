@@ -9,6 +9,7 @@
     "apps/web",
     "apps/desktop/ui",
     "apps/setup/ui",
+    "packages/ui",
     "tests/minecraft-bot"
   ],
   "trustedDependencies": [

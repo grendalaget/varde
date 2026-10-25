@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "@heroui/styles";
-@import "./mouve.css";
+@import "@varde/ui/mouve.css";
+/* Logo/ui components live in packages/ui, outside this app's scanned root */
+@source "../../../../packages/ui/src";
 /* pro component layer omitted: the app uses no pro components */
 
 /*

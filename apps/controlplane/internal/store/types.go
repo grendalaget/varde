@@ -189,6 +189,9 @@ type Node struct {
 	OwnerUserID     *string `db:"owner_user_id"`
 	LastSeenAt      *int64  `db:"last_seen_at"`
 	CreatedAt       int64   `db:"created_at"`
+	// DeletedAt marks a removed machine; the row stays for the executions
+	// and snapshots that reference it, but no lookup returns it.
+	DeletedAt *int64 `db:"deleted_at"`
 }
 
 type NodeStatus struct {
@@ -226,6 +229,9 @@ type Server struct {
 	ConfigJSON    string  `db:"config_json"`
 	CreatedAt     int64   `db:"created_at"`
 	UpdatedAt     int64   `db:"updated_at"`
+	// DeletedAt marks a deleted server waiting for machines to drop their
+	// copies of its saves; PurgeDeletedServer removes the row afterwards.
+	DeletedAt *int64 `db:"deleted_at"`
 }
 
 type Service struct {

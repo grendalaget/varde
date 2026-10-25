@@ -117,22 +117,10 @@ impl ServeTracker {
             .flat_map(|e| e.chunks.iter().flatten())
             .all(|c| s.chunks.contains(c))
     }
-    /// All chunk ids fetched for `snap_id` (by any peer).
-    pub fn chunks_served(&self, snap_id: &str) -> usize {
-        self.inner
-            .lock()
-            .unwrap()
-            .map
-            .get(snap_id)
-            .map(|s| s.chunks.len())
-            .unwrap_or(0)
-    }
 }
 
 pub struct ChunkServer {
     pub addr: SocketAddr,
-    #[allow(dead_code)]
-    pub tracker: Arc<ServeTracker>,
 }
 
 /// Serves the store until `stop` fires. Returns the bound address.
@@ -143,14 +131,13 @@ pub async fn serve(
 ) -> Result<ChunkServer> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let tracker2 = tracker.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 c = listener.accept() => {
                     let Ok((stream, _)) = c else { continue };
                     let store = store.clone();
-                    let tracker = tracker2.clone();
+                    let tracker = tracker.clone();
                     tokio::spawn(async move {
                         let _ = handle(stream, store, tracker).await;
                     });
@@ -159,7 +146,7 @@ pub async fn serve(
             }
         }
     });
-    Ok(ChunkServer { addr, tracker })
+    Ok(ChunkServer { addr })
 }
 
 /// Bytes of `avail` to consume so `head` ends exactly at the head terminator.
@@ -456,10 +443,10 @@ where
 
 /// One request/response round trip with `EXCHANGE_TIMEOUT` covering
 /// connect + send + full-body read.
-async fn exchange(addr: &str, request: String) -> Result<Vec<u8>> {
+async fn exchange(addr: &str, request: &[u8]) -> Result<Vec<u8>> {
     tokio::time::timeout(EXCHANGE_TIMEOUT, async {
-        let mut stream = tokio::net::TcpStream::connect(&addr).await?;
-        stream.write_all(request.as_bytes()).await?;
+        let mut stream = tokio::net::TcpStream::connect(addr).await?;
+        stream.write_all(request).await?;
         let mut buf = Vec::new();
         stream.read_to_end(&mut buf).await?;
         anyhow::Ok(buf)
@@ -468,16 +455,44 @@ async fn exchange(addr: &str, request: String) -> Result<Vec<u8>> {
     .context("chunk request timed out")?
 }
 
+/// `request` to `peer`'s chunk server through the mesh's cached forward →
+/// (status, body). A failed exchange retires the forward (its listener may
+/// tunnel to a stale peer path); a cached one gets one fresh re-bind.
+async fn peer_request(
+    mesh: &crate::mesh_ctl::MeshCtl,
+    peer: &str,
+    request: String,
+) -> Result<(u16, Vec<u8>)> {
+    let mut retried = false;
+    loop {
+        let Some(fwd) = mesh.internal_forward(peer, SERVICE_NAME).await? else {
+            bail!("mesh not connected");
+        };
+        match exchange(&fwd.addr, request.as_bytes())
+            .await
+            .and_then(|buf| parse_http(&buf))
+        {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                mesh.retire_internal_forward(peer, SERVICE_NAME, &fwd.id)
+                    .await;
+                if !fwd.reused || retried {
+                    return Err(e);
+                }
+                tracing::debug!(peer, error = %e, "cached chunk forward failed; re-binding");
+                retried = true;
+            }
+        }
+    }
+}
+
 async fn http_get(mesh: &crate::mesh_ctl::MeshCtl, peer: &str, path: &str) -> Result<Vec<u8>> {
-    let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
-        bail!("mesh not connected");
-    };
-    let buf = exchange(
-        &addr,
+    let (status, bytes) = peer_request(
+        mesh,
+        peer,
         format!("GET {path} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
     )
     .await?;
-    let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("GET {path} → {status}");
     }
@@ -491,15 +506,12 @@ pub async fn notify_ready(
     peer: &str,
     snap_id: &SnapshotId,
 ) -> Result<()> {
-    let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
-        bail!("mesh not connected");
-    };
-    let buf = exchange(
-        &addr,
+    let (status, _) = peer_request(
+        mesh,
+        peer,
         format!("POST /v1/replicas/{snap_id} HTTP/1.1\r\nhost: x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
     )
     .await?;
-    let (status, _) = parse_http(&buf)?;
     if status != 200 {
         bail!("ready notify → {status}");
     }
@@ -512,12 +524,10 @@ async fn batch_get(
     snap_id: &SnapshotId,
     hashes: &[String],
 ) -> Result<Vec<(String, Vec<u8>)>> {
-    let Some(addr) = mesh.bind_internal_forward(peer, SERVICE_NAME).await? else {
-        bail!("mesh not connected");
-    };
     let body = serde_json::json!({"snapshot_id": snap_id.0, "hashes": hashes}).to_string();
-    let buf = exchange(
-        &addr,
+    let (status, bytes) = peer_request(
+        mesh,
+        peer,
         format!(
             "POST /v1/chunks/batch HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
             body.len(),
@@ -525,7 +535,6 @@ async fn batch_get(
         ),
     )
     .await?;
-    let (status, bytes) = parse_http(&buf)?;
     if status != 200 {
         bail!("batch status {status}");
     }

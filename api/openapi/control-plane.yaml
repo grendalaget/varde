@@ -241,9 +241,10 @@ paths:
       security: [{ bearerAuth: [] }, { cookieAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/GroupId" }]
       responses:
-        "204": { description: Deleted (owner only). }
+        "204": { description: Deleted (owner only). Refused while it still has servers or machines. }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/members:
     get:
       operationId: listMembers
@@ -665,9 +666,10 @@ paths:
       security: [{ bearerAuth: [] }, { cookieAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/ServerId" }]
       responses:
-        "204": { description: Deleted (admin+). Snapshots are retained per policy. }
+        "204": { description: "Deleted (admin+): every machine is told to delete its copies of the server's saves. Refused while it runs or migrates." }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/servers/{serverId}/start:
     post:
       operationId: startServer
@@ -1282,9 +1284,9 @@ components:
       properties:
         code:
           type: string
-          enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
-                 limit_exceeded, validation, unauthorized, conflict,
-                 unschedulable, internal]
+          enum: [stale_epoch, latest_save_unavailable, no_reachable_save,
+                 not_found, forbidden, limit_exceeded, validation,
+                 unauthorized, conflict, unschedulable, internal]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:

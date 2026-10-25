@@ -19,7 +19,6 @@ import (
 // transport for one relay: outbound writes get wrapped in DATA frames to the
 // relay; inbound relay DATA payloads land on in.
 type relayPipe struct {
-	n     *Node
 	relay *relayClient
 	in    chan pipePacket
 	done  chan struct{}
@@ -71,9 +70,10 @@ func (p *relayPipe) SetWriteDeadline(time.Time) error { return nil }
 // relayClient keeps a registration alive and hosts the relayed QUIC
 // transport for this relay.
 type relayClient struct {
-	n    *Node
-	id   string
-	addr *net.UDPAddr
+	n       *Node
+	id      string
+	cfgAddr string       // Relay.addr as configured (may be a hostname)
+	addr    *net.UDPAddr // cfgAddr resolved once at creation
 
 	mu       sync.RWMutex
 	token    string
@@ -99,10 +99,10 @@ func (n *Node) newRelayClientLocked(id, addr, token string) (*relayClient, error
 		return nil, err
 	}
 	rc := &relayClient{
-		n: n, id: id, addr: ua, token: token,
+		n: n, id: id, cfgAddr: addr, addr: ua, token: token,
 		stopCh: make(chan struct{}),
 	}
-	rc.pipe = &relayPipe{n: n, relay: rc, in: make(chan pipePacket, 256), done: make(chan struct{})}
+	rc.pipe = &relayPipe{relay: rc, in: make(chan pipePacket, 256), done: make(chan struct{})}
 	rc.tr = &quic.Transport{Conn: rc.pipe}
 	rc.ln, err = rc.tr.Listen(n.tlsConfigFor(""), quicConfig())
 	if err != nil {

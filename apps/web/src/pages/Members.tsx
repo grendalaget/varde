@@ -10,11 +10,13 @@ import {
   PageHeader,
 } from "../components/ui";
 import { useLoad } from "../lib/data";
+import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
 
 export default function Members() {
-  const { group, me } = useSession();
+  const { group, me, refreshMe } = useSession();
   const admin = canAdmin(group.role);
+  const owner = group.role === "owner";
   const [invite, setInvite] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const members = useLoad(
@@ -24,6 +26,19 @@ export default function Members() {
       }),
     [group.group_id],
   );
+
+  const remove = async (userId: string) => {
+    setErr(null);
+    const { error } = await api.DELETE(
+      "/v1/groups/{groupId}/members/{userId}",
+      { params: { path: { groupId: group.group_id, userId } } },
+    );
+    if (error) {
+      setErr(errorMessage(error));
+      return false;
+    }
+    return true;
+  };
 
   return (
     <>
@@ -85,7 +100,10 @@ export default function Members() {
                 <div className="text-xs text-muted">{m.email}</div>
               </div>
               <div className="flex items-center gap-2">
-                {admin && m.role !== "owner" && m.user_id !== me.user.id ? (
+                {/* admins manage non-owners; only owners manage owners */}
+                {admin &&
+                m.user_id !== me.user.id &&
+                (m.role !== "owner" || owner) ? (
                   <>
                     <select
                       className="rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150"
@@ -101,7 +119,8 @@ export default function Members() {
                               },
                             },
                             body: {
-                              role: e.target.value as "admin" | "member",
+                              role: e.target.value as
+                                "owner" | "admin" | "member",
                             },
                           },
                         );
@@ -109,6 +128,7 @@ export default function Members() {
                         void members.refresh();
                       }}
                     >
+                      {owner && <option value="owner">Owner</option>}
                       <option value="admin">Admin</option>
                       <option value="member">Member</option>
                     </select>
@@ -119,18 +139,7 @@ export default function Members() {
                           !confirm(`Remove ${m.display_name} from the group?`)
                         )
                           return;
-                        const { error } = await api.DELETE(
-                          "/v1/groups/{groupId}/members/{userId}",
-                          {
-                            params: {
-                              path: {
-                                groupId: group.group_id,
-                                userId: m.user_id,
-                              },
-                            },
-                          },
-                        );
-                        if (error) setErr(errorMessage(error));
+                        await remove(m.user_id);
                         void members.refresh();
                       }}
                     >
@@ -138,9 +147,24 @@ export default function Members() {
                     </Button>
                   </>
                 ) : (
-                  <Badge tone={m.role === "owner" ? "violet" : "neutral"}>
-                    {m.role}
-                  </Badge>
+                  <>
+                    <Badge tone={m.role === "owner" ? "violet" : "neutral"}>
+                      {m.role}
+                    </Badge>
+                    {m.user_id === me.user.id && (
+                      <Button
+                        variant="ghost"
+                        onClick={async () => {
+                          if (!confirm(`Leave ${group.name}?`)) return;
+                          if (!(await remove(m.user_id))) return;
+                          await refreshMe();
+                          navigate("/");
+                        }}
+                      >
+                        Leave group
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             </li>

@@ -25,15 +25,19 @@ func (s *Server) ListEvents(ctx context.Context, req gen.ListEventsRequestObject
 	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
 		return nil, err
 	}
-	after := int64(0)
-	if req.Params.After != nil {
-		after = *req.Params.After
-	}
 	limit := 200
-	if req.Params.Limit != nil {
-		limit = *req.Params.Limit
+	if req.Params.Limit != nil && *req.Params.Limit > 0 {
+		limit = min(*req.Params.Limit, 500)
 	}
-	evs, err := s.Store.EventsAfter(ctx, req.GroupId, after, limit)
+	// With a cursor, page forward from it; without one, the newest events
+	// (both oldest-first).
+	var evs []store.Event
+	var err error
+	if req.Params.After != nil {
+		evs, err = s.Store.EventsAfter(ctx, req.GroupId, *req.Params.After, limit)
+	} else {
+		evs, err = s.Store.LatestEvents(ctx, req.GroupId, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +53,9 @@ func (s *Server) ListEvents(ctx context.Context, req gen.ListEventsRequestObject
 func (s *Server) StreamEvents(ctx context.Context, req gen.StreamEventsRequestObject) (gen.StreamEventsResponseObject, error) {
 	return nil, fmt.Errorf("handled by raw SSE handler")
 }
+
+// sseFallbackPoll bounds event latency when no change notification arrives.
+const sseFallbackPoll = 5 * time.Second
 
 // ServeSSE implements GET /v1/groups/{id}/events/stream outside oapi-codegen.
 func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +81,17 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, gen.Internal, "no streaming", nil)
 		return
 	}
-	after := int64(0)
+	// A fresh connection starts at the newest event (history comes from
+	// ListEvents); a reconnect resumes after Last-Event-ID.
+	var after int64
 	if lse := r.Header.Get("Last-Event-ID"); lse != "" {
 		_, _ = fmt.Sscanf(lse, "%d", &after)
+	} else {
+		var err error
+		if after, err = s.Store.MaxEventID(ctx, groupID); err != nil {
+			writeErr(w, http.StatusInternalServerError, gen.Internal, "internal error", nil)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -90,29 +105,42 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
-	poll := time.NewTicker(500 * time.Millisecond)
-	defer poll.Stop()
+	// Changed fires when the reconciler sees the group's fingerprint move
+	// (it includes the max event id). It is per-process, so on multi-replica
+	// deployments events written via another replica arrive on the fallback.
+	fallback := time.NewTicker(sseFallbackPoll)
+	defer fallback.Stop()
 
 	for {
-		select {
-		case <-ctx.Done():
+		changed := s.Recon.Changed(groupID)
+		evs, err := s.Store.EventsAfter(ctx, groupID, after, 500)
+		if err != nil {
 			return
-		case <-heartbeat.C:
-			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
+		}
+		for i := range evs {
+			e := &evs[i]
+			payload, _ := json.Marshal(genEvent(e))
+			_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, payload)
+			after = e.ID
+		}
+		if len(evs) > 0 {
 			flusher.Flush()
-		case <-poll.C:
-			evs, err := s.Store.EventsAfter(ctx, groupID, after, 500)
-			if err != nil {
+		}
+		if len(evs) == 500 {
+			continue // backlog: keep draining
+		}
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-			for i := range evs {
-				e := &evs[i]
-				payload, _ := json.Marshal(genEvent(e))
-				_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, payload)
-				after = e.ID
-			}
-			if len(evs) > 0 {
+			case <-heartbeat.C:
+				_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 				flusher.Flush()
+			case <-changed:
+				break wait
+			case <-fallback.C:
+				break wait
 			}
 		}
 	}
