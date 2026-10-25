@@ -219,12 +219,11 @@ func (s *Server) DeleteEnrollmentToken(ctx context.Context, req gen.DeleteEnroll
 // ---- device links (user side) ----
 
 // deviceLinkByCode looks up a device link by user code for u, refusing
-// callers (by user and by client IP) that recently failed too many lookups.
+// users that recently failed too many lookups. Not keyed by client IP: behind
+// a proxy every caller shares one address, so a few typos anywhere would lock
+// device linking for everyone.
 func (s *Server) deviceLinkByCode(ctx context.Context, u *store.User, code string) (*store.DeviceLink, error) {
 	keys := []string{"user:" + u.ID}
-	if ip := clientIPFrom(ctx); ip != "" {
-		keys = append(keys, "ip:"+ip)
-	}
 	now := s.Store.NowMs()
 	if !s.linkFails.Allowed(now, keys...) {
 		return nil, errResp(gen.LimitExceeded, "too many unknown device codes; try again in a minute", nil)

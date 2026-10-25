@@ -3,8 +3,8 @@ package api
 import "sync"
 
 // Device link user codes (WORD-NN-WORD) have ~1.1M combinations, so failed
-// lookups are capped per user and per client IP to make guessing a stranger's
-// pending code impractical.
+// lookups are capped per user to make guessing a stranger's pending code
+// impractical.
 const (
 	deviceLinkFailLimit    = 10
 	deviceLinkFailWindowMs = 60_000
@@ -14,7 +14,7 @@ const (
 // refused until its window ends.
 //
 // shortcut: in-memory and per-process (10 failed device-link lookups per
-// minute per user and per IP). On multi-replica deployments each replica
+// minute per user). On multi-replica deployments each replica
 // counts separately, so the effective limit is replicas × 10.
 type failLimiter struct {
 	limit    int

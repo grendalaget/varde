@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 
@@ -55,7 +54,6 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 			// the whole body to verify the signature, and only needs a known
 			// node id to get that far.
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes(p))
-			r = r.WithContext(withClientIP(r.Context(), r))
 		}
 		switch {
 		case strings.HasPrefix(p, "/v1/agent/"):
@@ -95,23 +93,6 @@ func maxBodyBytes(path string) int64 {
 func tooLarge(err error) bool {
 	var mbe *http.MaxBytesError
 	return errors.As(err, &mbe)
-}
-
-type clientIPKey struct{}
-
-// withClientIP records the peer address for per-IP rate limits. There is no
-// trusted-proxy configuration, so X-Forwarded-For is ignored (spoofable).
-func withClientIP(ctx context.Context, r *http.Request) context.Context {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return context.WithValue(ctx, clientIPKey{}, host)
-}
-
-func clientIPFrom(ctx context.Context) string {
-	ip, _ := ctx.Value(clientIPKey{}).(string)
-	return ip
 }
 
 type requestBaseKey struct{}

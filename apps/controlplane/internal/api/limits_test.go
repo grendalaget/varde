@@ -41,8 +41,8 @@ func TestRequestBodyCaps(t *testing.T) {
 	}
 }
 
-// Failed device-code lookups are limited per user and per client IP, so
-// codes can't be enumerated to approve strangers' machines.
+// Failed device-code lookups are limited per user, so codes can't be
+// enumerated to approve strangers' machines, without locking out other users.
 func TestDeviceLinkGuessingIsRateLimited(t *testing.T) {
 	e := newEnv(t)
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -64,10 +64,10 @@ func TestDeviceLinkGuessingIsRateLimited(t *testing.T) {
 		map[string]any{"user_code": code, "group_id": e.group, "name": "desktop"}, e.token); !limited(r) {
 		t.Fatalf("approve after 10 failures: want limit_exceeded, got %d %s", r.Status, r.Raw)
 	}
-	// the same client IP is limited for other accounts too
+	// other accounts (often behind the same proxy address) are unaffected
 	other := e.signup("other@example.com", "password123")
-	if r := e.do("GET", "/v1/device-links/"+code, nil, other); !limited(r) {
-		t.Fatalf("other user from same IP: want limit_exceeded, got %d %s", r.Status, r.Raw)
+	if r := e.do("GET", "/v1/device-links/"+code, nil, other); r.Status != 200 {
+		t.Fatalf("other user: want 200, got %d %s", r.Status, r.Raw)
 	}
 
 	e.clk.advance(60_000)
