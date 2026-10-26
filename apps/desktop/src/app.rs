@@ -11,6 +11,8 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::autostart;
@@ -32,6 +34,8 @@ static ICON_WARN: &[u8] = include_bytes!("../icons/tray-warn.png");
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) status: Mutex<Option<pb::Status>>,
+    /// server_id → since of the ready prompt already notified.
+    rejoin_notified: Mutex<std::collections::HashMap<String, i64>>,
     /// User picked "update when idle": apply on the next hosting-drained status.
     pub(crate) update_when_idle: std::sync::atomic::AtomicBool,
     view: Mutex<Option<TrayView>>,
@@ -141,7 +145,10 @@ pub fn run() {
             let _ = svcctl::ensure_started();
         });
     }
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let l = view::parse_launch(argv.into_iter().skip(1));
@@ -299,6 +306,9 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
         .map(|s| s.control_plane_url.clone())
         .filter(|u| !u.is_empty());
     let link_pending = s.as_ref().is_some_and(|s| s.link.is_some());
+    if let Some(st) = &s {
+        notify_rejoin(app, &st.rejoin);
+    }
     *app.state::<State>().status.lock().unwrap() = s;
     render(app, false);
     let _ = app.emit_to(MAIN_WINDOW, "status", ui);
@@ -372,6 +382,21 @@ fn sync_visible_facet(app: &AppHandle) {
     dock_sync(app);
 }
 
+/// One notification per failover, when the server is ready to rejoin.
+fn notify_rejoin(app: &AppHandle, rejoin: &[pb::Rejoin]) {
+    let st = app.state::<State>();
+    let mut sent = st.rejoin_notified.lock().unwrap();
+    sent.retain(|id, _| rejoin.iter().any(|r| &r.server_id == id));
+    for r in rejoin.iter().filter(|r| r.phase == "ready") {
+        if sent.get(&r.server_id) == Some(&r.since_unix_ms) {
+            continue;
+        }
+        sent.insert(r.server_id.clone(), r.since_unix_ms);
+        let (title, body) = view::rejoin_notice(r);
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
+}
+
 fn render(app: &AppHandle, force: bool) {
     let st = app.state::<State>();
     if st.relink {
@@ -403,6 +428,18 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         false,
         none,
     )?)?;
+    if let Some(r) = &v.rejoin {
+        m.append(&MenuItem::with_id(app, "rejoin", r, false, none)?)?;
+    }
+    if v.rejoin_address.is_some() {
+        m.append(&MenuItem::with_id(
+            app,
+            "copyaddr",
+            "Copy address",
+            true,
+            none,
+        )?)?;
+    }
     m.append(&MenuItem::with_id(app, "open", "Open Varde", true, none)?)?;
     if let Some(l) = &v.update_label {
         m.append(&MenuItem::with_id(app, "update", l, true, none)?)?;
@@ -463,6 +500,11 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
             Some(v) if v.relink => relink_window(app),
             _ => open_varde_window(app),
         },
+        "copyaddr" => {
+            if let Some(a) = v.and_then(|v| v.rejoin_address) {
+                let _ = app.clipboard().write_text(a);
+            }
+        }
         "logs" => {
             let _ = app
                 .opener()

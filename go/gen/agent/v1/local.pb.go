@@ -440,8 +440,11 @@ type Status struct {
 	// Whether crash reports captured on this machine are uploaded to the
 	// control plane. Capture to disk happens either way.
 	CrashReporting bool `protobuf:"varint,14,opt,name=crash_reporting,json=crashReporting,proto3" json:"crash_reporting,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Servers this PC was playing on whose host went away, until the player
+	// has rejoined (or gives up).
+	Rejoin        []*Rejoin `protobuf:"bytes,15,rep,name=rejoin,proto3" json:"rejoin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Status) Reset() {
@@ -572,6 +575,119 @@ func (x *Status) GetCrashReporting() bool {
 	return false
 }
 
+func (x *Status) GetRejoin() []*Rejoin {
+	if x != nil {
+		return x.Rejoin
+	}
+	return nil
+}
+
+// A server this PC's game was connected to lost its host.
+type Rejoin struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ServerId   string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	ServerName string                 `protobuf:"bytes,2,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	// host_lost: the host stopped answering; moving: starting on another PC;
+	// ready: running again — rejoin at the same address.
+	Phase            string `protobuf:"bytes,3,opt,name=phase,proto3" json:"phase,omitempty"`
+	HostName         string `protobuf:"bytes,4,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	PreviousHostName string `protobuf:"bytes,5,opt,name=previous_host_name,json=previousHostName,proto3" json:"previous_host_name,omitempty"`
+	// "127.77.x.y:port" — unchanged across the move.
+	Address string `protobuf:"bytes,6,opt,name=address,proto3" json:"address,omitempty"`
+	// The save the server resumes from (local clock); 0 = unknown.
+	SaveAtUnixMs int64 `protobuf:"varint,7,opt,name=save_at_unix_ms,json=saveAtUnixMs,proto3" json:"save_at_unix_ms,omitempty"`
+	// When this phase began (local clock).
+	SinceUnixMs   int64 `protobuf:"varint,8,opt,name=since_unix_ms,json=sinceUnixMs,proto3" json:"since_unix_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Rejoin) Reset() {
+	*x = Rejoin{}
+	mi := &file_agent_v1_local_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Rejoin) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Rejoin) ProtoMessage() {}
+
+func (x *Rejoin) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Rejoin.ProtoReflect.Descriptor instead.
+func (*Rejoin) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Rejoin) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *Rejoin) GetServerName() string {
+	if x != nil {
+		return x.ServerName
+	}
+	return ""
+}
+
+func (x *Rejoin) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *Rejoin) GetHostName() string {
+	if x != nil {
+		return x.HostName
+	}
+	return ""
+}
+
+func (x *Rejoin) GetPreviousHostName() string {
+	if x != nil {
+		return x.PreviousHostName
+	}
+	return ""
+}
+
+func (x *Rejoin) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *Rejoin) GetSaveAtUnixMs() int64 {
+	if x != nil {
+		return x.SaveAtUnixMs
+	}
+	return 0
+}
+
+func (x *Rejoin) GetSinceUnixMs() int64 {
+	if x != nil {
+		return x.SinceUnixMs
+	}
+	return 0
+}
+
 type GetStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -580,7 +696,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[5]
+	mi := &file_agent_v1_local_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +708,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[5]
+	mi := &file_agent_v1_local_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -605,7 +721,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{5}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{6}
 }
 
 type GetStatusResponse struct {
@@ -617,7 +733,7 @@ type GetStatusResponse struct {
 
 func (x *GetStatusResponse) Reset() {
 	*x = GetStatusResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[6]
+	mi := &file_agent_v1_local_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -629,7 +745,7 @@ func (x *GetStatusResponse) String() string {
 func (*GetStatusResponse) ProtoMessage() {}
 
 func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[6]
+	mi := &file_agent_v1_local_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -642,7 +758,7 @@ func (x *GetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{6}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetStatusResponse) GetStatus() *Status {
@@ -660,7 +776,7 @@ type WatchStatusRequest struct {
 
 func (x *WatchStatusRequest) Reset() {
 	*x = WatchStatusRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[7]
+	mi := &file_agent_v1_local_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +788,7 @@ func (x *WatchStatusRequest) String() string {
 func (*WatchStatusRequest) ProtoMessage() {}
 
 func (x *WatchStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[7]
+	mi := &file_agent_v1_local_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +801,7 @@ func (x *WatchStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchStatusRequest.ProtoReflect.Descriptor instead.
 func (*WatchStatusRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{7}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{8}
 }
 
 type WatchStatusResponse struct {
@@ -697,7 +813,7 @@ type WatchStatusResponse struct {
 
 func (x *WatchStatusResponse) Reset() {
 	*x = WatchStatusResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[8]
+	mi := &file_agent_v1_local_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -709,7 +825,7 @@ func (x *WatchStatusResponse) String() string {
 func (*WatchStatusResponse) ProtoMessage() {}
 
 func (x *WatchStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[8]
+	mi := &file_agent_v1_local_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -722,7 +838,7 @@ func (x *WatchStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchStatusResponse.ProtoReflect.Descriptor instead.
 func (*WatchStatusResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{8}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *WatchStatusResponse) GetStatus() *Status {
@@ -744,7 +860,7 @@ type StartLinkRequest struct {
 
 func (x *StartLinkRequest) Reset() {
 	*x = StartLinkRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[9]
+	mi := &file_agent_v1_local_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +872,7 @@ func (x *StartLinkRequest) String() string {
 func (*StartLinkRequest) ProtoMessage() {}
 
 func (x *StartLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[9]
+	mi := &file_agent_v1_local_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +885,7 @@ func (x *StartLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartLinkRequest.ProtoReflect.Descriptor instead.
 func (*StartLinkRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{9}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *StartLinkRequest) GetControlPlaneUrl() string {
@@ -795,7 +911,7 @@ type StartLinkResponse struct {
 
 func (x *StartLinkResponse) Reset() {
 	*x = StartLinkResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[10]
+	mi := &file_agent_v1_local_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -807,7 +923,7 @@ func (x *StartLinkResponse) String() string {
 func (*StartLinkResponse) ProtoMessage() {}
 
 func (x *StartLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[10]
+	mi := &file_agent_v1_local_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -820,7 +936,7 @@ func (x *StartLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartLinkResponse.ProtoReflect.Descriptor instead.
 func (*StartLinkResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{10}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *StartLinkResponse) GetStatus() *Status {
@@ -838,7 +954,7 @@ type CancelLinkRequest struct {
 
 func (x *CancelLinkRequest) Reset() {
 	*x = CancelLinkRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[11]
+	mi := &file_agent_v1_local_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -850,7 +966,7 @@ func (x *CancelLinkRequest) String() string {
 func (*CancelLinkRequest) ProtoMessage() {}
 
 func (x *CancelLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[11]
+	mi := &file_agent_v1_local_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -863,7 +979,7 @@ func (x *CancelLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelLinkRequest.ProtoReflect.Descriptor instead.
 func (*CancelLinkRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{11}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{12}
 }
 
 type CancelLinkResponse struct {
@@ -875,7 +991,7 @@ type CancelLinkResponse struct {
 
 func (x *CancelLinkResponse) Reset() {
 	*x = CancelLinkResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[12]
+	mi := &file_agent_v1_local_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -887,7 +1003,7 @@ func (x *CancelLinkResponse) String() string {
 func (*CancelLinkResponse) ProtoMessage() {}
 
 func (x *CancelLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[12]
+	mi := &file_agent_v1_local_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -900,7 +1016,7 @@ func (x *CancelLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelLinkResponse.ProtoReflect.Descriptor instead.
 func (*CancelLinkResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{12}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CancelLinkResponse) GetStatus() *Status {
@@ -918,7 +1034,7 @@ type CheckUpdateRequest struct {
 
 func (x *CheckUpdateRequest) Reset() {
 	*x = CheckUpdateRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[13]
+	mi := &file_agent_v1_local_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -930,7 +1046,7 @@ func (x *CheckUpdateRequest) String() string {
 func (*CheckUpdateRequest) ProtoMessage() {}
 
 func (x *CheckUpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[13]
+	mi := &file_agent_v1_local_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -943,7 +1059,7 @@ func (x *CheckUpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckUpdateRequest.ProtoReflect.Descriptor instead.
 func (*CheckUpdateRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{13}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{14}
 }
 
 type CheckUpdateResponse struct {
@@ -955,7 +1071,7 @@ type CheckUpdateResponse struct {
 
 func (x *CheckUpdateResponse) Reset() {
 	*x = CheckUpdateResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[14]
+	mi := &file_agent_v1_local_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1083,7 @@ func (x *CheckUpdateResponse) String() string {
 func (*CheckUpdateResponse) ProtoMessage() {}
 
 func (x *CheckUpdateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[14]
+	mi := &file_agent_v1_local_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -980,7 +1096,7 @@ func (x *CheckUpdateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckUpdateResponse.ProtoReflect.Descriptor instead.
 func (*CheckUpdateResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{14}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CheckUpdateResponse) GetStatus() *Status {
@@ -1015,7 +1131,7 @@ type CrashReportMsg struct {
 
 func (x *CrashReportMsg) Reset() {
 	*x = CrashReportMsg{}
-	mi := &file_agent_v1_local_proto_msgTypes[15]
+	mi := &file_agent_v1_local_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1027,7 +1143,7 @@ func (x *CrashReportMsg) String() string {
 func (*CrashReportMsg) ProtoMessage() {}
 
 func (x *CrashReportMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[15]
+	mi := &file_agent_v1_local_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1040,7 +1156,7 @@ func (x *CrashReportMsg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CrashReportMsg.ProtoReflect.Descriptor instead.
 func (*CrashReportMsg) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{15}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CrashReportMsg) GetKind() string {
@@ -1129,7 +1245,7 @@ type SubmitCrashReportRequest struct {
 
 func (x *SubmitCrashReportRequest) Reset() {
 	*x = SubmitCrashReportRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[16]
+	mi := &file_agent_v1_local_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1141,7 +1257,7 @@ func (x *SubmitCrashReportRequest) String() string {
 func (*SubmitCrashReportRequest) ProtoMessage() {}
 
 func (x *SubmitCrashReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[16]
+	mi := &file_agent_v1_local_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1154,7 +1270,7 @@ func (x *SubmitCrashReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitCrashReportRequest.ProtoReflect.Descriptor instead.
 func (*SubmitCrashReportRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{16}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SubmitCrashReportRequest) GetReport() *CrashReportMsg {
@@ -1172,7 +1288,7 @@ type SubmitCrashReportResponse struct {
 
 func (x *SubmitCrashReportResponse) Reset() {
 	*x = SubmitCrashReportResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[17]
+	mi := &file_agent_v1_local_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1184,7 +1300,7 @@ func (x *SubmitCrashReportResponse) String() string {
 func (*SubmitCrashReportResponse) ProtoMessage() {}
 
 func (x *SubmitCrashReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[17]
+	mi := &file_agent_v1_local_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1197,7 +1313,7 @@ func (x *SubmitCrashReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitCrashReportResponse.ProtoReflect.Descriptor instead.
 func (*SubmitCrashReportResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{17}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{18}
 }
 
 type SetCrashReportingRequest struct {
@@ -1209,7 +1325,7 @@ type SetCrashReportingRequest struct {
 
 func (x *SetCrashReportingRequest) Reset() {
 	*x = SetCrashReportingRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[18]
+	mi := &file_agent_v1_local_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1221,7 +1337,7 @@ func (x *SetCrashReportingRequest) String() string {
 func (*SetCrashReportingRequest) ProtoMessage() {}
 
 func (x *SetCrashReportingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[18]
+	mi := &file_agent_v1_local_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1234,7 +1350,7 @@ func (x *SetCrashReportingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCrashReportingRequest.ProtoReflect.Descriptor instead.
 func (*SetCrashReportingRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{18}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SetCrashReportingRequest) GetEnabled() bool {
@@ -1253,7 +1369,7 @@ type SetCrashReportingResponse struct {
 
 func (x *SetCrashReportingResponse) Reset() {
 	*x = SetCrashReportingResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[19]
+	mi := &file_agent_v1_local_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1265,7 +1381,7 @@ func (x *SetCrashReportingResponse) String() string {
 func (*SetCrashReportingResponse) ProtoMessage() {}
 
 func (x *SetCrashReportingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[19]
+	mi := &file_agent_v1_local_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1278,7 +1394,7 @@ func (x *SetCrashReportingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCrashReportingResponse.ProtoReflect.Descriptor instead.
 func (*SetCrashReportingResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{19}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SetCrashReportingResponse) GetStatus() *Status {
@@ -1318,7 +1434,7 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\tR\tsignature\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xa8\x04\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xd8\x04\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +
@@ -1336,7 +1452,18 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\ragent_version\x18\v \x01(\tR\fagentVersion\x12.\n" +
 	"\x06update\x18\f \x01(\v2\x16.varde.agent.v1.UpdateR\x06update\x12*\n" +
 	"\x11link_error_detail\x18\r \x01(\tR\x0flinkErrorDetail\x12'\n" +
-	"\x0fcrash_reporting\x18\x0e \x01(\bR\x0ecrashReporting\"\x12\n" +
+	"\x0fcrash_reporting\x18\x0e \x01(\bR\x0ecrashReporting\x12.\n" +
+	"\x06rejoin\x18\x0f \x03(\v2\x16.varde.agent.v1.RejoinR\x06rejoin\"\x8c\x02\n" +
+	"\x06Rejoin\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x1f\n" +
+	"\vserver_name\x18\x02 \x01(\tR\n" +
+	"serverName\x12\x14\n" +
+	"\x05phase\x18\x03 \x01(\tR\x05phase\x12\x1b\n" +
+	"\thost_name\x18\x04 \x01(\tR\bhostName\x12,\n" +
+	"\x12previous_host_name\x18\x05 \x01(\tR\x10previousHostName\x12\x18\n" +
+	"\aaddress\x18\x06 \x01(\tR\aaddress\x12%\n" +
+	"\x0fsave_at_unix_ms\x18\a \x01(\x03R\fsaveAtUnixMs\x12\"\n" +
+	"\rsince_unix_ms\x18\b \x01(\x03R\vsinceUnixMs\"\x12\n" +
 	"\x10GetStatusRequest\"C\n" +
 	"\x11GetStatusResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
@@ -1405,7 +1532,7 @@ func file_agent_v1_local_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_local_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_agent_v1_local_proto_goTypes = []any{
 	(State)(0),                        // 0: varde.agent.v1.State
 	(*Link)(nil),                      // 1: varde.agent.v1.Link
@@ -1413,21 +1540,22 @@ var file_agent_v1_local_proto_goTypes = []any{
 	(*Hosting)(nil),                   // 3: varde.agent.v1.Hosting
 	(*Update)(nil),                    // 4: varde.agent.v1.Update
 	(*Status)(nil),                    // 5: varde.agent.v1.Status
-	(*GetStatusRequest)(nil),          // 6: varde.agent.v1.GetStatusRequest
-	(*GetStatusResponse)(nil),         // 7: varde.agent.v1.GetStatusResponse
-	(*WatchStatusRequest)(nil),        // 8: varde.agent.v1.WatchStatusRequest
-	(*WatchStatusResponse)(nil),       // 9: varde.agent.v1.WatchStatusResponse
-	(*StartLinkRequest)(nil),          // 10: varde.agent.v1.StartLinkRequest
-	(*StartLinkResponse)(nil),         // 11: varde.agent.v1.StartLinkResponse
-	(*CancelLinkRequest)(nil),         // 12: varde.agent.v1.CancelLinkRequest
-	(*CancelLinkResponse)(nil),        // 13: varde.agent.v1.CancelLinkResponse
-	(*CheckUpdateRequest)(nil),        // 14: varde.agent.v1.CheckUpdateRequest
-	(*CheckUpdateResponse)(nil),       // 15: varde.agent.v1.CheckUpdateResponse
-	(*CrashReportMsg)(nil),            // 16: varde.agent.v1.CrashReportMsg
-	(*SubmitCrashReportRequest)(nil),  // 17: varde.agent.v1.SubmitCrashReportRequest
-	(*SubmitCrashReportResponse)(nil), // 18: varde.agent.v1.SubmitCrashReportResponse
-	(*SetCrashReportingRequest)(nil),  // 19: varde.agent.v1.SetCrashReportingRequest
-	(*SetCrashReportingResponse)(nil), // 20: varde.agent.v1.SetCrashReportingResponse
+	(*Rejoin)(nil),                    // 6: varde.agent.v1.Rejoin
+	(*GetStatusRequest)(nil),          // 7: varde.agent.v1.GetStatusRequest
+	(*GetStatusResponse)(nil),         // 8: varde.agent.v1.GetStatusResponse
+	(*WatchStatusRequest)(nil),        // 9: varde.agent.v1.WatchStatusRequest
+	(*WatchStatusResponse)(nil),       // 10: varde.agent.v1.WatchStatusResponse
+	(*StartLinkRequest)(nil),          // 11: varde.agent.v1.StartLinkRequest
+	(*StartLinkResponse)(nil),         // 12: varde.agent.v1.StartLinkResponse
+	(*CancelLinkRequest)(nil),         // 13: varde.agent.v1.CancelLinkRequest
+	(*CancelLinkResponse)(nil),        // 14: varde.agent.v1.CancelLinkResponse
+	(*CheckUpdateRequest)(nil),        // 15: varde.agent.v1.CheckUpdateRequest
+	(*CheckUpdateResponse)(nil),       // 16: varde.agent.v1.CheckUpdateResponse
+	(*CrashReportMsg)(nil),            // 17: varde.agent.v1.CrashReportMsg
+	(*SubmitCrashReportRequest)(nil),  // 18: varde.agent.v1.SubmitCrashReportRequest
+	(*SubmitCrashReportResponse)(nil), // 19: varde.agent.v1.SubmitCrashReportResponse
+	(*SetCrashReportingRequest)(nil),  // 20: varde.agent.v1.SetCrashReportingRequest
+	(*SetCrashReportingResponse)(nil), // 21: varde.agent.v1.SetCrashReportingResponse
 }
 var file_agent_v1_local_proto_depIdxs = []int32{
 	2,  // 0: varde.agent.v1.Hosting.latest_safe_save_on:type_name -> varde.agent.v1.SaveHolder
@@ -1436,32 +1564,33 @@ var file_agent_v1_local_proto_depIdxs = []int32{
 	1,  // 3: varde.agent.v1.Status.link:type_name -> varde.agent.v1.Link
 	3,  // 4: varde.agent.v1.Status.hosting:type_name -> varde.agent.v1.Hosting
 	4,  // 5: varde.agent.v1.Status.update:type_name -> varde.agent.v1.Update
-	5,  // 6: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 7: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 8: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 9: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
-	5,  // 10: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
-	16, // 11: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
-	5,  // 12: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
-	6,  // 13: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
-	8,  // 14: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
-	10, // 15: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
-	12, // 16: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
-	14, // 17: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
-	17, // 18: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
-	19, // 19: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
-	7,  // 20: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
-	9,  // 21: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
-	11, // 22: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
-	13, // 23: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
-	15, // 24: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
-	18, // 25: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
-	20, // 26: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
-	20, // [20:27] is the sub-list for method output_type
-	13, // [13:20] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	6,  // 6: varde.agent.v1.Status.rejoin:type_name -> varde.agent.v1.Rejoin
+	5,  // 7: varde.agent.v1.GetStatusResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 8: varde.agent.v1.WatchStatusResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 9: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 10: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 11: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
+	17, // 12: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
+	5,  // 13: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
+	7,  // 14: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
+	9,  // 15: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
+	11, // 16: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
+	13, // 17: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
+	15, // 18: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
+	18, // 19: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
+	20, // 20: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
+	8,  // 21: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
+	10, // 22: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
+	12, // 23: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
+	14, // 24: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
+	16, // 25: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
+	19, // 26: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
+	21, // 27: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
+	21, // [21:28] is the sub-list for method output_type
+	14, // [14:21] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_local_proto_init() }
@@ -1475,7 +1604,7 @@ func file_agent_v1_local_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_local_proto_rawDesc), len(file_agent_v1_local_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

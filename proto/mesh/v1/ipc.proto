@@ -54,6 +54,19 @@ message MeshStatus {
   repeated string observed_endpoints = 5;
   repeated RelayState relays = 6;
   int64 started_at_unix_ms = 7;
+  // Local game clients per route; feeds the tray's rejoin prompt.
+  repeated RouteActivity routes = 8;
+}
+
+message RouteActivity {
+  string service_id = 1;
+  // Game connections through this route that have lasted at least 15 s
+  // (TCP connections, UDP flows with recent traffic): a player, not a
+  // server-list ping.
+  uint32 sessions = 2;
+  // The host these sessions were opened to; a stale connection to a dead
+  // host is not a rejoin.
+  string host_node_id = 3;
 }
 
 message RelayState {

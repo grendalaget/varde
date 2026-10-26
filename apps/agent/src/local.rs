@@ -106,6 +106,7 @@ impl Hub {
             s.group_name = view.group_name;
             s.last_contact_unix_ms = view.last_contact_unix_ms;
             s.hosting = hosting(&a);
+            s.rejoin = view.rejoin;
             s.update = Some(crate::update::status_pb(&a.update.lock().unwrap()));
             let fresh = Duration::from_millis((view.heartbeat_interval_ms * 3).max(15_000) as u64);
             match *a.last_heartbeat_ok.lock().unwrap() {

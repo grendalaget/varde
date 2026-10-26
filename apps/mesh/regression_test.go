@@ -289,3 +289,31 @@ func TestInternalForwardCannotExposePeerChunks(t *testing.T) {
 		t.Fatalf("legacy bind exposed an internal forward: response=%v error=%v", forward, err)
 	}
 }
+
+func TestRouteSessionCounts(t *testing.T) {
+	rt := &routeState{n: &Node{}, flows: map[udpFlowKey]*udpFlow{}}
+	id := rt.openSession("node_b")
+	now := time.Now()
+	if c := rt.sessionCounts(now); len(c) != 0 {
+		t.Fatalf("a fresh connection is not a play session yet: %v", c)
+	}
+	playing := &udpFlow{hostNodeID: "node_a", opened: now.Add(-time.Minute)}
+	playing.lastUsed.Store(now.Add(sessionMinAge).UnixNano())
+	idle := &udpFlow{hostNodeID: "node_a", opened: now.Add(-time.Minute)}
+	idle.lastUsed.Store(now.Add(-time.Minute).UnixNano())
+	rt.flows[udpFlowKey{port: 1}] = playing
+	rt.flows[udpFlowKey{port: 2}] = idle
+	later := now.Add(sessionMinAge)
+	c := rt.sessionCounts(later.Add(-time.Second))
+	if c["node_b"] != 0 {
+		t.Fatalf("tcp session counted before %s: %v", sessionMinAge, c)
+	}
+	c = rt.sessionCounts(later)
+	if c["node_b"] != 1 || c["node_a"] != 1 || len(c) != 2 {
+		t.Fatalf("by host: %v", c)
+	}
+	rt.closeSession(id)
+	if c := rt.sessionCounts(later); c["node_b"] != 0 {
+		t.Fatalf("closed tcp session still counted: %v", c)
+	}
+}

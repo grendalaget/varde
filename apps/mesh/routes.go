@@ -36,6 +36,9 @@ type routeState struct {
 	// the previous host/epoch keep draining (TCP splices always drain
 	// naturally). A warm migration's route flip sets it so the old host can
 	// hand clients off.
+	// open TCP game connections (sessionCounts)
+	tcpSessions map[uint64]tcpSession
+
 	drainDeadline time.Time
 	drainHost     string
 	drainEpoch    uint64
@@ -252,6 +255,8 @@ func (rt *routeState) serveTCP(c net.Conn, port uint32) {
 		_ = c.Close()
 		return
 	}
+	id := rt.openSession(host)
+	defer rt.closeSession(id)
 	if host == rt.n.nodeID {
 		if tp, ok := rt.n.localTarget(rt.serviceID, port); ok {
 			up, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", tp))
@@ -311,6 +316,7 @@ type udpFlow struct {
 	epoch      uint64       // epoch this flow was opened under
 	stream     *quic.Stream // stays open for the flow's lifetime
 	lastUsed   atomic.Int64 // unixnano
+	opened     time.Time
 	closed     atomic.Bool
 	done       chan struct{}
 	peer       *peerState // nil for local
@@ -462,7 +468,7 @@ func (rt *routeState) openFlow(key udpFlowKey, c *net.UDPConn, src *net.UDPAddr,
 	}
 	f := &udpFlow{
 		id: rt.n.flowSeq.Add(1), key: key, src: src, port: port, rt: rt,
-		hostNodeID: host, epoch: epoch,
+		hostNodeID: host, epoch: epoch, opened: time.Now(),
 		done: make(chan struct{}),
 	}
 	f.touch()
@@ -577,4 +583,53 @@ func (n *Node) isForceRelay() bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.forceRelay
+}
+
+// A game connection counts as a play session once it has lasted this long
+// (a server-list ping doesn't); UDP flows must also still carry traffic.
+const (
+	sessionMinAge  = 15 * time.Second
+	sessionUDPIdle = 10 * time.Second
+)
+
+type tcpSession struct {
+	opened time.Time
+	host   string
+}
+
+func (rt *routeState) openSession(host string) uint64 {
+	id := rt.n.flowSeq.Add(1)
+	rt.mu.Lock()
+	if rt.tcpSessions == nil {
+		rt.tcpSessions = map[uint64]tcpSession{}
+	}
+	rt.tcpSessions[id] = tcpSession{opened: time.Now(), host: host}
+	rt.mu.Unlock()
+	return id
+}
+
+func (rt *routeState) closeSession(id uint64) {
+	rt.mu.Lock()
+	delete(rt.tcpSessions, id)
+	rt.mu.Unlock()
+}
+
+// sessionCounts: local game clients playing through this route right now,
+// by the host each connection was opened to.
+func (rt *routeState) sessionCounts(now time.Time) map[string]uint32 {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	out := map[string]uint32{}
+	for _, s := range rt.tcpSessions {
+		if now.Sub(s.opened) >= sessionMinAge {
+			out[s.host]++
+		}
+	}
+	for _, f := range rt.flows {
+		if now.Sub(f.opened) >= sessionMinAge &&
+			now.Sub(time.Unix(0, f.lastUsed.Load())) < sessionUDPIdle {
+			out[f.hostNodeID]++
+		}
+	}
+	return out
 }

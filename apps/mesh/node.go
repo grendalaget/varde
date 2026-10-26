@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -332,6 +333,16 @@ func (n *Node) status() *meshv1.MeshStatus {
 	}
 	st.Relays = relays
 	st.ObservedEndpoints = dedupe(observed)
+	now := time.Now()
+	for id, rt := range n.routes {
+		for host, c := range rt.sessionCounts(now) {
+			st.Routes = append(st.Routes, &meshv1.RouteActivity{ServiceId: id, HostNodeId: host, Sessions: c})
+		}
+	}
+	sort.Slice(st.Routes, func(i, j int) bool {
+		a, b := st.Routes[i], st.Routes[j]
+		return a.ServiceId < b.ServiceId || (a.ServiceId == b.ServiceId && a.HostNodeId < b.HostNodeId)
+	})
 	return st
 }
 
