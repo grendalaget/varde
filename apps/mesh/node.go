@@ -117,7 +117,6 @@ type Node struct {
 	routes      map[string]*routeState // service_id → route
 	hosted      map[string]*hostedService
 	internal    map[string]uint32 // name → target port
-	forwards    map[string]*internalForward
 	startedAt   time.Time
 	events      *eventBus
 	ctx         context.Context
@@ -125,7 +124,6 @@ type Node struct {
 	metrics     *metrics
 	connInbound sync.Map      // *quic.Conn → bool (was inbound)
 	flowSeq     atomic.Uint64 // node-wide UDP flow ids (peer-side maps key on them)
-	forwardSeq  atomic.Uint64 // internal forward ids; a clock collides within one tick
 }
 
 func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node {
@@ -138,7 +136,6 @@ func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node 
 		routes:     map[string]*routeState{},
 		hosted:     map[string]*hostedService{},
 		internal:   map[string]uint32{},
-		forwards:   map[string]*internalForward{},
 		events:     newEventBus(),
 		startedAt:  time.Now(),
 	}
@@ -260,10 +257,6 @@ func (n *Node) Close() {
 	for _, rt := range n.routes {
 		routes = append(routes, rt)
 	}
-	forwards := make([]*internalForward, 0, len(n.forwards))
-	for _, f := range n.forwards {
-		forwards = append(forwards, f)
-	}
 	n.mu.Unlock()
 
 	for _, p := range peers {
@@ -274,9 +267,6 @@ func (n *Node) Close() {
 	}
 	for _, rt := range routes {
 		rt.closeAll()
-	}
-	for _, f := range forwards {
-		f.close()
 	}
 	if n.listener != nil {
 		_ = n.listener.Close()

@@ -1,7 +1,6 @@
 //! Mesh supervisor: spawn the Go mesh child, keep the gRPC client connected,
 //! and re-apply the full desired state (Configure/Set*) after every restart.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -24,87 +23,11 @@ struct Desired {
     internal: Vec<pb::InternalService>,
 }
 
-/// A bound internal forward: a mesh-side 127.0.0.1 listener tunnelling to one
-/// peer's internal service.
-#[derive(Clone, Debug)]
-pub struct Forward {
-    pub id: String,
-    pub addr: String,
-    /// Came from the cache rather than a fresh bind — it may be stale.
-    pub reused: bool,
-}
-
-type FwdKey = (String, String); // (peer node id, service name)
-
-/// Forwards cached per (peer node, internal service). Each bind is a listener
-/// plus goroutine in the mesh kept until unbound, so binding per request
-/// leaks fds — and every open listener is reachable by any local user.
-#[derive(Default)]
-struct Forwards {
-    /// Bumped on every mesh (re)connect: forwards die with the mesh process
-    /// and ids may repeat in the next one, so entries never cross it.
-    generation: u64,
-    map: HashMap<FwdKey, Forward>,
-}
-
-impl Forwards {
-    fn get(&self, key: &FwdKey) -> Option<Forward> {
-        self.map.get(key).map(|f| Forward {
-            reused: true,
-            ..f.clone()
-        })
-    }
-
-    /// Cache a forward bound at `generation`. Returns the forward the caller
-    /// should unbind — the new one when a concurrent bind won the slot —
-    /// plus the one to use. A bind from an earlier generation died with its
-    /// mesh: nothing is cached and nothing needs unbinding.
-    fn insert(&mut self, generation: u64, key: FwdKey, fwd: Forward) -> (Option<Forward>, Forward) {
-        if self.generation != generation {
-            return (None, fwd);
-        }
-        if let Some(theirs) = self.map.get(&key) {
-            return (Some(fwd), theirs.clone());
-        }
-        self.map.insert(key, fwd.clone());
-        (None, fwd)
-    }
-
-    /// Remove `key` if it still maps to `forward_id`; true = caller unbinds.
-    fn retire(&mut self, key: &FwdKey, forward_id: &str) -> bool {
-        if self.map.get(key).is_some_and(|f| f.id == forward_id) {
-            self.map.remove(key);
-            return true;
-        }
-        false
-    }
-
-    /// Drop forwards to peers outside `peers`; returns their ids to unbind.
-    fn retain_peers(&mut self, peers: &[pb::Peer]) -> Vec<String> {
-        let mut gone = vec![];
-        self.map.retain(|(peer, _), f| {
-            let keep = peers.iter().any(|p| &p.node_id == peer);
-            if !keep {
-                gone.push(f.id.clone());
-            }
-            keep
-        });
-        gone
-    }
-
-    /// New mesh process: every cached forward died with the old one.
-    fn reset(&mut self) {
-        self.generation += 1;
-        self.map.clear();
-    }
-}
-
 /// Handle to the supervised mesh. All `set_*` calls are full-replacement and
 /// safe to re-issue; they are replayed automatically on reconnect.
 pub struct MeshCtl {
     desired: Mutex<Desired>,
     client_tx: watch::Sender<Option<MeshServiceClient<tonic::transport::Channel>>>,
-    forwards: Mutex<Forwards>,
     ipc: String,
 }
 
@@ -114,11 +37,6 @@ impl MeshCtl {
     }
 
     fn set_client(&self, c: Option<MeshServiceClient<tonic::transport::Channel>>) {
-        // a new (or no) mesh process: the old one's forwards are gone — drop
-        // them without unbinding, their ids may name new forwards now. Under
-        // the forwards lock so a bind sees client and generation together.
-        let mut f = self.forwards.lock().unwrap();
-        f.reset();
         // send_replace stores the value even with no receivers — `send` would
         // silently drop it (the watch channel is write-side only).
         self.client_tx.send_replace(c);
@@ -225,14 +143,6 @@ impl MeshCtl {
 
     pub async fn set_peers(&self, peers: Vec<pb::Peer>) -> Result<()> {
         self.desired.lock().unwrap().peers = peers.clone();
-        // forwards to peers that left the set would only ever fail
-        let (client, gone) = {
-            let mut f = self.forwards.lock().unwrap();
-            (self.current(), f.retain_peers(&peers))
-        };
-        for id in gone {
-            unbind_internal_forward(client.clone(), &id).await;
-        }
         if let Some(mut c) = self.current() {
             c.set_peers(pb::SetPeersRequest { peers }).await?;
         }
@@ -265,54 +175,29 @@ impl MeshCtl {
         Ok(())
     }
 
-    /// The cached forward to internal service `name` on `peer`, bound on
-    /// first use. None = mesh not connected. Callers `retire_internal_forward`
-    /// it when a connection through it fails.
-    pub async fn internal_forward(&self, peer: &str, name: &str) -> Result<Option<Forward>> {
-        let key = (peer.to_string(), name.to_string());
-        let (client, generation) = {
-            let f = self.forwards.lock().unwrap();
-            if let Some(fwd) = f.get(&key) {
-                return Ok(Some(fwd));
-            }
-            (self.current(), f.generation)
-        };
-        let Some(mut c) = client else {
-            return Ok(None);
-        };
-        let r = c
-            .bind_internal_forward(pb::BindInternalForwardRequest {
+    /// Exchange bytes over private IPC and the mesh's cached peer connection.
+    pub async fn internal_request(
+        &self,
+        peer: &str,
+        name: &str,
+        request: &[u8],
+    ) -> Result<Vec<u8>> {
+        let mut c = self
+            .current()
+            .ok_or_else(|| anyhow::anyhow!("mesh not connected"))?;
+        let mut response = c
+            .exchange_internal(pb::ExchangeInternalRequest {
                 peer_node_id: peer.into(),
                 name: name.into(),
+                request: request.to_vec(),
             })
             .await?
             .into_inner();
-        let fwd = Forward {
-            id: r.forward_id,
-            addr: r.local_addr,
-            reused: false,
-        };
-        let (surplus, fwd) = self.forwards.lock().unwrap().insert(generation, key, fwd);
-        if let Some(s) = surplus {
-            // a concurrent caller bound first: theirs is cached, ours goes
-            unbind_internal_forward(Some(c), &s.id).await;
+        let mut bytes = Vec::new();
+        while let Some(part) = response.message().await? {
+            bytes.extend_from_slice(&part.data);
         }
-        Ok(Some(fwd))
-    }
-
-    /// Drop a forward whose connection failed (stale peer path, peer
-    /// re-added) and close its mesh listener. A no-op when the cache already
-    /// moved on to another forward for that key.
-    pub async fn retire_internal_forward(&self, peer: &str, name: &str, forward_id: &str) {
-        let key = (peer.to_string(), name.to_string());
-        let client = {
-            let mut f = self.forwards.lock().unwrap();
-            if !f.retire(&key, forward_id) {
-                return;
-            }
-            self.current()
-        };
-        unbind_internal_forward(client, forward_id).await;
+        Ok(bytes)
     }
 
     pub async fn status(&self) -> Option<MeshStatus> {
@@ -338,103 +223,107 @@ impl MeshCtl {
         MeshCtl {
             desired: Mutex::new(Desired::default()),
             client_tx: tx,
-            forwards: Mutex::new(Forwards::default()),
             ipc,
         }
     }
 }
 
-/// Best-effort unbind, on the client captured together with the id (same
-/// mesh generation). Should a restart still slip in between, the worst case
-/// is a closed fresh forward, which its next failed request retires and
-/// re-binds.
-async fn unbind_internal_forward(
-    client: Option<MeshServiceClient<tonic::transport::Channel>>,
-    forward_id: &str,
-) {
-    if let Some(mut c) = client {
-        let _ = c
-            .unbind_internal_forward(pb::UnbindInternalForwardRequest {
-                forward_id: forward_id.into(),
-            })
-            .await;
-    }
-}
-
 #[cfg(test)]
-mod forward_cache_tests {
+mod tests {
     use super::*;
 
-    fn key(peer: &str) -> FwdKey {
-        (peer.to_string(), "agent.chunks".to_string())
-    }
+    struct ExchangeService;
 
-    fn fwd(id: &str) -> Forward {
-        Forward {
-            id: id.into(),
-            addr: format!("127.0.0.1:{}", 40000 + id.len()),
-            reused: false,
+    impl tonic::server::ServerStreamingService<pb::ExchangeInternalRequest> for ExchangeService {
+        type Response = pb::ExchangeInternalResponse;
+        type ResponseStream = tokio_stream::Iter<
+            std::vec::IntoIter<std::result::Result<Self::Response, tonic::Status>>,
+        >;
+        type Future =
+            tonic::codegen::BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+        fn call(&mut self, request: tonic::Request<pb::ExchangeInternalRequest>) -> Self::Future {
+            Box::pin(async move {
+                let request = request.into_inner();
+                assert_eq!(request.peer_node_id, "node_b");
+                assert_eq!(request.name, "agent.chunks");
+                let mut messages: Vec<_> = request
+                    .request
+                    .chunks(3)
+                    .map(|data| pb::ExchangeInternalResponse {
+                        data: data.to_vec(),
+                    })
+                    .map(Ok)
+                    .collect();
+                if request.request == b"partial-error" {
+                    messages.push(Err(tonic::Status::unavailable("peer disconnected")));
+                }
+                Ok(tonic::Response::new(tokio_stream::iter(messages)))
+            })
         }
     }
 
-    fn peer(id: &str) -> pb::Peer {
-        pb::Peer {
-            node_id: id.into(),
-            ..Default::default()
+    #[tokio::test]
+    async fn internal_request_reuses_channel_and_reassembles_streams() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+                .serve_connection(
+                    hyper_util::rt::TokioIo::new(stream),
+                    hyper::service::service_fn(|request| async move {
+                        assert_eq!(
+                            request.uri().path(),
+                            "/varde.mesh.v1.MeshService/ExchangeInternal"
+                        );
+                        let codec = tonic::codec::ProstCodec::default();
+                        let response = tonic::server::Grpc::new(codec)
+                            .server_streaming(ExchangeService, request)
+                            .await;
+                        Ok::<_, std::convert::Infallible>(response)
+                    }),
+                )
+                .await
+                .unwrap();
+        });
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mesh = MeshCtl::new(String::new());
+        mesh.set_client(Some(MeshServiceClient::new(channel)));
+        for request in [b"first-transfer\x00".as_slice(), b"second-transfer", b""] {
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                mesh.internal_request("node_b", "agent.chunks", request),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(response, request);
         }
+        let error = mesh
+            .internal_request("node_b", "agent.chunks", b"partial-error")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("peer disconnected"));
+        mesh.set_client(None);
+        assert!(mesh
+            .internal_request("node_b", "agent.chunks", b"request")
+            .await
+            .is_err());
+        server.abort();
     }
 
-    #[test]
-    fn one_forward_per_peer_and_service_is_reused() {
-        let mut f = Forwards::default();
-        assert!(f.get(&key("node_a")).is_none());
-        let (surplus, used) = f.insert(0, key("node_a"), fwd("fwd_1"));
-        assert!(surplus.is_none());
-        assert_eq!(used.id, "fwd_1");
-        let hit = f.get(&key("node_a")).unwrap();
-        assert_eq!(hit.id, "fwd_1");
-        assert!(hit.reused);
-        // a concurrent bind lost the race: it gets the cached one and must
-        // unbind its own
-        let (surplus, used) = f.insert(0, key("node_a"), fwd("fwd_2"));
-        assert_eq!(surplus.unwrap().id, "fwd_2");
-        assert_eq!(used.id, "fwd_1");
-        assert_eq!(f.map.len(), 1);
-    }
-
-    #[test]
-    fn retire_only_removes_the_named_forward() {
-        let mut f = Forwards::default();
-        f.insert(0, key("node_a"), fwd("fwd_1"));
-        assert!(!f.retire(&key("node_a"), "fwd_old"), "already replaced");
-        assert!(f.get(&key("node_a")).is_some());
-        assert!(f.retire(&key("node_a"), "fwd_1"));
-        assert!(f.get(&key("node_a")).is_none());
-        assert!(!f.retire(&key("node_a"), "fwd_1"), "retired once");
-    }
-
-    #[test]
-    fn departed_peers_lose_their_forwards() {
-        let mut f = Forwards::default();
-        f.insert(0, key("node_a"), fwd("fwd_1"));
-        f.insert(0, key("node_b"), fwd("fwd_2"));
-        let gone = f.retain_peers(&[peer("node_b")]);
-        assert_eq!(gone, vec!["fwd_1".to_string()]);
-        assert!(f.get(&key("node_a")).is_none());
-        assert!(f.get(&key("node_b")).is_some());
-    }
-
-    #[test]
-    fn mesh_restart_drops_the_cache_and_stale_binds() {
-        let mut f = Forwards::default();
-        f.insert(0, key("node_a"), fwd("fwd_1"));
-        f.reset();
-        assert!(f.get(&key("node_a")).is_none());
-        // a bind that started before the restart is not cached (its
-        // forward died with the old mesh) and needs no unbind
-        let (surplus, used) = f.insert(0, key("node_a"), fwd("fwd_1"));
-        assert!(surplus.is_none());
-        assert_eq!(used.id, "fwd_1");
-        assert!(f.map.is_empty());
+    #[tokio::test]
+    async fn internal_request_without_mesh_fails_closed() {
+        let mesh = MeshCtl::new(String::new());
+        let error = mesh
+            .internal_request("node_b", "agent.chunks", b"GET / HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "mesh not connected");
     }
 }

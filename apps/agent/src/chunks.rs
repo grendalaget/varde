@@ -327,7 +327,7 @@ fn route(
 // ---------------- pull side ----------------
 
 /// Fetch `snapshot_id`'s manifest + all missing chunks from `source_node_ids`
-/// via the mesh (`BindInternalForward` per source). Idempotent + resumable.
+/// via private mesh IPC and cached peer connections. Idempotent + resumable.
 pub async fn fetch_snapshot(
     mesh: &crate::mesh_ctl::MeshCtl,
     store: &Store,
@@ -443,21 +443,17 @@ where
 
 /// One request/response round trip with `EXCHANGE_TIMEOUT` covering
 /// connect + send + full-body read.
-async fn exchange(addr: &str, request: &[u8]) -> Result<Vec<u8>> {
-    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
-        let mut stream = tokio::net::TcpStream::connect(addr).await?;
-        stream.write_all(request).await?;
-        let mut buf = Vec::new();
-        stream.read_to_end(&mut buf).await?;
-        anyhow::Ok(buf)
-    })
+async fn exchange(mesh: &crate::mesh_ctl::MeshCtl, peer: &str, request: &[u8]) -> Result<Vec<u8>> {
+    tokio::time::timeout(
+        EXCHANGE_TIMEOUT,
+        mesh.internal_request(peer, SERVICE_NAME, request),
+    )
     .await
     .context("chunk request timed out")?
 }
 
-/// `request` to `peer`'s chunk server through the mesh's cached forward →
-/// (status, body). A failed exchange retires the forward (its listener may
-/// tunnel to a stale peer path); a cached one gets one fresh re-bind.
+/// `request` to `peer`'s chunk server over private IPC → (status, body).
+/// A failed exchange gets one fresh stream on the current peer path.
 async fn peer_request(
     mesh: &crate::mesh_ctl::MeshCtl,
     peer: &str,
@@ -465,21 +461,16 @@ async fn peer_request(
 ) -> Result<(u16, Vec<u8>)> {
     let mut retried = false;
     loop {
-        let Some(fwd) = mesh.internal_forward(peer, SERVICE_NAME).await? else {
-            bail!("mesh not connected");
-        };
-        match exchange(&fwd.addr, request.as_bytes())
+        match exchange(mesh, peer, request.as_bytes())
             .await
             .and_then(|buf| parse_http(&buf))
         {
             Ok(r) => return Ok(r),
             Err(e) => {
-                mesh.retire_internal_forward(peer, SERVICE_NAME, &fwd.id)
-                    .await;
-                if !fwd.reused || retried {
+                if retried {
                     return Err(e);
                 }
-                tracing::debug!(peer, error = %e, "cached chunk forward failed; re-binding");
+                tracing::debug!(peer, error = %e, "chunk exchange failed; opening a fresh stream");
                 retried = true;
             }
         }

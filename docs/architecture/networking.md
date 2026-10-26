@@ -82,8 +82,9 @@ carries that local port; clients always dial the service port.
 ### Internal services
 
 `agent.chunks` (see `storage.md`) is exposed with `SetInternalServices`; any authenticated group peer may open
-`InternalStream{name}` to it. `BindInternalForward` gives the local agent a `127.0.0.1:<port>` that tunnels to a peer's
-internal service.
+`InternalStream{name}` to it. The local agent uses `ExchangeInternal` over private IPC (Unix socket or Windows
+named pipe), streaming the response from a fresh QUIC stream on the cached peer connection. No local forwarding
+listener is created or retained between transfers; the legacy `BindInternalForward` RPC is unimplemented.
 
 ## Discovery
 

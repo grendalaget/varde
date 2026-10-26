@@ -64,21 +64,6 @@ func (s *meshServer) SetInternalServices(_ context.Context, req *meshv1.SetInter
 	return &meshv1.SetInternalServicesResponse{}, nil
 }
 
-func (s *meshServer) BindInternalForward(_ context.Context, req *meshv1.BindInternalForwardRequest) (*meshv1.BindInternalForwardResponse, error) {
-	id, addr, err := s.n.BindInternalForward(req.GetPeerNodeId(), req.GetName())
-	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
-	return &meshv1.BindInternalForwardResponse{ForwardId: id, LocalAddr: addr}, nil
-}
-
-func (s *meshServer) UnbindInternalForward(_ context.Context, req *meshv1.UnbindInternalForwardRequest) (*meshv1.UnbindInternalForwardResponse, error) {
-	if !s.n.UnbindInternalForward(req.GetForwardId()) {
-		return nil, status.Error(codes.NotFound, "unknown forward")
-	}
-	return &meshv1.UnbindInternalForwardResponse{}, nil
-}
-
 func (s *meshServer) WatchEvents(_ *meshv1.WatchEventsRequest, stream meshv1.MeshService_WatchEventsServer) error {
 	ch := s.n.events.subscribe()
 	defer s.n.events.unsubscribe(ch)

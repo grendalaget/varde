@@ -94,7 +94,9 @@ The CP decides targets; agents move bytes.
   what's still missing), verifies, then reports `ready`. Parent-first is not required: dedup is chunk-level.
 * **Transfer** goes through the mesh, not the CP: each agent serves its store on `127.0.0.1:<ephemeral>` as plain
   HTTP/1.1 and registers it with its mesh as internal service `agent.chunks`. To fetch from a peer, the agent calls
-  `BindInternalForward(peer, "agent.chunks")` and issues requests to the returned local address:
+  `ExchangeInternal(peer, "agent.chunks", request)` over private agent–mesh IPC. The mesh streams the response back
+  over IPC without exposing a local forwarding listener; IPC channels and peer QUIC connections are reused.
+  Requests remain HTTP/1.1:
   `GET /v1/manifests/{snapshot_id}` (raw bytes), `GET /v1/chunks/{hash}` (zstd bytes),
   `POST /v1/chunks/batch {hashes:[…]}` → concatenated `[u32 len][32-byte hash][zstd]` frames.
   The receiving side verifies every chunk before storing.

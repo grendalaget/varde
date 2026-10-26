@@ -711,7 +711,7 @@ func TestRouteMoveAndStaleEpoch(t *testing.T) {
 	}
 }
 
-func TestInternalForward(t *testing.T) {
+func TestExchangeInternalReusesPeerConnection(t *testing.T) {
 	a := newTestNode(t, "node_a")
 	b := newTestNode(t, "node_b")
 	a.configure(t, nil, false)
@@ -728,32 +728,35 @@ func TestInternalForward(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fr, err := a.cli.BindInternalForward(context.Background(), &meshv1.BindInternalForwardRequest{
-		PeerNodeId: "node_b", Name: "agent.chunks",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := net.DialTimeout("tcp", fr.GetLocalAddr(), 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg := []byte("chunk-request")
-	if _, err := c.Write(msg); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, len(msg))
-	if _, err := io.ReadFull(c, buf); err != nil {
-		t.Fatal(err)
-	}
-	if string(buf) != string(msg) {
-		t.Fatal("bad echo")
-	}
-	_ = c.Close()
-	if _, err := a.cli.UnbindInternalForward(context.Background(), &meshv1.UnbindInternalForwardRequest{
-		ForwardId: fr.GetForwardId(),
-	}); err != nil {
-		t.Fatal(err)
+	conn := a.n.peer("node_b").current()
+	for _, msg := range []string{"chunk-request-one", "chunk-request-two", ""} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		stream, err := a.cli.ExchangeInternal(ctx, &meshv1.ExchangeInternalRequest{
+			PeerNodeId: "node_b", Name: "agent.chunks", Request: []byte(msg),
+		})
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		var received []byte
+		for {
+			part, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			received = append(received, part.GetData()...)
+		}
+		cancel()
+		if string(received) != msg {
+			t.Fatalf("response %q, want %q", received, msg)
+		}
+		if a.n.peer("node_b").current() != conn {
+			t.Fatal("exchange replaced the cached peer connection")
+		}
 	}
 }
 

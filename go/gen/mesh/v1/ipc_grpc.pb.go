@@ -35,6 +35,7 @@ const (
 	MeshService_SetInternalServices_FullMethodName   = "/varde.mesh.v1.MeshService/SetInternalServices"
 	MeshService_BindInternalForward_FullMethodName   = "/varde.mesh.v1.MeshService/BindInternalForward"
 	MeshService_UnbindInternalForward_FullMethodName = "/varde.mesh.v1.MeshService/UnbindInternalForward"
+	MeshService_ExchangeInternal_FullMethodName      = "/varde.mesh.v1.MeshService/ExchangeInternal"
 	MeshService_WatchEvents_FullMethodName           = "/varde.mesh.v1.MeshService/WatchEvents"
 )
 
@@ -52,9 +53,11 @@ type MeshServiceClient interface {
 	SetHostedServices(ctx context.Context, in *SetHostedServicesRequest, opts ...grpc.CallOption) (*SetHostedServicesResponse, error)
 	// Agent-internal services (e.g. "agent.chunks") reachable by group peers.
 	SetInternalServices(ctx context.Context, in *SetInternalServicesRequest, opts ...grpc.CallOption) (*SetInternalServicesResponse, error)
-	// Opens a 127.0.0.1:<ephemeral> TCP listener forwarding to a peer's internal service.
+	// Retired: unauthenticated loopback internal forwards are no longer supported.
 	BindInternalForward(ctx context.Context, in *BindInternalForwardRequest, opts ...grpc.CallOption) (*BindInternalForwardResponse, error)
 	UnbindInternalForward(ctx context.Context, in *UnbindInternalForwardRequest, opts ...grpc.CallOption) (*UnbindInternalForwardResponse, error)
+	// One request/response over private IPC and the cached peer connection. No local listener.
+	ExchangeInternal(ctx context.Context, in *ExchangeInternalRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExchangeInternalResponse], error)
 	WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MeshEvent], error)
 }
 
@@ -156,9 +159,28 @@ func (c *meshServiceClient) UnbindInternalForward(ctx context.Context, in *Unbin
 	return out, nil
 }
 
+func (c *meshServiceClient) ExchangeInternal(ctx context.Context, in *ExchangeInternalRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExchangeInternalResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &MeshService_ServiceDesc.Streams[0], MeshService_ExchangeInternal_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExchangeInternalRequest, ExchangeInternalResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MeshService_ExchangeInternalClient = grpc.ServerStreamingClient[ExchangeInternalResponse]
+
 func (c *meshServiceClient) WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MeshEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &MeshService_ServiceDesc.Streams[0], MeshService_WatchEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &MeshService_ServiceDesc.Streams[1], MeshService_WatchEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +211,11 @@ type MeshServiceServer interface {
 	SetHostedServices(context.Context, *SetHostedServicesRequest) (*SetHostedServicesResponse, error)
 	// Agent-internal services (e.g. "agent.chunks") reachable by group peers.
 	SetInternalServices(context.Context, *SetInternalServicesRequest) (*SetInternalServicesResponse, error)
-	// Opens a 127.0.0.1:<ephemeral> TCP listener forwarding to a peer's internal service.
+	// Retired: unauthenticated loopback internal forwards are no longer supported.
 	BindInternalForward(context.Context, *BindInternalForwardRequest) (*BindInternalForwardResponse, error)
 	UnbindInternalForward(context.Context, *UnbindInternalForwardRequest) (*UnbindInternalForwardResponse, error)
+	// One request/response over private IPC and the cached peer connection. No local listener.
+	ExchangeInternal(*ExchangeInternalRequest, grpc.ServerStreamingServer[ExchangeInternalResponse]) error
 	WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[MeshEvent]) error
 	mustEmbedUnimplementedMeshServiceServer()
 }
@@ -229,6 +253,9 @@ func (UnimplementedMeshServiceServer) BindInternalForward(context.Context, *Bind
 }
 func (UnimplementedMeshServiceServer) UnbindInternalForward(context.Context, *UnbindInternalForwardRequest) (*UnbindInternalForwardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UnbindInternalForward not implemented")
+}
+func (UnimplementedMeshServiceServer) ExchangeInternal(*ExchangeInternalRequest, grpc.ServerStreamingServer[ExchangeInternalResponse]) error {
+	return status.Error(codes.Unimplemented, "method ExchangeInternal not implemented")
 }
 func (UnimplementedMeshServiceServer) WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[MeshEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchEvents not implemented")
@@ -416,6 +443,17 @@ func _MeshService_UnbindInternalForward_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MeshService_ExchangeInternal_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExchangeInternalRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(MeshServiceServer).ExchangeInternal(m, &grpc.GenericServerStream[ExchangeInternalRequest, ExchangeInternalResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MeshService_ExchangeInternalServer = grpc.ServerStreamingServer[ExchangeInternalResponse]
+
 func _MeshService_WatchEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(WatchEventsRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -472,6 +510,11 @@ var MeshService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ExchangeInternal",
+			Handler:       _MeshService_ExchangeInternal_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "WatchEvents",
 			Handler:       _MeshService_WatchEvents_Handler,
