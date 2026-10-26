@@ -99,6 +99,7 @@ impl MinecraftDriver {
                     sha256: Some(checksum),
                     sha1: None,
                     archive,
+                    untrusted: false,
                 },
             )
             .await?;
@@ -161,6 +162,7 @@ impl MinecraftDriver {
                     sha256: None,
                     sha1: Some(sha1),
                     archive: ArchiveKind::File,
+                    untrusted: false,
                 },
             )
             .await?;
@@ -486,6 +488,7 @@ mod tests {
             config: &cfg,
             ports: &bindings,
             memory_mb: 2048,
+            addons: &[],
         };
         MinecraftDriver::new().configure(&ctx).await.unwrap();
         let props = std::fs::read_to_string(server_dir.join("server.properties")).unwrap();

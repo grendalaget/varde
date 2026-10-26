@@ -603,6 +603,60 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for ServerAddonArchive.
+const (
+	ServerAddonArchiveTarGz ServerAddonArchive = "tar_gz"
+	ServerAddonArchiveZip   ServerAddonArchive = "zip"
+)
+
+// Valid indicates whether the value is a known member of the ServerAddonArchive enum.
+func (e ServerAddonArchive) Valid() bool {
+	switch e {
+	case ServerAddonArchiveTarGz:
+		return true
+	case ServerAddonArchiveZip:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ServerAddonSpecArchive.
+const (
+	ServerAddonSpecArchiveTarGz ServerAddonSpecArchive = "tar_gz"
+	ServerAddonSpecArchiveZip   ServerAddonSpecArchive = "zip"
+)
+
+// Valid indicates whether the value is a known member of the ServerAddonSpecArchive enum.
+func (e ServerAddonSpecArchive) Valid() bool {
+	switch e {
+	case ServerAddonSpecArchiveTarGz:
+		return true
+	case ServerAddonSpecArchiveZip:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ServerAddonSummaryArchive.
+const (
+	ServerAddonSummaryArchiveTarGz ServerAddonSummaryArchive = "tar_gz"
+	ServerAddonSummaryArchiveZip   ServerAddonSummaryArchive = "zip"
+)
+
+// Valid indicates whether the value is a known member of the ServerAddonSummaryArchive enum.
+func (e ServerAddonSummaryArchive) Valid() bool {
+	switch e {
+	case ServerAddonSummaryArchiveTarGz:
+		return true
+	case ServerAddonSummaryArchiveZip:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SnapshotReason.
 const (
 	SnapshotReasonFinal     SnapshotReason = "final"
@@ -1088,8 +1142,11 @@ type ExecutionEndReason string
 
 // ExecutionDirective defines model for ExecutionDirective.
 type ExecutionDirective struct {
-	Action     ExecutionDirectiveAction `json:"action"`
-	Config     *map[string]interface{}  `json:"config,omitempty"`
+	Action ExecutionDirectiveAction `json:"action"`
+
+	// Addons Server addons to prepare when action is run.
+	Addons     *[]ServerAddon          `json:"addons,omitempty"`
+	Config     *map[string]interface{} `json:"config,omitempty"`
 	Deployment *struct {
 		GameId string                 `json:"game_id"`
 		Id     string                 `json:"id"`
@@ -1155,6 +1212,7 @@ type ExternalLoginRequest struct {
 
 // Game defines model for Game.
 type Game struct {
+	AddonTargets *[]string         `json:"addon_targets,omitempty"`
 	Arch         []string          `json:"arch"`
 	ConfigFields []GameConfigField `json:"config_fields"`
 	Id           string            `json:"id"`
@@ -1468,6 +1526,60 @@ type Server struct {
 	Summary           ServerSummary          `json:"summary"`
 	UpdatedAt         int64                  `json:"updated_at"`
 }
+
+// ServerAddon defines model for ServerAddon.
+type ServerAddon struct {
+	AddonId       string                 `json:"addon_id"`
+	Archive       ServerAddonArchive     `json:"archive"`
+	DriverOptions map[string]interface{} `json:"driver_options"`
+	Files         map[string]string      `json:"files"`
+	PluginId      string                 `json:"plugin_id"`
+	Sha256        string                 `json:"sha256"`
+	Target        string                 `json:"target"`
+	Url           string                 `json:"url"`
+}
+
+// ServerAddonArchive defines model for ServerAddon.Archive.
+type ServerAddonArchive string
+
+// ServerAddonList defines model for ServerAddonList.
+type ServerAddonList struct {
+	Addons []ServerAddonSummary `json:"addons"`
+}
+
+// ServerAddonSpec defines model for ServerAddonSpec.
+type ServerAddonSpec struct {
+	Archive ServerAddonSpecArchive `json:"archive"`
+
+	// DriverOptions Driver-defined options, limited to 4 KiB when serialized as JSON.
+	DriverOptions map[string]interface{} `json:"driver_options"`
+
+	// Files Relative file paths and contents; at most 32 entries, each no larger than 64 KiB.
+	Files  map[string]string `json:"files"`
+	Sha256 string            `json:"sha256"`
+	Target string            `json:"target"`
+
+	// Url HTTPS URL, or HTTP when the control plane is in dev mode or the host is loopback.
+	Url string `json:"url"`
+}
+
+// ServerAddonSpecArchive defines model for ServerAddonSpec.Archive.
+type ServerAddonSpecArchive string
+
+// ServerAddonSummary defines model for ServerAddonSummary.
+type ServerAddonSummary struct {
+	AddonId   string                    `json:"addon_id"`
+	Archive   ServerAddonSummaryArchive `json:"archive"`
+	FileNames []string                  `json:"file_names"`
+	PluginId  string                    `json:"plugin_id"`
+	Sha256    string                    `json:"sha256"`
+	Target    string                    `json:"target"`
+	UpdatedAt int64                     `json:"updated_at"`
+	Url       string                    `json:"url"`
+}
+
+// ServerAddonSummaryArchive defines model for ServerAddonSummary.Archive.
+type ServerAddonSummaryArchive string
 
 // ServerSummary defines model for ServerSummary.
 type ServerSummary struct {
@@ -1850,6 +1962,9 @@ type UpdateNodeJSONRequestBody UpdateNodeJSONBody
 // UpdateServerJSONRequestBody defines body for UpdateServer for application/json ContentType.
 type UpdateServerJSONRequestBody UpdateServerJSONBody
 
+// PutServerAddonJSONRequestBody defines body for PutServerAddon for application/json ContentType.
+type PutServerAddonJSONRequestBody = ServerAddonSpec
+
 // MoveServerJSONRequestBody defines body for MoveServer for application/json ContentType.
 type MoveServerJSONRequestBody MoveServerJSONBody
 
@@ -2041,6 +2156,15 @@ type ServerInterface interface {
 
 	// (PATCH /v1/servers/{serverId})
 	UpdateServer(w http.ResponseWriter, r *http.Request, serverId ServerId)
+
+	// (GET /v1/servers/{serverId}/addons)
+	ListServerAddons(w http.ResponseWriter, r *http.Request, serverId ServerId)
+
+	// (DELETE /v1/servers/{serverId}/addons/{pluginId}/{addonId})
+	DeleteServerAddon(w http.ResponseWriter, r *http.Request, serverId ServerId, pluginId string, addonId string)
+
+	// (PUT /v1/servers/{serverId}/addons/{pluginId}/{addonId})
+	PutServerAddon(w http.ResponseWriter, r *http.Request, serverId ServerId, pluginId string, addonId string)
 
 	// (GET /v1/servers/{serverId}/executions)
 	ListExecutions(w http.ResponseWriter, r *http.Request, serverId ServerId)
@@ -3515,6 +3639,120 @@ func (siw *ServerInterfaceWrapper) UpdateServer(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListServerAddons operation middleware
+func (siw *ServerInterfaceWrapper) ListServerAddons(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "serverId" -------------
+	var serverId ServerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "serverId", r.PathValue("serverId"), &serverId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "serverId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListServerAddons(w, r, serverId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteServerAddon operation middleware
+func (siw *ServerInterfaceWrapper) DeleteServerAddon(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "serverId" -------------
+	var serverId ServerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "serverId", r.PathValue("serverId"), &serverId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "serverId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "addonId" -------------
+	var addonId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "addonId", r.PathValue("addonId"), &addonId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "addonId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteServerAddon(w, r, serverId, pluginId, addonId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutServerAddon operation middleware
+func (siw *ServerInterfaceWrapper) PutServerAddon(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "serverId" -------------
+	var serverId ServerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "serverId", r.PathValue("serverId"), &serverId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "serverId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "addonId" -------------
+	var addonId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "addonId", r.PathValue("addonId"), &addonId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "addonId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutServerAddon(w, r, serverId, pluginId, addonId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListExecutions operation middleware
 func (siw *ServerInterfaceWrapper) ListExecutions(w http.ResponseWriter, r *http.Request) {
 
@@ -3917,6 +4155,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/servers/{serverId}", wrapper.DeleteServer)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/servers/{serverId}", wrapper.GetServer)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/servers/{serverId}", wrapper.UpdateServer)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/servers/{serverId}/addons", wrapper.ListServerAddons)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/servers/{serverId}/addons/{pluginId}/{addonId}", wrapper.DeleteServerAddon)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/servers/{serverId}/addons/{pluginId}/{addonId}", wrapper.PutServerAddon)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/servers/{serverId}/start", wrapper.StartServer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/servers/{serverId}/stop", wrapper.StopServer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/servers/{serverId}/move", wrapper.MoveServer)
@@ -7212,6 +7453,247 @@ func (response UpdateServer403JSONResponse) VisitUpdateServerResponse(w http.Res
 	return err
 }
 
+type ListServerAddonsRequestObject struct {
+	ServerId ServerId `json:"serverId"`
+}
+
+type ListServerAddonsResponseObject interface {
+	VisitListServerAddonsResponse(w http.ResponseWriter) error
+}
+
+type ListServerAddons200JSONResponse ServerAddonList
+
+func (response ListServerAddons200JSONResponse) VisitListServerAddonsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServerAddons401JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListServerAddons401JSONResponse) VisitListServerAddonsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServerAddons403JSONResponse Error
+
+func (response ListServerAddons403JSONResponse) VisitListServerAddonsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServerAddons404JSONResponse Error
+
+func (response ListServerAddons404JSONResponse) VisitListServerAddonsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServerAddons503JSONResponse Error
+
+func (response ListServerAddons503JSONResponse) VisitListServerAddonsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServerAddonRequestObject struct {
+	ServerId ServerId `json:"serverId"`
+	PluginId string   `json:"pluginId"`
+	AddonId  string   `json:"addonId"`
+}
+
+type DeleteServerAddonResponseObject interface {
+	VisitDeleteServerAddonResponse(w http.ResponseWriter) error
+}
+
+type DeleteServerAddon204Response struct {
+}
+
+func (response DeleteServerAddon204Response) VisitDeleteServerAddonResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteServerAddon401JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteServerAddon401JSONResponse) VisitDeleteServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServerAddon403JSONResponse Error
+
+func (response DeleteServerAddon403JSONResponse) VisitDeleteServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServerAddon404JSONResponse Error
+
+func (response DeleteServerAddon404JSONResponse) VisitDeleteServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddonRequestObject struct {
+	ServerId ServerId `json:"serverId"`
+	PluginId string   `json:"pluginId"`
+	AddonId  string   `json:"addonId"`
+	Body     *PutServerAddonJSONRequestBody
+}
+
+type PutServerAddonResponseObject interface {
+	VisitPutServerAddonResponse(w http.ResponseWriter) error
+}
+
+type PutServerAddon204Response struct {
+}
+
+func (response PutServerAddon204Response) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutServerAddon400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutServerAddon400JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddon401JSONResponse Error
+
+func (response PutServerAddon401JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddon403JSONResponse Error
+
+func (response PutServerAddon403JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddon404JSONResponse Error
+
+func (response PutServerAddon404JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddon413JSONResponse Error
+
+func (response PutServerAddon413JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutServerAddon503JSONResponse Error
+
+func (response PutServerAddon503JSONResponse) VisitPutServerAddonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListExecutionsRequestObject struct {
 	ServerId ServerId `json:"serverId"`
 }
@@ -7813,6 +8295,15 @@ type StrictServerInterface interface {
 
 	// (PATCH /v1/servers/{serverId})
 	UpdateServer(ctx context.Context, request UpdateServerRequestObject) (UpdateServerResponseObject, error)
+
+	// (GET /v1/servers/{serverId}/addons)
+	ListServerAddons(ctx context.Context, request ListServerAddonsRequestObject) (ListServerAddonsResponseObject, error)
+
+	// (DELETE /v1/servers/{serverId}/addons/{pluginId}/{addonId})
+	DeleteServerAddon(ctx context.Context, request DeleteServerAddonRequestObject) (DeleteServerAddonResponseObject, error)
+
+	// (PUT /v1/servers/{serverId}/addons/{pluginId}/{addonId})
+	PutServerAddon(ctx context.Context, request PutServerAddonRequestObject) (PutServerAddonResponseObject, error)
 
 	// (GET /v1/servers/{serverId}/executions)
 	ListExecutions(ctx context.Context, request ListExecutionsRequestObject) (ListExecutionsResponseObject, error)
@@ -9581,6 +10072,95 @@ func (sh *strictHandler) UpdateServer(w http.ResponseWriter, r *http.Request, se
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateServerResponseObject); ok {
 		if err := validResponse.VisitUpdateServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListServerAddons operation middleware
+func (sh *strictHandler) ListServerAddons(w http.ResponseWriter, r *http.Request, serverId ServerId) {
+	var request ListServerAddonsRequestObject
+
+	request.ServerId = serverId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListServerAddons(ctx, request.(ListServerAddonsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListServerAddons")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListServerAddonsResponseObject); ok {
+		if err := validResponse.VisitListServerAddonsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteServerAddon operation middleware
+func (sh *strictHandler) DeleteServerAddon(w http.ResponseWriter, r *http.Request, serverId ServerId, pluginId string, addonId string) {
+	var request DeleteServerAddonRequestObject
+
+	request.ServerId = serverId
+	request.PluginId = pluginId
+	request.AddonId = addonId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteServerAddon(ctx, request.(DeleteServerAddonRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteServerAddon")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteServerAddonResponseObject); ok {
+		if err := validResponse.VisitDeleteServerAddonResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutServerAddon operation middleware
+func (sh *strictHandler) PutServerAddon(w http.ResponseWriter, r *http.Request, serverId ServerId, pluginId string, addonId string) {
+	var request PutServerAddonRequestObject
+
+	request.ServerId = serverId
+	request.PluginId = pluginId
+	request.AddonId = addonId
+
+	var body PutServerAddonJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutServerAddon(ctx, request.(PutServerAddonRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutServerAddon")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutServerAddonResponseObject); ok {
+		if err := validResponse.VisitPutServerAddonResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
