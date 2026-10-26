@@ -370,29 +370,77 @@ fn ensure_console() {
 #[cfg(windows)]
 struct Job(windows_sys::Win32::Foundation::HANDLE);
 
-/// Makes subsequently spawned children die when this process exits, even abruptly.
+/// Retains a child's kill-on-close job independently of other child jobs.
 #[cfg(windows)]
-pub fn kill_children_on_exit() -> Result<()> {
-    static OWNER: std::sync::OnceLock<std::result::Result<Job, String>> =
-        std::sync::OnceLock::new();
-    OWNER
-        .get_or_init(|| {
-            let job = Job::new().map_err(|error| error.to_string())?;
-            // SAFETY: the current process pseudo-handle is valid and job is owned here.
-            if unsafe {
-                windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
-                    job.0,
-                    windows_sys::Win32::System::Threading::GetCurrentProcess(),
-                )
-            } == 0
-            {
-                return Err(io::Error::last_os_error().to_string());
-            }
-            Ok(job)
-        })
-        .as_ref()
-        .map(|_| ())
-        .map_err(|error| error.clone().into())
+pub struct ChildJob {
+    _job: Job,
+}
+
+#[cfg(windows)]
+impl ChildJob {
+    pub fn spawn(cmd: &mut Command) -> Result<(Child, Self)> {
+        let job = Job::new()?;
+        cmd.kill_on_drop(true);
+        let child = cmd.spawn()?;
+        job.assign(&child)?;
+        Ok((child, Self { _job: job }))
+    }
+}
+
+#[cfg(all(test, windows))]
+mod child_job_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn child_job_excludes_parent_and_does_not_change_game_jobs() {
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let mut cmd = Command::new("findstr.exe");
+        cmd.arg("x").stdin(Stdio::piped());
+        let (mut child, job) = ChildJob::spawn(&mut cmd).unwrap();
+        let _stdin = child.stdin.take().unwrap();
+        // SAFETY: the child, current-process and job handles are live here.
+        unsafe {
+            let mut assigned = 0;
+            assert_ne!(
+                IsProcessInJob(child.raw_handle().unwrap() as _, job._job.0, &mut assigned),
+                0
+            );
+            assert_eq!(assigned, 1);
+            assert_ne!(
+                IsProcessInJob(GetCurrentProcess(), job._job.0, &mut assigned),
+                0
+            );
+            assert_eq!(assigned, 0);
+        }
+        let game = NativeExecutor
+            .spawn(&ProcessSpec {
+                program: "findstr.exe".into(),
+                args: vec!["x".into()],
+                env: vec![],
+                cwd: std::env::temp_dir(),
+                stdin: true,
+            })
+            .await
+            .unwrap();
+        game.kill().await.unwrap();
+        assert!(
+            !tokio::time::timeout(std::time::Duration::from_secs(10), game.wait())
+                .await
+                .unwrap()
+                .unwrap()
+                .success()
+        );
+        drop(job);
+        assert!(
+            !tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+                .await
+                .unwrap()
+                .unwrap()
+                .success()
+        );
+    }
 }
 // SAFETY: HANDLE names a process-wide kernel object — sending or sharing it
 // across threads is safe; the OS serializes job-object calls.

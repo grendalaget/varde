@@ -17,8 +17,27 @@ const STDERR_TAIL: usize = 64;
 /// Handle to the supervised child. Awaiting it resolves with the child's
 /// exit status when the process dies.
 pub struct SupervisedChild {
-    child: Child,
+    child: ProtectedChild,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+}
+
+struct ProtectedChild {
+    child: Child,
+    #[cfg(windows)]
+    _job: executor_native::ChildJob,
+}
+
+impl std::ops::Deref for ProtectedChild {
+    type Target = Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for ProtectedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
 }
 
 impl SupervisedChild {
@@ -74,7 +93,7 @@ fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {
     }
 }
 
-fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
+fn start(bin: &PathBuf, ipc: &str) -> Result<ProtectedChild> {
     let mut cmd = Command::new(bin);
     cmd.arg("--ipc")
         .arg(ipc)
@@ -88,10 +107,8 @@ fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     protected_spawn(&mut cmd).with_context(|| format!("spawn {}", bin.display()))
 }
 
-fn protected_spawn(cmd: &mut Command) -> std::io::Result<Child> {
+fn protected_spawn(cmd: &mut Command) -> std::io::Result<ProtectedChild> {
     cmd.kill_on_drop(true);
-    #[cfg(windows)]
-    executor_native::kill_children_on_exit().map_err(std::io::Error::other)?;
     #[cfg(target_os = "linux")]
     unsafe {
         let parent = std::process::id() as libc::pid_t;
@@ -105,7 +122,15 @@ fn protected_spawn(cmd: &mut Command) -> std::io::Result<Child> {
             Ok(())
         });
     }
-    cmd.spawn()
+    #[cfg(windows)]
+    let (child, job) = executor_native::ChildJob::spawn(cmd).map_err(std::io::Error::other)?;
+    #[cfg(not(windows))]
+    let child = cmd.spawn()?;
+    Ok(ProtectedChild {
+        child,
+        #[cfg(windows)]
+        _job: job,
+    })
 }
 
 #[cfg(all(test, any(windows, target_os = "linux")))]
