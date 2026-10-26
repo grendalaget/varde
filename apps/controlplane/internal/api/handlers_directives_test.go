@@ -162,14 +162,14 @@ func TestAgentHeartbeatDigestMatchesAfterSnapshotRequestClaim(t *testing.T) {
 	a := e.newAgent("node-a")
 	b := e.newAgent("node-b")
 	serverID := e.createServer("testgame", "snapshot-digest", nil)
-	host, _, _ := e.startToRunning(serverID, a, b)
+	host, execID, epoch := e.startToRunning(serverID, a, b)
 	if err := e.st.CreateSnapshotRequest(context.Background(), &store.SnapshotRequest{
 		ID: "snr_digest_test", ServerID: serverID, Reason: "manual", CreatedAt: e.st.NowMs(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	directives, heartbeat := host.heartbeat(nil)
+	directives, heartbeat := host.heartbeat([]map[string]any{{"execution_id": execID, "server_id": serverID, "epoch": epoch, "state": "running"}})
 	if heartbeat.Status != http.StatusOK {
 		t.Fatalf("heartbeat: %d %s", heartbeat.Status, heartbeat.Raw)
 	}
@@ -192,6 +192,86 @@ func TestAgentHeartbeatDigestMatchesAfterSnapshotRequestClaim(t *testing.T) {
 	got, changed := decodeWaitResponse(t, response)
 	if changed || got != directives.DirectivesDigest {
 		t.Fatalf("wait response = (%q, %t), want (%q, false)", got, changed, directives.DirectivesDigest)
+	}
+}
+
+func TestSnapshotRequestWaitsForRecoveredExecutionAcknowledgment(t *testing.T) {
+	for _, recovery := range []string{"renewed", "rescheduled"} {
+		t.Run(recovery, func(t *testing.T) {
+			e := newFastEnv(t)
+			a, b := e.newFastAgent("a"), e.newFastAgent("b")
+			serverID := e.createServer("testgame", "snapshot-recovery", nil)
+			host, execID, epoch := e.startToRunning(serverID, a, b)
+			other := b
+			if host == b {
+				other = a
+			}
+			requestID := "snr_recovery_test"
+			if err := e.st.CreateSnapshotRequest(context.Background(), &store.SnapshotRequest{
+				ID: requestID, ServerID: serverID, Reason: "manual", CreatedAt: e.st.NowMs(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			checkDeferred := func(reports []map[string]any) directives {
+				t.Helper()
+				d, r := host.heartbeat(reports)
+				if r.Status != http.StatusOK || strings.Contains(string(r.Raw), requestID) {
+					t.Fatalf("unacknowledged execution received snapshot work: %d %s", r.Status, r.Raw)
+				}
+				pending, err := e.st.PendingSnapshotRequests(context.Background(), serverID)
+				if err != nil || len(pending) != 1 || pending[0].ID != requestID {
+					t.Fatalf("snapshot request was consumed before acknowledgment: %+v, %v", pending, err)
+				}
+				return d
+			}
+			e.clk.advance(5000)
+			d := checkDeferred(nil)
+			response := host.waitForDirectives(d.DirectivesDigest, 1000)
+			if response.Status != http.StatusOK {
+				t.Fatalf("wait: %d %s", response.Status, response.Raw)
+			}
+			if digest, changed := decodeWaitResponse(t, response); changed || digest != d.DirectivesDigest {
+				t.Fatal("withheld request caused a spurious directive change")
+			}
+			checkDeferred([]map[string]any{{"execution_id": execID, "server_id": serverID, "epoch": epoch + 1, "state": "running"}})
+			if recovery == "renewed" {
+				if grant := host.renew(execID, serverID, epoch); len(grant.Leases) != 1 {
+					t.Fatalf("renew: %+v", grant)
+				}
+			} else {
+				e.clk.advance(3001)
+				checkDeferred([]map[string]any{{"execution_id": execID, "server_id": serverID, "epoch": epoch, "state": "running"}})
+				other.heartbeat(nil)
+				e.reconcile()
+				next := e.activeExec(serverID)
+				if next == nil || next["id"] == execID {
+					t.Fatalf("no replacement execution: %+v", next)
+				}
+				switch next["node"] {
+				case a.nodeID:
+					host = a
+				case b.nodeID:
+					host = b
+				default:
+					t.Fatalf("unexpected replacement host: %+v", next)
+				}
+				execID, epoch = next["id"].(string), next["epoch"].(int64)
+			}
+			checkDeferred(nil)
+			report := []map[string]any{{"execution_id": execID, "server_id": serverID, "epoch": epoch, "state": "running"}}
+			_, delivered := host.heartbeat(report)
+			if delivered.Status != http.StatusOK || !strings.Contains(string(delivered.Raw), requestID) {
+				t.Fatalf("acknowledged execution did not receive its snapshot request: %d %s", delivered.Status, delivered.Raw)
+			}
+			pending, err := e.st.PendingSnapshotRequests(context.Background(), serverID)
+			if err != nil || len(pending) != 0 {
+				t.Fatalf("delivered request remains pending: %+v, %v", pending, err)
+			}
+			_, repeated := host.heartbeat(report)
+			if repeated.Status != http.StatusOK || strings.Contains(string(repeated.Raw), requestID) {
+				t.Fatal("snapshot request was redelivered after claim")
+			}
+		})
 	}
 }
 

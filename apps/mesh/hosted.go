@@ -170,8 +170,9 @@ func (p *peerState) handleUDPFlowStream(st *quic.Stream, uf *meshv1.UdpFlow) {
 			if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(uf.GetFlowId()|flowReplyBit, buf[:nr])); err != nil {
 				// same policy as udpFlow.send: oversized datagrams are
 				// dropped and counted, the flow stays alive
-				if isDatagramTooLarge(err) {
+				if tooLarge := datagramTooLarge(err); tooLarge != nil {
 					rtMetricDrop(p.n)
+					p.n.log.Debug("oversized UDP datagram dropped", "service", uf.GetServiceId(), "direction", "host_to_client", "bytes", nr, "max_datagram_payload", tooLarge.MaxDatagramPayloadSize)
 					continue
 				}
 				return

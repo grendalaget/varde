@@ -21,6 +21,8 @@ type ServerView struct {
 type GameView struct {
 	ID          string
 	MinMemoryMB int64
+	MinDiskMB   int64
+	SteamApp    int64 // installed app is preferred; otherwise runtimes provision it
 	OS          []string
 	Arch        []string
 	Runtimes    []string
@@ -40,6 +42,7 @@ type NodeView struct {
 	Drivers           []string
 	Runtimes          []string
 	CachedDeployments []string
+	SteamApps         []int64
 	MemoryAvailableMB int64
 	MaxMemoryMB       *int64
 	DiskFreeBytes     int64
@@ -120,13 +123,18 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 			reasons = append(reasons, n.ID+": over max_memory_mb")
 			continue
 		}
-		need := snap.RestoreBytes*2 + snap.DeploymentSize
+		installed := game.SteamApp != 0 && slices.Contains(n.SteamApps, game.SteamApp)
+		minimum := game.MinDiskMB * 1_000_000
+		if installed {
+			minimum = 0
+		}
+		need := snap.RestoreBytes*2 + max(snap.DeploymentSize, minimum)
 		if need > 0 && n.DiskFreeBytes < need {
 			reasons = append(reasons, n.ID+": insufficient disk")
 			continue
 		}
 		// Runtime: any game runtime must be present.
-		if len(game.Runtimes) > 0 {
+		if !installed && len(game.Runtimes) > 0 {
 			ok := false
 			for _, rt := range game.Runtimes {
 				if slices.Contains(n.Runtimes, rt) {
@@ -143,6 +151,10 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 		var score float64
 		var rsn []string
 		add := func(w float64, why string) { score += w; rsn = append(rsn, why) }
+
+		if installed {
+			add(120, fmt.Sprintf("Steam app %d already installed", game.SteamApp))
+		}
 
 		if n.HasRestoreLocal {
 			add(100, "restore snapshot already local")

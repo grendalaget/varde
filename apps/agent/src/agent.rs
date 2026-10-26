@@ -219,7 +219,7 @@ impl Agent {
             .lock()
             .unwrap()
             .values()
-            .filter(|c| !c.is_finished())
+            .filter(|c| !c.is_finished() && !c.is_fenced() && !c.lease_expired())
             .map(|c| cp_api::ExecutionReport {
                 execution_id: c.dir.execution_id.clone(),
                 server_id: c.dir.server_id.clone(),

@@ -1215,6 +1215,13 @@ export interface components {
             os: ("linux" | "windows")[];
             arch: string[];
             min_memory_mb: number;
+            /** Format: int64 */
+            min_disk_mb?: number;
+            /**
+             * Format: int64
+             * @description Prefer a complete installed Steam app; otherwise provision using the catalog runtimes and min_disk_mb.
+             */
+            steam_app?: number;
             runtimes?: string[];
             addon_targets?: string[];
             config_fields: components["schemas"]["GameConfigField"][];
@@ -1428,6 +1435,7 @@ export interface components {
             user_active?: boolean;
             runtimes?: string[];
             cached_deployments?: string[];
+            steam_apps?: number[];
             drivers?: string[];
             uptime_s?: number;
             /** Format: int64 */

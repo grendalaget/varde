@@ -1,6 +1,6 @@
 //! Windows service integration: `service install|uninstall` plus the SCM
 //! entrypoint (`service run`, hidden). The service runs the same agent
-//! `run` path on a tokio runtime; SCM STOP and PRESHUTDOWN both feed the
+//! `run` path on a tokio runtime; SCM stop/shutdown controls feed the
 //! same graceful-stop channel as SIGTERM/ctrl-c, with a 120 s preshutdown
 //! hint so the final snapshot + replication hold can finish.
 //!
@@ -9,9 +9,8 @@
 
 use anyhow::{Context, Result};
 use std::ffi::OsString;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 use windows_service::service::{
     ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
     ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
@@ -21,9 +20,16 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 use windows_service::service_dispatcher;
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
+use crate::svc_status::{Status, StatusReporter};
+
 const SERVICE_NAME: &str = "VardeAgent";
 const SERVICE_DISPLAY: &str = "Varde Agent";
 const PRESHUTDOWN_MS: u32 = 150_000;
+
+enum ReporterEvent {
+    Draining,
+    Done,
+}
 
 pub fn install() -> Result<()> {
     let exe = std::env::current_exe().context("resolve exe path")?;
@@ -164,17 +170,29 @@ fn service_main_inner() -> Result<()> {
     // SCM -> agent graceful-stop channel
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let mut stop_tx = Some(stop_tx);
-    // set while a stop is being drained; the drain reporter below re-issues
-    // StopPending with fresh wait hints so the SCM doesn't kill us mid-hold
-    let draining = Arc::new(AtomicBool::new(false));
-    let handler_draining = draining.clone();
+    let (reporter_tx, reporter_rx) = mpsc::channel();
+    let handler_reporter = reporter_tx.clone();
+    type Reporter = StatusReporter<Box<dyn FnMut(Status) -> windows_service::Result<()> + Send>>;
+    let status: Arc<Mutex<Option<Reporter>>> = Arc::new(Mutex::new(None));
+    let handler_status = status.clone();
+    // Controls wait until the handle and initial reports are ready.
+    let mut startup = status.lock().unwrap();
     let status_handle = service_control_handler::register(
         SERVICE_NAME,
         move |event| -> ServiceControlHandlerResult {
             match event {
-                ServiceControl::Stop | ServiceControl::Preshutdown => {
-                    handler_draining.store(true, Ordering::SeqCst);
+                ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
+                    if let Err(e) = handler_status
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .unwrap()
+                        .stop(Instant::now())
+                    {
+                        tracing::error!(error = %e, "report StopPending");
+                    }
                     if let Some(tx) = stop_tx.take() {
+                        let _ = handler_reporter.send(ReporterEvent::Draining);
                         let _ = tx.send(());
                     }
                     ServiceControlHandlerResult::NoError
@@ -185,89 +203,123 @@ fn service_main_inner() -> Result<()> {
     )
     .context("register handler")?;
 
-    let set_status = |state: ServiceState, accept: ServiceControlAccept, hint: Duration| {
-        status_handle.set_service_status(ServiceStatus {
-            service_type: ServiceType::OWN_PROCESS,
-            current_state: state,
-            controls_accepted: accept,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: hint,
-            process_id: None,
-        })
-    };
-
-    set_status(
-        ServiceState::StartPending,
-        ServiceControlAccept::empty(),
-        Duration::from_secs(10),
-    )?;
-    set_status(
-        ServiceState::Running,
-        ServiceControlAccept::STOP | ServiceControlAccept::PRESHUTDOWN,
-        Duration::ZERO,
-    )?;
+    *startup = Some(StatusReporter::new(Box::new(move |status| {
+        status_handle.set_service_status(service_status(status))
+    })));
+    startup.as_mut().unwrap().start()?;
+    drop(startup);
 
     // re-report StopPending every few seconds while the agent drains; a
     // single short wait hint would let the SCM kill us mid-hold
-    let status_handle2 = status_handle;
-    let reporter_done = Arc::new(AtomicBool::new(false));
-    let reporter_done2 = reporter_done.clone();
-    let reporter = std::thread::spawn(move || {
-        let mut checkpoint: u32 = 1;
-        while !reporter_done2.load(Ordering::SeqCst) {
-            if draining.load(Ordering::SeqCst) {
-                let _ = status_handle2.set_service_status(ServiceStatus {
-                    service_type: ServiceType::OWN_PROCESS,
-                    current_state: ServiceState::StopPending,
-                    controls_accepted: ServiceControlAccept::empty(),
-                    exit_code: ServiceExitCode::Win32(0),
-                    checkpoint,
-                    wait_hint: Duration::from_secs(30),
-                    process_id: None,
-                });
-                checkpoint += 1;
+    let reporter_status = status.clone();
+    let reporter = std::thread::spawn(move || loop {
+        match reporter_rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(ReporterEvent::Draining) => (),
+            Ok(ReporterEvent::Done) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Err(e) = reporter_status
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .tick(Instant::now())
+                {
+                    tracing::warn!(error = %e, "refresh StopPending");
+                }
             }
-            std::thread::sleep(Duration::from_secs(3));
         }
     });
 
-    // run the real agent on this worker thread; STOP/PRESHUTDOWN feeds the
+    // run the real agent on this worker thread; SCM controls feed the
     // same graceful-stop path as SIGTERM/ctrl-c.
-    let rt = tokio::runtime::Runtime::new().context("tokio runtime")?;
-    let run_res = rt.block_on(crate::run(
-        crate::default_data_dir(),
-        None,
-        false,
-        false,
-        None,
-        None,
-        Some(stop_rx),
-    ));
+    let run_res = tokio::runtime::Runtime::new()
+        .context("tokio runtime")
+        .and_then(|rt| {
+            rt.block_on(crate::run(
+                crate::default_data_dir(),
+                None,
+                false,
+                false,
+                None,
+                None,
+                Some(stop_rx),
+            ))
+        });
 
-    reporter_done.store(true, Ordering::SeqCst);
+    let _ = reporter_tx.send(ReporterEvent::Done);
     let _ = reporter.join();
-    set_status(
-        ServiceState::StopPending,
-        ServiceControlAccept::empty(),
-        Duration::from_secs(10),
-    )?;
     if let Err(e) = &run_res {
         tracing::error!("agent failed: {e:#}");
     }
     // a non-zero exit code makes the SCM apply the restart actions
-    status_handle.set_service_status(ServiceStatus {
+    status
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .finish(run_res.is_err())?;
+    run_res
+}
+
+fn service_status(status: Status) -> ServiceStatus {
+    let mut report = ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
-        current_state: ServiceState::Stopped,
+        current_state: ServiceState::StartPending,
         controls_accepted: ServiceControlAccept::empty(),
-        exit_code: if run_res.is_err() {
-            ServiceExitCode::ServiceSpecific(1)
-        } else {
-            ServiceExitCode::Win32(0)
-        },
+        exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::ZERO,
         process_id: None,
-    })?;
-    run_res
+    };
+    match status {
+        Status::StartPending => report.wait_hint = Duration::from_secs(10),
+        Status::Running => {
+            report.current_state = ServiceState::Running;
+            report.controls_accepted = ServiceControlAccept::STOP
+                | ServiceControlAccept::SHUTDOWN
+                | ServiceControlAccept::PRESHUTDOWN;
+        }
+        Status::StopPending { checkpoint } => {
+            report.current_state = ServiceState::StopPending;
+            report.checkpoint = checkpoint;
+            report.wait_hint = Duration::from_secs(30);
+        }
+        Status::Stopped { failed } => {
+            report.current_state = ServiceState::Stopped;
+            if failed {
+                report.exit_code = ServiceExitCode::ServiceSpecific(1);
+            }
+        }
+    }
+    report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_status_disables_controls_and_retains_checkpoint_and_hint() {
+        let status = service_status(Status::StopPending { checkpoint: 7 });
+        assert_eq!(status.current_state, ServiceState::StopPending);
+        assert!(status.controls_accepted.is_empty());
+        assert_eq!(status.checkpoint, 7);
+        assert_eq!(status.wait_hint, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn stopped_status_preserves_failure_restart_policy() {
+        for failed in [false, true] {
+            let status = service_status(Status::Stopped { failed });
+            assert_eq!(status.current_state, ServiceState::Stopped);
+            assert!(status.controls_accepted.is_empty());
+            assert_eq!(status.checkpoint, 0);
+            assert_eq!(status.wait_hint, Duration::ZERO);
+            match status.exit_code {
+                ServiceExitCode::ServiceSpecific(1) => assert!(failed),
+                ServiceExitCode::Win32(0) => assert!(!failed),
+                other => panic!("unexpected exit code: {other:?}"),
+            }
+        }
+    }
 }

@@ -21,6 +21,20 @@ use tokio::sync::watch;
 use crate::chunks;
 use crate::Agent;
 
+type ProcessExit =
+    std::result::Result<executor_api::Result<executor_api::ExitStatus>, tokio::task::JoinError>;
+
+async fn startup_exit(
+    watch: &mut tokio::task::JoinHandle<executor_api::Result<executor_api::ExitStatus>>,
+    observed: Option<ProcessExit>,
+) -> Option<ProcessExit> {
+    match observed {
+        Some(status) => Some(status),
+        None if watch.is_finished() => Some(watch.await),
+        None => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Preparing,
@@ -176,6 +190,12 @@ impl ExecCtl {
     pub fn is_fenced(&self) -> bool {
         self.fenced.load(Ordering::SeqCst)
     }
+    pub fn lease_expired(&self) -> bool {
+        self.deadline
+            .lock()
+            .unwrap()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
     pub fn set_fence_margin_ms(&self, margin_ms: i64) {
         self.fence_margin_ms.store(margin_ms, Ordering::SeqCst);
     }
@@ -234,6 +254,9 @@ pub(crate) fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
 /// Report an immediate state transition to the CP (best effort — heartbeat
 /// also carries it).
 pub async fn report(agent: &Agent, ctl: &ExecCtl) {
+    if ctl.is_fenced() || ctl.lease_expired() {
+        return;
+    }
     let body = cp_api::ExecutionStatusUpdate {
         server_id: ctl.dir.server_id.clone(),
         epoch: ctl.dir.epoch,
@@ -257,10 +280,7 @@ pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
     let c = ctl.clone();
     let task = tokio::spawn(async move {
         if let Err(e) = run(a.clone(), c.clone()).await {
-            tracing::error!(exec = %c.dir.execution_id, error = %format!("{e:#}"), "supervisor failed");
-            c.set_phase(Phase::Failed);
-            c.set_message(&format!("{e:#}"));
-            report(&a, &c).await;
+            supervisor_error(&a, &c, &e).await;
         }
         a.execs.lock().unwrap().remove(&c.dir.execution_id);
         a.state.lock().unwrap().remove(&c.dir.execution_id);
@@ -269,7 +289,39 @@ pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
     ctl.set_task(task);
 }
 
+fn failure_phase(ctl: &ExecCtl) -> Phase {
+    if ctl.is_fenced() || ctl.lease_expired() || matches!(*ctl.stop.borrow(), Some(StopKind::Hard))
+    {
+        Phase::Fenced
+    } else if ctl.stop.borrow().is_some() {
+        Phase::Stopped
+    } else {
+        Phase::Failed
+    }
+}
+
+async fn supervisor_error(agent: &Agent, ctl: &ExecCtl, error: &anyhow::Error) {
+    let phase = failure_phase(ctl);
+    ctl.set_message(&format!("{error:#}"));
+    if phase == Phase::Fenced {
+        ctl.mark_fenced();
+        ctl.mark_finished();
+        if let Some(process) = ctl.proc() {
+            let _ = process.kill().await;
+            let _ = process.wait().await;
+        }
+        agent.sync_hosted_services().await;
+        tracing::warn!(exec = %ctl.dir.execution_id, %error, "execution refused; leaving lease to lapse");
+        return;
+    }
+    ctl.set_phase(phase);
+    tracing::error!(exec = %ctl.dir.execution_id, %error, ?phase, "supervisor ended");
+    report(agent, ctl).await;
+    ctl.mark_finished();
+}
+
 async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
+    ensure_live(&ctl)?;
     let dir = ctl.dir.clone();
     let game_id = exec_game_id(&dir).to_string();
     let driver: &dyn GameDriver = agent
@@ -405,13 +457,9 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
 
         ctl.set_phase(Phase::Starting);
         report(&agent, &ctl).await;
-        let spec = driver.process_spec(&ctx).map_err(dyn_err)?;
         ctl.clear_join_code();
-        let proc = agent.executor.spawn(&spec).await.map_err(dyn_err)?;
-        let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
+        let proc = spawn_live(driver, &ctx, &agent.executor, &ctl).await?;
         tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
-        ctl.set_pgid(proc.pid());
-        ctl.set_proc(proc.clone());
         agent.note_exec_pgid(&dir.execution_id, proc.pid());
         spawn_join_code_watcher(&agent, &ctl, proc.clone(), game_id.clone());
         spawn_log_pump(&agent, &ctl, proc.clone());
@@ -429,8 +477,10 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         // exec removed from execs (the fencing watchdog could never reach it)
         let mut running = false;
         let mut probe_dead = false;
+        let mut exit_status = None;
         let probe_deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < probe_deadline && !exit_watch.is_finished() {
+        while Instant::now() < probe_deadline && !exit_watch.is_finished() && exit_status.is_none()
+        {
             match driver.probe(&ctx, &*proc).await {
                 Ok(GameHealth::Healthy) => {
                     running = true;
@@ -444,7 +494,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 Ok(GameHealth::Starting) => {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {}
-                        _ = &mut exit_watch => {}
+                        st = &mut exit_watch => { exit_status = Some(st); }
                     }
                 }
                 Err(e) => {
@@ -460,8 +510,9 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             let _ = proc.kill().await;
             continue 'outer;
         }
-        if !running && exit_watch.is_finished() {
-            if let Ok(st) = (&mut exit_watch).await {
+        if !running {
+            let status = startup_exit(&mut exit_watch, exit_status.take()).await;
+            if let Some(Ok(st)) = status {
                 tracing::warn!(exec = %dir.execution_id, status = ?st, "game exited during startup");
             }
         }
@@ -1018,7 +1069,69 @@ fn ensure_live(ctl: &ExecCtl) -> Result<()> {
     if ctl.stop.borrow().is_some() {
         bail!("stop requested");
     }
+    if ctl.lease_expired() {
+        ctl.mark_fenced();
+        bail!("lease deadline expired");
+    }
     Ok(())
+}
+
+struct LiveExecutor<'a> {
+    executor: &'a dyn Executor,
+    ctl: &'a ExecCtl,
+}
+
+#[async_trait::async_trait]
+impl Executor for LiveExecutor<'_> {
+    fn kind(&self) -> &'static str {
+        self.executor.kind()
+    }
+
+    async fn spawn(
+        &self,
+        spec: &executor_api::ProcessSpec,
+    ) -> executor_api::Result<Box<dyn ProcessHandle>> {
+        ensure_live(self.ctl).map_err(|error| error.to_string())?;
+        self.executor.spawn(spec).await
+    }
+}
+
+async fn spawn_live(
+    driver: &dyn GameDriver,
+    ctx: &DriverContext<'_>,
+    executor: &dyn Executor,
+    ctl: &ExecCtl,
+) -> Result<Arc<dyn ProcessHandle>> {
+    ensure_live(ctl)?;
+    let executor = LiveExecutor { executor, ctl };
+    #[cfg(windows)]
+    let firewall = if driver.id() == "cs2" {
+        Some(
+            crate::cs2_firewall::install(
+                ctx.server_id,
+                u16::try_from(ctx.local_port(game_cs2::PORT))?,
+            )
+            .await
+            .map_err(dyn_err)?,
+        )
+    } else {
+        None
+    };
+    let process = driver.spawn(ctx, &executor).await.map_err(dyn_err)?;
+    #[cfg(windows)]
+    let process = match firewall {
+        Some(rule) => crate::cs2_firewall::retain(process, rule),
+        None => process,
+    };
+    let process: Arc<dyn ProcessHandle> = Arc::from(process);
+    ctl.set_pgid(process.pid());
+    ctl.set_proc(process.clone());
+    if let Err(error) = ensure_live(ctl) {
+        let _ = process.kill().await;
+        let _ = process.wait().await;
+        return Err(error);
+    }
+    Ok(process)
 }
 
 /// Allocate one contiguous block of local ports covering `service_ports`.
@@ -1356,6 +1469,41 @@ mod requires_stop_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::broadcast;
 
+    #[tokio::test]
+    async fn startup_exit_never_repolls_a_consumed_task() {
+        for consumed in [false, true] {
+            for failed in [false, true] {
+                let mut watch = tokio::spawn(async move {
+                    if failed {
+                        return Err(std::io::Error::other("wait failed").into());
+                    }
+                    Ok(ExitStatus {
+                        code: Some(1),
+                        signal: None,
+                    })
+                });
+                while !watch.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+                let observed = if consumed {
+                    Some((&mut watch).await)
+                } else {
+                    None
+                };
+                let result = startup_exit(&mut watch, observed).await.unwrap().unwrap();
+                assert_eq!(result.is_err(), failed);
+            }
+        }
+        let mut watch = tokio::spawn(std::future::pending());
+        assert!(startup_exit(&mut watch, None).await.is_none());
+        watch.abort();
+        let observed = (&mut watch).await;
+        assert!(startup_exit(&mut watch, Some(observed))
+            .await
+            .unwrap()
+            .is_err());
+    }
+
     struct StopDriver {
         stopped: AtomicUsize,
         after_stop: bool,
@@ -1367,6 +1515,7 @@ mod requires_stop_tests {
         /// prepare_snapshot errors after its (pretend) autosave pause
         fail_prepare: bool,
         resume_calls: AtomicUsize,
+        spawn_gate: Option<Arc<tokio::sync::Notify>>,
     }
 
     impl StopDriver {
@@ -1381,6 +1530,7 @@ mod requires_stop_tests {
                 handoff: false,
                 fail_prepare: false,
                 resume_calls: AtomicUsize::new(0),
+                spawn_gate: None,
             }
         }
     }
@@ -1415,6 +1565,24 @@ mod requires_stop_tests {
         }
         fn process_spec(&self, _c: &DriverContext<'_>) -> game_driver_api::Result<ProcessSpec> {
             unreachable!()
+        }
+        async fn spawn(
+            &self,
+            ctx: &DriverContext<'_>,
+            executor: &dyn Executor,
+        ) -> game_driver_api::Result<Box<dyn ProcessHandle>> {
+            if let Some(gate) = &self.spawn_gate {
+                gate.notified().await;
+            }
+            executor
+                .spawn(&ProcessSpec {
+                    program: "unused".into(),
+                    args: vec![],
+                    env: vec![],
+                    cwd: ctx.deployment_dir.into(),
+                    stdin: false,
+                })
+                .await
         }
         async fn freeze(
             &self,
@@ -1453,12 +1621,16 @@ mod requires_stop_tests {
         }
         async fn prepare_snapshot(
             &self,
-            _c: &DriverContext<'_>,
+            ctx: &DriverContext<'_>,
             _p: &dyn ProcessHandle,
         ) -> game_driver_api::Result<SnapshotBarrier> {
             self.prepare_calls.fetch_add(1, Ordering::SeqCst);
             if self.fail_prepare {
                 return Err("save-all write failed".into());
+            }
+            if self.live_barrier {
+                std::fs::create_dir_all(ctx.server_dir.join("saves"))?;
+                std::fs::write(ctx.server_dir.join("saves/world.txt"), b"barrier")?;
             }
             Ok(if self.live_barrier {
                 SnapshotBarrier::Live
@@ -1535,13 +1707,20 @@ mod requires_stop_tests {
 
     /// Stub CP: accept HTTP posts and answer 200 {}.
     async fn stub_cp() -> String {
+        stub_cp_recording().await.0
+    }
+
+    async fn stub_cp_recording() -> (String, Arc<AtomicUsize>) {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((mut s, _)) = l.accept().await else {
                     break;
                 };
+                count.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 64 * 1024];
                     let _ = s.read(&mut buf).await;
@@ -1553,7 +1732,168 @@ mod requires_stop_tests {
                 });
             }
         });
-        format!("http://127.0.0.1:{port}")
+        (format!("http://127.0.0.1:{port}"), requests)
+    }
+
+    #[tokio::test]
+    async fn supervisor_refusals_never_report_failed_but_game_errors_do() {
+        for reason in ["fenced", "expired", "hard stop", "graceful stop", "game"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (cp, requests) = stub_cp_recording().await;
+            let agent = Arc::new(test_agent(cp, tmp.path()));
+            let ctl = test_ctl();
+            match reason {
+                "fenced" => ctl.mark_fenced(),
+                "expired" => *ctl.deadline.lock().unwrap() = Some(Instant::now()),
+                "hard stop" => ctl.request_stop(StopKind::Hard),
+                "graceful stop" => ctl.request_stop(StopKind::Graceful),
+                _ => (),
+            }
+            agent
+                .execs
+                .lock()
+                .unwrap()
+                .insert(ctl.dir.execution_id.clone(), ctl.clone());
+            spawn_supervisor(agent.clone(), ctl.clone());
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while agent
+                    .execs
+                    .lock()
+                    .unwrap()
+                    .contains_key(&ctl.dir.execution_id)
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let expected = match reason {
+                "game" => Phase::Failed,
+                "graceful stop" => Phase::Stopped,
+                _ => Phase::Fenced,
+            };
+            assert_eq!(ctl.phase(), expected, "{reason}");
+            assert_eq!(
+                requests.load(Ordering::SeqCst),
+                usize::from(matches!(expected, Phase::Failed | Phase::Stopped)),
+                "{reason}"
+            );
+            assert!(agent.exec_reports().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn lease_refusal_is_sticky_and_cleans_up_a_registered_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (cp, requests) = stub_cp_recording().await;
+        let agent = test_agent(cp, tmp.path());
+        let ctl = test_ctl();
+        let process = Arc::new(FakeProc {
+            tx: broadcast::channel(1).0,
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus::default(),
+        });
+        ctl.set_proc(process.clone());
+        *ctl.deadline.lock().unwrap() = Some(Instant::now());
+        let error = ensure_live(&ctl).unwrap_err();
+        *ctl.deadline.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+        supervisor_error(&agent, &ctl, &error).await;
+        assert_eq!(ctl.phase(), Phase::Fenced);
+        assert!(process.exited.load(Ordering::SeqCst));
+        assert!(ctl.is_finished());
+        report(&agent, &ctl).await;
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+    }
+
+    struct RecordingExecutor {
+        calls: AtomicUsize,
+        fence_during_spawn: Option<Arc<ExecCtl>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Executor for RecordingExecutor {
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+        async fn spawn(&self, _: &ProcessSpec) -> executor_api::Result<Box<dyn ProcessHandle>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(ctl) = &self.fence_during_spawn {
+                ctl.mark_fenced();
+            }
+            Ok(Box::new(FakeProc {
+                tx: broadcast::channel(1).0,
+                exited: AtomicBool::new(false),
+                exit_status: ExitStatus::default(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_rechecks_authorization_after_driver_wait() {
+        for cancellation in [
+            "none",
+            "fenced",
+            "hard stop",
+            "graceful stop",
+            "expired lease",
+            "during spawn",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let runtimes = runtimes::HttpRuntimes::new(tmp.path().join("runtimes"));
+            let config = serde_json::json!({});
+            let deployment = DeploymentSpec::parse(&config);
+            let ctx = DriverContext {
+                server_id: "s",
+                server_dir: tmp.path(),
+                deployment_dir: tmp.path(),
+                runtimes: &runtimes,
+                deployment: &deployment,
+                config: &config,
+                ports: &[],
+                memory_mb: 0,
+                addons: &[],
+            };
+            let gate = Arc::new(tokio::sync::Notify::new());
+            let driver = StopDriver {
+                spawn_gate: Some(gate.clone()),
+                ..StopDriver::new(false)
+            };
+            let ctl = test_ctl();
+            let executor = RecordingExecutor {
+                calls: AtomicUsize::new(0),
+                fence_during_spawn: (cancellation == "during spawn").then(|| ctl.clone()),
+            };
+            let (result, ()) = tokio::join!(spawn_live(&driver, &ctx, &executor, &ctl), async {
+                tokio::task::yield_now().await;
+                match cancellation {
+                    "fenced" => ctl.mark_fenced(),
+                    "hard stop" => ctl.request_stop(StopKind::Hard),
+                    "graceful stop" => ctl.request_stop(StopKind::Graceful),
+                    "expired lease" => *ctl.deadline.lock().unwrap() = Some(Instant::now()),
+                    _ => (),
+                }
+                gate.notify_one();
+            });
+            if cancellation == "none" {
+                let process = result.unwrap();
+                process.kill().await.unwrap();
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+            } else if cancellation == "during spawn" {
+                assert!(result.is_err());
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+                let process = ctl
+                    .proc()
+                    .expect("handle registered before final fence check");
+                tokio::time::timeout(Duration::from_millis(5), process.wait())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            } else {
+                assert!(result.is_err(), "{cancellation}");
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 0, "{cancellation}");
+                assert!(ctl.proc().is_none());
+            }
+        }
     }
 
     fn test_agent(cp: String, tmp: &Path) -> Agent {
@@ -1863,6 +2203,15 @@ mod requires_stop_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn requires_stop_snapshots_files_written_at_exit() {
+        snapshots_capture_barrier_or_exit_files(false).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_snapshot_captures_barrier_files_before_stop() {
+        snapshots_capture_barrier_or_exit_files(true).await;
+    }
+
+    async fn snapshots_capture_barrier_or_exit_files(live: bool) {
         let tmp = tempfile::tempdir().unwrap();
         let agent = test_agent(stub_cp().await, tmp.path());
         let ctl = test_ctl();
@@ -1894,7 +2243,7 @@ mod requires_stop_tests {
             memory_mb: 0,
             addons: &[],
         };
-        let driver = StopDriver::new(false);
+        let driver = StopDriver::new(live);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
         assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
         assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
@@ -1906,6 +2255,23 @@ mod requires_stop_tests {
         assert!(
             files.iter().any(|p| p == "saves/world.txt"),
             "manifest missing exit-time save: {files:?}"
+        );
+        let restored = tmp.path().join("restored");
+        agent
+            .store
+            .restore(
+                &snaps[0],
+                &restored,
+                &[snapshot_store::PathPattern::new("saves/")],
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(restored.join("saves/world.txt")).unwrap(),
+            if live {
+                b"barrier".as_slice()
+            } else {
+                b"final".as_slice()
+            }
         );
     }
 

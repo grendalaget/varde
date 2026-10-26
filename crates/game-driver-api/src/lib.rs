@@ -9,11 +9,22 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
-use executor_api::{ProcessHandle, ProcessSpec};
+use executor_api::{Executor, ProcessHandle, ProcessSpec};
 pub use snapshot_store::PathPattern;
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, DynError>;
+
+/// Whether SteamCMD marks an app installation as fully installed.
+pub fn steam_app_installed(app_id: u32, dest: &Path) -> bool {
+    let manifest =
+        std::fs::read_to_string(dest.join(format!("steamapps/appmanifest_{app_id}.acf")))
+            .unwrap_or_default();
+    let tokens: Vec<_> = manifest.split('"').collect();
+    tokens
+        .windows(3)
+        .any(|w| w[0] == "StateFlags" && w[2] == "4")
+}
 
 /// How the game runtime is obtained. `local_binary` = an already-installed
 /// binary (path from agent config or next to the agent executable); other
@@ -562,9 +573,13 @@ pub trait RuntimeProvider: Send + Sync {
         Err("runtime provider cannot fetch".into())
     }
     /// Install/update a Steam dedicated app into `dest` via steamcmd
-    /// (`+force_install_dir +login anonymous +app_update <app> validate +quit`).
+    /// Validate missing/incomplete installations; routine updates skip validation.
     async fn steam_app_install(&self, _app_id: u32, _dest: &Path) -> Result<()> {
         Err("runtime provider cannot fetch".into())
+    }
+    /// Bootstrap SteamCMD and return its executable path.
+    async fn steamcmd_path(&self) -> Result<PathBuf> {
+        Err("runtime provider cannot supply steamcmd".into())
     }
 }
 
@@ -611,6 +626,13 @@ pub trait GameDriver: Send + Sync {
     /// Write config files into `server_dir`.
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()>;
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec>;
+    async fn spawn(
+        &self,
+        ctx: &DriverContext<'_>,
+        executor: &dyn Executor,
+    ) -> Result<Box<dyn ProcessHandle>> {
+        executor.spawn(&self.process_spec(ctx)?).await
+    }
     async fn probe(&self, ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<GameHealth>;
     /// Enter the snapshot barrier; returns Live or RequiresStop.
     async fn prepare_snapshot(

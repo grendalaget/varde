@@ -21,9 +21,11 @@ service MeshService {
   rpc SetHostedServices(SetHostedServicesRequest) returns (SetHostedServicesResponse);
   // Agent-internal services (e.g. "agent.chunks") reachable by group peers.
   rpc SetInternalServices(SetInternalServicesRequest) returns (SetInternalServicesResponse);
-  // Opens a 127.0.0.1:<ephemeral> TCP listener forwarding to a peer's internal service.
+  // Retired: unauthenticated loopback internal forwards are no longer supported.
   rpc BindInternalForward(BindInternalForwardRequest) returns (BindInternalForwardResponse);
   rpc UnbindInternalForward(UnbindInternalForwardRequest) returns (UnbindInternalForwardResponse);
+  // One request/response over private IPC and the cached peer connection. No local listener.
+  rpc ExchangeInternal(ExchangeInternalRequest) returns (stream ExchangeInternalResponse);
   rpc WatchEvents(WatchEventsRequest) returns (stream MeshEvent);
 }
 
@@ -179,6 +181,13 @@ message BindInternalForwardResponse {
 }
 message UnbindInternalForwardRequest { string forward_id = 1; }
 message UnbindInternalForwardResponse {}
+
+message ExchangeInternalRequest {
+  string peer_node_id = 1;
+  string name = 2;
+  bytes request = 3;
+}
+message ExchangeInternalResponse { bytes data = 1; }
 
 message WatchEventsRequest {}
 message MeshEvent {

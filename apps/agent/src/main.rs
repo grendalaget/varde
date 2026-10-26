@@ -7,6 +7,8 @@ mod chunks;
 mod config;
 mod control;
 mod crash;
+#[cfg(any(windows, test))]
+mod cs2_firewall;
 mod exec;
 mod identity;
 mod link;
@@ -142,6 +144,9 @@ fn default_mesh_bin() -> Result<PathBuf> {
 
 #[cfg(windows)]
 mod svc;
+
+#[cfg(any(windows, test))]
+mod svc_status;
 
 #[cfg(windows)]
 async fn service_dispatch(action: ServiceAction) -> Result<()> {
@@ -406,6 +411,8 @@ async fn run(
 ) -> Result<()> {
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    #[cfg(windows)]
+    cs2_firewall::start_sweep();
     crash_report::install_panic_hook(
         crash::dir(&data_dir),
         "varde-agent",
@@ -517,6 +524,7 @@ async fn run_linked(
     drivers.register(Box::new(tg));
     drivers.register(Box::new(game_minecraft::MinecraftDriver::new()));
     drivers.register(Box::new(game_valheim::ValheimDriver::new()));
+    drivers.register(Box::new(game_cs2::Cs2Driver::new()));
     let runtimes = Arc::new(runtimes::HttpRuntimes::new(data_dir.join("runtimes")));
 
     // mesh

@@ -387,8 +387,9 @@ func (f *udpFlow) send(payload []byte) {
 	}
 	if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(f.id, payload)); err != nil {
 		// oversize datagrams are dropped (and counted) per spec
-		if isDatagramTooLarge(err) {
+		if tooLarge := datagramTooLarge(err); tooLarge != nil {
 			rtMetricDrop(f.rt.n)
+			f.rt.n.log.Debug("oversized UDP datagram dropped", "service", f.rt.serviceID, "direction", "client_to_host", "bytes", len(payload), "max_datagram_payload", tooLarge.MaxDatagramPayloadSize)
 			return
 		}
 		f.close()
@@ -401,8 +402,15 @@ func (f *udpFlow) send(payload []byte) {
 // with a zero-valued target never matches: its Is compares
 // MaxDatagramPayloadSize.
 func isDatagramTooLarge(err error) bool {
+	return datagramTooLarge(err) != nil
+}
+
+func datagramTooLarge(err error) *quic.DatagramTooLargeError {
 	var tooLarge *quic.DatagramTooLargeError
-	return errors.As(err, &tooLarge)
+	if errors.As(err, &tooLarge) {
+		return tooLarge
+	}
+	return nil
 }
 
 func rtMetricDrop(n *Node) {

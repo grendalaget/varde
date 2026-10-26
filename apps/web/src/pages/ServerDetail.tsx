@@ -326,6 +326,12 @@ function Overview({
                 <span className="text-muted">-</span>
               )}
             </div>
+            {s.game_id === "cs2" && (
+              <p className="text-xs text-muted">
+                In CS2 open the console and run{" "}
+                <code>connect {sum.address || "<address>"}</code>.
+              </p>
+            )}
             {crossplay ? (
               <p className="text-xs text-muted">
                 Crossplay server: players join from Valheim&apos;s Join game →

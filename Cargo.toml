@@ -16,6 +16,8 @@ members = [
     "games/testgame",
     "games/minecraft",
     "games/valheim",
+    "games/cs2",
+    "crates/cs2-bind",
 ]
 
 [workspace.package]

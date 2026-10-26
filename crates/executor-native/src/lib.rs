@@ -10,11 +10,17 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use async_trait::async_trait;
 use executor_api::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{broadcast, watch, Mutex as AsyncMutex};
+
+#[cfg(windows)]
+static HIDDEN_CONSOLE_ALLOCATED: AtomicBool = AtomicBool::new(false);
 
 pub struct NativeExecutor;
 
@@ -73,16 +79,24 @@ impl NativeHandle {
         let mut cmd = Command::new(&spec.program);
         cmd.args(&spec.args)
             .envs(spec.env.iter().map(|(k, v)| (k, v)))
-            .current_dir(&spec.cwd)
-            .stdin(if spec.stdin {
-                Stdio::piped()
+            .current_dir(&spec.cwd);
+        platform_configure(&mut cmd);
+        let stdin = if spec.stdin {
+            Stdio::piped()
+        } else {
+            #[cfg(windows)]
+            if HIDDEN_CONSOLE_ALLOCATED.load(Ordering::SeqCst) {
+                Stdio::inherit()
             } else {
                 Stdio::null()
-            })
+            }
+            #[cfg(not(windows))]
+            Stdio::null()
+        };
+        cmd.stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        platform_configure(&mut cmd);
 
         let mut child = cmd.spawn().map_err(to_err)?;
         let pid = child.id().unwrap_or(0);
@@ -344,6 +358,7 @@ fn ensure_console() {
         if AllocConsole() == 0 {
             return;
         }
+        HIDDEN_CONSOLE_ALLOCATED.store(true, Ordering::SeqCst);
         let hwnd = GetConsoleWindow();
         if !hwnd.is_null() {
             ShowWindow(hwnd, SW_HIDE);
@@ -354,6 +369,77 @@ fn ensure_console() {
 
 #[cfg(windows)]
 struct Job(windows_sys::Win32::Foundation::HANDLE);
+
+/// Retains a child's kill-on-close job independently of other child jobs.
+#[cfg(windows)]
+pub struct ChildJob {
+    _job: Job,
+}
+
+#[cfg(windows)]
+impl ChildJob {
+    pub fn spawn(cmd: &mut Command) -> Result<(Child, Self)> {
+        let job = Job::new()?;
+        cmd.kill_on_drop(true);
+        let child = cmd.spawn()?;
+        job.assign(&child)?;
+        Ok((child, Self { _job: job }))
+    }
+}
+
+#[cfg(all(test, windows))]
+mod child_job_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn child_job_excludes_parent_and_does_not_change_game_jobs() {
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let mut cmd = Command::new("findstr.exe");
+        cmd.arg("x").stdin(Stdio::piped());
+        let (mut child, job) = ChildJob::spawn(&mut cmd).unwrap();
+        let _stdin = child.stdin.take().unwrap();
+        // SAFETY: the child, current-process and job handles are live here.
+        unsafe {
+            let mut assigned = 0;
+            assert_ne!(
+                IsProcessInJob(child.raw_handle().unwrap() as _, job._job.0, &mut assigned),
+                0
+            );
+            assert_eq!(assigned, 1);
+            assert_ne!(
+                IsProcessInJob(GetCurrentProcess(), job._job.0, &mut assigned),
+                0
+            );
+            assert_eq!(assigned, 0);
+        }
+        let game = NativeExecutor
+            .spawn(&ProcessSpec {
+                program: "findstr.exe".into(),
+                args: vec!["x".into()],
+                env: vec![],
+                cwd: std::env::temp_dir(),
+                stdin: true,
+            })
+            .await
+            .unwrap();
+        game.kill().await.unwrap();
+        assert!(
+            !tokio::time::timeout(std::time::Duration::from_secs(10), game.wait())
+                .await
+                .unwrap()
+                .unwrap()
+                .success()
+        );
+        assert!(child.try_wait().unwrap().is_none());
+        drop(job);
+        tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
 // SAFETY: HANDLE names a process-wide kernel object — sending or sharing it
 // across threads is safe; the OS serializes job-object calls.
 #[cfg(windows)]

@@ -149,7 +149,7 @@ func (r *Reconciler) placeOff(ctx context.Context, srv *store.Server, exclude, o
 	}
 	dec, err := scheduler.Place(
 		scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred},
-		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
+		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB, SteamApp: game.SteamApp, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
 		views,
 		snap,
 	)

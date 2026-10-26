@@ -70,6 +70,54 @@ fn apply_deadline(
     *slot.lock().unwrap() = Some(deadline);
 }
 
+struct StartupLease {
+    sent: Instant,
+    deadline: Instant,
+    margin_ms: i64,
+}
+
+async fn renew_startup_leases(
+    cp: &cp_api::CpClient,
+    executions: Vec<cp_api::LeaseRef>,
+    margin_ms: i64,
+    ttl_ms: i64,
+) -> Result<HashMap<String, StartupLease>> {
+    if executions.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let request = cp_api::RenewLeasesRequest { executions };
+    let sent = Instant::now();
+    let response: cp_api::RenewLeasesResponse =
+        cp.json("POST", "/v1/agent/leases", Some(&request)).await?;
+    let mut leases = HashMap::new();
+    for lease in response.leases {
+        if !request
+            .executions
+            .iter()
+            .any(|e| e.execution_id == lease.execution_id)
+        {
+            continue;
+        }
+        let (deadline, margin_ms) = fence_deadline(
+            sent,
+            lease.lease_expires_at_unix_ms - response.server_time_unix_ms,
+            margin_ms,
+            ttl_ms,
+        );
+        if Instant::now() < deadline {
+            leases.insert(
+                lease.execution_id,
+                StartupLease {
+                    sent,
+                    deadline,
+                    margin_ms,
+                },
+            );
+        }
+    }
+    Ok(leases)
+}
+
 struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
 
 impl Drop for HeartbeatCompletionGuard<'_> {
@@ -370,6 +418,40 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
     update_rejoin(agent, d).await;
 
     // ---- executions ----
+    let new_leases = {
+        let held = agent.execs.lock().unwrap();
+        d.executions
+            .iter()
+            .filter(|e| {
+                e.action != "stop"
+                    && !held.contains_key(&e.execution_id)
+                    && !agent
+                        .shutting_down
+                        .load(std::sync::atomic::Ordering::SeqCst)
+            })
+            .map(|e| cp_api::LeaseRef {
+                execution_id: e.execution_id.clone(),
+                server_id: e.server_id.clone(),
+                epoch: e.epoch,
+            })
+            .collect()
+    };
+    let startup_leases = match renew_startup_leases(
+        &agent.cp,
+        new_leases,
+        agent
+            .cfg
+            .effective_fence_margin_ms(d.lease_renew_interval_ms.is_some()),
+        d.lease_ttl_ms,
+    )
+    .await
+    {
+        Ok(leases) => leases,
+        Err(error) => {
+            warn!(%error, "startup lease renewal failed; deferring new executions");
+            HashMap::new()
+        }
+    };
     let mut wanted: HashSet<String> = HashSet::new();
     for e in &d.executions {
         wanted.insert(e.execution_id.clone());
@@ -415,10 +497,19 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                     report_absent_stopped_msg(agent, e, "node shutting down").await;
                     continue;
                 }
+                let Some(lease) = startup_leases.get(&e.execution_id) else {
+                    warn!(exec = %e.execution_id, "no safe renewed startup lease; deferring execution");
+                    continue;
+                };
                 let ctl = ExecCtl::new(e.clone());
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
-                ctl.set_fence_margin_ms(margin_ms);
-                apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
+                ctl.set_fence_margin_ms(lease.margin_ms);
+                apply_deadline(
+                    &ctl.deadline,
+                    &ctl.deadline_sent,
+                    lease.sent,
+                    lease.deadline,
+                );
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -827,6 +918,127 @@ mod tests {
     use std::collections::BTreeSet;
     use std::sync::Mutex;
     use std::time::Duration;
+
+    async fn lease_cp(
+        status: u16,
+        response: serde_json::Value,
+        delay: Duration,
+    ) -> (
+        cp_api::CpClient,
+        tokio::sync::mpsc::UnboundedReceiver<cp_api::RenewLeasesRequest>,
+    ) {
+        use http_body_util::{BodyExt, Full};
+        use hyper::{
+            body::{Bytes, Incoming},
+            Request, Response,
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client =
+            cp_api::CpClient::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let service = hyper::service::service_fn(move |request: Request<Incoming>| {
+                let tx = tx.clone();
+                let response = response.clone();
+                async move {
+                    assert_eq!(request.method(), "POST");
+                    assert_eq!(request.uri().path(), "/v1/agent/leases");
+                    let body = request.into_body().collect().await.unwrap().to_bytes();
+                    tx.send(serde_json::from_slice(&body).unwrap()).unwrap();
+                    tokio::time::sleep(delay).await;
+                    Ok::<_, std::convert::Infallible>(
+                        Response::builder()
+                            .status(status)
+                            .body(Full::new(Bytes::from(response.to_string())))
+                            .unwrap(),
+                    )
+                }
+            });
+            let _ = hyper::server::conn::http1::Builder::new()
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                .await;
+        });
+        (client, rx)
+    }
+
+    #[tokio::test]
+    async fn startup_renewal_requires_a_fresh_matching_grant() {
+        for (id, window, status, admitted) in [
+            ("exec", 8000, 200, true),
+            ("exec", 3000, 200, false),
+            ("exec", 0, 200, false),
+            ("other", 8000, 200, false),
+            ("", 8000, 200, false),
+            ("exec", 8000, 500, false),
+        ] {
+            let response = serde_json::json!({"server_time_unix_ms": 10000, "leases": if id.is_empty() { vec![] } else { vec![serde_json::json!({"execution_id": id, "lease_expires_at_unix_ms": 10000 + window})] }});
+            let (cp, mut requests) = lease_cp(status, response, Duration::ZERO).await;
+            let result = super::renew_startup_leases(
+                &cp,
+                vec![
+                    cp_api::LeaseRef {
+                        execution_id: "exec".into(),
+                        server_id: "server".into(),
+                        epoch: 7,
+                    },
+                    cp_api::LeaseRef {
+                        execution_id: "omitted".into(),
+                        server_id: "server2".into(),
+                        epoch: 8,
+                    },
+                ],
+                4000,
+                8000,
+            )
+            .await;
+            let request = requests.recv().await.unwrap();
+            assert_eq!(request.executions.len(), 2);
+            assert_eq!(request.executions[0].epoch, 7);
+            assert_eq!(request.executions[0].server_id, "server");
+            if status == 500 {
+                assert!(result.is_err());
+            } else {
+                let leases = result.unwrap();
+                assert!(!leases.contains_key("omitted"));
+                assert_eq!(leases.contains_key("exec"), admitted, "{id}: {window}");
+            }
+        }
+        let (cp, _requests) = lease_cp(200, serde_json::json!({"server_time_unix_ms": 0, "leases": [{"execution_id": "exec", "lease_expires_at_unix_ms": 100}]}), Duration::from_millis(150)).await;
+        let leases = super::renew_startup_leases(
+            &cp,
+            vec![cp_api::LeaseRef {
+                execution_id: "exec".into(),
+                server_id: "server".into(),
+                epoch: 7,
+            }],
+            50,
+            100,
+        )
+        .await
+        .unwrap();
+        assert!(
+            leases.is_empty(),
+            "response latency must consume the safe window"
+        );
+        let cp = cp_api::CpClient::new("http://127.0.0.1:1").unwrap();
+        assert!(super::renew_startup_leases(&cp, vec![], 4000, 8000)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(super::renew_startup_leases(
+            &cp,
+            vec![cp_api::LeaseRef {
+                execution_id: "exec".into(),
+                server_id: "server".into(),
+                epoch: 7
+            }],
+            4000,
+            8000
+        )
+        .await
+        .is_err());
+    }
 
     #[test]
     fn cp_timestamps_move_to_this_pcs_clock() {

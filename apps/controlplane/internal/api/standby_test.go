@@ -2,6 +2,57 @@ package api_test
 
 import "testing"
 
+func TestCS2StandbyAndRecoveryUseInstalledSteamDiskPolicy(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		name := "fallback needs install space"
+		if installed {
+			name = "installed app bypasses install budget"
+		}
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			a, b := e.newAgent("host"), e.newAgent("standby")
+			hostCaps := caps()
+			hostCaps["steam_apps"] = []int64{730}
+			a.heartbeatCaps(nil, hostCaps)
+			standbyCaps := caps()
+			standbyCaps["disk_free_bytes"] = 1_000_000
+			if installed {
+				standbyCaps["steam_apps"] = []int64{730}
+			} else {
+				standbyCaps["runtimes"] = []string{"native", "steamcmd"}
+			}
+			b.heartbeatCaps(nil, standbyCaps)
+			srv := e.createServer("cs2", "cs2", map[string]any{
+				"preferred_node_id": a.nodeID,
+				"config":            map[string]any{"server_name": "CS2 standby test"},
+			})
+			host, _, _ := e.startToRunning(srv, a, b)
+			if host != a {
+				t.Fatalf("host = %s, want %s", host.nodeID, a.nodeID)
+			}
+			e.reconcile()
+			want := ""
+			if installed {
+				want = b.nodeID
+			}
+			if got := e.standbyOf(srv); got != want {
+				t.Fatalf("standby = %q, want %q", got, want)
+			}
+			e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+			b.heartbeatCaps(nil, standbyCaps)
+			e.reconcile()
+			ex := e.activeExec(srv)
+			if installed {
+				if ex == nil || ex["node"] != b.nodeID {
+					t.Fatalf("recovery = %+v, want installed standby %s", ex, b.nodeID)
+				}
+			} else if ex != nil {
+				t.Fatalf("fallback without install space became eligible: %+v", ex)
+			}
+		})
+	}
+}
+
 func (e *env) standbyOf(serverID string) string {
 	e.t.Helper()
 	var sb *string

@@ -61,6 +61,7 @@ parts:
       mkdir -p "$CRAFT_PART_INSTALL/bin" \
         "$CRAFT_PART_INSTALL/usr/share/licenses/varde-agent"
       cp "$CRAFT_PART_BUILD/wrapper/run" "$CRAFT_PART_BUILD/dist/varde-agent" \
-        "$CRAFT_PART_BUILD/dist/varde-mesh" "$CRAFT_PART_INSTALL/bin/"
+        "$CRAFT_PART_BUILD/dist/varde-mesh" "$CRAFT_PART_BUILD/dist/libcs2_bind.so" \
+        "$CRAFT_PART_INSTALL/bin/"
       cp "$CRAFT_PART_BUILD/dist/LICENSE" \
         "$CRAFT_PART_INSTALL/usr/share/licenses/varde-agent/"

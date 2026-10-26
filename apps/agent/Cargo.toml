@@ -24,6 +24,7 @@ game-driver-api = { path = "../../crates/game-driver-api" }
 game-minecraft = { path = "../../games/minecraft" }
 game-testgame = { path = "../../games/testgame" }
 game-valheim = { path = "../../games/valheim" }
+game-cs2 = { path = "../../games/cs2" }
 hex.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1"] }
@@ -50,7 +51,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 tracing-appender.workspace = true
 windows-service = "0.8"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

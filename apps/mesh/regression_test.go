@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 )
@@ -223,6 +225,9 @@ func TestIsDatagramTooLarge(t *testing.T) {
 	if !isDatagramTooLarge(e) || !isDatagramTooLarge(fmt.Errorf("send: %w", e)) {
 		t.Fatal("DatagramTooLargeError not matched")
 	}
+	if got := datagramTooLarge(fmt.Errorf("send: %w", e)); got != e {
+		t.Fatalf("oversize metadata = %v, want %v", got, e)
+	}
 	if isDatagramTooLarge(io.EOF) {
 		t.Fatal("unrelated error matched")
 	}
@@ -270,42 +275,18 @@ func TestRelayHostnameSurvivesReconfigure(t *testing.T) {
 	}
 }
 
-// Regression: forward ids came from time.Now().UnixNano(); two binds in one
-// clock tick (Windows) collided and the first forward leaked, unclosable.
-func TestInternalForwardIDsUniqueAndUnbindCloses(t *testing.T) {
-	n := NewNode(testLog(), testTimings, nil)
-	t.Cleanup(func() { n.Close() })
-	n.mu.Lock()
-	n.peers["node_b"] = newPeerState(n, &meshv1.Peer{NodeId: "node_b"})
-	n.mu.Unlock()
-	ids := map[string]string{}
-	for i := 0; i < 100; i++ {
-		id, addr, err := n.BindInternalForward("node_b", "agent.chunks")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, dup := ids[id]; dup {
-			t.Fatalf("duplicate forward id %q", id)
-		}
-		ids[id] = addr
-	}
-	n.mu.RLock()
-	got := len(n.forwards)
-	n.mu.RUnlock()
-	if got != len(ids) {
-		t.Fatalf("forwards=%d, want %d", got, len(ids))
-	}
-	for id, addr := range ids {
-		if !n.UnbindInternalForward(id) {
-			t.Fatalf("unbind %s failed", id)
-		}
-		if n.UnbindInternalForward(id) {
-			t.Fatalf("second unbind %s succeeded", id)
-		}
-		if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
-			_ = c.Close()
-			t.Fatalf("forward %s still accepting after unbind", id)
-		}
+func TestInternalForwardCannotExposePeerChunks(t *testing.T) {
+	a := newTestNode(t, "node_a")
+	a.n.mu.Lock()
+	a.n.peers["node_b"] = newPeerState(a.n, &meshv1.Peer{NodeId: "node_b"})
+	a.n.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	forward, err := a.cli.BindInternalForward(ctx, &meshv1.BindInternalForwardRequest{
+		PeerNodeId: "node_b", Name: "agent.chunks",
+	})
+	if status.Code(err) != codes.Unimplemented || forward != nil {
+		t.Fatalf("legacy bind exposed an internal forward: response=%v error=%v", forward, err)
 	}
 }
 

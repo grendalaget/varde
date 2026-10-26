@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -89,6 +90,13 @@ func (s *sharedSock) SetDeadline(t time.Time) error            { return s.udp.Se
 func (s *sharedSock) SetReadDeadline(t time.Time) error        { return s.udp.SetReadDeadline(t) }
 func (s *sharedSock) SetWriteDeadline(t time.Time) error       { return s.udp.SetWriteDeadline(t) }
 
+// Expose DF support so quic-go can probe the direct path above its initial MTU.
+// Keep packet I/O on WriteTo: relay demultiplexing and the direct-path test hook
+// must not be bypassed by an OOB or batched writer.
+func (s *sharedSock) SyscallConn() (syscall.RawConn, error) { return s.udp.SyscallConn() }
+func (s *sharedSock) SetReadBuffer(bytes int) error         { return s.udp.SetReadBuffer(bytes) }
+func (s *sharedSock) SetWriteBuffer(bytes int) error        { return s.udp.SetWriteBuffer(bytes) }
+
 // Node is the whole mesh state for this process.
 type Node struct {
 	log     *slog.Logger
@@ -110,7 +118,6 @@ type Node struct {
 	routes      map[string]*routeState // service_id → route
 	hosted      map[string]*hostedService
 	internal    map[string]uint32 // name → target port
-	forwards    map[string]*internalForward
 	startedAt   time.Time
 	events      *eventBus
 	ctx         context.Context
@@ -118,7 +125,6 @@ type Node struct {
 	metrics     *metrics
 	connInbound sync.Map      // *quic.Conn → bool (was inbound)
 	flowSeq     atomic.Uint64 // node-wide UDP flow ids (peer-side maps key on them)
-	forwardSeq  atomic.Uint64 // internal forward ids; a clock collides within one tick
 }
 
 func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node {
@@ -131,7 +137,6 @@ func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node 
 		routes:     map[string]*routeState{},
 		hosted:     map[string]*hostedService{},
 		internal:   map[string]uint32{},
-		forwards:   map[string]*internalForward{},
 		events:     newEventBus(),
 		startedAt:  time.Now(),
 	}
@@ -253,10 +258,6 @@ func (n *Node) Close() {
 	for _, rt := range n.routes {
 		routes = append(routes, rt)
 	}
-	forwards := make([]*internalForward, 0, len(n.forwards))
-	for _, f := range n.forwards {
-		forwards = append(forwards, f)
-	}
 	n.mu.Unlock()
 
 	for _, p := range peers {
@@ -267,9 +268,6 @@ func (n *Node) Close() {
 	}
 	for _, rt := range routes {
 		rt.closeAll()
-	}
-	for _, f := range forwards {
-		f.close()
 	}
 	if n.listener != nil {
 		_ = n.listener.Close()

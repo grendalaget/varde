@@ -16,6 +16,10 @@ contents:
     dst: /usr/lib/varde/varde-mesh
     file_info:
       mode: 0755
+  - src: dist/libcs2_bind.so
+    dst: /usr/lib/varde/libcs2_bind.so
+    file_info:
+      mode: 0644
   - src: packaging/linux/varde-agent.service
     dst: /usr/lib/systemd/system/varde-agent.service
     type: config
