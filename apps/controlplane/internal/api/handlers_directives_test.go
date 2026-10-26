@@ -247,11 +247,12 @@ func TestSnapshotRequestWaitsForRecoveredExecutionAcknowledgment(t *testing.T) {
 				if next == nil || next["id"] == execID {
 					t.Fatalf("no replacement execution: %+v", next)
 				}
-				if next["node"] == a.nodeID {
+				switch next["node"] {
+				case a.nodeID:
 					host = a
-				} else if next["node"] == b.nodeID {
+				case b.nodeID:
 					host = b
-				} else {
+				default:
 					t.Fatalf("unexpected replacement host: %+v", next)
 				}
 				execID, epoch = next["id"].(string), next["epoch"].(int64)
