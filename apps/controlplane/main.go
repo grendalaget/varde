@@ -122,6 +122,8 @@ type serveCfg struct {
 	suspectAfterMs   int64
 	offlineAfterMs   int64
 	logLevel         string
+	fastLeaseTTLMs   int64
+	leaseRenewMs     int64
 }
 
 // serveFlags returns a FlagSet bound to a fresh serveCfg; both interactive
@@ -151,6 +153,8 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs.Int64Var(&cfg.leaseTTLMs, "lease-ttl-ms", envInt("VARDE_LEASE_TTL_MS", 20000), "execution lease TTL")
 	fs.Int64Var(&cfg.shortHeartbeatMs, "short-heartbeat-interval-ms", envInt("VARDE_SHORT_HEARTBEAT_INTERVAL_MS", 1000), "short-profile agent heartbeat interval")
 	fs.Int64Var(&cfg.shortLeaseTTLMs, "short-lease-ttl-ms", envInt("VARDE_SHORT_LEASE_TTL_MS", 5000), "short-profile execution lease TTL")
+	fs.Int64Var(&cfg.fastLeaseTTLMs, "fast-lease-ttl-ms", envInt("VARDE_FAST_LEASE_TTL_MS", 8000), "lease TTL for agents that renew every --lease-renew-interval-ms (0 disables fast leases)")
+	fs.Int64Var(&cfg.leaseRenewMs, "lease-renew-interval-ms", envInt("VARDE_LEASE_RENEW_INTERVAL_MS", 1000), "fast lease renewal interval")
 	fs.Int64Var(&cfg.startGraceMs, "start-grace-ms", envInt("VARDE_START_GRACE_MS", 30000), "extra lease while preparing/restoring")
 	fs.Int64Var(&cfg.suspectAfterMs, "suspect-after-ms", envInt("VARDE_SUSPECT_AFTER_MS", 15000), "node suspect threshold")
 	fs.Int64Var(&cfg.offlineAfterMs, "offline-after-ms", envInt("VARDE_OFFLINE_AFTER_MS", 30000), "node offline threshold")
@@ -244,6 +248,8 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	timings.LeaseTTLMs = cfg.leaseTTLMs
 	timings.ShortHeartbeatIntervalMs = cfg.shortHeartbeatMs
 	timings.ShortLeaseTTLMs = cfg.shortLeaseTTLMs
+	timings.FastLeaseTTLMs = cfg.fastLeaseTTLMs
+	timings.LeaseRenewIntervalMs = cfg.leaseRenewMs
 	timings.StartGraceMs = cfg.startGraceMs
 	timings.SuspectAfterMs = cfg.suspectAfterMs
 	timings.OfflineAfterMs = cfg.offlineAfterMs
@@ -336,6 +342,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	}
 
 	go recon.Run(ctx)
+	go recon.RunRetention(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

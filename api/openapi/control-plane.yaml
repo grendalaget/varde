@@ -307,9 +307,10 @@ paths:
       security: [{ bearerAuth: [] }, { cookieAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/GroupId" }]
       responses:
-        "204": { description: Deleted (owner only). }
+        "204": { description: Deleted (owner only). Refused while it still has servers or machines. }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/members:
     get:
       operationId: listMembers
@@ -838,9 +839,10 @@ paths:
       security: [{ bearerAuth: [] }, { cookieAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/ServerId" }]
       responses:
-        "204": { description: Deleted (admin+). Snapshots are retained per policy. }
+        "204": { description: "Deleted (admin+): every machine is told to delete its copies of the server's saves. Refused while it runs or migrates." }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /v1/servers/{serverId}/addons:
     get:
       operationId: listServerAddons
@@ -1302,6 +1304,52 @@ paths:
               schema: { $ref: "#/components/schemas/AgentDirectivesWait" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/agent/leases:
+    post:
+      operationId: agentRenewLeases
+      tags: [agent]
+      security: [{ agentSignature: [] }]
+      description: >-
+        Lightweight lease renewal for agents that advertise `fast_lease`:
+        sent every `lease_renew_interval_ms` while hosting, between full
+        heartbeats. Renews only; never changes execution state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [executions]
+              properties:
+                executions:
+                  type: array
+                  items:
+                    type: object
+                    required: [execution_id, server_id, epoch]
+                    properties:
+                      execution_id: { type: string }
+                      server_id: { type: string }
+                      epoch: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Renewed leases (rejected executions are omitted).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [server_time_unix_ms, leases]
+                properties:
+                  server_time_unix_ms: { type: integer, format: int64 }
+                  leases:
+                    type: array
+                    items:
+                      type: object
+                      required: [execution_id, lease_expires_at_unix_ms]
+                      properties:
+                        execution_id: { type: string }
+                        lease_expires_at_unix_ms: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
   /v1/agent/executions/{executionId}/status:
     post:
       operationId: agentExecutionStatus
@@ -1493,10 +1541,10 @@ components:
       properties:
         code:
           type: string
-          enum: [stale_epoch, latest_save_unavailable, not_found, forbidden,
-                 limit_exceeded, validation, unauthorized, conflict,
-                 unschedulable, internal, plugin_unavailable,
-                 secrets_unconfigured]
+          enum: [stale_epoch, latest_save_unavailable, no_reachable_save,
+                 not_found, forbidden, limit_exceeded, validation,
+                 unauthorized, conflict, unschedulable, internal,
+                 plugin_unavailable, secrets_unconfigured]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:
@@ -2106,6 +2154,7 @@ components:
           type: string
           enum: [standard, short]
           description: Optional lease timing profile; absent or unknown values use standard.
+        fast_lease: { type: boolean, description: "Agent renews leases via /v1/agent/leases (short TTL)." }
     MeshReport:
       type: object
       properties:
@@ -2304,6 +2353,11 @@ components:
         server_time_unix_ms: { type: integer, format: int64 }
         heartbeat_interval_ms: { type: integer }
         lease_ttl_ms: { type: integer }
+        lease_renew_interval_ms:
+          description: >-
+            Set when this node gets fast leases: renew via /v1/agent/leases
+            at this interval while hosting.
+          type: integer
         node:
           type: object
           required: [name, hosting_enabled, anchor, admin_state]
@@ -2335,6 +2389,26 @@ components:
         delete_snapshots:
           type: array
           items: { type: string }
+        standby:
+          description: >-
+            Servers this node is the hot standby for: pre-install the
+            deployment (runtime + game files) so a failover or shutdown
+            handoff skips the download. Snapshots already replicate here.
+          type: array
+          items: { $ref: "#/components/schemas/StandbyDirective" }
+    StandbyDirective:
+      type: object
+      required: [server_id, deployment]
+      properties:
+        server_id: { type: string }
+        deployment:
+          type: object
+          required: [id, game_id, spec]
+          properties:
+            id: { type: string }
+            game_id: { type: string }
+            spec: { type: object, additionalProperties: true }
+        config: { type: object, additionalProperties: true }
     AgentDirectivesWait:
       type: object
       required: [digest, changed]

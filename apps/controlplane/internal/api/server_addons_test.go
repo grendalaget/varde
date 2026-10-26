@@ -227,7 +227,7 @@ func TestServerAddonDeleteServerCleansRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.DeleteServer(t.Context(), serverID); err != nil {
+	if err := e.st.DeleteServer(t.Context(), serverID, e.clk.ms); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := e.st.ListServerAddons(t.Context(), serverID)

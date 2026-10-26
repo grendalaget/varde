@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Logo, Mark } from "./Logo";
+import { Logo, Mark } from "@varde/ui/Logo";
 import ShaderBg from "./ShaderBg";
 import {
   invoke,
@@ -9,7 +9,7 @@ import {
   type ProgressEvent,
   type UiState,
 } from "./tauri";
-import { Button, cx, ErrorNote, WarnNote } from "./ui";
+import { Button, cx, ErrorNote, WarnNote } from "@varde/ui/ui";
 
 type Screen = "intro" | "progress" | "confirm" | "done" | "error";
 

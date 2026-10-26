@@ -53,6 +53,23 @@ fn fence_deadline(
     )
 }
 
+/// Set a fencing deadline unless a later-sent CP response already did: a
+/// delayed heartbeat must not roll back a newer lease renewal. Not a max —
+/// the CP may legitimately shorten a lease (start grace → running).
+fn apply_deadline(
+    slot: &Mutex<Option<Instant>>,
+    sent_slot: &Mutex<Option<Instant>>,
+    sent: Instant,
+    deadline: Instant,
+) {
+    let mut last = sent_slot.lock().unwrap();
+    if last.is_some_and(|l| sent < l) {
+        return;
+    }
+    *last = Some(sent);
+    *slot.lock().unwrap() = Some(deadline);
+}
+
 struct HeartbeatCompletionGuard<'a>(&'a tokio::sync::watch::Sender<u64>);
 
 impl Drop for HeartbeatCompletionGuard<'_> {
@@ -186,6 +203,8 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         v.node_name = d.node.name.clone();
         v.group_name = d.node.group_name.clone().unwrap_or_default();
         v.heartbeat_interval_ms = d.heartbeat_interval_ms;
+        v.lease_ttl_ms = d.lease_ttl_ms;
+        v.lease_renew_interval_ms = d.lease_renew_interval_ms;
         v.latest_safe_save = d
             .executions
             .iter()
@@ -294,13 +313,15 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         let (deadline, margin_ms) = fence_deadline(
             sent,
             window_ms,
-            agent.cfg.effective_fence_margin_ms(),
+            agent
+                .cfg
+                .effective_fence_margin_ms(d.lease_renew_interval_ms.is_some()),
             d.lease_ttl_ms,
         );
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
         match existing {
             Some(ctl) => {
-                *ctl.deadline.lock().unwrap() = Some(deadline);
+                apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
                 ctl.set_fence_margin_ms(margin_ms);
                 // stop reason first: the shutdown drain reads an unfreeze
                 // without a 'handoff' stop as an aborted migration
@@ -331,7 +352,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                 let ctl = ExecCtl::new(e.clone());
                 ctl.set_want_frozen(e.freeze.unwrap_or(false));
                 ctl.set_fence_margin_ms(margin_ms);
-                *ctl.deadline.lock().unwrap() = Some(deadline);
+                apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
                 for r in &e.snapshot_requests {
                     ctl.queue_snapshot(r.request_id.clone(), r.reason.clone());
                 }
@@ -362,6 +383,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
 
     // ---- replication + deletes ----
     agent.replace_replication_tasks(&d.replication_tasks);
+    crate::standby::apply(agent, &d.standby);
     for id in &d.delete_snapshots {
         if let Some(sid) = snapshot_store::SnapshotId::parse(id) {
             match agent.store.delete_snapshot(&sid) {
@@ -579,6 +601,84 @@ async fn sleep_or_stop(stop: &mut tokio::sync::watch::Receiver<bool>, duration: 
 
 const SHUTDOWN_HEARTBEAT: Duration = Duration::from_secs(1);
 
+/// Fast lease channel: while hosting, renew every lease the CP asked for at
+/// `lease_renew_interval_ms` with a tiny request, between full heartbeats.
+pub async fn lease_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
+    loop {
+        let every = agent.cp_view.lock().unwrap().lease_renew_interval_ms;
+        let wait = match every {
+            Some(ms) if ms > 0 => {
+                let t = Instant::now();
+                match renew_once(&agent).await {
+                    Err(e) => {
+                        warn!(error = %e, elapsed_ms = t.elapsed().as_millis() as u64, "lease renewal failed")
+                    }
+                    Ok(()) if t.elapsed() > Duration::from_millis(1000) => {
+                        warn!(
+                            elapsed_ms = t.elapsed().as_millis() as u64,
+                            "slow lease renewal"
+                        )
+                    }
+                    Ok(()) => {}
+                }
+                Duration::from_millis(ms.clamp(200, 10_000) as u64)
+            }
+            _ => Duration::from_secs(1),
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {},
+            _ = stop.changed() => return,
+        }
+    }
+}
+
+async fn renew_once(agent: &Arc<Agent>) -> Result<()> {
+    let held: Vec<Arc<ExecCtl>> = agent
+        .execs
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|c| !c.is_finished() && !c.is_fenced())
+        .cloned()
+        .collect();
+    if held.is_empty() {
+        return Ok(());
+    }
+    let req = cp_api::RenewLeasesRequest {
+        executions: held
+            .iter()
+            .map(|c| cp_api::LeaseRef {
+                execution_id: c.dir.execution_id.clone(),
+                server_id: c.dir.server_id.clone(),
+                epoch: c.dir.epoch,
+            })
+            .collect(),
+    };
+    // fencing math depends on the send instant, captured before the request
+    let sent = Instant::now();
+    let r: cp_api::RenewLeasesResponse = agent
+        .cp
+        .json("POST", "/v1/agent/leases", Some(&req))
+        .await?;
+    let lease_ttl_ms = agent.cp_view.lock().unwrap().lease_ttl_ms;
+    for l in &r.leases {
+        let Some(c) = held.iter().find(|c| c.dir.execution_id == l.execution_id) else {
+            continue;
+        };
+        let window_ms = l.lease_expires_at_unix_ms - r.server_time_unix_ms;
+        let (deadline, margin_ms) = fence_deadline(
+            sent,
+            window_ms,
+            agent.cfg.effective_fence_margin_ms(true),
+            lease_ttl_ms,
+        );
+        c.set_fence_margin_ms(margin_ms);
+        apply_deadline(&c.deadline, &c.deadline_sent, sent, deadline);
+    }
+    agent.cp_view.lock().unwrap().last_contact_unix_ms = crate::now_ms();
+    Ok(())
+}
+
 /// Fencing watchdog: deadline expiry ⇒ graceful stop bounded to
 /// fence_margin/2, then kill; mark fenced; drop hosted services; never upload.
 pub async fn fence_watchdog(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
@@ -673,6 +773,20 @@ mod tests {
         };
         assert_eq!(v.to_local_ms(1_025_000), 995_000);
         assert_eq!(v.to_local_ms(0), 0);
+    }
+
+    #[test]
+    fn only_the_newest_sent_response_sets_the_deadline() {
+        let t0 = std::time::Instant::now();
+        let (slot, sent) = (Mutex::new(None), Mutex::new(None));
+        let at = |s| t0 + Duration::from_secs(s);
+        super::apply_deadline(&slot, &sent, at(2), at(8));
+        // delayed heartbeat sent before the renewal: ignored
+        super::apply_deadline(&slot, &sent, at(1), at(4));
+        assert_eq!(*slot.lock().unwrap(), Some(at(8)));
+        // a newer response may shorten it (start grace → running)
+        super::apply_deadline(&slot, &sent, at(3), at(6));
+        assert_eq!(*slot.lock().unwrap(), Some(at(6)));
     }
 
     #[test]

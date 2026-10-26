@@ -1,7 +1,7 @@
 //! Update apply. Windows: download the signed installer the agent's checker
 //! surfaced (Status.update.url + .signature), verify it against the release
-//! key and run it silently — the NSIS installer's own hooks drain services,
-//! swap binaries and relaunch the tray. macOS: the sibling `varde-agent
+//! key and run it elevated and silent — varde-setup drains services, swaps
+//! binaries and relaunches the tray. macOS: the sibling `varde-agent
 //! update` verifies the feed itself and swaps every binary in this .app;
 //! the tray then restarts the LaunchAgent and relaunches itself.
 //! Never auto-applies while hosting.
@@ -82,10 +82,8 @@ enum Choice {
 
 #[cfg(windows)]
 fn info_box(title: &str, text: &str) {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
+    use crate::app::wide;
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
-    let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
     // SAFETY: `wide` produces NUL-terminated UTF-16 strings; MessageBoxW
     // takes no ownership.
     unsafe {
@@ -110,15 +108,13 @@ fn info_box(title: &str, text: &str) {
 
 #[cfg(windows)]
 fn ask_hosting(version: &str, hosting: &str) -> Choice {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
+    use crate::app::wide;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDNO, IDYES, MB_ICONQUESTION, MB_YESNOCANCEL,
     };
     let text = format!(
         "Update Varde to {version} now?\r\n\r\n{hosting} — updating drains the server, swaps Varde and restarts it. Players see a short break.\r\n\r\nYes = update now\r\nNo = update when the server stops\r\nCancel = later"
     );
-    let wide = |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(Some(0)).collect() };
     // SAFETY: `wide` produces NUL-terminated UTF-16 strings; MessageBoxW
     // takes no ownership.
     let r = unsafe {
@@ -182,8 +178,9 @@ pub fn maybe_apply_when_idle(app: &AppHandle) {
     }
 }
 
-/// Download → verify minisign → spawn `/S /R` (silent install + post-install
-/// tray relaunch as the original user, which the updater flow wants).
+/// Download → stage + verify minisign → launch elevated `/S /R` (silent
+/// install + post-install tray relaunch as the original user, which the
+/// updater flow wants).
 #[cfg(windows)]
 fn spawn_apply(app: AppHandle) {
     let found = {
@@ -219,32 +216,93 @@ async fn download_verify_run(version: &str, url: &str, sig: &str) -> anyhow::Res
     let pk = minisign_verify::PublicKey::from_base64(&key)
         .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
     let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
-    pk.verify(&exe, &s, false)
-        .map_err(|e| anyhow::anyhow!("installer signature invalid: {e}"))?;
+    // the UAC prompt blocks ShellExecuteExW until answered; keep it off the
+    // async runtime
+    let version = version.to_string();
+    tauri::async_runtime::spawn_blocking(move || stage_verify_launch(&version, &exe, &pk, &s))
+        .await
+        .context("installer task")?
+}
 
-    // Stage under %ProgramData%\Varde\update — the installer ACL'd that tree
-    // to SYSTEM+Administrators, so a non-admin process can't swap the file
-    // between signature verification and launch. %TEMP% would not give that.
-    let dir = std::path::PathBuf::from(
-        std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string()),
+/// Stage the installer under a fresh %LOCALAPPDATA%\Varde\update\<nonce>,
+/// verify the bytes as read back from disk and launch it elevated.
+///
+/// Not %ProgramData%\Varde: the installer ACLs that tree to
+/// SYSTEM+Administrators, so this non-elevated tray can't write there. The
+/// per-user dir is writable by anything running as this user, so the file is
+/// pinned instead: it's reopened sharing only FILE_SHARE_READ (no writers,
+/// no delete/rename while the handle lives) and the signature is checked over
+/// the bytes read through that handle — what's verified is what's on disk.
+/// The handle stays open until ShellExecuteExW returns; by then the installer
+/// process exists and its image is mapped, which Windows won't let anyone
+/// overwrite. (varde-setup install mode never rereads its own exe — the
+/// payload is embedded.)
+#[cfg(windows)]
+fn stage_verify_launch(
+    version: &str,
+    exe: &[u8],
+    pk: &minisign_verify::PublicKey,
+    sig: &minisign_verify::Signature,
+) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use std::io::{Read as _, Write as _};
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let base = std::path::PathBuf::from(
+        std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?,
     )
     .join(r"Varde\update");
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    std::fs::create_dir_all(&base).with_context(|| format!("create {}", base.display()))?;
+    // sweep earlier staging dirs; one whose installer still runs fails to
+    // delete and is left for next time
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.flatten() {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = base.join(format!("{}-{nonce}", std::process::id()));
+    // create_dir, not _all: the leaf must be new, never a pre-planted one
+    std::fs::create_dir(&dir).with_context(|| format!("create {}", dir.display()))?;
     let path = dir.join(format!("VardeSetup-{version}.exe"));
-    std::fs::write(&path, &exe).with_context(|| format!("write {}", path.display()))?;
-    // NSIS self-elevates (RequestExecutionLevel admin → UAC prompt). /S silent,
-    // /R relaunches the main binary as the original user post-install, /ARGS
-    // feeds it --autostart so the tray comes back in background mode.
-    std::process::Command::new(&path)
-        .args(["/S", "/R", "/ARGS", "--autostart"])
-        .spawn()
-        .context("launch installer")?;
-    Ok(())
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("create {}", path.display()))?;
+        f.write_all(exe)
+            .with_context(|| format!("write {}", path.display()))?;
+    }
+    // A sharing violation here means someone else still holds the file open
+    // for writing — treat it like any other failed write.
+    let mut pinned = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&path)
+        .with_context(|| format!("reopen {}", path.display()))?;
+    let mut on_disk = Vec::with_capacity(exe.len());
+    pinned
+        .read_to_end(&mut on_disk)
+        .with_context(|| format!("read back {}", path.display()))?;
+    pk.verify(&on_disk, sig, false)
+        .map_err(|e| anyhow::anyhow!("installer signature invalid: {e}"))?;
+    // /S silent, /R relaunches the tray as the original user post-install,
+    // /ARGS feeds it --autostart so it comes back in background mode
+    // (apps/setup/src/args.rs).
+    let launched =
+        crate::app::run_elevated(&path, "/S /R /ARGS --autostart").context("launch installer");
+    drop(pinned);
+    launched
 }
 
 /// The sibling `varde-agent update` verifies the feed signature and swaps
 /// every binary in this .app (agent, mesh AND the tray), then the service
-/// is restarted and the app relaunched — same end state as the NSIS flow.
+/// is restarted and the app relaunched — same end state as the Windows flow.
 #[cfg(target_os = "macos")]
 fn spawn_apply(app: AppHandle) {
     tauri::async_runtime::spawn(async move {

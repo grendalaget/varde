@@ -846,6 +846,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent/leases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Lightweight lease renewal for agents that advertise `fast_lease`: sent every `lease_renew_interval_ms` while hosting, between full heartbeats. Renews only; never changes execution state. */
+        post: operations["agentRenewLeases"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent/executions/{executionId}/status": {
         parameters: {
             query?: never;
@@ -933,7 +950,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "plugin_unavailable" | "secrets_unconfigured";
+            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "plugin_unavailable" | "secrets_unconfigured";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -1421,6 +1438,8 @@ export interface components {
              * @enum {string}
              */
             lease_profile?: "standard" | "short";
+            /** @description Agent renews leases via /v1/agent/leases (short TTL). */
+            fast_lease?: boolean;
         };
         MeshReport: {
             listen_port?: number;
@@ -1555,6 +1574,8 @@ export interface components {
             server_time_unix_ms: number;
             heartbeat_interval_ms: number;
             lease_ttl_ms: number;
+            /** @description Set when this node gets fast leases: renew via /v1/agent/leases at this interval while hosting. */
+            lease_renew_interval_ms?: number;
             node: {
                 name: string;
                 /** @description Display name of the node's group (tray/status). */
@@ -1570,6 +1591,21 @@ export interface components {
             relays?: components["schemas"]["DirectiveRelay"][];
             replication_tasks?: components["schemas"]["ReplicationTask"][];
             delete_snapshots?: string[];
+            /** @description Servers this node is the hot standby for: pre-install the deployment (runtime + game files) so a failover or shutdown handoff skips the download. Snapshots already replicate here. */
+            standby?: components["schemas"]["StandbyDirective"][];
+        };
+        StandbyDirective: {
+            server_id: string;
+            deployment: {
+                id: string;
+                game_id: string;
+                spec: {
+                    [key: string]: unknown;
+                };
+            };
+            config?: {
+                [key: string]: unknown;
+            };
         };
         AgentDirectivesWait: {
             digest: string;
@@ -2152,7 +2188,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted (owner only). */
+            /** @description Deleted (owner only). Refused while it still has servers or machines. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2161,6 +2197,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     updateGroup: {
@@ -2889,7 +2926,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted (admin+). Snapshots are retained per policy. */
+            /** @description Deleted (admin+): every machine is told to delete its copies of the server's saves. Refused while it runs or migrates. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2898,6 +2935,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     updateServer: {
@@ -3538,6 +3576,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentDirectivesWait"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    agentRenewLeases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    executions: {
+                        execution_id: string;
+                        server_id: string;
+                        /** Format: int64 */
+                        epoch: number;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Renewed leases (rejected executions are omitted). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: int64 */
+                        server_time_unix_ms: number;
+                        leases: {
+                            execution_id: string;
+                            /** Format: int64 */
+                            lease_expires_at_unix_ms: number;
+                        }[];
+                    };
                 };
             };
             401: components["responses"]["Error"];

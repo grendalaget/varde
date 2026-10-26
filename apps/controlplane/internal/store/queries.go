@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -24,17 +26,12 @@ type Querier interface {
 var ErrNotFound = errors.New("store: not found")
 var ErrSteamIDTaken = errors.New("store: steam id already linked")
 
+// ErrConflict means the row exists but its current state forbids the change.
+var ErrConflict = errors.New("store: conflict")
+
 func (s *Store) q() *sqlx.DB { return s.DB }
 
 // ---- users / sessions ----
-
-func (s *Store) CreateUser(ctx context.Context, u *User) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO users (id,email,display_name,password_hash,is_operator,website_user_id,created_at)
-		 VALUES (?,?,?,?,?,?,?)`),
-		u.ID, u.Email, u.DisplayName, u.PasswordHash, u.IsOperator, u.WebsiteUserID, u.CreatedAt)
-	return err
-}
 
 // CreateUserFirstOperator inserts a user that becomes operator iff the
 // users table is empty — decided inside the INSERT, so two concurrent
@@ -272,18 +269,82 @@ func (s *Store) UpdateGroup(ctx context.Context, g *Group) error {
 	return err
 }
 
+// DeleteGroup removes an empty group and every row that references it, in
+// one transaction, children before parents (Postgres enforces the foreign
+// keys). Empty means no live servers or machines; deleted servers still
+// waiting for save acks and deleted machines' history go with it, since no
+// machine is left to ack. ErrConflict while servers or machines remain.
 func (s *Store) DeleteGroup(ctx context.Context, id string) error {
+	const (
+		srvs      = `SELECT id FROM servers WHERE group_id=?`
+		nodes     = `SELECT id FROM nodes WHERE group_id=?`
+		nodeExecs = `SELECT id FROM server_executions WHERE node_id IN (` + nodes + `)`
+	)
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(ctx, s.Rebind(
-			`DELETE FROM server_addons WHERE server_id IN (SELECT id FROM servers WHERE group_id=?)`), id); err != nil {
+		var live int64
+		if err := tx.GetContext(ctx, &live, s.Rebind(
+			`SELECT (SELECT COUNT(*) FROM servers WHERE group_id=? AND deleted_at IS NULL) +
+			        (SELECT COUNT(*) FROM nodes WHERE group_id=? AND deleted_at IS NULL)`), id, id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM group_plugins WHERE group_id=?`), id); err != nil {
+		if live > 0 {
+			return ErrConflict
+		}
+		// what the group's machines hold or ran, then its servers
+		if err := s.execEach(ctx, tx, id,
+			`DELETE FROM execution_logs WHERE execution_id IN (`+nodeExecs+`)`,
+			`DELETE FROM execution_info WHERE execution_id IN (`+nodeExecs+`)`,
+			`DELETE FROM snapshot_replicas WHERE node_id IN (`+nodes+`)`,
+			`DELETE FROM migrations WHERE to_node_id IN (`+nodes+`)`,
+			`DELETE FROM server_executions WHERE node_id IN (`+nodes+`)`,
+		); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
-		return err
+		if err := s.purgeServersTx(ctx, tx, srvs, id); err != nil {
+			return err
+		}
+		if err := s.execEach(ctx, tx, id,
+			`DELETE FROM snapshot_replicas WHERE snapshot_id IN (SELECT id FROM snapshots WHERE group_id=?)`,
+			`DELETE FROM snapshots WHERE group_id=?`,
+			`DELETE FROM services WHERE group_id=?`,
+			`DELETE FROM node_status WHERE node_id IN (`+nodes+`)`,
+			`DELETE FROM nodes WHERE group_id=?`,
+			`DELETE FROM deployments WHERE group_id=?`,
+			`DELETE FROM enrollment_tokens WHERE group_id=?`,
+			`DELETE FROM invites WHERE group_id=?`,
+			`DELETE FROM group_plugins WHERE group_id=?`,
+			`DELETE FROM group_members WHERE group_id=?`,
+			`DELETE FROM group_limits WHERE group_id=?`,
+			`DELETE FROM device_links WHERE group_id=?`,
+			`DELETE FROM crash_reports WHERE group_id=?`,
+			`DELETE FROM events WHERE group_id=?`,
+			`DELETE FROM audit_log WHERE group_id=?`,
+		); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM groups WHERE id=?`), id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
 	})
+}
+
+// execEach runs each statement with id bound to every placeholder.
+func (s *Store) execEach(ctx context.Context, q Querier, id string, stmts ...string) error {
+	for _, stmt := range stmts {
+		args := make([]any, strings.Count(stmt, "?"))
+		for i := range args {
+			args[i] = id
+		}
+		if _, err := q.ExecContext(ctx, s.Rebind(stmt), args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) GroupsForUser(ctx context.Context, userID string) ([]Member, error) {
@@ -312,16 +373,11 @@ func (s *Store) ListMembers(ctx context.Context, groupID string) ([]Member, erro
 	return ms, err
 }
 
+// SetMemberRole changes a member's role. ErrConflict if that would leave the
+// group without an owner.
 func (s *Store) SetMemberRole(ctx context.Context, groupID, userID, role string) error {
-	res, err := s.q().ExecContext(ctx, s.Rebind(
-		`UPDATE group_members SET role=? WHERE group_id=? AND user_id=?`), role, groupID, userID)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.changeMember(ctx, groupID,
+		`UPDATE group_members SET role=? WHERE group_id=? AND user_id=?`, role, groupID, userID)
 }
 
 func (s *Store) AddMember(ctx context.Context, groupID, userID, role string, now int64) error {
@@ -331,16 +387,39 @@ func (s *Store) AddMember(ctx context.Context, groupID, userID, role string, now
 	return err
 }
 
+// RemoveMember removes a member. ErrConflict if that would leave the group
+// without an owner.
 func (s *Store) RemoveMember(ctx context.Context, groupID, userID string) error {
-	res, err := s.q().ExecContext(ctx, s.Rebind(
-		`DELETE FROM group_members WHERE group_id=? AND user_id=?`), groupID, userID)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.changeMember(ctx, groupID,
+		`DELETE FROM group_members WHERE group_id=? AND user_id=?`, groupID, userID)
+}
+
+// changeMember runs stmt on one membership row of groupID and rolls it back
+// (ErrConflict) if the group is left without an owner. The group row is
+// locked first, so concurrent changes can't each count the other's owner.
+func (s *Store) changeMember(ctx context.Context, groupID, stmt string, args ...any) error {
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE groups SET name=name WHERE id=?`), groupID); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, s.Rebind(stmt), args...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		var owners int
+		if err := tx.GetContext(ctx, &owners, s.Rebind(
+			`SELECT COUNT(*) FROM group_members WHERE group_id=? AND role='owner'`), groupID); err != nil {
+			return err
+		}
+		if owners == 0 {
+			return ErrConflict
+		}
+		return nil
+	})
 }
 
 func (s *Store) AllGroups(ctx context.Context) ([]Group, error) {
@@ -371,13 +450,13 @@ func (s *Store) SetLimits(ctx context.Context, l *GroupLimits) error {
 
 func (s *Store) NodeCount(ctx context.Context, groupID string) (int64, error) {
 	var n int64
-	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT COUNT(*) FROM nodes WHERE group_id=?`), groupID)
+	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT COUNT(*) FROM nodes WHERE group_id=? AND deleted_at IS NULL`), groupID)
 	return n, err
 }
 
 func (s *Store) ServerCount(ctx context.Context, groupID string) (int64, error) {
 	var n int64
-	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT COUNT(*) FROM servers WHERE group_id=?`), groupID)
+	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT COUNT(*) FROM servers WHERE group_id=? AND deleted_at IS NULL`), groupID)
 	return n, err
 }
 
@@ -414,7 +493,8 @@ func (s *Store) ConsumeInvite(ctx context.Context, code string) error {
 }
 
 // RefundInvite returns one use — consumed but unneeded when a concurrent
-// accept had already committed the membership.
+// accept had already committed the membership, or when the signup that
+// consumed it failed to create the account.
 func (s *Store) RefundInvite(ctx context.Context, code string) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`UPDATE invites SET uses=uses-1 WHERE code=? AND uses>0`), code)
@@ -569,7 +649,7 @@ func (s *Store) CreateNode(ctx context.Context, n *Node) error {
 
 func (s *Store) GetNode(ctx context.Context, id string) (*Node, error) {
 	var n Node
-	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT * FROM nodes WHERE id=?`), id)
+	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT * FROM nodes WHERE id=? AND deleted_at IS NULL`), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -578,7 +658,7 @@ func (s *Store) GetNode(ctx context.Context, id string) (*Node, error) {
 
 func (s *Store) NodeByPubKey(ctx context.Context, pubKeyB64 string) (*Node, error) {
 	var n Node
-	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT * FROM nodes WHERE public_key=?`), pubKeyB64)
+	err := s.q().GetContext(ctx, &n, s.Rebind(`SELECT * FROM nodes WHERE public_key=? AND deleted_at IS NULL`), pubKeyB64)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -588,7 +668,7 @@ func (s *Store) NodeByPubKey(ctx context.Context, pubKeyB64 string) (*Node, erro
 func (s *Store) ListNodes(ctx context.Context, groupID string) ([]Node, error) {
 	var ns []Node
 	err := s.q().SelectContext(ctx, &ns, s.Rebind(
-		`SELECT * FROM nodes WHERE group_id=? ORDER BY created_at`), groupID)
+		`SELECT * FROM nodes WHERE group_id=? AND deleted_at IS NULL ORDER BY created_at`), groupID)
 	return ns, err
 }
 
@@ -601,9 +681,90 @@ func (s *Store) UpdateNode(ctx context.Context, n *Node) error {
 	return err
 }
 
-func (s *Store) DeleteNode(ctx context.Context, id string) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(`DELETE FROM nodes WHERE id=?`), id)
-	return err
+// DeleteNode soft-deletes a machine: the row stays for the executions and
+// snapshots that reference it, but no lookup returns it (agentAuth rejects
+// it) and its public key is released so the machine can enroll again. Its
+// save copies stop counting — it can't ack deletes anymore — and a save left
+// without a ready copy anywhere becomes 'invalid' (partial copies elsewhere
+// are deleted) so it can't block starts forever. Its serving execution is
+// left to run out its lease: the agent can't renew it, the reconciler ends it
+// 'lost' and recovery restarts the server elsewhere — ending it here would
+// start a second host while this one may still be inside its lease.
+func (s *Store) DeleteNode(ctx context.Context, id string, now int64) error {
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		res, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE nodes SET deleted_at=?, public_key=? WHERE id=? AND deleted_at IS NULL`),
+			now, "deleted:"+id, id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		var held []struct {
+			SnapshotID string `db:"snapshot_id"`
+			ServerID   string `db:"server_id"`
+		}
+		if err := tx.SelectContext(ctx, &held, s.Rebind(
+			`SELECT r.snapshot_id, sn.server_id FROM snapshot_replicas r
+			 JOIN snapshots sn ON sn.id = r.snapshot_id WHERE r.node_id=?`), id); err != nil {
+			return err
+		}
+		if err := s.execEach(ctx, tx, id,
+			`DELETE FROM snapshot_replicas WHERE node_id=?`,
+			`DELETE FROM node_status WHERE node_id=?`,
+			`UPDATE servers SET standby_node_id=NULL WHERE standby_node_id=?`,
+			`UPDATE servers SET preferred_node_id=NULL WHERE preferred_node_id=?`,
+		); err != nil {
+			return err
+		}
+		// moves onto it can never land; its non-serving (incoming/draining)
+		// executions have no lease the reconciler fences — end them here
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE migrations SET state='failed', finished_at=? WHERE to_node_id=? AND finished_at IS NULL`),
+			now, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE server_executions SET action='stop', ended_at=?, end_reason='aborted'
+			 WHERE node_id=? AND ended_at IS NULL AND role != 'serving'`), now, id); err != nil {
+			return err
+		}
+		for _, h := range held {
+			snapID := h.SnapshotID
+			var left struct {
+				Ready int64 `db:"ready"`
+				All   int64 `db:"total"`
+			}
+			if err := tx.GetContext(ctx, &left, s.Rebind(
+				`SELECT COALESCE(SUM(CASE WHEN state='ready' THEN 1 ELSE 0 END), 0) AS ready,
+				        COUNT(*) AS total
+				 FROM snapshot_replicas WHERE snapshot_id=?`), snapID); err != nil {
+				return err
+			}
+			switch {
+			case left.Ready > 0:
+				continue
+			case left.All == 0:
+				err = s.execEach(ctx, tx, snapID, `DELETE FROM snapshots WHERE id=?`)
+			default:
+				if err = s.SetSnapshotState(ctx, tx, snapID, "invalid", nil); err == nil {
+					err = s.execEach(ctx, tx, snapID,
+						`UPDATE snapshot_replicas SET state='deleting' WHERE snapshot_id=?`)
+				}
+			}
+			if err != nil {
+				return err
+			}
+		}
+		// a deleted server whose last save copies were on it
+		for _, h := range held {
+			if err := s.PurgeDeletedServer(ctx, tx, h.ServerID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) TouchNodeSeen(ctx context.Context, nodeID string, now int64) error {
@@ -658,7 +819,7 @@ func (s *Store) CreateServer(ctx context.Context, srv *Server, svc *Service) err
 
 func (s *Store) GetServer(ctx context.Context, id string) (*Server, error) {
 	var srv Server
-	err := s.q().GetContext(ctx, &srv, s.Rebind(`SELECT * FROM servers WHERE id=?`), id)
+	err := s.q().GetContext(ctx, &srv, s.Rebind(`SELECT * FROM servers WHERE id=? AND deleted_at IS NULL`), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -668,19 +829,26 @@ func (s *Store) GetServer(ctx context.Context, id string) (*Server, error) {
 func (s *Store) ListServers(ctx context.Context, groupID string) ([]Server, error) {
 	var ss []Server
 	err := s.q().SelectContext(ctx, &ss, s.Rebind(
-		`SELECT * FROM servers WHERE group_id=? ORDER BY created_at`), groupID)
+		`SELECT * FROM servers WHERE group_id=? AND deleted_at IS NULL ORDER BY created_at`), groupID)
 	return ss, err
 }
 
 func (s *Store) AllServers(ctx context.Context) ([]Server, error) {
 	var ss []Server
-	err := s.q().SelectContext(ctx, &ss, `SELECT * FROM servers ORDER BY id`)
+	err := s.q().SelectContext(ctx, &ss, `SELECT * FROM servers WHERE deleted_at IS NULL ORDER BY id`)
 	return ss, err
 }
 
 func (s *Store) UpdateServerDesired(ctx context.Context, id, desired string, now int64) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
 		`UPDATE servers SET desired_state=?, updated_at=? WHERE id=?`), desired, now, id)
+	return err
+}
+
+// SetServerStandby records the server's hot standby node (nil clears it).
+func (s *Store) SetServerStandby(ctx context.Context, id string, nodeID *string) error {
+	_, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE servers SET standby_node_id=? WHERE id=?`), nodeID, id)
 	return err
 }
 
@@ -699,15 +867,102 @@ func (s *Store) SetObservedState(ctx context.Context, q Querier, id, state strin
 	return err
 }
 
-func (s *Store) DeleteServer(ctx context.Context, id string) error {
+// DeleteServer soft-deletes a server that isn't running: no lookup returns
+// it, its service (routes, loopback IP) goes, and every replica of its saves
+// is marked 'deleting' so the machines delete their copies.
+// The rows are purged once the last copy is acked (PurgeDeletedServer).
+// ErrConflict while it has an open execution or migration.
+func (s *Store) DeleteServer(ctx context.Context, id string, now int64) error {
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(ctx, s.Rebind(
-			`DELETE FROM server_addons WHERE server_id=?`), id); err != nil {
+		// Mark first: the row lock orders this against a concurrent
+		// activation, whose epoch bump skips deleted rows — so either the
+		// activation fails or the check below sees its execution.
+		res, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE servers SET deleted_at=?, desired_state='stopped', standby_node_id=NULL, updated_at=?
+			 WHERE id=? AND deleted_at IS NULL`), now, now, id)
+		if err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM servers WHERE id=?`), id)
-		return err
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		var open int64
+		if err := tx.GetContext(ctx, &open, s.Rebind(
+			`SELECT (SELECT COUNT(*) FROM server_executions WHERE server_id=? AND ended_at IS NULL) +
+			        (SELECT COUNT(*) FROM migrations WHERE server_id=? AND finished_at IS NULL)`), id, id); err != nil {
+			return err
+		}
+		if open > 0 {
+			return ErrConflict
+		}
+		if err := s.execEach(ctx, tx, id,
+			`DELETE FROM server_addons WHERE server_id=?`,
+			`DELETE FROM services WHERE server_id=?`,
+			`DELETE FROM snapshot_requests WHERE server_id=?`,
+			`UPDATE snapshot_replicas SET state='deleting'
+			 WHERE snapshot_id IN (SELECT id FROM snapshots WHERE server_id=?)`,
+		); err != nil {
+			return err
+		}
+		// no machine held a copy: nothing to wait for
+		return s.PurgeDeletedServer(ctx, tx, id)
 	})
+}
+
+// purgeable matches a deleted server (aliased sv) that no machine holds a
+// save copy of anymore.
+const purgeable = `sv.deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM snapshot_replicas r
+	JOIN snapshots sn ON sn.id = r.snapshot_id WHERE sn.server_id = sv.id)`
+
+// PurgeDeletedServers hard-deletes every deleted server that no machine holds
+// a save copy of anymore, with its history.
+func (s *Store) PurgeDeletedServers(ctx context.Context) error {
+	var ids []string
+	if err := s.q().SelectContext(ctx, &ids,
+		`SELECT id FROM servers sv WHERE `+purgeable); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+			return s.PurgeDeletedServer(ctx, tx, id)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PurgeDeletedServer hard-deletes server id inside tx if it is deleted and
+// no machine holds a save copy of it anymore; otherwise it does nothing.
+func (s *Store) PurgeDeletedServer(ctx context.Context, tx *sqlx.Tx, id string) error {
+	var n int
+	if err := tx.GetContext(ctx, &n, s.Rebind(
+		`SELECT COUNT(*) FROM servers sv WHERE id=? AND `+purgeable), id); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	return s.purgeServersTx(ctx, tx, `?`, id)
+}
+
+// purgeServersTx hard-deletes the servers whose ids `in` selects (SQL with
+// every placeholder bound to arg) and every row that references them,
+// children before parents.
+func (s *Store) purgeServersTx(ctx context.Context, tx *sqlx.Tx, in, arg string) error {
+	execs := `SELECT id FROM server_executions WHERE server_id IN (` + in + `)`
+	return s.execEach(ctx, tx, arg,
+		`DELETE FROM execution_logs WHERE execution_id IN (`+execs+`)`,
+		`DELETE FROM execution_info WHERE execution_id IN (`+execs+`)`,
+		`DELETE FROM snapshot_replicas WHERE snapshot_id IN (SELECT id FROM snapshots WHERE server_id IN (`+in+`))`,
+		`DELETE FROM snapshot_requests WHERE server_id IN (`+in+`)`,
+		`DELETE FROM snapshots WHERE server_id IN (`+in+`)`,
+		`DELETE FROM migrations WHERE server_id IN (`+in+`)`,
+		`DELETE FROM server_executions WHERE server_id IN (`+in+`)`,
+		`DELETE FROM server_addons WHERE server_id IN (`+in+`)`,
+		`DELETE FROM services WHERE server_id IN (`+in+`)`,
+		`DELETE FROM servers WHERE id IN (`+in+`)`,
+	)
 }
 
 func (s *Store) ServiceByServer(ctx context.Context, serverID string) (*Service, error) {
@@ -726,19 +981,38 @@ func (s *Store) ServicesInGroup(ctx context.Context, groupID string) ([]Service,
 	return svcs, err
 }
 
+// ErrEpochConflict means another activation (or a delete) changed the server
+// between reading its epoch and bumping it.
+var ErrEpochConflict = errors.New("store: epoch bump failed (concurrent activation)")
+
 // BumpEpochAndCreateExecution performs the single-transaction activation
 // from the spec: optimistic epoch bump + insert of the new active execution.
 // The unique partial index enforces I1 against races.
 func (s *Store) BumpEpochAndCreateExecution(ctx context.Context, e *Execution) error {
+	return s.bumpEpochAndCreateExecution(ctx, e, false)
+}
+
+// StartExecution is BumpEpochAndCreateExecution for an explicit start: it
+// also sets desired_state='running' in the same transaction, so nothing ever
+// sees desired=running without the execution the start created.
+func (s *Store) StartExecution(ctx context.Context, e *Execution) error {
+	return s.bumpEpochAndCreateExecution(ctx, e, true)
+}
+
+func (s *Store) bumpEpochAndCreateExecution(ctx context.Context, e *Execution, start bool) error {
+	set := `epoch=epoch+1, updated_at=?`
+	if start {
+		set += `, desired_state='running'`
+	}
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
 		res, err := tx.ExecContext(ctx, s.Rebind(
-			`UPDATE servers SET epoch=epoch+1, updated_at=? WHERE id=? AND epoch=?`),
+			`UPDATE servers SET `+set+` WHERE id=? AND epoch=? AND deleted_at IS NULL`),
 			s.NowMs(), e.ServerID, e.Epoch-1)
 		if err != nil {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("epoch bump failed (concurrent activation)")
+			return ErrEpochConflict
 		}
 		role := e.Role
 		if role == "" {
@@ -847,11 +1121,20 @@ func (s *Store) EndExecution(ctx context.Context, q Querier, id string, endReaso
 	return err
 }
 
-func (s *Store) RenewLease(ctx context.Context, id string, expiresAt int64) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`UPDATE server_executions SET lease_expires_at=? WHERE id=? AND ended_at IS NULL`),
-		expiresAt, id)
-	return err
+// ExtendLease raises an unexpired, unended lease held by nodeID at epoch to
+// expiresAt; it never shortens one and never touches state, so it cannot
+// race a concurrent stop or end. It reports whether a row matched.
+func (s *Store) ExtendLease(ctx context.Context, id, nodeID string, epoch, now, expiresAt int64) (bool, error) {
+	res, err := s.q().ExecContext(ctx, s.Rebind(
+		`UPDATE server_executions SET lease_expires_at=?
+		 WHERE id=? AND node_id=? AND epoch=? AND ended_at IS NULL
+		   AND lease_expires_at > ? AND lease_expires_at < ?`),
+		expiresAt, id, nodeID, epoch, now, expiresAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ---- migrations ----
@@ -893,10 +1176,6 @@ func (s *Store) UpdateMigration(ctx context.Context, m *Migration) error {
 }
 
 // ---- snapshots ----
-
-func (s *Store) CreateSnapshot(ctx context.Context, snap *Snapshot) error {
-	return s.CreateSnapshotTx(ctx, s.q(), snap)
-}
 
 // CreateSnapshotTx inserts inside a caller-managed transaction.
 func (s *Store) CreateSnapshotTx(ctx context.Context, q Querier, snap *Snapshot) error {
@@ -1082,6 +1361,58 @@ func (s *Store) EventsAfter(ctx context.Context, groupID string, after int64, li
 	return evs, err
 }
 
+// LatestEvents returns the group's newest limit events, oldest first (the
+// same order as EventsAfter).
+func (s *Store) LatestEvents(ctx context.Context, groupID string, limit int) ([]Event, error) {
+	var evs []Event
+	if err := s.q().SelectContext(ctx, &evs, s.Rebind(
+		`SELECT * FROM events WHERE group_id=? ORDER BY id DESC LIMIT ?`), groupID, limit); err != nil {
+		return nil, err
+	}
+	slices.Reverse(evs)
+	return evs, nil
+}
+
+// MaxEventID is the group's newest event id, 0 when it has none.
+func (s *Store) MaxEventID(ctx context.Context, groupID string) (int64, error) {
+	var id int64
+	err := s.q().GetContext(ctx, &id, s.Rebind(
+		`SELECT COALESCE(MAX(id), 0) FROM events WHERE group_id=?`), groupID)
+	return id, err
+}
+
+const pruneBatch = 5000
+
+// PruneEvents deletes events created before beforeMs and returns how many.
+// It deletes in id-ordered batches, each its own statement, so a first run
+// over months of events never holds the write lock for one huge delete; ids
+// rise with time, so the old rows sit at the front of the id order.
+func (s *Store) PruneEvents(ctx context.Context, beforeMs int64) (int64, error) {
+	var maxID sql.NullInt64
+	if err := s.q().GetContext(ctx, &maxID, s.Rebind(
+		`SELECT MAX(id) FROM events WHERE created_at<?`), beforeMs); err != nil || !maxID.Valid {
+		return 0, err
+	}
+	var total int64
+	for {
+		res, err := s.q().ExecContext(ctx, s.Rebind(
+			`DELETE FROM events WHERE id IN (
+			   SELECT id FROM events WHERE id<=? AND created_at<? ORDER BY id LIMIT ?)`),
+			maxID.Int64, beforeMs, pruneBatch)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		total += n
+		if err != nil || n < pruneBatch {
+			return total, err
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+	}
+}
+
 func (s *Store) Audit(ctx context.Context, q Querier, groupID *string, actorType, actorID, action, target string, data any) error {
 	b, _ := json.Marshal(data)
 	_, err := q.ExecContext(ctx, s.Rebind(
@@ -1221,7 +1552,7 @@ func (s *Store) DirectiveFingerprintData(ctx context.Context) (DirectiveFingerpr
 		`SELECT sv.group_id, e.id, e.node_id, e.state, e.action, e.epoch, e.role, e.stop_reason
 		 FROM server_executions e
 		 JOIN servers sv ON sv.id = e.server_id
-		 WHERE e.ended_at IS NULL
+		 WHERE e.ended_at IS NULL AND sv.deleted_at IS NULL
 		 ORDER BY sv.group_id, e.id`)); err != nil {
 		return data, err
 	}
@@ -1230,13 +1561,13 @@ func (s *Store) DirectiveFingerprintData(ctx context.Context) (DirectiveFingerpr
 		        m.mode, m.to_execution_id, m.drain_until, m.final_snapshot_id, m.created_at, m.finished_at
 		 FROM migrations m
 		 JOIN servers sv ON sv.id = m.server_id
-		 WHERE m.finished_at IS NULL OR m.drain_until > ?
+		 WHERE sv.deleted_at IS NULL AND (m.finished_at IS NULL OR m.drain_until > ?)
 		 ORDER BY sv.group_id, m.id`), s.NowMs()); err != nil {
 		return data, err
 	}
 	if err := s.DB.SelectContext(ctx, &data.Nodes, s.Rebind(
 		`SELECT id, group_id, lease_profile, admin_state, hosting_enabled, anchor, last_seen_at
-		 FROM nodes ORDER BY group_id, id`)); err != nil {
+		 FROM nodes WHERE deleted_at IS NULL ORDER BY group_id, id`)); err != nil {
 		return data, err
 	}
 	if err := s.DB.SelectContext(ctx, &data.Replicas, s.Rebind(
@@ -1254,7 +1585,7 @@ func (s *Store) DirectiveFingerprintData(ctx context.Context) (DirectiveFingerpr
 	}
 	if err := s.DB.SelectContext(ctx, &data.Servers, s.Rebind(
 		`SELECT group_id, id, desired_state, observed_state, epoch
-		 FROM servers ORDER BY group_id, id`)); err != nil {
+		 FROM servers WHERE deleted_at IS NULL ORDER BY group_id, id`)); err != nil {
 		return data, err
 	}
 	return data, nil

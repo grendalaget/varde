@@ -216,6 +216,7 @@ type agent struct {
 	priv   ed25519.PrivateKey
 	pub    ed25519.PublicKey
 	nodeID string
+	fast   bool // advertises fast_lease
 }
 
 func (e *env) newAgent(hostname string) *agent {
@@ -264,10 +265,11 @@ func (a *agent) signedDo(method, path string, body []byte, tsDelta int64, tamper
 }
 
 type directives struct {
-	DirectivesDigest    string `json:"directives_digest"`
-	HeartbeatIntervalMs int    `json:"heartbeat_interval_ms"`
-	LeaseTtlMs          int    `json:"lease_ttl_ms"`
-	Node                struct {
+	DirectivesDigest     string `json:"directives_digest"`
+	HeartbeatIntervalMs  int    `json:"heartbeat_interval_ms"`
+	LeaseTtlMs           int    `json:"lease_ttl_ms"`
+	LeaseRenewIntervalMs *int64 `json:"lease_renew_interval_ms"`
+	Node                 struct {
 		Name      string  `json:"name"`
 		GroupName *string `json:"group_name"`
 	} `json:"node"`
@@ -297,6 +299,14 @@ type directives struct {
 		ServerID   string `json:"server_id"`
 	} `json:"replication_tasks"`
 	DeleteSnapshots []string `json:"delete_snapshots"`
+	Standby         []struct {
+		ServerID   string `json:"server_id"`
+		Deployment struct {
+			ID     string `json:"id"`
+			GameID string `json:"game_id"`
+		} `json:"deployment"`
+		Config map[string]any `json:"config"`
+	} `json:"standby"`
 }
 
 func caps() map[string]any {
@@ -311,7 +321,11 @@ func caps() map[string]any {
 // heartbeat sends a heartbeat with optional execution reports; returns the
 // parsed directives.
 func (a *agent) heartbeat(execReports []map[string]any) (directives, apiResp) {
-	return a.heartbeatCaps(execReports, caps())
+	c := caps()
+	if a.fast {
+		c["fast_lease"] = true
+	}
+	return a.heartbeatCaps(execReports, c)
 }
 
 // heartbeatCaps is heartbeat with a caller-supplied capabilities body.
@@ -1112,11 +1126,21 @@ func TestLatestSaveUnavailableAndAllowOlder(t *testing.T) {
 	if r.Status != 409 || r.Body["code"] != "latest_save_unavailable" {
 		t.Fatalf("want 409 latest_save_unavailable, got %d %s", r.Status, r.Raw)
 	}
-	// allow_older_snapshot proceeds (restore from an older/nonexistent snap →
-	// clean start is allowed per spec only when no reachable save).
+	// allow_older_snapshot has no older save to fall back to: it must not
+	// start an empty world (that would supersede snap_solo and retention
+	// would delete it) — a fresh start is only for servers with no saves.
 	r = e.do("POST", "/v1/servers/"+srv+"/start",
 		map[string]any{"allow_older_snapshot": true}, e.token)
-	e.mustOK(r)
+	if r.Status != 409 || r.Body["code"] != "no_reachable_save" {
+		t.Fatalf("want 409 no_reachable_save, got %d %s", r.Status, r.Raw)
+	}
+	if e.activeExec(srv) != nil {
+		t.Fatal("no_reachable_save must not create an execution")
+	}
+	e.reconcile()
+	if e.activeExec(srv) != nil {
+		t.Fatal("the reconciler started the server after a refused start")
+	}
 }
 
 func TestRetentionDeleteAck(t *testing.T) {
@@ -1299,13 +1323,17 @@ func TestOlderReachableSaveDoesNotBypassLatestBlocker(t *testing.T) {
 		t.Fatalf("allow_older restore: %+v", found)
 	}
 
-	// the exec dies → automatic re-placement is recovery and must also use
-	// snap_old (newest committed save reachable), never 409
+	// the exec's host is lost → automatic re-placement is recovery and must
+	// also use snap_old (newest committed save reachable), never 409
 	execB := ex["id"].(string)
 	epochB := ex["epoch"].(int64)
-	if r := other.execStatus(execB, srv, epochB, "stopped"); r.Status != 204 {
-		t.Fatalf("exec stop %d %s", r.Status, r.Raw)
+	if r := other.execStatus(execB, srv, epochB, "running"); r.Status != 204 {
+		t.Fatalf("exec running %d %s", r.Status, r.Raw)
 	}
+	e.clk.advance(testTimings.LeaseTTLMs + 1000)
+	e.reconcile() // lease expired → 'lost'; other isn't online yet
+	e.clk.advance(1000)
+	other.heartbeat(nil) // checks in after the loss: placeable again
 	e.reconcile()
 	ex = e.activeExec(srv)
 	if ex == nil {
@@ -2492,7 +2520,7 @@ func TestExternalLogin(t *testing.T) {
 		t.Fatalf("local mode external login: want 404, got %d %s", r.Status, r.Raw)
 	}
 
-	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	fed, err := auth.NewFederation(e.srv.Auth, "test-fed-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2579,7 +2607,7 @@ func TestExternalLogin(t *testing.T) {
 // The first federated user gets operator, same as the first local signup.
 func TestExternalLoginFirstUserIsOperator(t *testing.T) {
 	e := newBareEnv(t)
-	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	fed, err := auth.NewFederation(e.srv.Auth, "test-fed-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2626,7 +2654,7 @@ func TestFederatedState(t *testing.T) {
 		t.Fatalf("local mode should report enabled=false: %v", s)
 	}
 
-	fed, err := auth.NewFederation(e.srv.Auth.(*auth.Local), "test-fed-secret")
+	fed, err := auth.NewFederation(e.srv.Auth, "test-fed-secret")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -117,6 +117,7 @@ type Node struct {
 	metrics     *metrics
 	connInbound sync.Map      // *quic.Conn → bool (was inbound)
 	flowSeq     atomic.Uint64 // node-wide UDP flow ids (peer-side maps key on them)
+	forwardSeq  atomic.Uint64 // internal forward ids; a clock collides within one tick
 }
 
 func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node {
@@ -198,7 +199,10 @@ func (n *Node) applyConfig(req *meshv1.ConfigureRequest) (removed []*relayClient
 		want[r.GetRelayId()] = r
 	}
 	for id, rc := range n.relays {
-		if w, ok := want[id]; ok && w.GetAddr() == rc.addr.String() {
+		// compare the configured string, not the resolved IP: a hostname
+		// would never match and the relay (and every relayed conn) would be
+		// rebuilt on each Configure — the CP sends one per heartbeat.
+		if w, ok := want[id]; ok && w.GetAddr() == rc.cfgAddr {
 			rc.setToken(w.GetToken())
 			delete(want, id)
 			continue

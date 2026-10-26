@@ -76,9 +76,11 @@ fn default_shutdown_handoff_s() -> i64 {
 }
 
 impl Config {
-    pub fn effective_fence_margin_ms(&self) -> i64 {
+    /// Fencing margin when unset: 2 s for short leases (short profile or a
+    /// CP-granted fast lease), 5 s otherwise.
+    pub fn effective_fence_margin_ms(&self, fast_lease: bool) -> i64 {
         self.fence_margin_ms.unwrap_or_else(|| {
-            if self.lease_profile == "short" {
+            if fast_lease || self.lease_profile == "short" {
                 2000
             } else {
                 5000
@@ -143,7 +145,7 @@ control_plane_public_key = "key"
     #[test]
     fn short_profile_uses_short_margin_when_unset() {
         assert_eq!(
-            config("lease_profile = \"short\"").effective_fence_margin_ms(),
+            config("lease_profile = \"short\"").effective_fence_margin_ms(false),
             2000
         );
     }
@@ -151,11 +153,17 @@ control_plane_public_key = "key"
     #[test]
     fn explicit_fence_margin_overrides_profile_default() {
         assert_eq!(
-            config("lease_profile = \"short\"\nfence_margin_ms = 3500").effective_fence_margin_ms(),
+            config("lease_profile = \"short\"\nfence_margin_ms = 3500")
+                .effective_fence_margin_ms(true),
             3500
         );
         let standard = config("");
         assert_eq!(standard.lease_profile, "standard");
-        assert_eq!(standard.effective_fence_margin_ms(), 5000);
+        assert_eq!(standard.effective_fence_margin_ms(false), 5000);
+    }
+
+    #[test]
+    fn fast_lease_uses_short_margin_when_unset() {
+        assert_eq!(config("").effective_fence_margin_ms(true), 2000);
     }
 }

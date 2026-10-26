@@ -73,7 +73,8 @@ contact, the pending code, and each server this machine hosts with its phase and
   Configure(relays)` on the mesh; start/stop executions; schedule replication tasks; delete snapshots. A separate
   signed directives wait long-poll only wakes this loop; complete directives still arrive exclusively in the
   heartbeat response.
-  Heartbeat failures back off (1 s → 5 s) but never block fencing.
+  Heartbeat failures back off (1 s → 5 s) but never block fencing. When the CP grants fast leases, a separate lease
+  loop renews held leases via `/v1/agent/leases` every `lease_renew_interval_ms` (1 s).
 * **Fencing watchdog**: per execution, deadline per `control-plane.md#leases-epochs-fencing`, checked on a monotonic
   clock every 250 ms. Expired ⇒ stop game (bounded graceful, then kill), mark `fenced`, drop from `SetHostedServices`,
   never upload its snapshots. On agent restart, executions found in `state/` are not resumed: running orphan game
@@ -87,13 +88,18 @@ contact, the pending code, and each server this machine hosts with its phase and
 **Lease profile.** `lease_profile` is `standard` by default; use `--lease-profile short` on enrollment/run or set it in
 `config.toml` for an embedded or mobile host. The control plane supplies each heartbeat interval. Standard uses a
 5 s heartbeat and 20 s lease; short uses a 1 s heartbeat and 5 s lease. An unset `fence_margin_ms` defaults to 5 s for
-standard and 2 s for short; an explicit margin overrides either default.
+standard and 2 s for short or when the CP grants a fast lease; an explicit margin overrides either default.
 Short trades availability for faster handoff: losing network contact for about 3 s fences the host and stops its
 executions. The lease/epoch fencing guarantee still prevents two hosts from serving the same execution.
 
 On shutdown the agent first drains executions (graceful stop, final snapshot, replication hold) while heartbeats,
 the fencing watchdog, the mesh, the chunk server and the replication worker keep running — the node stays CP-visible
 as a snapshot source and refuses new executions — and only then signals the loops to stop.
+
+**Hot standby.** Directive `standby[]` lists servers this node would take over. The agent runs the driver's
+`prepare` (runtime + game files) for each in the background — once per server/deployment/config per agent run,
+serialized with executions per deployment dir — and marks the dir `.varde-prepared`; the heartbeat reports those as
+`cached_deployments`. Snapshots already replicate here, so a takeover skips both download and remote restore.
 
 **Shutdown handoff.** Running servers whose driver `can_handoff()` (Minecraft) are not stopped straight away: the
 heartbeat advertises `draining`, the agent heartbeats every 1 s, and the control plane opens a warm migration to the
