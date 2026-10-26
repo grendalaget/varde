@@ -116,8 +116,13 @@ mod lifetime_tests {
 
     #[test]
     fn parent_probe() {
-        let Some(dir) = std::env::var_os("VARDE_MESH_LIFETIME_PROBE") else { return };
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let Some(dir) = std::env::var_os("VARDE_MESH_LIFETIME_PROBE") else {
+            return;
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(async {
             #[cfg(windows)]
             let mut cmd = {
@@ -140,14 +145,18 @@ mod lifetime_tests {
     fn running(pid: u32) -> bool {
         #[cfg(target_os = "linux")]
         {
-            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
             !stat.rsplit_once(") ").unwrap().1.starts_with('Z')
         }
         #[cfg(windows)]
         unsafe {
             use windows_sys::Win32::System::Threading::*;
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if handle.is_null() { return false; }
+            if handle.is_null() {
+                return false;
+            }
             let mut code = 0;
             let ok = GetExitCodeProcess(handle, &mut code);
             windows_sys::Win32::Foundation::CloseHandle(handle);
@@ -159,13 +168,20 @@ mod lifetime_tests {
     fn mesh_child_dies_when_parent_is_killed() {
         let dir = tempfile::tempdir().unwrap();
         let mut parent = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "mesh_child::lifetime_tests::parent_probe", "--nocapture"])
+            .args([
+                "--exact",
+                "mesh_child::lifetime_tests::parent_probe",
+                "--nocapture",
+            ])
             .env("VARDE_MESH_LIFETIME_PROBE", dir.path())
-            .spawn().unwrap();
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let pid = loop {
             if let Ok(value) = std::fs::read_to_string(dir.path().join("pid")) {
-                if let Ok(pid) = value.parse::<u32>() { break pid; }
+                if let Ok(pid) = value.parse::<u32>() {
+                    break pid;
+                }
             }
             if Instant::now() >= deadline {
                 let _ = parent.kill();
