@@ -195,6 +195,7 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
         config: &cfg,
         ports: &bindings,
         memory_mb: 4096,
+        addons: &[],
     };
     let driver = Cs2Driver::new();
     driver.validate(&cfg).unwrap();

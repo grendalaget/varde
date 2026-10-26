@@ -1851,6 +1851,7 @@ mod requires_stop_tests {
                 config: &config,
                 ports: &[],
                 memory_mb: 0,
+                addons: &[],
             };
             let gate = Arc::new(tokio::sync::Notify::new());
             let driver = StopDriver {

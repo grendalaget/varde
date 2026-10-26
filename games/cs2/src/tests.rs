@@ -607,6 +607,7 @@ fn context<'a>(
         runtimes: &NoRuntimes,
         ports: &[],
         memory_mb: 4096,
+        addons: &[],
     }
 }
 
