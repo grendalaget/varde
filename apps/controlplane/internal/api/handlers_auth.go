@@ -29,11 +29,14 @@ func apiErrFromMsg(err error) error {
 
 func genUser(u *store.User) gen.User {
 	return gen.User{
-		Id:          u.ID,
-		Email:       u.Email,
-		DisplayName: u.DisplayName,
-		IsOperator:  u.IsOperator == 1,
-		CreatedAt:   u.CreatedAt,
+		Id:               u.ID,
+		Email:            u.Email,
+		DisplayName:      u.DisplayName,
+		SteamId:          u.SteamID,
+		SteamPersonaName: u.SteamPersonaName,
+		SteamAvatarUrl:   u.SteamAvatarURL,
+		IsOperator:       u.IsOperator == 1,
+		CreatedAt:        u.CreatedAt,
 	}
 }
 
@@ -148,4 +151,44 @@ func (s *Server) GetMe(ctx context.Context, _ gen.GetMeRequestObject) (gen.GetMe
 		User:   genUser(u),
 		Groups: groups,
 	}, nil
+}
+
+func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (gen.UpdateMeResponseObject, error) {
+	u, err := s.requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		return nil, errResp(gen.Validation, "missing body", nil)
+	}
+	if req.Body.DisplayName != nil && u.WebsiteUserID != nil {
+		return nil, errResp(gen.Validation, "display name is managed by varde.games", nil)
+	}
+	if err := s.Store.UpdateUserProfile(ctx, u.ID, req.Body.DisplayName); err != nil {
+		return nil, err
+	}
+	if req.Body.DisplayName != nil {
+		u.DisplayName = *req.Body.DisplayName
+	}
+	ms, err := s.Store.GroupsForUser(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]struct {
+		GroupId string   `json:"group_id"`
+		Name    string   `json:"name"`
+		Role    gen.Role `json:"role"`
+	}, 0, len(ms))
+	for _, m := range ms {
+		g, err := s.Store.GetGroup(ctx, m.GroupID)
+		if err != nil {
+			continue
+		}
+		groups = append(groups, struct {
+			GroupId string   `json:"group_id"`
+			Name    string   `json:"name"`
+			Role    gen.Role `json:"role"`
+		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
+	}
+	return gen.UpdateMe200JSONResponse(gen.Me{User: genUser(u), Groups: groups}), nil
 }

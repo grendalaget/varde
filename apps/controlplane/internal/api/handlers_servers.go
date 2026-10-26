@@ -185,7 +185,7 @@ func (s *Server) saveHolders(ctx context.Context, snapshotID string) []gen.SaveH
 }
 
 func (s *Server) ListServers(ctx context.Context, req gen.ListServersRequestObject) (gen.ListServersResponseObject, error) {
-	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, req.GroupId, "servers", "member"); err != nil {
 		return nil, err
 	}
 	ss, err := s.Store.ListServers(ctx, req.GroupId)
@@ -326,7 +326,7 @@ func (s *Server) GetServer(ctx context.Context, req gen.GetServerRequestObject) 
 	if err != nil {
 		return nil, errResp(gen.NotFound, "server not found", nil)
 	}
-	if _, _, err := s.requireRole(ctx, srv.GroupID, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, srv.GroupID, "servers", "member"); err != nil {
 		return nil, err
 	}
 	v, err := s.serverView(ctx, srv)

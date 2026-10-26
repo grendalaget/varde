@@ -152,6 +152,54 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        patch: operations["updateMe"];
+        trace?: never;
+    };
+    "/v1/me/steam/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createSteamLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/steam": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["unlinkSteam"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -217,6 +265,70 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["updateMember"];
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listGroupPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins/{pluginId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putGroupPlugin"];
+        post?: never;
+        delete: operations["deleteGroupPlugin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["listPluginPage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["invokePluginAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/groups/{groupId}/invites": {
@@ -806,7 +918,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal";
+            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "plugin_unavailable" | "secrets_unconfigured";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -850,6 +962,9 @@ export interface components {
             id: string;
             email: string;
             display_name: string;
+            steam_id?: string | null;
+            steam_persona_name?: string | null;
+            steam_avatar_url?: string | null;
             is_operator: boolean;
             /** Format: int64 */
             created_at: number;
@@ -894,9 +1009,76 @@ export interface components {
             user_id: string;
             email: string;
             display_name: string;
+            steam_id?: string | null;
             role: components["schemas"]["Role"];
             /** Format: int64 */
             created_at: number;
+        };
+        Plugin: {
+            id: string;
+            name: string;
+            version: string;
+            settings: components["schemas"]["PluginField"][];
+            pages: components["schemas"]["PluginPage"][];
+        };
+        PluginField: {
+            name: string;
+            /** @enum {string} */
+            type: "string" | "int" | "bool" | "select" | "secret" | "multiselect" | "member_multiselect";
+            default?: unknown;
+            /** @default false */
+            required: boolean;
+            /** @default false */
+            secret: boolean;
+            /** @default false */
+            hidden: boolean;
+            options?: string[];
+            help?: string;
+            /** @enum {string} */
+            requires?: "steam_id";
+        };
+        PluginPage: {
+            id: string;
+            title: string;
+            list_endpoint?: string;
+            actions: components["schemas"]["PluginAction"][];
+        };
+        PluginAction: {
+            id: string;
+            title: string;
+            endpoint: string;
+            fields: components["schemas"]["PluginField"][];
+        };
+        GroupPlugin: {
+            id: string;
+            enabled: boolean;
+            settings: {
+                [key: string]: unknown;
+            };
+            secrets_set: string[];
+        };
+        GroupPluginRequest: {
+            settings: {
+                [key: string]: unknown;
+            };
+        };
+        PluginListResponse: {
+            items: {
+                title: string;
+                subtitle?: string;
+                status?: string;
+                href?: string;
+            }[];
+        };
+        PluginActionRequest: {
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        PluginActionResponse: {
+            message: string;
+            href?: string;
+            notes?: string[];
         };
         Invite: {
             code: string;
@@ -1530,6 +1712,9 @@ export interface components {
     };
     parameters: {
         GroupId: string;
+        PluginId: string;
+        PageId: string;
+        ActionId: string;
         UserId: string;
         NodeId: string;
         ServerId: string;
@@ -1751,6 +1936,100 @@ export interface operations {
             401: components["responses"]["Error"];
         };
     };
+    updateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    display_name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated current user profile. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    createSteamLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Steam OpenID sign-in URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        redirect_url: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    unlinkSteam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Steam account unlinked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Loaded plugins and their declarative UI metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        plugins: components["schemas"]["Plugin"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
     listGroups: {
         parameters: {
             query?: never;
@@ -1825,6 +2104,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     deleteGroup: {
@@ -1959,6 +2239,156 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    listGroupPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin enablement and non-secret settings for the group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        plugins: components["schemas"]["GroupPlugin"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    putGroupPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupPluginRequest"];
+            };
+        };
+        responses: {
+            /** @description Enabled plugin and merged settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupPlugin"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deleteGroupPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin disabled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listPluginPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+                pageId: components["parameters"]["PageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declarative items supplied by the plugin. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginListResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    invokePluginAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+                pageId: components["parameters"]["PageId"];
+                actionId: components["parameters"]["ActionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Action result supplied by the plugin. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginActionResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     createInvite: {

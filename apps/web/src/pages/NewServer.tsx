@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage, type GameConfigField } from "../api/client";
+import { api, errorMessage } from "../api/client";
 import {
   Button,
   Card,
@@ -14,6 +14,7 @@ import { navigate } from "../lib/router";
 import { useSession } from "../lib/session";
 import { useGames } from "../lib/games";
 import { configDefaults } from "../lib/config-defaults";
+import { ConfigInput } from "../components/ConfigInput";
 
 export default function NewServer() {
   const { group, nodes } = useSession();
@@ -184,70 +185,5 @@ export default function NewServer() {
         </div>
       </form>
     </>
-  );
-}
-
-export function ConfigInput({
-  f,
-  value,
-  onChange,
-}: {
-  f: GameConfigField;
-  value: unknown;
-  onChange: (v: unknown) => void;
-}) {
-  const label = f.name
-    .replace(/_/g, " ")
-    .replace(/^\w/, (c) => c.toUpperCase());
-  if (f.type === "bool") {
-    return (
-      <div className="flex items-start gap-3">
-        <Toggle checked={!!value} onChange={onChange} label={label}>
-          <span>
-            <span className="block text-sm text-foreground">{label}</span>
-            {f.help && <span className="block text-xs text-muted">{f.help}</span>}
-          </span>
-        </Toggle>
-      </div>
-    );
-  }
-  return (
-    <Field label={label} help={f.help}>
-      {f.type === "select" ? (
-        <select
-          className={inputClass}
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {(f.options ?? []).map((o) => (
-            <option key={String(o)} value={String(o)}>
-              {String(o)}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          className={inputClass}
-          type={
-            f.type === "int"
-              ? "number"
-              : f.type === "secret" || f.secret
-                ? "password"
-                : "text"
-          }
-          required={f.required}
-          value={value == null ? "" : String(value)}
-          onChange={(e) =>
-            onChange(
-              f.type === "int"
-                ? e.target.value === ""
-                  ? undefined
-                  : Number(e.target.value)
-                : e.target.value,
-            )
-          }
-        />
-      )}
-    </Field>
   );
 }

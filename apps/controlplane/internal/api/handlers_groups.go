@@ -140,6 +140,8 @@ func (s *Server) ListMembers(ctx context.Context, req gen.ListMembersRequestObje
 	if _, _, err := s.scopedActor(ctx, req.GroupId, "members", "member"); err != nil {
 		return nil, err
 	}
+	token := serviceFrom(ctx)
+	showSteamIDs := token == nil || token.Allows("steam_ids")
 	ms, err := s.Store.ListMembers(ctx, req.GroupId)
 	if err != nil {
 		return nil, err
@@ -149,6 +151,12 @@ func (s *Server) ListMembers(ctx context.Context, req gen.ListMembersRequestObje
 		out = append(out, gen.Member{
 			UserId: m.UserID, Email: m.Email, DisplayName: m.DisplayName,
 			Role: gen.Role(m.Role), CreatedAt: m.CreatedAt,
+			SteamId: func() *string {
+				if showSteamIDs {
+					return m.SteamID
+				}
+				return nil
+			}(),
 		})
 	}
 	return gen.ListMembers200JSONResponse{Members: out}, nil

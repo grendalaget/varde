@@ -450,6 +450,16 @@
   .cell-slider[data-orientation="horizontal"] .slider__track {
     height: 36px;
   }
+  .checkbox > input[type="checkbox"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
   .checkbox__control {
     border: 1px solid var(--field-border);
   }
