@@ -3,7 +3,7 @@
 //! replication/deletions), computes fencing deadlines, and drives the
 //! fencing watchdog (checked every 250 ms on a monotonic clock).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -196,6 +196,71 @@ fn cp_clock_offset_ms(server_time_ms: i64, now_ms: i64, round_trip: Duration) ->
     server_time_ms - (now_ms - round_trip.as_millis() as i64 / 2)
 }
 
+/// Follow failovers of servers this PC was playing on (tray rejoin prompt).
+async fn update_rejoin(agent: &Agent, d: &cp_api::AgentDirectives) {
+    let mut sessions: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    if let Some(st) = agent.mesh.status().await {
+        for r in st.routes {
+            sessions
+                .entry(r.service_id)
+                .or_default()
+                .insert(r.host_node_id, r.sessions);
+        }
+    }
+    let reachable: HashSet<String> = agent
+        .mesh
+        .list_peers()
+        .await
+        .into_iter()
+        .filter(|p| {
+            p.path == mesh_ipc::pb::PathKind::Direct as i32
+                || p.path == mesh_ipc::pb::PathKind::Relayed as i32
+        })
+        .map(|p| p.node_id)
+        .collect();
+    let names: HashMap<&str, &str> = d
+        .peers
+        .iter()
+        .map(|p| (p.node_id.as_str(), p.name.as_str()))
+        .collect();
+    let mut v = agent.cp_view.lock().unwrap();
+    let routes: Vec<crate::rejoin::Route> = d
+        .routes
+        .iter()
+        .map(|r| crate::rejoin::Route {
+            server_id: r.server_id.clone(),
+            server_name: r.server_name.clone(),
+            address: match r.ports.first() {
+                Some(p) => format!(
+                    "{}:{}",
+                    agent.cfg.translate_loopback(&r.loopback_ip),
+                    p.port
+                ),
+                None => agent.cfg.translate_loopback(&r.loopback_ip),
+            },
+            host: r.host_node_id.clone(),
+            host_name: if !r.host_node_name.is_empty() {
+                r.host_node_name.clone()
+            } else if r.host_node_id == agent.cfg.node_id {
+                d.node.name.clone()
+            } else {
+                names
+                    .get(r.host_node_id.as_str())
+                    .copied()
+                    .unwrap_or_default()
+                    .to_string()
+            },
+            host_running: r.host_running,
+            drain_host: r.drain_host_node_id.clone().unwrap_or_default(),
+            restore_save_at_ms: v.to_local_ms(r.restore_save_at_unix_ms.unwrap_or_default()),
+            sessions: sessions.remove(&r.service_id).unwrap_or_default(),
+        })
+        .collect();
+    let mut tracker = std::mem::take(&mut v.rejoin_tracker);
+    v.rejoin = tracker.update(crate::now_ms(), &agent.cfg.node_id, &routes, &reachable);
+    v.rejoin_tracker = tracker;
+}
+
 /// Apply the directives: mesh state, execution diff, replication, deletes.
 async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -> Result<()> {
     {
@@ -302,6 +367,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
                 .collect(),
         )
         .await?;
+    update_rejoin(agent, d).await;
 
     // ---- executions ----
     let mut wanted: HashSet<String> = HashSet::new();

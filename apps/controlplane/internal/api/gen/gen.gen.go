@@ -933,12 +933,19 @@ type DirectiveRoute struct {
 	Epoch            *int64  `json:"epoch,omitempty"`
 
 	// HostNodeId empty = server stopped
-	HostNodeId *string    `json:"host_node_id,omitempty"`
-	LoopbackIp string     `json:"loopback_ip"`
-	Ports      []GamePort `json:"ports"`
-	ServerId   string     `json:"server_id"`
-	ServerName string     `json:"server_name"`
-	ServiceId  string     `json:"service_id"`
+	HostNodeId   *string `json:"host_node_id,omitempty"`
+	HostNodeName *string `json:"host_node_name,omitempty"`
+
+	// HostRunning The host's execution is running (players can join).
+	HostRunning *bool      `json:"host_running,omitempty"`
+	LoopbackIp  string     `json:"loopback_ip"`
+	Ports       []GamePort `json:"ports"`
+
+	// RestoreSaveAtUnixMs created_at of the save the host's execution restored from.
+	RestoreSaveAtUnixMs *int64 `json:"restore_save_at_unix_ms,omitempty"`
+	ServerId            string `json:"server_id"`
+	ServerName          string `json:"server_name"`
+	ServiceId           string `json:"service_id"`
 }
 
 // EnrollResult defines model for EnrollResult.

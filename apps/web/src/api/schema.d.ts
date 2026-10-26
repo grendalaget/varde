@@ -1227,6 +1227,14 @@ export interface components {
             ports: components["schemas"]["GamePort"][];
             /** @description empty = server stopped */
             host_node_id?: string;
+            host_node_name?: string;
+            /** @description The host's execution is running (players can join). */
+            host_running?: boolean;
+            /**
+             * Format: int64
+             * @description created_at of the save the host's execution restored from.
+             */
+            restore_save_at_unix_ms?: number | null;
             /** Format: int64 */
             epoch?: number;
             /** @description During a warm migration flip, the previous host whose old-epoch streams stay alive until drain_until_unix_ms. */

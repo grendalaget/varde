@@ -493,6 +493,15 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		if e, err := s.Store.ActiveExecution(ctx, srv.ID); err == nil {
 			rt.HostNodeId = ptr(e.NodeID)
 			rt.Epoch = ptr(e.Epoch)
+			rt.HostRunning = ptr(e.State == "running")
+			if hn, err := s.Store.GetNode(ctx, e.NodeID); err == nil {
+				rt.HostNodeName = ptr(hn.Name)
+			}
+			if e.RestoreSnapshotID != nil {
+				if snap, err := s.Store.GetSnapshot(ctx, *e.RestoreSnapshotID); err == nil {
+					rt.RestoreSaveAtUnixMs = ptr(snap.CreatedAt)
+				}
+			}
 		}
 		// warm flip in progress: drain old-epoch streams to the previous host
 		if m, err := s.Store.DrainingMigration(ctx, srv.ID, now); err == nil {

@@ -287,12 +287,15 @@ type directives struct {
 		} `json:"restore"`
 	} `json:"executions"`
 	Routes []struct {
-		ServerID         string `json:"server_id"`
-		HostNodeId       string `json:"host_node_id"`
-		Epoch            int64  `json:"epoch"`
-		DrainHostNodeId  string `json:"drain_host_node_id"`
-		DrainEpoch       int64  `json:"drain_epoch"`
-		DrainUntilUnixMs int64  `json:"drain_until_unix_ms"`
+		ServerID            string `json:"server_id"`
+		HostNodeId          string `json:"host_node_id"`
+		HostNodeName        string `json:"host_node_name"`
+		HostRunning         bool   `json:"host_running"`
+		RestoreSaveAtUnixMs *int64 `json:"restore_save_at_unix_ms"`
+		Epoch               int64  `json:"epoch"`
+		DrainHostNodeId     string `json:"drain_host_node_id"`
+		DrainEpoch          int64  `json:"drain_epoch"`
+		DrainUntilUnixMs    int64  `json:"drain_until_unix_ms"`
 	} `json:"routes"`
 	ReplicationTasks []struct {
 		SnapshotID string `json:"snapshot_id"`
@@ -1088,6 +1091,26 @@ func TestRecoveryCommittedOnly(t *testing.T) {
 	}
 	if found == nil || found.SnapshotID != "snap_old" {
 		t.Fatalf("recovery restore: %+v", found)
+	}
+
+	// the route tells players' PCs where the server went and from which
+	// save (tray rejoin prompt)
+	var otherName string
+	var snapAt int64
+	if err := e.st.DB.QueryRow(e.st.Rebind(`SELECT name FROM nodes WHERE id=?`), other.nodeID).Scan(&otherName); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.DB.QueryRow(`SELECT created_at FROM snapshots WHERE id='snap_old'`).Scan(&snapAt); err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range d.Routes {
+		if rt.ServerID != srv {
+			continue
+		}
+		if rt.HostNodeId != other.nodeID || rt.HostNodeName != otherName || rt.HostRunning ||
+			rt.RestoreSaveAtUnixMs == nil || *rt.RestoreSaveAtUnixMs != snapAt {
+			t.Fatalf("recovery route: %+v (want host %s %q, not running, save at %d)", rt, other.nodeID, otherName, snapAt)
+		}
 	}
 }
 
