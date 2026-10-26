@@ -369,6 +369,24 @@ fn ensure_console() {
 
 #[cfg(windows)]
 struct Job(windows_sys::Win32::Foundation::HANDLE);
+
+/// Makes subsequently spawned children die when this process exits, even abruptly.
+#[cfg(windows)]
+pub fn kill_children_on_exit() -> Result<()> {
+    static OWNER: std::sync::OnceLock<std::result::Result<Job, String>> = std::sync::OnceLock::new();
+    OWNER.get_or_init(|| {
+        let job = Job::new().map_err(|error| error.to_string())?;
+        // SAFETY: the current process pseudo-handle is valid and job is owned here.
+        if unsafe {
+            windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
+                job.0, windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            )
+        } == 0 {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        Ok(job)
+    }).as_ref().map(|_| ()).map_err(|error| error.clone().into())
+}
 // SAFETY: HANDLE names a process-wide kernel object — sending or sharing it
 // across threads is safe; the OS serializes job-object calls.
 #[cfg(windows)]

@@ -85,18 +85,104 @@ fn start(bin: &PathBuf, ipc: &str) -> Result<Child> {
     if let Ok(lvl) = std::env::var("VARDE_MESH_LOG_LEVEL") {
         cmd.arg("--log-level").arg(lvl);
     }
-    // Linux can kill the mesh on abrupt agent death to release its routes and socket.
+    protected_spawn(&mut cmd).with_context(|| format!("spawn {}", bin.display()))
+}
+
+fn protected_spawn(cmd: &mut Command) -> std::io::Result<Child> {
+    cmd.kill_on_drop(true);
+    #[cfg(windows)]
+    executor_native::kill_children_on_exit().map_err(std::io::Error::other)?;
     #[cfg(target_os = "linux")]
     unsafe {
-        cmd.pre_exec(|| {
+        let parent = std::process::id() as libc::pid_t;
+        cmd.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                 return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                return Err(std::io::Error::other("mesh parent exited before spawn"));
             }
             Ok(())
         });
     }
     cmd.spawn()
-        .with_context(|| format!("spawn {}", bin.display()))
+}
+
+#[cfg(all(test, any(windows, target_os = "linux")))]
+mod lifetime_tests {
+    use super::*;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn parent_probe() {
+        let Some(dir) = std::env::var_os("VARDE_MESH_LIFETIME_PROBE") else { return };
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            #[cfg(windows)]
+            let mut cmd = {
+                let mut cmd = Command::new("cmd.exe");
+                cmd.args(["/D", "/C", "ping -n 60 127.0.0.1 > NUL"]);
+                cmd
+            };
+            #[cfg(target_os = "linux")]
+            let mut cmd = {
+                let mut cmd = Command::new("/bin/sleep");
+                cmd.arg("60");
+                cmd
+            };
+            let mut child = protected_spawn(&mut cmd).unwrap();
+            std::fs::write(Path::new(&dir).join("pid"), child.id().unwrap().to_string()).unwrap();
+            child.wait().await.unwrap();
+        });
+    }
+
+    fn running(pid: u32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+            !stat.rsplit_once(") ").unwrap().1.starts_with('Z')
+        }
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::System::Threading::*;
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() { return false; }
+            let mut code = 0;
+            let ok = GetExitCodeProcess(handle, &mut code);
+            windows_sys::Win32::Foundation::CloseHandle(handle);
+            ok != 0 && code == 259
+        }
+    }
+
+    #[test]
+    fn mesh_child_dies_when_parent_is_killed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut parent = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mesh_child::lifetime_tests::parent_probe", "--nocapture"])
+            .env("VARDE_MESH_LIFETIME_PROBE", dir.path())
+            .spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            if let Ok(value) = std::fs::read_to_string(dir.path().join("pid")) {
+                if let Ok(pid) = value.parse::<u32>() { break pid; }
+            }
+            if Instant::now() >= deadline {
+                let _ = parent.kill();
+                let _ = parent.wait();
+                panic!("mesh probe did not start");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(running(pid));
+        parent.kill().unwrap();
+        parent.wait().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while running(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!running(pid), "mesh child survived parent death");
+    }
 }
 
 #[cfg(all(test, unix))]
