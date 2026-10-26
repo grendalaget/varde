@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -167,7 +168,10 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 		digestDirectives.Executions = &executions
 	}
 	resp.DirectivesDigest = ptr(directivesDigest(digestDirectives))
-	s.Recon.WakeGroup(node.GroupID)
+	// Only ask for a pass: it notifies the group's directive waiters when the
+	// group fingerprint actually changed. Notifying here would wake every
+	// waiting node in the group on every heartbeat of any node.
+	s.Recon.Wake()
 	return gen.AgentHeartbeat200JSONResponse(resp), nil
 }
 
@@ -194,12 +198,20 @@ func (s *Server) acknowledgeDeletedSnapshot(ctx context.Context, nodeID, snapsho
 			`SELECT COUNT(*) FROM snapshot_replicas WHERE snapshot_id=?`), snapshotID); err != nil {
 			return err
 		}
-		if replicas == 0 {
-			_, err := tx.ExecContext(ctx, s.Store.Rebind(
-				`DELETE FROM snapshots WHERE id=?`), snapshotID)
+		if replicas > 0 {
+			return nil
+		}
+		var serverID string
+		if err := tx.GetContext(ctx, &serverID, s.Store.Rebind(
+			`SELECT server_id FROM snapshots WHERE id=?`), snapshotID); err != nil {
 			return err
 		}
-		return nil
+		if _, err := tx.ExecContext(ctx, s.Store.Rebind(
+			`DELETE FROM snapshots WHERE id=?`), snapshotID); err != nil {
+			return err
+		}
+		// the last copy of a deleted server's saves is gone: drop the server
+		return s.Store.PurgeDeletedServer(ctx, tx, serverID)
 	})
 }
 
@@ -238,7 +250,8 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 	if er.Message != nil {
 		exec.Message = er.Message
 	}
-	leaseExp := now + s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs
+	ttl, _ := s.leaseTTL(ctx, node)
+	leaseExp := now + ttl
 
 	return s.Store.Tx(ctx, func(tx *sqlx.Tx) error {
 		if er.JoinCode != nil {
@@ -261,6 +274,10 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 			exec.LeaseExpiresAt = leaseExp
 			if err := s.Store.UpdateExecutionState(ctx, tx, exec); err != nil {
 				return err
+			}
+			// every heartbeat re-reports running; only the transition is news
+			if previousState == "running" {
+				return nil
 			}
 			return s.Store.EmitEvent(ctx, tx, node.GroupID, &exec.ServerID, &node.ID,
 				"execution.state", map[string]any{"execution_id": exec.ID, "state": "running"})
@@ -300,16 +317,21 @@ func (s *Server) processExecReport(ctx context.Context, node *store.Node, er *ge
 
 // buildDirectives composes the full desired-state response for the node.
 func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int64) (gen.AgentDirectives, error) {
+	leaseTTL, fastLease := s.leaseTTL(ctx, node)
 	d := gen.AgentDirectives{
 		ServerTimeUnixMs:    now,
 		HeartbeatIntervalMs: int(s.Cfg.Timings.ForProfile(node.LeaseProfile).HeartbeatIntervalMs),
-		LeaseTtlMs:          int(s.Cfg.Timings.ForProfile(node.LeaseProfile).LeaseTTLMs),
+		LeaseTtlMs:          int(leaseTTL),
 		Executions:          &[]gen.ExecutionDirective{},
 		Peers:               &[]gen.DirectivePeer{},
 		Routes:              &[]gen.DirectiveRoute{},
 		Relays:              &[]gen.DirectiveRelay{},
 		ReplicationTasks:    &[]gen.ReplicationTask{},
 		DeleteSnapshots:     &[]string{},
+	}
+	if fastLease {
+		iv := int(s.Cfg.Timings.LeaseRenewIntervalMs)
+		d.LeaseRenewIntervalMs = &iv
 	}
 	d.Node.Name = node.Name
 	d.Node.HostingEnabled = node.HostingEnabled == 1
@@ -527,6 +549,7 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		delIDs = append(delIDs, r.SnapshotID)
 	}
 	d.DeleteSnapshots = &delIDs
+	d.Standby = s.standbyDirectives(ctx, node)
 
 	return d, nil
 }
@@ -705,10 +728,6 @@ func (s *Server) assignReplication(ctx context.Context, srv *store.Server, snap 
 	if err != nil {
 		return nil, err
 	}
-	var parentNode = ""
-	if snap.ParentID != nil {
-		parentNode = "" // HasParent checked below per node
-	}
 	var cands []scheduler.ReplCandidate
 	for i := range nodes {
 		n := &nodes[i]
@@ -737,8 +756,15 @@ func (s *Server) assignReplication(ctx context.Context, srv *store.Server, snap 
 			HasParent: hasParent, DiskFreeBytes: diskFree,
 		})
 	}
-	_ = parentNode
 	targets := scheduler.SelectReplicationTargets(snap.NodeID, int(srv.ReplicationFactor), cands)
+	// the hot standby always gets a copy, on top of the replication factor
+	if sb := srv.StandbyNodeID; sb != nil && *sb != snap.NodeID && !slices.Contains(targets, *sb) {
+		for _, c := range cands {
+			if c.NodeID == *sb && c.Online {
+				targets = append(targets, *sb)
+			}
+		}
+	}
 	now := s.Store.NowMs()
 	for _, t := range targets {
 		if err := s.Store.UpsertReplica(ctx, s.Store.DB, &store.Replica{
@@ -947,4 +973,31 @@ func (s *Server) AgentReplicaReady(ctx context.Context, req gen.AgentReplicaRead
 	}
 	s.Recon.WakeGroup(node.GroupID)
 	return gen.AgentReplicaReady204Response{}, nil
+}
+
+// standbyDirectives lists the running servers this node is the hot standby
+// for, with what the agent needs to pre-install their deployment.
+func (s *Server) standbyDirectives(ctx context.Context, node *store.Node) *[]gen.StandbyDirective {
+	out := []gen.StandbyDirective{}
+	srvs, err := s.Store.ListServers(ctx, node.GroupID)
+	if err != nil {
+		return &out
+	}
+	for i := range srvs {
+		sv := &srvs[i]
+		if sv.DesiredState != "running" || sv.StandbyNodeID == nil || *sv.StandbyNodeID != node.ID || sv.DeploymentID == nil {
+			continue
+		}
+		dep, err := s.getDeployment(ctx, *sv.DeploymentID)
+		if err != nil {
+			continue
+		}
+		var spec, cfg map[string]any
+		_ = json.Unmarshal([]byte(dep.SpecJSON), &spec)
+		_ = json.Unmarshal([]byte(sv.ConfigJSON), &cfg)
+		sd := gen.StandbyDirective{ServerId: sv.ID, Config: &cfg}
+		sd.Deployment.Id, sd.Deployment.GameId, sd.Deployment.Spec = dep.ID, dep.GameID, spec
+		out = append(out, sd)
+	}
+	return &out
 }

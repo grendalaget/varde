@@ -60,7 +60,9 @@ func Open(url string, clk Clock) (*Store, error) {
 		if strings.Contains(dsn, "?") {
 			sep = "&"
 		}
-		dsn += sep + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate"
+		// foreign_keys: enforce REFERENCES like Postgres does, so a
+		// wrong delete order fails here too instead of orphaning rows
+		dsn += sep + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 	case strings.HasPrefix(url, "postgres://") || strings.HasPrefix(url, "postgresql://"):
 		drv = "pgx"
 		dsn = url
@@ -111,6 +113,9 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 		{"nodes", "update_available", "TEXT NOT NULL DEFAULT ''"},
 		{"crash_reports", "client_ref", "TEXT NOT NULL DEFAULT ''"},
 		{"service_tokens", "group_ids", "TEXT"},
+		{"servers", "standby_node_id", "TEXT"},
+		{"servers", "deleted_at", "BIGINT"},
+		{"nodes", "deleted_at", "BIGINT"},
 	}
 	for _, c := range cols {
 		if dialect == "postgres" {

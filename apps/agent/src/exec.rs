@@ -64,6 +64,9 @@ pub struct ExecCtl {
     join_code: Mutex<Option<String>>,
     /// fencing deadline; refreshed each heartbeat
     pub deadline: Mutex<Option<Instant>>,
+    /// Send instant of the CP response that set `deadline`; responses may
+    /// arrive out of order, and only the newest-sent one may set it.
+    pub deadline_sent: Mutex<Option<Instant>>,
     fence_margin_ms: AtomicI64,
     fenced: AtomicBool,
     stop: watch::Sender<Option<StopKind>>,
@@ -99,6 +102,7 @@ impl ExecCtl {
             message: Mutex::new(String::new()),
             join_code: Mutex::new(None),
             deadline: Mutex::new(None),
+            deadline_sent: Mutex::new(None),
             fence_margin_ms: AtomicI64::new(0),
             fenced: AtomicBool::new(false),
             stop: tx,
@@ -222,7 +226,7 @@ impl ExecCtl {
 }
 
 /// executor/driver APIs return Box<dyn Error>; anyhow can't `?` them.
-fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
+pub(crate) fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
 }
 
@@ -307,7 +311,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     // ---- prepare ----
     ctl.set_phase(Phase::Preparing);
     report(&agent, &ctl).await;
-    driver.prepare(&ctx).await.map_err(dyn_err)?;
+    crate::standby::prepare_locked(&agent, driver, &ctx).await?;
     ensure_live(&ctl)?;
 
     // ---- restore ----
@@ -674,32 +678,44 @@ async fn graceful_stop_and_snapshot(
     let mut final_snap = None;
     let mut requires_stop = driver.snapshot_after_stop();
     if !requires_stop && !ctl.is_fenced() {
-        match driver.prepare_snapshot(ctx, &**proc).await.map_err(dyn_err) {
-            Ok(SnapshotBarrier::Live) => {
-                match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
-                    Ok(info) => final_snap = Some(info),
-                    Err(e) => {
-                        if let Some(path) = is_changed_during_snapshot(&e) {
-                            requires_stop = true;
-                            tracing::warn!(
-                                exec = %ctl.dir.execution_id,
-                                path,
-                                "live final snapshot changed; falling back to a post-stop snapshot"
-                            );
-                        } else {
-                            tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+        let (final_snap, requires_stop) = (&mut final_snap, &mut requires_stop);
+        // snapshot failures are logged here, so only a failed resume is
+        // returned — and it never discards a snapshot already taken
+        let resumed = with_snapshot_barrier(
+            &ctl.dir.execution_id,
+            driver,
+            ctx,
+            proc,
+            |barrier| async move {
+                match barrier {
+                    Ok(SnapshotBarrier::Live) => {
+                        match snapshot_files(agent, ctl, driver, ctx, "final", None).await {
+                            Ok(info) => *final_snap = Some(info),
+                            Err(e) => {
+                                if let Some(path) = is_changed_during_snapshot(&e) {
+                                    *requires_stop = true;
+                                    tracing::warn!(
+                                        exec = %ctl.dir.execution_id,
+                                        path,
+                                        "live final snapshot changed; falling back to a post-stop snapshot"
+                                    );
+                                } else {
+                                    tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                                }
+                            }
                         }
                     }
+                    Ok(SnapshotBarrier::RequiresStop) => *requires_stop = true,
+                    Err(e) => {
+                        tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
+                    }
                 }
-                let _ = driver
-                    .resume_after_snapshot(ctx, &**proc)
-                    .await
-                    .map_err(|e| tracing::warn!("resume after snapshot: {e}"));
-            }
-            Ok(SnapshotBarrier::RequiresStop) => requires_stop = true,
-            Err(e) => {
-                tracing::warn!(exec = %ctl.dir.execution_id, error = %format!("{e:#}"), "final snapshot failed")
-            }
+                Ok(())
+            },
+        )
+        .await;
+        if let Err(e) = resumed {
+            tracing::warn!("resume after snapshot: {e}");
         }
     }
 
@@ -750,35 +766,58 @@ async fn do_snapshot(
         if ctl.is_fenced() {
             bail!("fenced execution never uploads snapshots");
         }
-        match driver
-            .prepare_snapshot(ctx, &**proc)
-            .await
-            .map_err(dyn_err)?
-        {
-            SnapshotBarrier::Live => {}
-            SnapshotBarrier::RequiresStop => {
-                bail!("driver requires stop for snapshot")
-            }
-        }
-        let info = match snapshot_files(agent, ctl, driver, ctx, reason, request_id).await {
-            Ok(info) => info,
-            Err(e) => {
-                if is_changed_during_snapshot(&e).is_some() {
-                    driver
-                        .resume_after_snapshot(ctx, &**proc)
-                        .await
-                        .map_err(dyn_err)?;
+        with_snapshot_barrier(
+            &ctl.dir.execution_id,
+            driver,
+            ctx,
+            proc,
+            |barrier| async move {
+                match barrier? {
+                    SnapshotBarrier::Live => {
+                        snapshot_files(agent, ctl, driver, ctx, reason, request_id).await
+                    }
+                    SnapshotBarrier::RequiresStop => {
+                        bail!("driver requires stop for snapshot")
+                    }
                 }
-                return Err(e);
-            }
-        };
-        driver
-            .resume_after_snapshot(ctx, &**proc)
-            .await
-            .map_err(dyn_err)?;
-        Ok(info)
+            },
+        )
+        .await
     })
     .await
+}
+
+/// Run `body` inside the driver's snapshot barrier and always resume after
+/// it. Drivers that pause autosave may have paused it even when the barrier
+/// then reports `RequiresStop` or errors, so `body` gets the barrier result
+/// and resume runs whatever it was. A failed resume is the result only when
+/// `body` succeeded; otherwise it is logged and `body`'s error wins.
+async fn with_snapshot_barrier<T, F, Fut>(
+    exec: &str,
+    driver: &dyn GameDriver,
+    ctx: &DriverContext<'_>,
+    proc: &Arc<dyn ProcessHandle>,
+    body: F,
+) -> Result<T>
+where
+    F: FnOnce(Result<SnapshotBarrier>) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let barrier = driver.prepare_snapshot(ctx, &**proc).await.map_err(dyn_err);
+    let res = body(barrier).await;
+    let resumed = driver
+        .resume_after_snapshot(ctx, &**proc)
+        .await
+        .map_err(dyn_err);
+    match (res, resumed) {
+        (Ok(v), Ok(())) => Ok(v),
+        (Ok(_), Err(re)) => Err(re),
+        (Err(e), Err(re)) => {
+            tracing::warn!(exec = %exec, error = %re, "resume after snapshot");
+            Err(e)
+        }
+        (Err(e), Ok(())) => Err(e),
+    }
 }
 
 async fn retry_changed_snapshot<T, Attempt, Fut>(exec: &str, mut attempt: Attempt) -> Result<T>
@@ -1267,6 +1306,9 @@ mod requires_stop_tests {
         handoff_target: std::sync::Mutex<Option<(String, u16)>>,
         freeze_calls: AtomicUsize,
         handoff: bool,
+        /// prepare_snapshot errors after its (pretend) autosave pause
+        fail_prepare: bool,
+        resume_calls: AtomicUsize,
     }
 
     impl StopDriver {
@@ -1279,6 +1321,8 @@ mod requires_stop_tests {
                 handoff_target: std::sync::Mutex::new(None),
                 freeze_calls: AtomicUsize::new(0),
                 handoff: false,
+                fail_prepare: false,
+                resume_calls: AtomicUsize::new(0),
             }
         }
     }
@@ -1355,6 +1399,9 @@ mod requires_stop_tests {
             _p: &dyn ProcessHandle,
         ) -> game_driver_api::Result<SnapshotBarrier> {
             self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_prepare {
+                return Err("save-all write failed".into());
+            }
             Ok(if self.live_barrier {
                 SnapshotBarrier::Live
             } else {
@@ -1366,6 +1413,7 @@ mod requires_stop_tests {
             _c: &DriverContext<'_>,
             _p: &dyn ProcessHandle,
         ) -> game_driver_api::Result<()> {
+            self.resume_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
         async fn graceful_stop(
@@ -1492,6 +1540,8 @@ mod requires_stop_tests {
             heartbeat_sequence,
             heartbeat_now: tokio::sync::Notify::new(),
             shutting_down: AtomicBool::new(false),
+            prepare_locks: Mutex::new(Default::default()),
+            standby_inflight: Mutex::new(Default::default()),
             cp_view: Mutex::new(Default::default()),
             update: Mutex::new(crate::update::UpdateState::default()),
         }
@@ -1654,6 +1704,35 @@ mod requires_stop_tests {
             "abort was not noticed"
         );
         assert_eq!(ctl.stop_reason(), None);
+    }
+
+    #[tokio::test]
+    async fn standby_pre_installs_each_deployment_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        agent.drivers.register(Box::new(StopDriver::new(true)));
+        let agent = Arc::new(agent);
+        let sd = cp_api::StandbyDirective {
+            server_id: "srv_s".into(),
+            deployment: cp_api::Deployment {
+                id: "dep_s".into(),
+                game_id: "stopgame".into(),
+                spec: serde_json::json!({}),
+            },
+            config: Some(serde_json::json!({"version": "1.21.4"})),
+        };
+        crate::standby::apply(&agent, &[sd.clone(), sd.clone()]);
+        crate::standby::apply(&agent, &[sd]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while crate::standby::prepared_deployments(tmp.path()).is_empty() {
+            assert!(Instant::now() < deadline, "standby never prepared dep_s");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            crate::standby::prepared_deployments(tmp.path()),
+            vec!["dep_s"]
+        );
+        assert_eq!(agent.standby_inflight.lock().unwrap().len(), 1);
     }
 
     fn test_ctl() -> Arc<ExecCtl> {
@@ -1950,5 +2029,106 @@ mod requires_stop_tests {
             *driver.handoff_target.lock().unwrap(),
             Some(("127.77.0.42".to_string(), 27001))
         );
+    }
+
+    /// Every do_snapshot exit after prepare_snapshot resumes the game — a
+    /// driver that paused autosave must never be left paused.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn do_snapshot_always_resumes_after_barrier() {
+        // (live barrier, prepare fails, CP reachable) → expect success
+        for (live, fail_prepare, cp_up, ok) in [
+            (false, false, true, false), // RequiresStop
+            (true, true, true, false),   // barrier errored after pausing
+            (true, false, false, false), // snapshot taken, upload failed
+            (true, false, true, true),   // happy path
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            // nothing listens on port 1: the snapshot POST fails at once
+            let cp = if cp_up {
+                stub_cp().await
+            } else {
+                "http://127.0.0.1:1".to_string()
+            };
+            let agent = test_agent(cp, tmp.path());
+            let ctl = test_ctl();
+            let (tx, _rx) = broadcast::channel(8);
+            let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+                tx,
+                exited: AtomicBool::new(false),
+                exit_status: ExitStatus {
+                    code: Some(0),
+                    signal: None,
+                },
+            });
+            let server_dir = tmp.path().join("servers").join("srv_t");
+            let deployment_dir = tmp.path().join("deployments").join("dep_t");
+            std::fs::create_dir_all(server_dir.join("saves")).unwrap();
+            std::fs::write(server_dir.join("saves/world.txt"), b"live").unwrap();
+            std::fs::create_dir_all(&deployment_dir).unwrap();
+            let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+            let config = serde_json::json!({});
+            let bindings: Vec<PortBinding> = vec![];
+            let ctx = DriverContext {
+                server_id: "srv_t",
+                server_dir: &server_dir,
+                deployment_dir: &deployment_dir,
+                runtimes: &*agent.runtimes,
+                deployment: &deployment,
+                config: &config,
+                ports: &bindings,
+                memory_mb: 0,
+            };
+            let mut driver = StopDriver::new(live);
+            driver.fail_prepare = fail_prepare;
+            let res = do_snapshot(&agent, &ctl, &driver, &ctx, &proc, "scheduled", None).await;
+            assert_eq!(
+                res.is_ok(),
+                ok,
+                "live={live} fail_prepare={fail_prepare} cp_up={cp_up}"
+            );
+            assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                driver.resume_calls.load(Ordering::SeqCst),
+                1,
+                "live={live} fail_prepare={fail_prepare} cp_up={cp_up}: not resumed"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn graceful_stop_resumes_after_requires_stop_barrier() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = test_agent(stub_cp().await, tmp.path());
+        let ctl = test_ctl();
+        let (tx, _rx) = broadcast::channel(8);
+        let proc: Arc<dyn ProcessHandle> = Arc::new(FakeProc {
+            tx,
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus {
+                code: Some(0),
+                signal: None,
+            },
+        });
+        let server_dir = tmp.path().join("servers").join("srv_t");
+        let deployment_dir = tmp.path().join("deployments").join("dep_t");
+        std::fs::create_dir_all(&server_dir).unwrap();
+        std::fs::create_dir_all(&deployment_dir).unwrap();
+        let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+        let config = serde_json::json!({});
+        let bindings: Vec<PortBinding> = vec![];
+        let ctx = DriverContext {
+            server_id: "srv_t",
+            server_dir: &server_dir,
+            deployment_dir: &deployment_dir,
+            runtimes: &*agent.runtimes,
+            deployment: &deployment,
+            config: &config,
+            ports: &bindings,
+            memory_mb: 0,
+        };
+        let driver = StopDriver::new(false);
+        graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
+        assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(driver.resume_calls.load(Ordering::SeqCst), 1);
     }
 }

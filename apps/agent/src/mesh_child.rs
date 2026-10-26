@@ -37,27 +37,9 @@ impl SupervisedChild {
     }
 }
 
-/// Spawn parameters kept for respawns after a crash.
-pub struct ChildSpec {
-    #[allow(dead_code)]
-    bin: PathBuf,
-    #[allow(dead_code)]
-    ipc: String,
-}
-
-/// Spawns the mesh binary and returns the child plus a spec for `respawn`.
-pub fn spawn(bin: PathBuf, ipc: String) -> (SupervisedChild, ChildSpec) {
-    let spec = ChildSpec {
-        bin: bin.clone(),
-        ipc: ipc.clone(),
-    };
-    (spawn_inner(&bin, &ipc), spec)
-}
-
-/// Respawns after a crash using the saved spec.
-#[allow(dead_code)]
-pub fn respawn(spec: &ChildSpec) -> SupervisedChild {
-    spawn_inner(&spec.bin, &spec.ipc)
+/// Spawns the mesh binary; the supervisor calls this again after a crash.
+pub fn spawn(bin: PathBuf, ipc: String) -> SupervisedChild {
+    spawn_inner(&bin, &ipc)
 }
 
 fn spawn_inner(bin: &PathBuf, ipc: &str) -> SupervisedChild {

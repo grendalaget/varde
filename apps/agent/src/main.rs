@@ -13,6 +13,7 @@ mod link;
 mod local;
 mod mesh_child;
 mod mesh_ctl;
+mod standby;
 mod state;
 mod sysinfo;
 mod update;
@@ -551,6 +552,8 @@ async fn run_linked(
         heartbeat_sequence: tokio::sync::watch::channel(0).0,
         heartbeat_now: tokio::sync::Notify::new(),
         shutting_down: AtomicBool::new(false),
+        prepare_locks: Mutex::new(Default::default()),
+        standby_inflight: Mutex::new(Default::default()),
         cp_view: Mutex::new(Default::default()),
         update: Mutex::new(update::UpdateState::default()),
     });
@@ -586,6 +589,9 @@ async fn run_linked(
     tokio::spawn(async move { control::fence_watchdog(a, s).await });
     let a = agent.clone();
     let s = stop_rx.clone();
+    tokio::spawn(async move { control::lease_loop(a, s).await });
+    let a = agent.clone();
+    let s = stop_rx.clone();
     tokio::spawn(async move { a.replication_worker(s).await });
     let a = agent.clone();
     let s = stop_rx.clone();
@@ -604,7 +610,10 @@ async fn run_linked(
                 tokio::select! {
                     _ = tick.tick() => {
                         let store = agent.store.clone();
-                        let _ = tokio::task::spawn_blocking(move || store.gc()).await;
+                        // an aborted sweep deleted nothing; the next tick retries
+                        if let Ok(Err(e)) = tokio::task::spawn_blocking(move || store.gc()).await {
+                            tracing::warn!(error = %e, "store gc failed");
+                        }
                     }
                     _ = stop.changed() => return,
                 }

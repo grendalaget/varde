@@ -1,6 +1,7 @@
 //! Path validation for manifest entries: relative `/`-separated paths only —
-//! no `..`, absolute paths, drive letters, NUL, Windows-reserved names, or
-//! trailing dot/space. Checked on snapshot create *and* restore.
+//! no `..`, absolute paths, drive letters, NUL, Windows-reserved names,
+//! trailing dot/space, or characters Windows treats as path syntax (`\`, `:`)
+//! or rejects (control characters). Checked on snapshot create *and* restore.
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PathError {
@@ -20,6 +21,8 @@ pub enum PathError {
     TrailingDotOrSpace,
     #[error("windows-reserved name")]
     ReservedName,
+    #[error("backslash, colon or control character")]
+    BadChar,
     #[error("non-UTF8")]
     NonUtf8,
 }
@@ -42,6 +45,11 @@ pub fn validate_rel_path(p: &str) -> Result<(), PathError> {
     let bytes = p.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
         return Err(PathError::DriveLetter);
+    }
+    // Windows splits on `\` too, so `w\..\..\x` would escape the restore
+    // root there; `:` opens drive-relative paths and NTFS streams.
+    if p.chars().any(|c| c == '\\' || c == ':' || c.is_control()) {
+        return Err(PathError::BadChar);
     }
     for seg in p.split('/') {
         if seg.is_empty() {

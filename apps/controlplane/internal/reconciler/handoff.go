@@ -109,8 +109,15 @@ func (r *Reconciler) nodeDraining(ctx context.Context, nodeID string) bool {
 	return caps.Draining
 }
 
-// handoffTarget places srv as the scheduler would, never on the source.
+// handoffTarget is the node a shutdown handoff moves srv to: its hot
+// standby when still eligible, else the scheduler's pick off the source.
 func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourceNodeID string) (string, error) {
+	return r.pickStandby(ctx, srv, sourceNodeID)
+}
+
+// placeOff places srv as recovery would, never on exclude; only, when set,
+// restricts the candidates to that node (an eligibility check).
+func (r *Reconciler) placeOff(ctx context.Context, srv *store.Server, exclude, only string) (string, error) {
 	game := catalog.Get(srv.GameID)
 	if game == nil {
 		return "", &scheduler.Error{Reasons: []string{"unknown game " + srv.GameID}}
@@ -131,10 +138,10 @@ func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourc
 	}
 	var views []scheduler.NodeView
 	for i := range nodes {
-		if nodes[i].ID == sourceNodeID {
+		if nodes[i].ID == exclude || (only != "" && nodes[i].ID != only) {
 			continue
 		}
-		views = append(views, r.nodeView(ctx, &nodes[i], restore, sources))
+		views = append(views, r.placementView(ctx, srv, &nodes[i], restore, sources))
 	}
 	preferred := ""
 	if srv.PreferredNodeID != nil {
