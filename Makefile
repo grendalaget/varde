@@ -31,6 +31,7 @@ build:
 	(cd apps/relay && go build -o ../../$(BIN)/varde-relay .)
 	(cd apps/mesh && go build -o ../../$(BIN)/varde-mesh .)
 	cp target/debug/varde-agent $(BIN)/varde-agent
+	@if [ "$$(uname -s)" = Linux ]; then cp target/debug/libcs2_bind.so $(BIN)/; fi
 
 # Copy the built SPA into the Go module so go:embed picks it up. dist/ is
 # fully untracked so `git status` stays clean; without a web build we
@@ -84,6 +85,7 @@ package: VERSION ?= 0.0.0-dev
 package: build
 	@mkdir -p dist
 	cp bin/varde-agent bin/varde-mesh bin/varde-control-plane bin/varde-relay dist/
+	cp bin/libcs2_bind.so dist/
 	@for p in varde-agent varde-control-plane varde-relay; do \
 		cfg=packaging/linux/nfpm.yaml; \
 		[ $$p = varde-agent ] || cfg=packaging/linux/nfpm-$${p#varde-}.yaml; \

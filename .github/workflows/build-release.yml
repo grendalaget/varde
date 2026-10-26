@@ -99,8 +99,14 @@ jobs:
           if [[ "$GOOS" == windows || "$GOOS" == darwin ]]; then
             crates+=(-p varde-tray)
           fi
+          if [[ "$GOOS" == linux ]]; then
+            crates+=(-p cs2-bind)
+          fi
           cargo build --locked --release "${crates[@]}"
           cp "target/release/varde-agent$suffix" dist/
+          if [[ "$GOOS" == linux ]]; then
+            cp target/release/libcs2_bind.so dist/
+          fi
           if [[ "$GOOS" == windows || "$GOOS" == darwin ]]; then
             cp "target/release/varde-tray$suffix" dist/
           fi

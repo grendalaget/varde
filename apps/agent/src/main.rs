@@ -7,6 +7,8 @@ mod chunks;
 mod config;
 mod control;
 mod crash;
+#[cfg(any(windows, test))]
+mod cs2_firewall;
 mod exec;
 mod identity;
 mod link;
@@ -409,6 +411,10 @@ async fn run(
 ) -> Result<()> {
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    #[cfg(windows)]
+    cs2_firewall::sweep()
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     crash_report::install_panic_hook(
         crash::dir(&data_dir),
         "varde-agent",

@@ -7,6 +7,8 @@ use executor_api::{Executor, ProcessHandle, ProcessSpec};
 use game_driver_api::*;
 use serde_json::Value;
 
+#[cfg(target_os = "linux")]
+mod confinement;
 mod install_lock;
 mod rcon;
 pub mod steam;
@@ -569,6 +571,10 @@ impl GameDriver for Cs2Driver {
             }
             env.push(("LD_LIBRARY_PATH".into(), std::env::join_paths(paths)?));
         }
+        #[cfg(target_os = "linux")]
+        env.extend(confinement::environment(u16::try_from(
+            ctx.local_port(PORT),
+        )?)?);
         if cfg!(windows) {
             if let Some(library) = selected
                 .as_ref()

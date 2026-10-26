@@ -52,7 +52,7 @@ for component in agent control-plane relay; do
   mkdir -p "$project/dist"
   files=("varde-$component" LICENSE)
   if [[ "$component" == agent ]]; then
-    files+=(varde-mesh)
+    files+=(varde-mesh libcs2_bind.so)
   fi
   for file in "${files[@]}"; do
     cp "dist/$file" "$project/dist/"

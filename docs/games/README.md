@@ -57,14 +57,33 @@ On Windows the directory containing `steamclient64.dll` is prepended to `PATH`.
 `-nominidumps` starts harmlessly on Linux; its Windows behavior is unverified.
 
 In CS2 open the console and run `connect <address>` using the Varde address.
-Only UDP 27015 is exposed through the mesh, not RCON or SourceTV. CS2's UDP
-socket can remain wildcard-bound despite loopback settings; the driver uses
-the agent-allocated port and local UDP health checks. Real gameplay over the
+Only UDP 27015 is exposed through the mesh, not RCON or SourceTV. CS2 ignores
+loopback launch settings for its game UDP socket. On Linux a child-only
+`LD_PRELOAD` shim confines wildcard binds on the allocated game/RCON port to
+loopback, without root or network namespaces. Dual-stack sockets use mapped
+IPv4 loopback so the mesh's `127.0.0.1` transport still works; IPv6-only sockets
+use `::1`. Other ports, including Steam's ephemeral sockets, are unchanged.
+The agent package includes `libcs2_bind.so` in `/usr/lib/varde`; development
+and standalone installs keep it alongside the agent. `make build` stages both.
+`VARDE_CS2_BIND_SHIM` can specify its path. A missing, unloadable or incompatible
+shim refuses launch; `VARDE_CS2_ALLOW_EXPOSED_PORT=1` explicitly opts out with a
+warning. The override is Linux-only and deliberately reintroduces exposure.
+
+On Windows the agent uses `INetFwPolicy2` through built-in PowerShell COM to add
+inbound TCP/UDP block rules named `Varde CS2 <server-id>` before spawn. Rules
+cover the allocated port on all profiles, not the shared `cs2.exe` path. WFP
+does not filter loopback, preserving A2S and RCON. Any disabled firewall profile or
+rule-creation failures refuse launch with a warning. Rules are removed after
+exit (including failed spawn); startup sweeps stale `Varde CS2 *` rules but
+retains blocks for ports still bound. Failed cleanup leaves the block in place.
+This requires the service's existing LocalSystem privileges; Windows runtime
+verification is pending. Real gameplay over the
 mesh and gameplay packet sizes still need client validation.
 
 **Future hardening:** On Linux, per-server overlayfs (shared install as a read-only lower dir, per-server upper dir)
 would isolate `steam_appid.txt`/`boot.vcfg` writes and keep the shared install read-only.
-Pair it with per-server network namespaces for the wildcard UDP bind ([#96](https://github.com/grendalaget/varde/issues/96)).
+[#96](https://github.com/grendalaget/varde/issues/96): wildcard game/RCON exposure is now confined by the Linux shim / Windows firewall rules;
+per-server network namespaces remain stronger isolation for all sockets, including Steam's unmodified ephemeral binds.
 The agent runs as unprivileged `varde`; Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor.
 
 Modes: casual, competitive (default), wingman, arms_race and deathmatch.
@@ -74,7 +93,7 @@ process arguments. After map initialization, a loopback RCON connection with a
 random per-launch credential re-executes that cfg after the game-mode defaults,
 resets the bots and applies the configured quota. The credential is held in cfg
 files, never argv, and RCON authentication is disabled again before readiness.
-The TCP control socket uses `-ip 127.0.0.1`; UDP can still bind wildcard.
+The TCP control socket uses `-ip 127.0.0.1`; the port confinement above also protects it.
 This post-map control path is real-tested on Linux, not yet on Windows.
 Positive quotas remain subject to CS2's player-join/hibernation policy: an empty
 server's A2S bot count need not immediately equal a nonzero quota. The real

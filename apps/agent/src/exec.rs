@@ -1023,7 +1023,25 @@ async fn spawn_live(
 ) -> Result<Arc<dyn ProcessHandle>> {
     ensure_live(ctl)?;
     let executor = LiveExecutor { executor, ctl };
+    #[cfg(windows)]
+    let firewall = if driver.id() == "cs2" {
+        Some(
+            crate::cs2_firewall::install(
+                ctx.server_id,
+                u16::try_from(ctx.local_port(game_cs2::PORT))?,
+            )
+            .await
+            .map_err(dyn_err)?,
+        )
+    } else {
+        None
+    };
     let process = driver.spawn(ctx, &executor).await.map_err(dyn_err)?;
+    #[cfg(windows)]
+    let process = match firewall {
+        Some(rule) => crate::cs2_firewall::retain(process, rule),
+        None => process,
+    };
     let process: Arc<dyn ProcessHandle> = Arc::from(process);
     ctl.set_pgid(process.pid());
     ctl.set_proc(process.clone());

@@ -204,6 +204,37 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
         .is_ok();
     let healthy_together = matches!(driver.probe(&ctx, &*process).await, Ok(GameHealth::Healthy));
     println!("CS2 concurrent {name} healthy={healthy_together}");
+    let sockets = std::process::Command::new("ss")
+        .args(["-H", "-l", "-u", "-n", "-p", "-t"])
+        .output()
+        .unwrap();
+    assert!(sockets.status.success());
+    let sockets = String::from_utf8(sockets.stdout).unwrap();
+    let mut protocols = std::collections::BTreeSet::new();
+    let mut exposed = Vec::new();
+    for line in sockets.lines() {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        let Some(local) = fields.get(4) else { continue };
+        let Some((address, actual)) = local.rsplit_once(':') else {
+            continue;
+        };
+        if actual != port.to_string() {
+            continue;
+        }
+        println!("CS2 ss {name}: {line}");
+        protocols.insert(fields[0].to_string());
+        let address = address.trim_matches(['[', ']']).parse::<std::net::IpAddr>();
+        let loopback = match address {
+            Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback(),
+            Ok(std::net::IpAddr::V6(ip)) => {
+                ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+            }
+            Err(_) => false,
+        };
+        if !loopback {
+            exposed.push(line.to_string());
+        }
+    }
     let mut observed = None;
     if ready {
         process
@@ -247,6 +278,12 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
         }
     }
     stop.unwrap();
+    assert!(
+        exposed.is_empty(),
+        "non-loopback CS2 listeners: {exposed:?}"
+    );
+    assert!(protocols.contains("udp"), "game UDP listener missing");
+    assert!(protocols.contains("tcp"), "RCON listener missing");
     let status = status.expect("server did not stop").unwrap();
     let password_stuck = process
         .output_tail(1000)

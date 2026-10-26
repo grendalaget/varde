@@ -973,6 +973,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cs2-bind"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "cssparser"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1686,10 +1693,12 @@ name = "game-cs2"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cs2-bind",
  "executor-api",
  "executor-native",
  "fs2",
  "game-driver-api",
+ "libc",
  "rand 0.8.8",
  "runtimes",
  "serde",
