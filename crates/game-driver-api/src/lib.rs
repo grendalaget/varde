@@ -374,6 +374,16 @@ pub fn sync_addons(state_file: &Path, installs: &[(&PreparedAddon, PathBuf)]) ->
     }
 
     let mut installed = Installed::default();
+    for path in &previous_dirs {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => {
+                installed.dirs.push(path.clone());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let install_result: Result<()> = (|| {
         for (addon, destination) in destinations {
             ensure_directory(&managed_root, &destination, &mut installed)?;
@@ -938,6 +948,12 @@ mod addon_tests {
 
         assert!(destination.join("maps").is_dir());
         assert_eq!(std::fs::read_to_string(user_file).unwrap(), "user data");
+
+        std::fs::remove_file(destination.join("maps/user.txt")).unwrap();
+        sync_addons(&state_file, &[]).unwrap();
+
+        assert!(!destination.join("maps").exists());
+        assert!(!destination.exists());
     }
 
     #[cfg(unix)]
