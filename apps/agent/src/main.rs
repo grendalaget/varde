@@ -13,6 +13,7 @@ mod link;
 mod local;
 mod mesh_child;
 mod mesh_ctl;
+mod rejoin;
 mod standby;
 mod state;
 mod sysinfo;

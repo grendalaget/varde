@@ -79,6 +79,9 @@ pub struct CpView {
     pub latest_save: HashMap<String, i64>,
     /// control-plane clock minus this PC's, as of the last heartbeat
     pub cp_clock_offset_ms: i64,
+    pub rejoin_tracker: crate::rejoin::Tracker,
+    /// Rejoin prompts for the tray (rejoin.rs).
+    pub rejoin: Vec<pb::Rejoin>,
 }
 
 impl CpView {

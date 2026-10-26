@@ -199,6 +199,14 @@ pub struct DirectiveRoute {
     #[serde(default)]
     pub host_node_id: String,
     #[serde(default)]
+    pub host_node_name: String,
+    /// The host's execution is running: players can join.
+    #[serde(default)]
+    pub host_running: bool,
+    /// created_at (CP clock) of the save the host restored from.
+    #[serde(default)]
+    pub restore_save_at_unix_ms: Option<i64>,
+    #[serde(default)]
     pub epoch: i64,
     /// Warm migration drain window: previous host/epoch whose streams stay
     /// alive until drain_until_unix_ms.
