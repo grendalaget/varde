@@ -22,7 +22,7 @@ func genEvent(e *store.Event) gen.Event {
 }
 
 func (s *Server) ListEvents(ctx context.Context, req gen.ListEventsRequestObject) (gen.ListEventsResponseObject, error) {
-	if _, _, err := s.requireRole(ctx, req.GroupId, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, req.GroupId, "events", "member"); err != nil {
 		return nil, err
 	}
 	limit := 200
@@ -68,7 +68,7 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ctx := r.Context()
-	if _, _, err := s.requireRole(ctx, groupID, "member"); err != nil {
+	if _, _, err := s.scopedActor(ctx, groupID, "events", "member"); err != nil {
 		if ae, ok := err.(*apiError); ok {
 			writeErr(w, statusFor(ae.code), ae.code, ae.msg, nil)
 			return

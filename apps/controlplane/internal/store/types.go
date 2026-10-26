@@ -16,8 +16,11 @@ type User struct {
 	PasswordHash string `db:"password_hash"`
 	IsOperator   int64  `db:"is_operator"`
 	// varde.games user id when the account came in through federation.
-	WebsiteUserID *string `db:"website_user_id"`
-	CreatedAt     int64   `db:"created_at"`
+	WebsiteUserID    *string `db:"website_user_id"`
+	SteamID          *string `db:"steam_id"`
+	SteamPersonaName *string `db:"steam_persona_name"`
+	SteamAvatarURL   *string `db:"steam_avatar_url"`
+	CreatedAt        int64   `db:"created_at"`
 }
 
 type Session struct {
@@ -33,6 +36,15 @@ type Group struct {
 	Plan         string `db:"plan"`
 	SettingsJSON string `db:"settings_json"`
 	CreatedAt    int64  `db:"created_at"`
+}
+
+type GroupPlugin struct {
+	GroupID      string `db:"group_id"`
+	PluginID     string `db:"plugin_id"`
+	SettingsJSON string `db:"settings_json"`
+	EnabledBy    string `db:"enabled_by"`
+	CreatedAt    int64  `db:"created_at"`
+	UpdatedAt    int64  `db:"updated_at"`
 }
 
 // GroupSettings is the JSON shape stored in groups.settings_json.
@@ -73,8 +85,9 @@ type Member struct {
 	Role      string `db:"role"`
 	CreatedAt int64  `db:"created_at"`
 	// joined from users when listing
-	Email       string `db:"email"`
-	DisplayName string `db:"display_name"`
+	Email       string  `db:"email"`
+	DisplayName string  `db:"display_name"`
+	SteamID     *string `db:"steam_id"`
 }
 
 type Invite struct {

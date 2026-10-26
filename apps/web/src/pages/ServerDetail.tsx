@@ -28,7 +28,7 @@ import { Link, navigate } from "../lib/router";
 import { canAdmin, useNodeName, useSession } from "../lib/session";
 import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
-import { ConfigInput } from "./NewServer";
+import { ConfigInput } from "../components/ConfigInput";
 import SaveSafety from "../components/SaveSafety";
 import { isCrossplayEnabled, useGames } from "../lib/games";
 

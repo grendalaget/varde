@@ -103,6 +103,9 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
 		{"nodes", "lease_profile", "TEXT NOT NULL DEFAULT 'standard'"},
 		{"users", "website_user_id", "TEXT"},
+		{"users", "steam_id", "TEXT"},
+		{"users", "steam_persona_name", "TEXT"},
+		{"users", "steam_avatar_url", "TEXT"},
 		{"server_executions", "role", "TEXT NOT NULL DEFAULT 'serving'"},
 		{"migrations", "mode", "TEXT NOT NULL DEFAULT 'serial'"},
 		{"migrations", "to_execution_id", "TEXT"},
@@ -142,6 +145,10 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 	// so both dialects get it through the index (NULLs don't collide).
 	if _, err := db.Exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_website_user_id ON users(website_user_id)`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_steam_id ON users(steam_id) WHERE steam_id IS NOT NULL`); err != nil {
 		return err
 	}
 	// the uploader's idempotency key: a retried upload does not duplicate

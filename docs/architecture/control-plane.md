@@ -1,5 +1,7 @@
 # Control plane
 
+See [Plugins](../plugins.md) for the out-of-tree HTTP plugin contract.
+
 Single Go binary `varde-control-plane serve`. Modules (packages under `apps/controlplane/internal/`):
 `store` (SQL), `auth`, `api` (public, OpenAPI-generated server), `agentapi`, `scheduler` (pure, deterministic),
 `reconciler` (the only writer of lease/execution state transitions besides agent reports), `events` (durable log +
@@ -83,6 +85,10 @@ execution_logs(execution_id, seq, at, stream{stdout,stderr,agent}, line)   -- ca
    `varde-agent enroll --server URL --token vde_…` → `POST /v1/agent/enroll/token {token, public_key, ...}`.
 
 Group limits (`max_nodes`) are checked at approval/enrollment.
+
+## Steam linking
+
+Users link Steam with `POST /v1/me/steam/link`; Steam returns to `/v1/auth/steam/callback`, and `DELETE /v1/me/steam` unlinks the account. Set `VARDE_STEAM_API_KEY` optionally to populate the persona name and avatar; without it, Varde stores only the verified SteamID64. The control plane's `--public-url` must be reachable by the user's browser for the Steam redirect and callback.
 
 ## Agent protocol: heartbeat = reconciliation
 
