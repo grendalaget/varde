@@ -795,6 +795,7 @@ mod tests {
             config,
             ports,
             memory_mb: 2048,
+            addons: &[],
         }
     }
 

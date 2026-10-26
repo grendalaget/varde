@@ -31,6 +31,7 @@ import (
 type Config struct {
 	PublicURL   string
 	SteamAPIKey string
+	Dev         bool
 	Timings     reconciler.Timings
 	Relays      []RelayConf
 	Version     string

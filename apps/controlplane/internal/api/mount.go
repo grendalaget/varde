@@ -66,6 +66,14 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(raw))
+		} else if r.Method == http.MethodPut && strings.HasPrefix(p, "/v1/servers/") && strings.Contains(p, "/addons/") {
+			r.Body = http.MaxBytesReader(w, r.Body, 2500<<10)
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeErr(w, http.StatusRequestEntityTooLarge, gen.Validation, "request body too large", nil)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
 		} else if (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.Contains(p, "/plugins") {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		}

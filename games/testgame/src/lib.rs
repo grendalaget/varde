@@ -88,6 +88,10 @@ impl GameDriver for TestgameDriver {
         vec![PathPattern::new("data/")]
     }
 
+    fn addon_targets(&self) -> &'static [&'static str] {
+        &["server"]
+    }
+
     fn validate(&self, _config: &serde_json::Value) -> Result<()> {
         Ok(())
     }
@@ -97,8 +101,22 @@ impl GameDriver for TestgameDriver {
         self.binary_path(ctx).map(|_| ())
     }
 
-    async fn configure(&self, _ctx: &DriverContext<'_>) -> Result<()> {
-        Ok(())
+    async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
+        let installs: Vec<_> = ctx
+            .addons
+            .iter()
+            .filter(|addon| addon.target == "server")
+            .map(|addon| {
+                (
+                    addon,
+                    ctx.server_dir
+                        .join("addons")
+                        .join(&addon.plugin_id)
+                        .join(&addon.addon_id),
+                )
+            })
+            .collect();
+        sync_addons(&ctx.server_dir.join(".varde-addons.json"), &installs)
     }
 
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
@@ -170,6 +188,28 @@ mod tests {
         }
     }
 
+    async fn configure_addons(
+        server_dir: &std::path::Path,
+        deployment_dir: &std::path::Path,
+        addons: &[PreparedAddon],
+    ) -> Result<()> {
+        let runtimes = NullRuntimes;
+        let config = serde_json::json!({});
+        let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+        let ctx = DriverContext {
+            server_id: "testgame-addon-test",
+            server_dir,
+            deployment_dir,
+            runtimes: &runtimes,
+            deployment: &deployment,
+            config: &config,
+            ports: &[],
+            memory_mb: 64,
+            addons,
+        };
+        TestgameDriver::new().configure(&ctx).await
+    }
+
     #[test]
     fn spec_uses_local_port() {
         let tmp = tempfile::tempdir().unwrap();
@@ -190,6 +230,7 @@ mod tests {
             config: &cfg,
             ports: &bindings,
             memory_mb: 64,
+            addons: &[],
         };
         let spec = TestgameDriver::default().process_spec(&ctx).unwrap();
         let args: Vec<String> = spec
@@ -199,5 +240,83 @@ mod tests {
             .collect();
         let i = args.iter().position(|a| a == "--port").unwrap();
         assert_eq!(args[i + 1], "29876");
+    }
+
+    #[tokio::test]
+    async fn configure_syncs_updated_server_addons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v1_root = tmp.path().join("addon-v1");
+        std::fs::create_dir_all(&v1_root).unwrap();
+        std::fs::write(v1_root.join("archive.txt"), "archive v1").unwrap();
+        let v2_root = tmp.path().join("addon-v2");
+        std::fs::create_dir_all(&v2_root).unwrap();
+        std::fs::write(v2_root.join("archive.txt"), "archive v2").unwrap();
+        let server_dir = tmp.path().join("server");
+        let destination = server_dir.join("addons/plugin/addon");
+        let v1 = [PreparedAddon {
+            plugin_id: "plugin".into(),
+            addon_id: "addon".into(),
+            root: v1_root,
+            target: "server".into(),
+            driver_options: serde_json::json!({"flag": true}),
+            files: vec![
+                ("cfg/x".into(), "configured v1".into()),
+                ("cfg/y".into(), "obsolete".into()),
+            ],
+        }];
+        configure_addons(&server_dir, tmp.path(), &v1)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("archive.txt")).unwrap(),
+            "archive v1"
+        );
+
+        let v2 = [PreparedAddon {
+            plugin_id: "plugin".into(),
+            addon_id: "addon".into(),
+            root: v2_root,
+            target: "server".into(),
+            driver_options: serde_json::json!({"flag": true}),
+            files: vec![("cfg/x".into(), "configured v2".into())],
+        }];
+        configure_addons(&server_dir, tmp.path(), &v2)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("cfg/x")).unwrap(),
+            "configured v2"
+        );
+        assert!(!destination.join("cfg/y").exists());
+    }
+
+    #[tokio::test]
+    async fn configure_removes_server_addons_when_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let addon_root = tmp.path().join("addon");
+        std::fs::create_dir_all(&addon_root).unwrap();
+        std::fs::write(addon_root.join("archive.txt"), "archive").unwrap();
+        let server_dir = tmp.path().join("server");
+        let destination = server_dir.join("addons/plugin/addon");
+        let addons = [PreparedAddon {
+            plugin_id: "plugin".into(),
+            addon_id: "addon".into(),
+            root: addon_root,
+            target: "server".into(),
+            driver_options: serde_json::json!({}),
+            files: vec![("cfg/settings.ini".into(), "configured".into())],
+        }];
+
+        configure_addons(&server_dir, tmp.path(), &addons)
+            .await
+            .unwrap();
+        assert!(destination.join("archive.txt").exists());
+        assert!(destination.join("cfg/settings.ini").exists());
+
+        configure_addons(&server_dir, tmp.path(), &[])
+            .await
+            .unwrap();
+        assert!(!destination.join("archive.txt").exists());
+        assert!(!destination.join("cfg/settings.ini").exists());
     }
 }

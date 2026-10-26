@@ -402,6 +402,9 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
 		ed.Config = &cfg
+		if e.Action == "run" && s.Secrets != nil {
+			ed.Addons = s.directiveServerAddons(ctx, srv)
+		}
 		if srv.DeploymentID != nil {
 			if dep, err := s.getDeployment(ctx, *srv.DeploymentID); err == nil {
 				var spec map[string]any

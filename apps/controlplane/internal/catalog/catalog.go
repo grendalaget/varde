@@ -39,6 +39,7 @@ type Game struct {
 	MinDiskMB    int64         `json:"min_disk_mb,omitempty"`
 	SteamApp     int64         `json:"steam_app,omitempty"`
 	Runtimes     []string      `json:"runtimes"`
+	AddonTargets []string      `json:"addon_targets"`
 	ConfigFields []ConfigField `json:"config_fields"`
 }
 

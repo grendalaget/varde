@@ -54,7 +54,7 @@ func serviceTokenFlags() (*flag.FlagSet, *string) {
 // every scope; anything else is validated so a typo cannot quietly grant
 // more (or less) than the operator meant.
 var serviceScopes = map[string]struct{}{
-	"enroll": {}, "members": {}, "nodes": {}, "servers": {}, "events": {}, "steam_ids": {}, "*": {},
+	"enroll": {}, "members": {}, "nodes": {}, "servers": {}, "server_addons": {}, "events": {}, "steam_ids": {}, "*": {},
 }
 
 func openServiceStore(dbURL string) (*store.Store, error) {
@@ -69,7 +69,7 @@ func openServiceStore(dbURL string) (*store.Store, error) {
 func serviceTokenCreate(args []string) error {
 	fs, dbURL := serviceTokenFlags()
 	name := fs.String("name", "", "token name (appears in the audit log)")
-	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,members,nodes,servers,events,steam_ids; * for all)")
+	scopes := fs.String("scopes", "", "comma-separated scopes (enroll,members,nodes,servers,server_addons,events,steam_ids; * for all)")
 	groups := fs.String("groups", "", "comma-separated group ids the token may act in (empty = all groups)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -85,7 +85,7 @@ func serviceTokenCreate(args []string) error {
 	}
 	for _, s := range scopeList {
 		if _, ok := serviceScopes[s]; !ok {
-			return fmt.Errorf("unknown scope %q (known: enroll, members, nodes, servers, events, steam_ids, *)", s)
+			return fmt.Errorf("unknown scope %q (known: enroll, members, nodes, servers, server_addons, events, steam_ids, *)", s)
 		}
 	}
 	groupsProvided := false

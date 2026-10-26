@@ -12,7 +12,8 @@ use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
 use executor_api::{Executor, OutputStream, ProcessHandle};
 use game_driver_api::{
-    DeploymentSpec, DriverContext, GameDriver, GameHealth, PortBinding, PortSpec, SnapshotBarrier,
+    ArchiveKind, DeploymentSpec, DriverContext, FetchSpec, GameDriver, GameHealth, PortBinding,
+    PortSpec, PreparedAddon, RuntimeProvider, SnapshotBarrier,
 };
 use snapshot_store::{SnapshotId, SnapshotMeta};
 use tokio::sync::watch;
@@ -345,6 +346,44 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             .map(|d| d.spec.clone())
             .unwrap_or(serde_json::json!({})),
     );
+    let supported_targets = driver.addon_targets();
+    let mut prepared_addons = Vec::with_capacity(dir.addons.len());
+    for addon in &dir.addons {
+        validate_addon_target(&game_id, supported_targets, &addon.target)?;
+        let (file_name, archive) = match addon.archive.as_str() {
+            "zip" => ("addon.zip", ArchiveKind::Zip),
+            "tar_gz" => ("addon.tar.gz", ArchiveKind::Tgz),
+            _ => bail!("addon {} has unsupported archive kind", addon.addon_id),
+        };
+        let root = agent
+            .runtimes
+            .fetch(
+                "addons",
+                &addon.sha256,
+                &FetchSpec {
+                    url: addon.url.clone(),
+                    file_name: file_name.to_string(),
+                    sha256: Some(addon.sha256.clone()),
+                    sha1: None,
+                    archive,
+                    untrusted: true,
+                },
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("addon {}: {err}", addon.addon_id))?;
+        prepared_addons.push(PreparedAddon {
+            plugin_id: addon.plugin_id.clone(),
+            addon_id: addon.addon_id.clone(),
+            root,
+            target: addon.target.clone(),
+            driver_options: addon.driver_options.clone(),
+            files: addon
+                .files
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        });
+    }
     // allocate the local port block before configure so drivers can bind
     // 127.0.0.1:<local_port> while the mesh owns <loopback>:<service_port>
     let bindings = alloc_port_block(&driver.ports(&config))?;
@@ -358,6 +397,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         config: &config,
         ports: &bindings,
         memory_mb: 0,
+        addons: &prepared_addons,
     };
 
     // ---- prepare ----
@@ -605,6 +645,13 @@ pub fn drain_step(
         return DrainStep::Stop;
     }
     DrainStep::Wait
+}
+
+fn validate_addon_target(game_id: &str, supported_targets: &[&str], target: &str) -> Result<()> {
+    if !supported_targets.contains(&target) {
+        bail!("{game_id} does not support addon target {target}");
+    }
+    Ok(())
 }
 
 fn exec_game_id(dir: &ExecutionDirective) -> &str {
@@ -1357,6 +1404,16 @@ mod snapshot_retry_tests {
 mod ensure_live_tests {
     use super::*;
 
+    #[test]
+    fn addon_target_must_be_advertised_by_driver() {
+        let err = validate_addon_target("minecraft", &[], "server").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "minecraft does not support addon target server"
+        );
+        assert!(validate_addon_target("testgame", &["server"], "server").is_ok());
+    }
+
     fn ctl() -> Arc<ExecCtl> {
         ExecCtl::new(ExecutionDirective {
             execution_id: "e".into(),
@@ -1365,6 +1422,7 @@ mod ensure_live_tests {
             epoch: 1,
             lease_expires_at_unix_ms: 0,
             action: "run".into(),
+            addons: vec![],
             stop_reason: None,
             deployment: None,
             config: None,
@@ -2082,6 +2140,7 @@ mod requires_stop_tests {
             epoch: 1,
             lease_expires_at_unix_ms: 0,
             action: "run".into(),
+            addons: vec![],
             stop_reason: None,
             deployment: None,
             config: None,
@@ -2181,6 +2240,7 @@ mod requires_stop_tests {
             config: &config,
             ports: &bindings,
             memory_mb: 0,
+            addons: &[],
         };
         let driver = StopDriver::new(live);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
@@ -2245,6 +2305,7 @@ mod requires_stop_tests {
             config: &config,
             ports: &bindings,
             memory_mb: 0,
+            addons: &[],
         };
         let driver = {
             let mut d = StopDriver::new(true);
@@ -2320,6 +2381,7 @@ mod requires_stop_tests {
                 config: &config,
                 ports: &bindings,
                 memory_mb: 0,
+                addons: &[],
             };
             let driver = {
                 let mut d = StopDriver::new(true);
@@ -2361,6 +2423,7 @@ mod requires_stop_tests {
             config: &config,
             ports: &bindings,
             memory_mb: 0,
+            addons: &[],
         };
         let mk_ctl = |stop_reason: Option<String>| {
             let d = test_ctl();
@@ -2442,6 +2505,7 @@ mod requires_stop_tests {
                 config: &config,
                 ports: &bindings,
                 memory_mb: 0,
+                addons: &[],
             };
             let mut driver = StopDriver::new(live);
             driver.fail_prepare = fail_prepare;
@@ -2490,6 +2554,7 @@ mod requires_stop_tests {
             config: &config,
             ports: &bindings,
             memory_mb: 0,
+            addons: &[],
         };
         let driver = StopDriver::new(false);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
