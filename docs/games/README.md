@@ -40,15 +40,19 @@ Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubu
 The driver launches the original binary. Current Linux and Windows builds ignore
 the private `-game` directory, so shared installs use one uniquely named
 `game/csgo/cfg/varde_<server-id>.cfg`, containing the server settings and inline
-ban copies. It is recreated before each launch, removed after healthy startup,
-and removed again on stop. Existing user cfg/ban files are never overwritten;
+ban copies. It is created only immediately before spawn, removed after healthy
+startup, and guarded against failed/cancelled launches, process exit and stop.
+Before launch, stale files matching exactly `varde_<validated-server-id>.cfg`
+are swept; zero-byte `.varde_<server-id>.cfg.lock` sidecars protect concurrent
+launches with OS locks. Existing user cfg/ban files are never overwritten;
 user startup cfgs can still execute. Private deployment files retain Varde's
 configuration and ban copies. CS2 itself creates
 or rewrites `steam_appid.txt` beside its executable and rewrites
 `game/csgo/cfg/boot.vcfg` without changing its content. The gated test seeds
 nonempty client-style boot settings and requires byte-identical content after
 both servers stop. It also verifies that the app-ID marker contains `730` and
-that all other installed files retain their sizes and modification times.
+that all other installed files (apart from these empty lock sidecars) retain
+their sizes and modification times.
 Linux library search uses
 the binary directory plus an existing `steamclient.so` from that directory,
 Steam's `linux64`, or `~/.steam/sdk64`. No library is copied into the client

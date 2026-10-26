@@ -613,6 +613,7 @@ fn context<'a>(
 #[derive(Default)]
 struct Process {
     exited: Option<tokio::sync::watch::Sender<bool>>,
+    fail_wait: bool,
     fail_stdin: bool,
     stall: bool,
     interrupts: AtomicUsize,
@@ -642,6 +643,9 @@ impl ProcessHandle for Process {
     }
     async fn wait(&self) -> Result<ExitStatus> {
         self.waits.fetch_add(1, Ordering::SeqCst);
+        if self.fail_wait {
+            return Err("wait failed".into());
+        }
         if let Some(exited) = &self.exited {
             let mut rx = exited.subscribe();
             while !*rx.borrow_and_update() {
@@ -1052,6 +1056,12 @@ async fn selected_install_uses_unique_shared_cfg_and_cleans_up() {
     let driver = Cs2Driver::new();
     driver.configure(&ctx).await.unwrap();
     let shared_cfg = install_dir.join("game/csgo/cfg/varde_server-123.cfg");
+    assert!(!shared_cfg.exists());
+    let executor = LiveExecutor {
+        exited: tokio::sync::watch::channel(false).0,
+        fail: false,
+    };
+    let process = driver.spawn(&ctx, &executor).await.unwrap();
     let shared = tokio::fs::read_to_string(&shared_cfg).await.unwrap();
     assert!(shared.contains("hostname \"Varde\"\n"));
     assert!(shared.contains("sv_password \"secret\"\n"));
@@ -1109,16 +1119,93 @@ async fn selected_install_uses_unique_shared_cfg_and_cleans_up() {
     assert!(!shared_cfg.exists());
     assert!(deployment_dir.join("cs2-configured").is_file());
     driver.process_spec(&ctx).unwrap();
-    assert!(shared_cfg.exists());
+    assert!(!shared_cfg.exists());
     assert!(!deployment_dir.join("cs2-configured").exists());
 
     driver.configure(&ctx).await.unwrap();
-    assert!(shared_cfg.exists());
-    driver
-        .graceful_stop(&ctx, &Process::default())
-        .await
-        .unwrap();
     assert!(!shared_cfg.exists());
+    process.kill().await.unwrap();
+    process.wait().await.unwrap();
+    drop(process);
+    executor.exited.send_replace(false);
+    let process = driver.spawn(&ctx, &executor).await.unwrap();
+    assert!(shared_cfg.exists());
+    process.kill().await.unwrap();
+    driver.graceful_stop(&ctx, process.as_ref()).await.unwrap();
+    assert!(!shared_cfg.exists());
+}
+
+#[tokio::test]
+async fn shared_config_is_cleaned_on_spawn_failure_exit_and_lost_handle() {
+    for outcome in ["failed", "exited", "dropped", "cancelled", "stop_error"] {
+        let root = tempfile::tempdir().unwrap();
+        let dir = fake_steam_install(root.path());
+        let private = root.path().join("deployment");
+        std::fs::create_dir_all(&private).unwrap();
+        let cfg = json!({"server_name":"Private"});
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let ctx = context(&private, &cfg, &deployment);
+        Cs2Driver::prepare_shared(&ctx, &steam::in_root(root.path()).unwrap()).unwrap();
+        Cs2Driver.configure(&ctx).await.unwrap();
+        let path = dir.join("game/csgo/cfg/varde_cs2-test.cfg");
+        Cs2Driver.process_spec(&ctx).unwrap();
+        assert!(!path.exists());
+        let executor = LiveExecutor {
+            exited: tokio::sync::watch::channel(false).0,
+            fail: outcome == "failed",
+        };
+        if outcome == "failed" {
+            assert!(Cs2Driver.spawn(&ctx, &executor).await.is_err());
+        } else if outcome == "cancelled" {
+            struct Pending(PathBuf);
+            #[async_trait]
+            impl Executor for Pending {
+                fn kind(&self) -> &'static str {
+                    "pending"
+                }
+                async fn spawn(&self, _: &ProcessSpec) -> Result<Box<dyn ProcessHandle>> {
+                    assert!(self.0.is_file());
+                    std::future::pending().await
+                }
+            }
+            assert!(tokio::time::timeout(
+                Duration::from_millis(10),
+                Cs2Driver.spawn(&ctx, &Pending(path.clone()))
+            )
+            .await
+            .is_err());
+        } else {
+            let process = Cs2Driver.spawn(&ctx, &executor).await.unwrap();
+            assert!(path.exists());
+            if outcome == "exited" {
+                executor.exited.send_replace(true);
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while path.exists() {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                process.wait().await.unwrap();
+            }
+            if outcome == "stop_error" {
+                assert!(Cs2Driver
+                    .graceful_stop(
+                        &ctx,
+                        &Process {
+                            fail_wait: true,
+                            ..Process::default()
+                        }
+                    )
+                    .await
+                    .is_err());
+                assert!(!path.exists());
+            }
+            drop(process);
+            executor.exited.send_replace(true);
+        }
+        assert!(!path.exists(), "config leaked after {outcome}");
+    }
 }
 
 #[tokio::test]

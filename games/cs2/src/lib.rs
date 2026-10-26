@@ -11,6 +11,7 @@ use serde_json::Value;
 mod confinement;
 mod install_lock;
 mod rcon;
+mod shared_config;
 pub mod steam;
 mod vdf;
 
@@ -352,11 +353,16 @@ impl Cs2Driver {
         Ok(format!("exec {name}; {kick}bot_quota {bots}"))
     }
 
-    fn write_shared_config(ctx: &DriverContext<'_>) -> Result<()> {
+    fn create_shared_config(
+        ctx: &DriverContext<'_>,
+    ) -> Result<Option<shared_config::SharedConfig>> {
         let Some((path, _)) = Self::shared_config(ctx)? else {
-            return Ok(());
+            return Ok(None);
         };
         let dir = Self::game_dir(ctx)?.join("cfg");
+        if !dir.join("varde.cfg").is_file() {
+            return Ok(None);
+        }
         let mut cfg = std::fs::read_to_string(dir.join("varde.cfg"))?;
         for name in BANS {
             let contents = match std::fs::read_to_string(dir.join(name)) {
@@ -367,22 +373,7 @@ impl Cs2Driver {
             cfg = cfg.replace(&format!("exec {name}\n"), &format!("{contents}\n"));
         }
         std::fs::create_dir_all(path.parent().ok_or("cs2: config path has no parent")?)?;
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(path)?;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-            file.write_all(cfg.as_bytes())?;
-        }
-        #[cfg(not(unix))]
-        std::fs::write(path, cfg)?;
-        Ok(())
+        Ok(Some(shared_config::SharedConfig::write(path, &cfg)?))
     }
 
     async fn remove_shared_config(ctx: &DriverContext<'_>) -> Result<()> {
@@ -526,7 +517,6 @@ impl GameDriver for Cs2Driver {
         }
         #[cfg(not(unix))]
         tokio::fs::write(&path, cfg).await?;
-        Self::write_shared_config(ctx)?;
         Ok(())
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
@@ -534,9 +524,6 @@ impl GameDriver for Cs2Driver {
         let selected = Self::selected(ctx)?;
         let program = Self::binary(ctx)?;
         let mut args = Self::args(ctx.config, ctx.local_port(PORT))?;
-        if Self::game_dir(ctx)?.join("cfg/varde.cfg").is_file() {
-            Self::write_shared_config(ctx)?;
-        }
         match std::fs::remove_file(ctx.deployment_dir.join("cs2-configured")) {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -602,15 +589,20 @@ impl GameDriver for Cs2Driver {
         executor: &dyn Executor,
     ) -> Result<Box<dyn ProcessHandle>> {
         let selected = Self::selected(ctx)?;
-        if selected.as_ref().is_some_and(|install| !install.managed) {
-            return executor.spawn(&self.process_spec(ctx)?).await;
-        }
+        let managed = !selected.as_ref().is_some_and(|install| !install.managed);
         let dir = selected.map_or_else(|| Self::install_dir(ctx), |install| install.dir);
-        let lock = install_lock::shared(dir.clone()).await?;
-        if !steam_app_installed(APP_ID, &dir) || !steam::binary(&dir).is_file() {
+        let lock = if managed {
+            Some(install_lock::shared(dir.clone()).await?)
+        } else {
+            None
+        };
+        if managed && (!steam_app_installed(APP_ID, &dir) || !steam::binary(&dir).is_file()) {
             return Err("cs2: install became incomplete before launch".into());
         }
-        install_lock::spawn(executor, &self.process_spec(ctx)?, lock).await
+        let spec = self.process_spec(ctx)?;
+        shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"))?;
+        let config = Self::create_shared_config(ctx)?;
+        install_lock::spawn(executor, &spec, lock, config).await
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
         let map = Self::map(ctx.config)?;
@@ -665,6 +657,8 @@ impl GameDriver for Cs2Driver {
         Ok(())
     }
     async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
+        let _cleanup = Self::shared_config(_ctx)?
+            .map(|(path, _)| shared_config::SharedConfig::remove_on_drop(path));
         #[cfg(windows)]
         {
             p.kill().await?;

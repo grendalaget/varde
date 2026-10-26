@@ -26,25 +26,41 @@ pub async fn shared(dir: PathBuf) -> Result<File> {
 pub async fn spawn(
     executor: &dyn Executor,
     spec: &ProcessSpec,
-    lock: File,
+    lock: Option<File>,
+    config: Option<crate::shared_config::SharedConfig>,
 ) -> Result<Box<dyn ProcessHandle>> {
     let process: Arc<dyn ProcessHandle> = Arc::from(executor.spawn(spec).await?);
-    let lease = Arc::new(Mutex::new(Some(lock)));
+    let lease = Arc::new(Mutex::new(lock));
     let watched = process.clone();
     let held = lease.clone();
+    let config = Arc::new(Mutex::new(config));
+    let cleanup = config.clone();
     tokio::spawn(async move {
-        if let Err(error) = watched.wait().await {
+        let result = watched.wait().await;
+        cleanup.lock().unwrap().take();
+        if let Err(error) = result {
             tracing::warn!(%error, "CS2 exit unknown; retaining install lock");
             std::future::pending::<()>().await;
         }
         held.lock().unwrap().take();
     });
-    Ok(Box::new(LockedProcess { process, lease }))
+    Ok(Box::new(LockedProcess {
+        process,
+        lease,
+        config,
+    }))
 }
 
 struct LockedProcess {
     process: Arc<dyn ProcessHandle>,
     lease: Arc<Mutex<Option<File>>>,
+    config: Arc<Mutex<Option<crate::shared_config::SharedConfig>>>,
+}
+
+impl Drop for LockedProcess {
+    fn drop(&mut self) {
+        self.config.lock().unwrap().take();
+    }
 }
 
 #[async_trait]
@@ -62,7 +78,9 @@ impl ProcessHandle for LockedProcess {
         self.process.output_tail(n)
     }
     async fn wait(&self) -> Result<ExitStatus> {
-        let status = self.process.wait().await?;
+        let status = self.process.wait().await;
+        self.config.lock().unwrap().take();
+        let status = status?;
         self.lease.lock().unwrap().take();
         Ok(status)
     }

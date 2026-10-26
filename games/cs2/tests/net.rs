@@ -12,6 +12,24 @@ use std::time::{Duration, Instant};
 
 struct ExistingInstall;
 
+struct IsolatedHome(PathBuf);
+
+#[async_trait]
+impl Executor for IsolatedHome {
+    fn kind(&self) -> &'static str {
+        "native"
+    }
+    async fn spawn(
+        &self,
+        spec: &executor_api::ProcessSpec,
+    ) -> executor_api::Result<Box<dyn executor_api::ProcessHandle>> {
+        let mut spec = spec.clone();
+        spec.env
+            .push(("HOME".into(), self.0.clone().into_os_string()));
+        executor_native::NativeExecutor.spawn(&spec).await
+    }
+}
+
 async fn settings(port: u16) -> Option<(String, u8)> {
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.ok()?;
     socket
@@ -106,6 +124,14 @@ async fn real_cs2_detected_install_concurrent_start_a2s_and_quit() {
         "unexpected CS2 app-ID marker content"
     );
     after.remove(&marker);
+    for name in ["cs2-net-a", "cs2-net-b"] {
+        let lock = install
+            .dir
+            .join("game/csgo/cfg")
+            .join(format!(".varde_{name}.cfg.lock"));
+        assert_eq!(after.remove(&lock).expect("config lock sidecar").0, 0);
+        before.remove(&lock);
+    }
     for (path, metadata) in &after {
         assert_eq!(
             before.get(path),
@@ -120,7 +146,7 @@ async fn real_cs2_detected_install_concurrent_start_a2s_and_quit() {
         "shared installation files removed"
     );
     println!(
-        "CS2 shared installation unchanged: {} files; allowed steam_appid.txt=730 and byte-identical boot.vcfg; SteamCMD calls=0",
+        "CS2 shared installation unchanged: {} files; allowed steam_appid.txt=730, byte-identical boot.vcfg and empty config lock sidecars; SteamCMD calls=0",
         before.len()
     );
 }
@@ -174,7 +200,7 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
     driver.validate(&cfg).unwrap();
     driver.prepare(&ctx).await.unwrap();
     driver.configure(&ctx).await.unwrap();
-    let mut spec = driver.process_spec(&ctx).unwrap();
+    let spec = driver.process_spec(&ctx).unwrap();
     assert_eq!(
         spec.program,
         steam::binary(&steam::detect(None).unwrap().dir)
@@ -182,9 +208,8 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
     assert!(spec.args.iter().any(|s| s == "-game"));
     let home = server_dir.join("empty-home");
     std::fs::create_dir_all(&home).unwrap();
-    spec.env.push(("HOME".into(), home.into_os_string()));
     let start = Instant::now();
-    let process = executor_native::NativeExecutor.spawn(&spec).await.unwrap();
+    let process = driver.spawn(&ctx, &IsolatedHome(home)).await.unwrap();
     let ready = tokio::time::timeout(Duration::from_secs(90), async {
         loop {
             if matches!(driver.probe(&ctx, &*process).await, Ok(GameHealth::Healthy)) {
