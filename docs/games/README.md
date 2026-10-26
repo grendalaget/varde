@@ -46,7 +46,9 @@ Before launch, stale files matching exactly `varde_<validated-server-id>.cfg`
 and starting with a `// varde-managed:<launch-id>` marker are swept. Unmarked
 files are preserved, including ambiguous legacy files, and are never overwritten.
 Zero-byte `.varde_<server-id>.cfg.lock` sidecars protect concurrent
-launches with OS locks. Existing user cfg/ban files are never overwritten;
+launches with OS locks. These harmless empty files remain in the shared cfg
+folder, one per server ever run; they contain no configuration or credentials.
+Existing user cfg/ban files are never overwritten;
 user startup cfgs can still execute. Private deployment files retain Varde's
 configuration and ban copies. CS2 itself creates
 or rewrites `steam_appid.txt` beside its executable and rewrites

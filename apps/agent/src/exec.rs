@@ -189,6 +189,12 @@ impl ExecCtl {
     pub fn is_fenced(&self) -> bool {
         self.fenced.load(Ordering::SeqCst)
     }
+    pub fn lease_expired(&self) -> bool {
+        self.deadline
+            .lock()
+            .unwrap()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
     pub fn set_fence_margin_ms(&self, margin_ms: i64) {
         self.fence_margin_ms.store(margin_ms, Ordering::SeqCst);
     }
@@ -247,6 +253,9 @@ pub(crate) fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
 /// Report an immediate state transition to the CP (best effort — heartbeat
 /// also carries it).
 pub async fn report(agent: &Agent, ctl: &ExecCtl) {
+    if ctl.is_fenced() || ctl.lease_expired() {
+        return;
+    }
     let body = cp_api::ExecutionStatusUpdate {
         server_id: ctl.dir.server_id.clone(),
         epoch: ctl.dir.epoch,
@@ -270,10 +279,7 @@ pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
     let c = ctl.clone();
     let task = tokio::spawn(async move {
         if let Err(e) = run(a.clone(), c.clone()).await {
-            tracing::error!(exec = %c.dir.execution_id, error = %format!("{e:#}"), "supervisor failed");
-            c.set_phase(Phase::Failed);
-            c.set_message(&format!("{e:#}"));
-            report(&a, &c).await;
+            supervisor_error(&a, &c, &e).await;
         }
         a.execs.lock().unwrap().remove(&c.dir.execution_id);
         a.state.lock().unwrap().remove(&c.dir.execution_id);
@@ -282,7 +288,39 @@ pub fn spawn_supervisor(agent: Arc<Agent>, ctl: Arc<ExecCtl>) {
     ctl.set_task(task);
 }
 
+fn failure_phase(ctl: &ExecCtl) -> Phase {
+    if ctl.is_fenced() || ctl.lease_expired() || matches!(*ctl.stop.borrow(), Some(StopKind::Hard))
+    {
+        Phase::Fenced
+    } else if ctl.stop.borrow().is_some() {
+        Phase::Stopped
+    } else {
+        Phase::Failed
+    }
+}
+
+async fn supervisor_error(agent: &Agent, ctl: &ExecCtl, error: &anyhow::Error) {
+    let phase = failure_phase(ctl);
+    ctl.set_message(&format!("{error:#}"));
+    if phase == Phase::Fenced {
+        ctl.mark_fenced();
+        ctl.mark_finished();
+        if let Some(process) = ctl.proc() {
+            let _ = process.kill().await;
+            let _ = process.wait().await;
+        }
+        agent.sync_hosted_services().await;
+        tracing::warn!(exec = %ctl.dir.execution_id, %error, "execution refused; leaving lease to lapse");
+        return;
+    }
+    ctl.set_phase(phase);
+    tracing::error!(exec = %ctl.dir.execution_id, %error, ?phase, "supervisor ended");
+    report(agent, ctl).await;
+    ctl.mark_finished();
+}
+
 async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
+    ensure_live(&ctl)?;
     let dir = ctl.dir.clone();
     let game_id = exec_game_id(&dir).to_string();
     let driver: &dyn GameDriver = agent
@@ -984,12 +1022,8 @@ fn ensure_live(ctl: &ExecCtl) -> Result<()> {
     if ctl.stop.borrow().is_some() {
         bail!("stop requested");
     }
-    if ctl
-        .deadline
-        .lock()
-        .unwrap()
-        .is_some_and(|deadline| Instant::now() >= deadline)
-    {
+    if ctl.lease_expired() {
+        ctl.mark_fenced();
         bail!("lease deadline expired");
     }
     Ok(())
@@ -1615,13 +1649,20 @@ mod requires_stop_tests {
 
     /// Stub CP: accept HTTP posts and answer 200 {}.
     async fn stub_cp() -> String {
+        stub_cp_recording().await.0
+    }
+
+    async fn stub_cp_recording() -> (String, Arc<AtomicUsize>) {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((mut s, _)) = l.accept().await else {
                     break;
                 };
+                count.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 64 * 1024];
                     let _ = s.read(&mut buf).await;
@@ -1633,7 +1674,77 @@ mod requires_stop_tests {
                 });
             }
         });
-        format!("http://127.0.0.1:{port}")
+        (format!("http://127.0.0.1:{port}"), requests)
+    }
+
+    #[tokio::test]
+    async fn supervisor_refusals_never_report_failed_but_game_errors_do() {
+        for reason in ["fenced", "expired", "hard stop", "graceful stop", "game"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (cp, requests) = stub_cp_recording().await;
+            let agent = Arc::new(test_agent(cp, tmp.path()));
+            let ctl = test_ctl();
+            match reason {
+                "fenced" => ctl.mark_fenced(),
+                "expired" => *ctl.deadline.lock().unwrap() = Some(Instant::now()),
+                "hard stop" => ctl.request_stop(StopKind::Hard),
+                "graceful stop" => ctl.request_stop(StopKind::Graceful),
+                _ => (),
+            }
+            agent
+                .execs
+                .lock()
+                .unwrap()
+                .insert(ctl.dir.execution_id.clone(), ctl.clone());
+            spawn_supervisor(agent.clone(), ctl.clone());
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while agent
+                    .execs
+                    .lock()
+                    .unwrap()
+                    .contains_key(&ctl.dir.execution_id)
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let expected = match reason {
+                "game" => Phase::Failed,
+                "graceful stop" => Phase::Stopped,
+                _ => Phase::Fenced,
+            };
+            assert_eq!(ctl.phase(), expected, "{reason}");
+            assert_eq!(
+                requests.load(Ordering::SeqCst),
+                usize::from(matches!(expected, Phase::Failed | Phase::Stopped)),
+                "{reason}"
+            );
+            assert!(agent.exec_reports().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn lease_refusal_is_sticky_and_cleans_up_a_registered_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (cp, requests) = stub_cp_recording().await;
+        let agent = test_agent(cp, tmp.path());
+        let ctl = test_ctl();
+        let process = Arc::new(FakeProc {
+            tx: broadcast::channel(1).0,
+            exited: AtomicBool::new(false),
+            exit_status: ExitStatus::default(),
+        });
+        ctl.set_proc(process.clone());
+        *ctl.deadline.lock().unwrap() = Some(Instant::now());
+        let error = ensure_live(&ctl).unwrap_err();
+        *ctl.deadline.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+        supervisor_error(&agent, &ctl, &error).await;
+        assert_eq!(ctl.phase(), Phase::Fenced);
+        assert!(process.exited.load(Ordering::SeqCst));
+        assert!(ctl.is_finished());
+        report(&agent, &ctl).await;
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
     }
 
     struct RecordingExecutor {

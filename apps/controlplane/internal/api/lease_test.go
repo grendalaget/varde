@@ -1,9 +1,77 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
+
+func TestRestartedAgentRenewsInsideFenceMargin(t *testing.T) {
+	e := newFastEnv(t)
+	a := e.newFastAgent("host")
+	srv := e.createServer("testgame", "s", nil)
+	_, execID, epoch := e.startToRunning(srv, a)
+	e.clk.advance(5000)
+	d, _ := a.heartbeat(nil)
+	before, err := e.st.GetExecution(context.Background(), execID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Executions) != 1 || before.LeaseExpiresAt-e.st.NowMs() != 3000 {
+		t.Fatalf("expected a recovered directive inside the 4 s fence margin: %+v", d)
+	}
+	grant := a.renew(execID, srv, epoch)
+	if len(grant.Leases) != 1 || grant.Leases[0].ExpiresAt-grant.ServerTime != 8000 {
+		t.Fatalf("startup lease was not safely refreshed: %+v", grant)
+	}
+	a.heartbeat([]map[string]any{{"execution_id": execID, "server_id": srv, "epoch": epoch, "state": "running"}})
+	e.reconcile()
+	ex, err := e.st.GetExecution(context.Background(), execID)
+	if err != nil || ex.EndedAt != nil || ex.Epoch != epoch || e.observed(srv) != "running" {
+		t.Fatalf("renewed startup did not retain its execution: %+v, %v", ex, err)
+	}
+}
+
+func TestLeaseRefusalRecoversButGameFailureStaysTerminal(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "lease refusal", true: "game failure"}[failed], func(t *testing.T) {
+			e := newFastEnv(t)
+			a, b := e.newFastAgent("a"), e.newFastAgent("b")
+			srv := e.createServer("testgame", "s", nil)
+			host, execID, epoch := e.startToRunning(srv, a, b)
+			other := b
+			if host == b {
+				other = a
+			}
+			e.clk.advance(5000)
+			host.heartbeat(nil)
+			if failed {
+				host.heartbeat([]map[string]any{{"execution_id": execID, "server_id": srv, "epoch": epoch, "state": "failed"}})
+			}
+			e.clk.advance(3001)
+			other.heartbeat(nil)
+			e.reconcile()
+			old, err := e.st.GetExecution(context.Background(), execID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "lost"
+			if failed {
+				want = "failed"
+			}
+			if old.EndReason == nil || *old.EndReason != want {
+				t.Fatalf("end reason = %v, want %s", old.EndReason, want)
+			}
+			if failed {
+				if e.activeExecCount(srv) != 0 || e.observed(srv) != "failed" {
+					t.Fatal("game failure must remain terminal")
+				}
+			} else if next := e.activeExec(srv); next == nil || next["id"] == execID {
+				t.Fatalf("lease refusal did not automatically recover: %+v", next)
+			}
+		})
+	}
+}
 
 type renewed struct {
 	ServerTime int64 `json:"server_time_unix_ms"`
