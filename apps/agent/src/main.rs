@@ -142,6 +142,9 @@ fn default_mesh_bin() -> Result<PathBuf> {
 #[cfg(windows)]
 mod svc;
 
+#[cfg(any(windows, test))]
+mod svc_status;
+
 #[cfg(windows)]
 async fn service_dispatch(action: ServiceAction) -> Result<()> {
     match action {
