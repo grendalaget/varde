@@ -359,7 +359,7 @@ async fn prepare_updates_complete_own_and_previous_steamcmd_installs_each_time()
             Cs2Driver::prepare_install(&ctx, None).await.unwrap();
             assert_eq!(Cs2Driver::binary(&ctx).unwrap(), steam::binary(&server));
             #[cfg(target_os = "linux")]
-            if !fail {
+            {
                 assert_eq!(
                     std::fs::read(steam::binary(&server).with_file_name("steamclient.so")).unwrap(),
                     b"library"
@@ -388,6 +388,53 @@ async fn failed_update_that_leaves_incomplete_install_errors() {
     assert!(!steam_app_installed(APP_ID, &server));
     assert_eq!(runtimes.calls.lock().unwrap().len(), 1);
     assert!(!private.join("cs2-install.json").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn failed_update_requires_or_repairs_steamclient() {
+    for installed in [false, true] {
+        for source in ["missing", "empty", "present"] {
+            let root = tempfile::tempdir().unwrap();
+            let (private, server, mut runtimes) = managed_install(root.path(), "previous");
+            runtimes.fail = true;
+            let target = steam::binary(&server).with_file_name("steamclient.so");
+            if installed {
+                std::fs::write(&target, "existing library").unwrap();
+            }
+            let library = runtimes
+                .steamcmd
+                .parent()
+                .unwrap()
+                .join("linux64/steamclient.so");
+            match source {
+                "missing" => std::fs::remove_file(&library).unwrap(),
+                "empty" => std::fs::write(&library, "").unwrap(),
+                _ => (),
+            }
+            let cfg = json!({});
+            let deployment = DeploymentSpec::parse(&cfg);
+            let mut ctx = context(&private, &cfg, &deployment);
+            ctx.runtimes = &runtimes;
+            let result = Cs2Driver::prepare_install(&ctx, None).await;
+            assert_eq!(
+                result.is_ok(),
+                installed || source == "present",
+                "installed={installed}, source={source}: {result:?}"
+            );
+            if result.is_ok() {
+                assert_eq!(
+                    std::fs::read(&target).unwrap(),
+                    if installed {
+                        b"existing library".to_vec()
+                    } else {
+                        b"library".to_vec()
+                    }
+                );
+            }
+            assert_eq!(runtimes.calls.lock().unwrap().len(), 1);
+        }
+    }
 }
 
 struct LiveExecutor {
@@ -450,6 +497,11 @@ async fn live_steamcmd_install_is_locked_until_last_process_exits() {
 async fn failed_spawn_and_dropped_process_handles_do_not_leave_stale_locks() {
     let root = tempfile::tempdir().unwrap();
     let (private, server, _) = managed_install(root.path(), "previous");
+    std::fs::write(
+        steam::binary(&server).with_file_name("steamclient.so"),
+        "library",
+    )
+    .unwrap();
     let cfg = json!({});
     let deployment = DeploymentSpec::parse(&json!({}));
     let ctx = context(&private, &cfg, &deployment);
@@ -482,6 +534,11 @@ async fn failed_spawn_and_dropped_process_handles_do_not_leave_stale_locks() {
 async fn launch_waits_for_updater_and_rechecks_manifest() {
     let root = tempfile::tempdir().unwrap();
     let (private, server, _) = managed_install(root.path(), "previous");
+    std::fs::write(
+        steam::binary(&server).with_file_name("steamclient.so"),
+        "library",
+    )
+    .unwrap();
     let cfg = json!({});
     let deployment = DeploymentSpec::parse(&json!({}));
     let ctx = context(&private, &cfg, &deployment);

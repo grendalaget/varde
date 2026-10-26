@@ -92,6 +92,10 @@ impl Cs2Driver {
             Ok(()) => (),
             Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
                 if steam_app_installed(APP_ID, dir) && steam::binary(dir).is_file() {
+                    #[cfg(target_os = "linux")]
+                    if !Self::steamclient_ready(dir) {
+                        return Err("cs2: in-use install is missing steamclient.so".into());
+                    }
                     tracing::info!(install = %dir.display(), "CS2 install in use; skipping update");
                     return Ok(());
                 }
@@ -101,26 +105,38 @@ impl Cs2Driver {
         }
         check_install_space(dir, fs2::available_space(dir)?)
             .map_err(|e| format!("{e} at {}", dir.display()))?;
-        if let Err(error) = ctx.runtimes.steam_app_install(APP_ID, dir).await {
-            if steam_app_installed(APP_ID, dir) && steam::binary(dir).is_file() {
+        let _updated = match ctx.runtimes.steam_app_install(APP_ID, dir).await {
+            Ok(()) => true,
+            Err(error) => {
+                if !steam_app_installed(APP_ID, dir) || !steam::binary(dir).is_file() {
+                    return Err(error);
+                }
                 tracing::warn!(install = %dir.display(), %error, "CS2 update failed; using complete install");
-                return Ok(());
+                false
             }
-            return Err(error);
-        }
+        };
         if !steam::binary(dir).is_file() {
             return Err("cs2: installed server binary is missing".into());
         }
         #[cfg(target_os = "linux")]
-        {
+        if _updated || !Self::steamclient_ready(dir) {
             let steamcmd = ctx.runtimes.steamcmd_path().await?;
             let library = steamcmd
                 .parent()
                 .ok_or("cs2: steamcmd path has no parent")?
                 .join("linux64/steamclient.so");
+            if tokio::fs::metadata(&library).await?.len() == 0 {
+                return Err("cs2: SteamCMD steamclient.so is empty".into());
+            }
             tokio::fs::copy(library, steam::binary(dir).with_file_name("steamclient.so")).await?;
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn steamclient_ready(dir: &Path) -> bool {
+        std::fs::metadata(steam::binary(dir).with_file_name("steamclient.so"))
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
     }
 
     fn selected(ctx: &DriverContext<'_>) -> Result<Option<steam::Install>> {

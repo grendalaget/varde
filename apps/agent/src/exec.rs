@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
-use executor_api::{OutputStream, ProcessHandle};
+use executor_api::{Executor, OutputStream, ProcessHandle};
 use game_driver_api::{
     DeploymentSpec, DriverContext, GameDriver, GameHealth, PortBinding, PortSpec, SnapshotBarrier,
 };
@@ -380,11 +380,8 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         ctl.set_phase(Phase::Starting);
         report(&agent, &ctl).await;
         ctl.clear_join_code();
-        let proc = driver.spawn(&ctx, &agent.executor).await.map_err(dyn_err)?;
-        let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
+        let proc = spawn_live(driver, &ctx, &agent.executor, &ctl).await?;
         tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
-        ctl.set_pgid(proc.pid());
-        ctl.set_proc(proc.clone());
         agent.note_exec_pgid(&dir.execution_id, proc.pid());
         spawn_join_code_watcher(&agent, &ctl, proc.clone(), game_id.clone());
         spawn_log_pump(&agent, &ctl, proc.clone());
@@ -987,7 +984,55 @@ fn ensure_live(ctl: &ExecCtl) -> Result<()> {
     if ctl.stop.borrow().is_some() {
         bail!("stop requested");
     }
+    if ctl
+        .deadline
+        .lock()
+        .unwrap()
+        .is_some_and(|deadline| Instant::now() >= deadline)
+    {
+        bail!("lease deadline expired");
+    }
     Ok(())
+}
+
+struct LiveExecutor<'a> {
+    executor: &'a dyn Executor,
+    ctl: &'a ExecCtl,
+}
+
+#[async_trait::async_trait]
+impl Executor for LiveExecutor<'_> {
+    fn kind(&self) -> &'static str {
+        self.executor.kind()
+    }
+
+    async fn spawn(
+        &self,
+        spec: &executor_api::ProcessSpec,
+    ) -> executor_api::Result<Box<dyn ProcessHandle>> {
+        ensure_live(self.ctl).map_err(|error| error.to_string())?;
+        self.executor.spawn(spec).await
+    }
+}
+
+async fn spawn_live(
+    driver: &dyn GameDriver,
+    ctx: &DriverContext<'_>,
+    executor: &dyn Executor,
+    ctl: &ExecCtl,
+) -> Result<Arc<dyn ProcessHandle>> {
+    ensure_live(ctl)?;
+    let executor = LiveExecutor { executor, ctl };
+    let process = driver.spawn(ctx, &executor).await.map_err(dyn_err)?;
+    let process: Arc<dyn ProcessHandle> = Arc::from(process);
+    ctl.set_pgid(process.pid());
+    ctl.set_proc(process.clone());
+    if let Err(error) = ensure_live(ctl) {
+        let _ = process.kill().await;
+        let _ = process.wait().await;
+        return Err(error);
+    }
+    Ok(process)
 }
 
 /// Allocate one contiguous block of local ports covering `service_ports`.
@@ -1360,6 +1405,7 @@ mod requires_stop_tests {
         /// prepare_snapshot errors after its (pretend) autosave pause
         fail_prepare: bool,
         resume_calls: AtomicUsize,
+        spawn_gate: Option<Arc<tokio::sync::Notify>>,
     }
 
     impl StopDriver {
@@ -1374,6 +1420,7 @@ mod requires_stop_tests {
                 handoff: false,
                 fail_prepare: false,
                 resume_calls: AtomicUsize::new(0),
+                spawn_gate: None,
             }
         }
     }
@@ -1408,6 +1455,24 @@ mod requires_stop_tests {
         }
         fn process_spec(&self, _c: &DriverContext<'_>) -> game_driver_api::Result<ProcessSpec> {
             unreachable!()
+        }
+        async fn spawn(
+            &self,
+            ctx: &DriverContext<'_>,
+            executor: &dyn Executor,
+        ) -> game_driver_api::Result<Box<dyn ProcessHandle>> {
+            if let Some(gate) = &self.spawn_gate {
+                gate.notified().await;
+            }
+            executor
+                .spawn(&ProcessSpec {
+                    program: "unused".into(),
+                    args: vec![],
+                    env: vec![],
+                    cwd: ctx.deployment_dir.into(),
+                    stdin: false,
+                })
+                .await
         }
         async fn freeze(
             &self,
@@ -1551,6 +1616,96 @@ mod requires_stop_tests {
             }
         });
         format!("http://127.0.0.1:{port}")
+    }
+
+    struct RecordingExecutor {
+        calls: AtomicUsize,
+        fence_during_spawn: Option<Arc<ExecCtl>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Executor for RecordingExecutor {
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+        async fn spawn(&self, _: &ProcessSpec) -> executor_api::Result<Box<dyn ProcessHandle>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(ctl) = &self.fence_during_spawn {
+                ctl.mark_fenced();
+            }
+            Ok(Box::new(FakeProc {
+                tx: broadcast::channel(1).0,
+                exited: AtomicBool::new(false),
+                exit_status: ExitStatus::default(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_rechecks_authorization_after_driver_wait() {
+        for cancellation in [
+            "none",
+            "fenced",
+            "hard stop",
+            "graceful stop",
+            "expired lease",
+            "during spawn",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let runtimes = runtimes::HttpRuntimes::new(tmp.path().join("runtimes"));
+            let config = serde_json::json!({});
+            let deployment = DeploymentSpec::parse(&config);
+            let ctx = DriverContext {
+                server_id: "s",
+                server_dir: tmp.path(),
+                deployment_dir: tmp.path(),
+                runtimes: &runtimes,
+                deployment: &deployment,
+                config: &config,
+                ports: &[],
+                memory_mb: 0,
+            };
+            let gate = Arc::new(tokio::sync::Notify::new());
+            let driver = StopDriver {
+                spawn_gate: Some(gate.clone()),
+                ..StopDriver::new(false)
+            };
+            let ctl = test_ctl();
+            let executor = RecordingExecutor {
+                calls: AtomicUsize::new(0),
+                fence_during_spawn: (cancellation == "during spawn").then(|| ctl.clone()),
+            };
+            let (result, ()) = tokio::join!(spawn_live(&driver, &ctx, &executor, &ctl), async {
+                tokio::task::yield_now().await;
+                match cancellation {
+                    "fenced" => ctl.mark_fenced(),
+                    "hard stop" => ctl.request_stop(StopKind::Hard),
+                    "graceful stop" => ctl.request_stop(StopKind::Graceful),
+                    "expired lease" => *ctl.deadline.lock().unwrap() = Some(Instant::now()),
+                    _ => (),
+                }
+                gate.notify_one();
+            });
+            if cancellation == "none" {
+                let process = result.unwrap();
+                process.kill().await.unwrap();
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+            } else if cancellation == "during spawn" {
+                assert!(result.is_err());
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+                let process = ctl
+                    .proc()
+                    .expect("handle registered before final fence check");
+                tokio::time::timeout(Duration::from_millis(5), process.wait())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            } else {
+                assert!(result.is_err(), "{cancellation}");
+                assert_eq!(executor.calls.load(Ordering::SeqCst), 0, "{cancellation}");
+                assert!(ctl.proc().is_none());
+            }
+        }
     }
 
     fn test_agent(cp: String, tmp: &Path) -> Agent {
