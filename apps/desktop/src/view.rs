@@ -106,10 +106,8 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         headline,
         hosting,
         rejoin,
-        rejoin_address: s
-            .rejoin
-            .iter()
-            .find(|r| r.phase == "ready" && !r.address.is_empty())
+        rejoin_address: shown_rejoin(&s.rejoin)
+            .filter(|r| r.phase == "ready" && !r.address.is_empty())
             .map(|r| r.address.clone()),
         safe_save,
         link_label,
@@ -184,7 +182,7 @@ pub fn save_line(hosting: &[pb::Hosting], now_ms: i64) -> Option<String> {
 
 /// The player-facing state of a failover the game on this PC was caught in.
 pub fn rejoin_line(r: &[pb::Rejoin], now_ms: i64) -> Option<String> {
-    let r = r.first()?;
+    let r = shown_rejoin(r)?;
     let name = or(&r.server_name, "the server");
     let host = or(&r.host_name, "another PC");
     Some(match r.phase.as_str() {
@@ -199,6 +197,12 @@ pub fn rejoin_line(r: &[pb::Rejoin], now_ms: i64) -> Option<String> {
         "moving" => format!("Starting {name} on {host}…"),
         _ => format!("{name} is back on {host}: rejoin at {}", r.address),
     })
+}
+
+/// The one prompt the tray shows: a server ready to rejoin wins, so the
+/// line and "Copy address" always describe the same server.
+fn shown_rejoin(r: &[pb::Rejoin]) -> Option<&pb::Rejoin> {
+    r.iter().find(|r| r.phase == "ready").or(r.first())
 }
 
 /// (title, body) of the "server is back" notification.
@@ -457,6 +461,15 @@ mod tests {
             body,
             "Rejoin at 127.77.12.4:25565 (same address) from your game's server list."
         );
+
+        // two servers caught: line and Copy address name the same one
+        let mut other = rejoin("moving");
+        other.server_name = "Creative".into();
+        other.address = "127.77.9.9:25565".into();
+        s.rejoin = vec![other, rejoin("ready")];
+        let v = tray_view(Some(&s), now);
+        assert!(v.rejoin.as_deref().unwrap().starts_with("Survival is back"));
+        assert_eq!(v.rejoin_address.as_deref(), Some("127.77.12.4:25565"));
 
         s.rejoin.clear();
         let v = tray_view(Some(&s), now);
