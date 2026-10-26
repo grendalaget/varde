@@ -432,14 +432,12 @@ mod child_job_tests {
                 .unwrap()
                 .success()
         );
+        assert!(child.try_wait().unwrap().is_none());
         drop(job);
-        assert!(
-            !tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
-                .await
-                .unwrap()
-                .unwrap()
-                .success()
-        );
+        tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 // SAFETY: HANDLE names a process-wide kernel object — sending or sharing it
