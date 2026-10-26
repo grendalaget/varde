@@ -115,6 +115,8 @@ impl Track {
     fn step(&mut self, now: i64, self_node: &str, r: &Route, reachable: &HashSet<String>) {
         let lost = |h: &str| !h.is_empty() && h != self_node && !reachable.contains(h);
         let on = |h: &str| r.sessions.get(h).copied().unwrap_or(0);
+        // Running and reachable from here: the player can actually rejoin.
+        let ready = r.host_running && !lost(&r.host);
 
         // Planned warm move off the host we played on: the game is
         // transferred, there's nothing to rejoin.
@@ -136,11 +138,7 @@ impl Track {
                     false
                 }
             } else {
-                let phase = if r.host_running {
-                    Phase::Ready
-                } else {
-                    Phase::Moving
-                };
+                let phase = if ready { Phase::Ready } else { Phase::Moving };
                 if phase != i.phase {
                     i.phase = phase;
                     i.since = now;
@@ -165,8 +163,24 @@ impl Track {
             return;
         }
 
+        let recent = self
+            .played_at
+            .is_some_and(|at| now - at <= PLAYED_WITHIN_MS);
         if r.host.is_empty() {
-            // Stopped on purpose (or not placed yet): no prompt.
+            // No host: the one we played on died before a replacement was
+            // placed, or the server was stopped on purpose (its host still
+            // answers) — no prompt for that.
+            if recent && lost(&self.played_host) {
+                self.incident = Some(Incident {
+                    from: self.played_host.clone(),
+                    from_name: self.played_host_name.clone(),
+                    phase: Phase::HostLost,
+                    since: now,
+                    started: now,
+                    host_name: String::new(),
+                    save_at: 0,
+                });
+            }
             self.played_at = None;
             return;
         }
@@ -181,7 +195,7 @@ impl Track {
             return;
         }
         let phase = if r.host != self.played_host {
-            if r.host_running {
+            if ready {
                 Phase::Ready
             } else {
                 Phase::Moving
@@ -294,7 +308,7 @@ mod tests {
             .update(1_000, "me", &[route("ola", true)], &peers(&[]))
             .is_empty());
         assert!(t
-            .update(9_000, "me", &[route("kari", true)], &peers(&[]))
+            .update(9_000, "me", &[route("kari", true)], &peers(&["kari"]))
             .is_empty());
     }
 
@@ -307,7 +321,7 @@ mod tests {
             &[playing(route("ola", true), "ola")],
             &peers(&["ola"]),
         );
-        let v = t.update(60_000, "me", &[route("kari", true)], &peers(&[]));
+        let v = t.update(60_000, "me", &[route("kari", true)], &peers(&["kari"]));
         assert_eq!(phases(&v), ["ready"]);
 
         let mut t = Tracker::default();
@@ -365,7 +379,7 @@ mod tests {
             &peers(&["ola"]),
         );
         assert_eq!(
-            phases(&t.update(1_000, "me", &[route("kari", true)], &peers(&[]))),
+            phases(&t.update(1_000, "me", &[route("kari", true)], &peers(&["kari"]))),
             ["ready"]
         );
         assert!(t
@@ -373,7 +387,7 @@ mod tests {
                 1_000 + READY_SHOWN_MS,
                 "me",
                 &[route("kari", true)],
-                &peers(&[])
+                &peers(&["kari"])
             )
             .is_empty());
 
@@ -400,5 +414,56 @@ mod tests {
                 &peers(&[])
             )
             .is_empty());
+    }
+
+    #[test]
+    fn host_dies_before_a_replacement_is_placed() {
+        let mut t = Tracker::default();
+        t.update(
+            0,
+            "me",
+            &[playing(route("ola", true), "ola")],
+            &peers(&["ola"]),
+        );
+        // lease expired, route left hostless; ola is gone
+        let v = t.update(1_000, "me", &[route("", false)], &peers(&["kari"]));
+        assert_eq!(phases(&v), ["host_lost"]);
+        let v = t.update(9_000, "me", &[route("kari", true)], &peers(&["kari"]));
+        assert_eq!(phases(&v), ["ready"]);
+
+        // stopped on purpose: the host still answers, no prompt
+        let mut t = Tracker::default();
+        t.update(
+            0,
+            "me",
+            &[playing(route("ola", true), "ola")],
+            &peers(&["ola"]),
+        );
+        assert!(t
+            .update(1_000, "me", &[route("", false)], &peers(&["ola"]))
+            .is_empty());
+        assert!(t
+            .update(
+                9_000,
+                "me",
+                &[route("kari", true)],
+                &peers(&["ola", "kari"])
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn not_ready_until_the_new_host_is_reachable() {
+        let mut t = Tracker::default();
+        t.update(
+            0,
+            "me",
+            &[playing(route("ola", true), "ola")],
+            &peers(&["ola"]),
+        );
+        let v = t.update(9_000, "me", &[route("kari", true)], &peers(&[]));
+        assert_eq!(phases(&v), ["moving"]);
+        let v = t.update(10_000, "me", &[route("kari", true)], &peers(&["kari"]));
+        assert_eq!(phases(&v), ["ready"]);
     }
 }
