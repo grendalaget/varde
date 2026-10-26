@@ -15,8 +15,13 @@ fn sweep_script() -> String {
     format!("$ports=@((Get-NetUDPEndpoint).LocalPort)+@((Get-NetTCPConnection).LocalPort); @($policy.Rules) | Where-Object {{ $_.Name.StartsWith({}, [StringComparison]::Ordinal) }} | ForEach-Object {{ if ($ports -notcontains [int]$_.LocalPorts) {{ $policy.Rules.Remove($_.Name) }} else {{ Write-Warning ('Retaining CS2 rule for a port still in use: '+$_.Name) }} }}", quote(PREFIX))
 }
 
+fn cleanup_prefix(owner: &str) -> String {
+    format!("{PREFIX}cleanup {owner} ")
+}
+
 fn cleanup_script(name: &str, owner: &str) -> String {
-    format!("@($policy.Rules) | Where-Object {{ $_.Name -ceq {} -and $_.Description -ceq {} }} | ForEach-Object {{ $cleanup={}+$_.Protocol; $_.Name=$cleanup; $policy.Rules.Remove($cleanup) }}", quote(name), quote(owner), quote(&format!("{PREFIX}cleanup {owner} ")))
+    let renamed = quote(&cleanup_prefix(owner));
+    format!("@($policy.Rules) | Where-Object {{ ($_.Name -ceq {} -or $_.Name.StartsWith({renamed}, [StringComparison]::Ordinal)) -and $_.Description -ceq {} }} | ForEach-Object {{ $cleanup={renamed}+$_.Protocol; $_.Name=$cleanup; $policy.Rules.Remove($cleanup) }}", quote(name), quote(owner))
 }
 
 fn install_script(name: &str, owner: &str, port: u16) -> Result<String, &'static str> {
@@ -187,9 +192,30 @@ mod tests {
         let first = cleanup_script("Varde CS2 same-server", "owner-a");
         let second = cleanup_script("Varde CS2 same-server", "owner-b");
         assert_ne!(first, second);
-        assert!(first
-            .contains("$_.Name -ceq 'Varde CS2 same-server' -and $_.Description -ceq 'owner-a'"));
+        assert!(first.contains("$_.Name -ceq 'Varde CS2 same-server'"));
+        assert!(first.contains("-and $_.Description -ceq 'owner-a'"));
         assert!(first.contains("$_.Name=$cleanup; $policy.Rules.Remove($cleanup)"));
         assert!(!first.contains("Remove('Varde CS2 same-server')"));
+    }
+
+    #[test]
+    fn failed_deletion_remains_discoverable_by_sweep_and_stop_retry() {
+        let original = rule_name("server-a").unwrap();
+        let renamed = cleanup_prefix("owner-a");
+        let cleanup = cleanup_script(&original, "owner-a");
+        assert!(original.starts_with(PREFIX));
+        for protocol in [6, 17] {
+            assert!(format!("{renamed}{protocol}").starts_with(PREFIX));
+        }
+        assert!(sweep_script().contains(&format!(
+            "StartsWith({}, [StringComparison]::Ordinal)",
+            quote(PREFIX)
+        )));
+        assert!(cleanup.contains(&format!(
+            "$_.Name.StartsWith({}, [StringComparison]::Ordinal)",
+            quote(&renamed)
+        )));
+        assert!(cleanup.contains("-and $_.Description -ceq 'owner-a'"));
+        assert!(!cleanup.contains(&cleanup_prefix("owner-b")));
     }
 }
