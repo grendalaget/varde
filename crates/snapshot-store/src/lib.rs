@@ -145,7 +145,8 @@ impl Store {
             for (off, len) in chunk_ranges(&data) {
                 let bytes = &data[off..off + len];
                 let id = blake3::hash(bytes).to_hex().to_string();
-                if !self.has_chunk(&id) {
+                // reuse refreshes the chunk so a concurrent GC keeps it
+                if !self.touch_chunk(&id)? {
                     let z = zstd::bulk::compress(bytes, ZSTD_LEVEL)?;
                     self.write_chunk_atomic(&id, &z)?;
                     stored_bytes += z.len() as u64;
@@ -397,18 +398,6 @@ impl Store {
 
     // ---- chunks ----
 
-    pub fn missing_chunks(&self, m: &Manifest) -> Result<Vec<ChunkId>> {
-        let mut out = Vec::new();
-        for e in &m.files {
-            for c in e.chunks.iter().flatten() {
-                if !self.has_chunk(c) {
-                    out.push(c.clone());
-                }
-            }
-        }
-        Ok(out)
-    }
-
     pub fn missing_or_corrupt_chunks(&self, m: &Manifest) -> Result<Vec<ChunkId>> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -417,8 +406,10 @@ impl Store {
                 if !seen.insert(c.clone()) {
                     continue;
                 }
-                match self.read_chunk_compressed(c) {
-                    Ok(_) => {}
+                match self.read_chunk_verified(c, true) {
+                    // a replica about to rely on this chunk: keep it young so
+                    // a GC that marked before the manifest landed spares it
+                    Ok((f, _)) => refresh_mtime(&f)?,
                     Err(Error::ChunkMissing(_) | Error::ChunkCorrupt(_) | Error::Manifest(_)) => {
                         out.push(c.clone())
                     }
@@ -441,14 +432,27 @@ impl Store {
     /// Compressed bytes for transfer — verifies plaintext hash on every read;
     /// a mismatch moves the file to quarantine and errors (I6).
     pub fn read_chunk_compressed(&self, id: &ChunkId) -> Result<Vec<u8>> {
+        self.read_chunk_verified(id, false).map(|(_, z)| z)
+    }
+
+    /// `read_chunk_compressed` that also hands back the open file; `write`
+    /// opens it writable so the caller can refresh its mtime in place.
+    fn read_chunk_verified(&self, id: &ChunkId, write: bool) -> Result<(fs::File, Vec<u8>)> {
         if !valid_chunk_id(id) {
             return Err(Error::InvalidChunkId(id.clone()));
         }
         let p = self.chunk_path(id);
-        let z = fs::read(&p).map_err(|e| not_found(e, || Error::ChunkMissing(id.clone())))?;
+        let mut f = fs::File::options()
+            .read(true)
+            .write(write)
+            .open(&p)
+            .map_err(|e| not_found(e, || Error::ChunkMissing(id.clone())))?;
+        let mut z = Vec::with_capacity(f.metadata().map(|m| m.len() as usize).unwrap_or(0));
+        f.read_to_end(&mut z)?;
         match verify_compressed(id, &z) {
-            Ok(()) => Ok(z),
+            Ok(()) => Ok((f, z)),
             Err(e) => {
+                drop(f);
                 let qdir = self.root.join("chunks").join("quarantine");
                 fs::create_dir_all(&qdir)?;
                 let mut q = qdir.join(id);
@@ -469,6 +473,9 @@ impl Store {
             return Err(Error::InvalidChunkId(id.clone()));
         }
         verify_compressed(id, z)?;
+        if self.touch_chunk(id)? {
+            return Ok(());
+        }
         self.write_chunk_atomic(id, z)
     }
 
@@ -477,11 +484,35 @@ impl Store {
         Ok(zstd::bulk::decompress(&z, CHUNK_MAX)?)
     }
 
+    /// Keep an existing chunk young for GC (see `mtime_is_fresh`); false when
+    /// the chunk is absent. Reusing an old unreferenced chunk without this
+    /// races a GC whose mark set predates the manifest about to reference
+    /// it — the sweep would see an old orphan and delete it.
+    fn touch_chunk(&self, id: &str) -> Result<bool> {
+        if !valid_chunk_id(id) {
+            return Err(Error::InvalidChunkId(id.to_string()));
+        }
+        let p = self.chunk_path(id);
+        match fs::metadata(&p) {
+            Ok(md) if mtime_is_fresh(&md) => return Ok(true),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        }
+        match fs::File::options().write(true).open(&p) {
+            Ok(f) => {
+                f.set_modified(SystemTime::now())?;
+                Ok(true)
+            }
+            // swept between the stat and the open
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Callers check for an existing chunk first (`touch_chunk`).
     fn write_chunk_atomic(&self, id: &ChunkId, z: &[u8]) -> Result<()> {
         let p = self.chunk_path(id);
-        if p.exists() {
-            return Ok(());
-        }
         if let Some(d) = p.parent() {
             fs::create_dir_all(d)?;
         }
@@ -520,14 +551,38 @@ impl Store {
     }
 
     /// Sweep chunks no manifest references; chunks younger than 1 h are kept.
+    ///
+    /// A manifest that cannot be read aborts the sweep: its chunks are
+    /// unknown, and skipping it would delete data a snapshot still needs
+    /// (EMFILE, EIO, Windows sharing violations are usually transient). Two
+    /// cases are skipped on purpose: a manifest deleted since the listing,
+    /// and one whose bytes no longer match its id — `manifest()` just
+    /// quarantined that one, so it stays out of every later GC too.
     pub fn gc(&self) -> Result<GcReport> {
         let mut referenced: HashSet<ChunkId> = HashSet::new();
         for id in self.list_snapshots()? {
-            if let Ok(m) = self.manifest(&id) {
-                for e in &m.files {
-                    for c in e.chunks.iter().flatten() {
-                        referenced.insert(c.clone());
-                    }
+            if !valid_snapshot_id(&id.0) {
+                // a stray *.json no lookup can address — not a snapshot
+                tracing::warn!(file = %id.0, "gc: ignoring non-snapshot file");
+                continue;
+            }
+            let m = match self.manifest(&id) {
+                Ok(m) => m,
+                Err(Error::SnapshotNotFound(_)) => continue,
+                Err(Error::IdMismatch(_)) => {
+                    tracing::warn!(snap = %id.0, "gc: corrupt manifest quarantined");
+                    continue;
+                }
+                Err(e) => {
+                    return Err(Error::Manifest(format!(
+                        "gc aborted, manifest {} unreadable: {e}",
+                        id.0
+                    )))
+                }
+            };
+            for e in &m.files {
+                for c in e.chunks.iter().flatten() {
+                    referenced.insert(c.clone());
                 }
             }
         }
@@ -568,6 +623,26 @@ impl Store {
 }
 
 // ---- helpers ----
+
+/// Whether a chunk's mtime is recent enough to skip refreshing it. Rewriting
+/// it on every reuse costs an inode write per chunk per snapshot; GC spares
+/// anything younger than `GC_GRACE_MS`, so refreshing past half of that still
+/// leaves a reuser at least half the grace period to land its manifest. An
+/// unreadable or future mtime counts as fresh, as it does in GC.
+fn mtime_is_fresh(md: &fs::Metadata) -> bool {
+    md.modified()
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+        .map(|d| d.as_millis() < (GC_GRACE_MS / 2) as u128)
+        .unwrap_or(true)
+}
+
+fn refresh_mtime(f: &fs::File) -> Result<()> {
+    if !mtime_is_fresh(&f.metadata()?) {
+        f.set_modified(SystemTime::now())?;
+    }
+    Ok(())
+}
 
 fn verify_compressed(id: &ChunkId, z: &[u8]) -> Result<()> {
     let plain = zstd::bulk::decompress(z, CHUNK_MAX)
@@ -788,28 +863,6 @@ fn valid_snapshot_id(s: &str) -> bool {
     SnapshotId::parse(s).is_some_and(|id| id.0 == s)
 }
 
-// Read a whole small file helper used by the HTTP chunk server.
-pub fn read_file(p: &Path) -> Result<Vec<u8>> {
-    Ok(fs::read(p)?)
-}
-
-/// Concatenate plaintext of `chunks` (for tests/tools).
-pub fn cat_chunks(store: &Store, ids: &[ChunkId]) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    for c in ids {
-        let z = store.read_chunk_compressed(c)?;
-        let mut d = zstd::bulk::decompress(&z, CHUNK_MAX)?;
-        out.append(&mut d);
-    }
-    Ok(out)
-}
-
-/// Read all bytes of an open file into memory (helper for callers).
-pub fn slurp(mut r: impl Read) -> Result<Vec<u8>> {
-    let mut v = Vec::new();
-    r.read_to_end(&mut v)?;
-    Ok(v)
-}
 #[cfg(test)]
 mod snapshot_consistency_tests {
     use super::*;

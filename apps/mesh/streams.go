@@ -26,15 +26,23 @@ func (p *peerState) openStream(ctx context.Context, open *meshv1.StreamOpen) (*q
 		p.n.log.Debug("open stream failed", "peer", p.id, "error", err)
 		return nil, err
 	}
+	// ctx only bounds OpenStreamSync; a peer that never answers would
+	// otherwise block the StreamAccept read forever.
+	if dl, ok := ctx.Deadline(); ok {
+		_ = st.SetDeadline(dl)
+	}
 	if err := meshproto.WriteFrame(st, open); err != nil {
 		_ = st.Close()
+		st.CancelRead(0)
 		return nil, err
 	}
 	var acc meshv1.StreamAccept
 	if err := meshproto.ReadFrame(st, &acc); err != nil {
 		_ = st.Close()
+		st.CancelRead(0)
 		return nil, err
 	}
+	_ = st.SetDeadline(time.Time{})
 	if !acc.GetOk() {
 		_ = st.Close()
 		p.n.log.Debug("stream rejected", "peer", p.id, "reason", acc.GetReason(), "msg", acc.GetMessage())

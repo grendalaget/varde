@@ -1,4 +1,6 @@
-// Shared UI helpers, kept in sync with apps/web/src/components/ui.tsx.
+// Shared UI helpers for the tray (apps/desktop/ui), installer (apps/setup/ui)
+// and dashboard. apps/web/src/components/ui.tsx re-exports cx, Button, Field
+// and inputClass from here and adds the dashboard's own, larger set.
 import { Button as HButton } from "@heroui/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 

@@ -113,6 +113,9 @@ jobs:
       - run: bun run --filter "@varde/desktop-ui" lint
       - run: bun run --filter "@varde/desktop-ui" typecheck
       - run: bun run --filter "@varde/desktop-ui" build
+      # shared by web, tray and installer UIs (each build compiles it)
+      - run: bun run --filter "@varde/ui" lint
+      - run: bun run --filter "@varde/ui" typecheck
 
   contracts:
     runs-on: ubuntu-latest

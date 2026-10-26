@@ -151,6 +151,7 @@ const (
 	Internal              ErrorCode = "internal"
 	LatestSaveUnavailable ErrorCode = "latest_save_unavailable"
 	LimitExceeded         ErrorCode = "limit_exceeded"
+	NoReachableSave       ErrorCode = "no_reachable_save"
 	NotFound              ErrorCode = "not_found"
 	StaleEpoch            ErrorCode = "stale_epoch"
 	Unauthorized          ErrorCode = "unauthorized"
@@ -170,6 +171,8 @@ func (e ErrorCode) Valid() bool {
 	case LatestSaveUnavailable:
 		return true
 	case LimitExceeded:
+		return true
+	case NoReachableSave:
 		return true
 	case NotFound:
 		return true
@@ -686,8 +689,11 @@ type AgentDirectives struct {
 	DirectivesDigest    *string               `json:"directives_digest,omitempty"`
 	Executions          *[]ExecutionDirective `json:"executions,omitempty"`
 	HeartbeatIntervalMs int                   `json:"heartbeat_interval_ms"`
-	LeaseTtlMs          int                   `json:"lease_ttl_ms"`
-	Node                struct {
+
+	// LeaseRenewIntervalMs Set when this node gets fast leases: renew via /v1/agent/leases at this interval while hosting.
+	LeaseRenewIntervalMs *int `json:"lease_renew_interval_ms,omitempty"`
+	LeaseTtlMs           int  `json:"lease_ttl_ms"`
+	Node                 struct {
 		AdminState AgentDirectivesNodeAdminState `json:"admin_state"`
 		Anchor     bool                          `json:"anchor"`
 
@@ -701,6 +707,9 @@ type AgentDirectives struct {
 	ReplicationTasks *[]ReplicationTask `json:"replication_tasks,omitempty"`
 	Routes           *[]DirectiveRoute  `json:"routes,omitempty"`
 	ServerTimeUnixMs int64              `json:"server_time_unix_ms"`
+
+	// Standby Servers this node is the hot standby for: pre-install the deployment (runtime + game files) so a failover or shutdown handoff skips the download. Snapshots already replicate here.
+	Standby *[]StandbyDirective `json:"standby,omitempty"`
 }
 
 // AgentDirectivesNodeAdminState defines model for AgentDirectives.Node.AdminState.
@@ -762,6 +771,9 @@ type Capabilities struct {
 	DiskFreeBytes     *int64    `json:"disk_free_bytes,omitempty"`
 	Draining          *bool     `json:"draining,omitempty"`
 	Drivers           *[]string `json:"drivers,omitempty"`
+
+	// FastLease Agent renews leases via /v1/agent/leases (short TTL).
+	FastLease *bool `json:"fast_lease,omitempty"`
 
 	// LeaseProfile Optional lease timing profile; absent or unknown values use standard.
 	LeaseProfile      *CapabilitiesLeaseProfile `json:"lease_profile,omitempty"`
@@ -1402,6 +1414,17 @@ type SnapshotRequest struct {
 // SnapshotRequestReason defines model for SnapshotRequest.Reason.
 type SnapshotRequestReason string
 
+// StandbyDirective defines model for StandbyDirective.
+type StandbyDirective struct {
+	Config     *map[string]interface{} `json:"config,omitempty"`
+	Deployment struct {
+		GameId string                 `json:"game_id"`
+		Id     string                 `json:"id"`
+		Spec   map[string]interface{} `json:"spec"`
+	} `json:"deployment"`
+	ServerId string `json:"server_id"`
+}
+
 // TokenEnrollRequest defines model for TokenEnrollRequest.
 type TokenEnrollRequest struct {
 	AgentVersion *string `json:"agent_version,omitempty"`
@@ -1468,6 +1491,15 @@ type AgentExecutionStatusJSONBody struct {
 	Message  *string        `json:"message,omitempty"`
 	ServerId string         `json:"server_id"`
 	State    ExecutionState `json:"state"`
+}
+
+// AgentRenewLeasesJSONBody defines parameters for AgentRenewLeases.
+type AgentRenewLeasesJSONBody struct {
+	Executions []struct {
+		Epoch       int64  `json:"epoch"`
+		ExecutionId string `json:"execution_id"`
+		ServerId    string `json:"server_id"`
+	} `json:"executions"`
 }
 
 // AgentReplicaReadyJSONBody defines parameters for AgentReplicaReady.
@@ -1611,6 +1643,9 @@ type AgentExecutionStatusJSONRequestBody AgentExecutionStatusJSONBody
 // AgentHeartbeatJSONRequestBody defines body for AgentHeartbeat for application/json ContentType.
 type AgentHeartbeatJSONRequestBody = AgentHeartbeat
 
+// AgentRenewLeasesJSONRequestBody defines body for AgentRenewLeases for application/json ContentType.
+type AgentRenewLeasesJSONRequestBody AgentRenewLeasesJSONBody
+
 // AgentCreateSnapshotJSONRequestBody defines body for AgentCreateSnapshot for application/json ContentType.
 type AgentCreateSnapshotJSONRequestBody = AgentSnapshot
 
@@ -1700,6 +1735,9 @@ type ServerInterface interface {
 
 	// (POST /v1/agent/heartbeat)
 	AgentHeartbeat(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/agent/leases)
+	AgentRenewLeases(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/agent/snapshots)
 	AgentCreateSnapshot(w http.ResponseWriter, r *http.Request)
@@ -2079,6 +2117,20 @@ func (siw *ServerInterfaceWrapper) AgentHeartbeat(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AgentHeartbeat(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AgentRenewLeases operation middleware
+func (siw *ServerInterfaceWrapper) AgentRenewLeases(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AgentRenewLeases(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3437,6 +3489,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/token", wrapper.AgentEnrollToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/heartbeat", wrapper.AgentHeartbeat)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agent/directives/wait", wrapper.AgentDirectivesWait)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/leases", wrapper.AgentRenewLeases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/executions/{executionId}/status", wrapper.AgentExecutionStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/executions/{executionId}/logs", wrapper.AgentExecutionLogs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/snapshots", wrapper.AgentCreateSnapshot)
@@ -3987,6 +4040,62 @@ func (response AgentHeartbeat401JSONResponse) VisitAgentHeartbeatResponse(w http
 type AgentHeartbeat403JSONResponse Error
 
 func (response AgentHeartbeat403JSONResponse) VisitAgentHeartbeatResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentRenewLeasesRequestObject struct {
+	Body *AgentRenewLeasesJSONRequestBody
+}
+
+type AgentRenewLeasesResponseObject interface {
+	VisitAgentRenewLeasesResponse(w http.ResponseWriter) error
+}
+
+type AgentRenewLeases200JSONResponse struct {
+	Leases []struct {
+		ExecutionId          string `json:"execution_id"`
+		LeaseExpiresAtUnixMs int64  `json:"lease_expires_at_unix_ms"`
+	} `json:"leases"`
+	ServerTimeUnixMs int64 `json:"server_time_unix_ms"`
+}
+
+func (response AgentRenewLeases200JSONResponse) VisitAgentRenewLeasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentRenewLeases401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AgentRenewLeases401JSONResponse) VisitAgentRenewLeasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AgentRenewLeases403JSONResponse Error
+
+func (response AgentRenewLeases403JSONResponse) VisitAgentRenewLeasesResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -4620,6 +4729,20 @@ func (response DeleteGroup403JSONResponse) VisitDeleteGroupResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteGroup409JSONResponse Error
+
+func (response DeleteGroup409JSONResponse) VisitDeleteGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5881,6 +6004,20 @@ func (response DeleteServer403JSONResponse) VisitDeleteServerResponse(w http.Res
 	return err
 }
 
+type DeleteServer409JSONResponse Error
+
+func (response DeleteServer409JSONResponse) VisitDeleteServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetServerRequestObject struct {
 	ServerId ServerId `json:"serverId"`
 }
@@ -6454,6 +6591,9 @@ type StrictServerInterface interface {
 	// (POST /v1/agent/heartbeat)
 	AgentHeartbeat(ctx context.Context, request AgentHeartbeatRequestObject) (AgentHeartbeatResponseObject, error)
 
+	// (POST /v1/agent/leases)
+	AgentRenewLeases(ctx context.Context, request AgentRenewLeasesRequestObject) (AgentRenewLeasesResponseObject, error)
+
 	// (POST /v1/agent/snapshots)
 	AgentCreateSnapshot(ctx context.Context, request AgentCreateSnapshotRequestObject) (AgentCreateSnapshotResponseObject, error)
 
@@ -6980,6 +7120,37 @@ func (sh *strictHandler) AgentHeartbeat(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AgentHeartbeatResponseObject); ok {
 		if err := validResponse.VisitAgentHeartbeatResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AgentRenewLeases operation middleware
+func (sh *strictHandler) AgentRenewLeases(w http.ResponseWriter, r *http.Request) {
+	var request AgentRenewLeasesRequestObject
+
+	var body AgentRenewLeasesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AgentRenewLeases(ctx, request.(AgentRenewLeasesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AgentRenewLeases")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AgentRenewLeasesResponseObject); ok {
+		if err := validResponse.VisitAgentRenewLeasesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

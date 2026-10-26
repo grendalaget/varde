@@ -35,7 +35,9 @@ fn decode_sig(text: &str) -> Result<minisign_verify::Signature> {
 
 /// minisign public key of the release signer; matches the
 /// TAURI_SIGNING_PRIVATE_KEY repo secret the pipeline signs with. The
-/// `update.pubkey` config key overrides it.
+/// `update.pubkey` config key overrides it for checking and staging; the
+/// root-side `apply-update` ignores that and trusts only this key or a
+/// root-owned /etc/varde/update.pub.
 pub const RELEASE_PUBKEY: &str = "RWTGjRo20qP1eV0SYg+R+cQklu9rnXL+hHg1fS729LTc0IOdbuVXinns";
 
 #[derive(Debug, Default)]
@@ -336,7 +338,6 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
     if !artifact_url_ok(url) {
         anyhow::bail!("refusing non-https artifact url: {url}");
     }
-    const MAX_PKG_BYTES: usize = 512 * 1024 * 1024;
     let body = cp_api::client::fetch_url(url, MAX_PKG_BYTES)
         .await
         .with_context(|| format!("download {url}"))?;
@@ -379,6 +380,10 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
     }
     Ok(())
 }
+
+/// Largest update package the agent downloads or root installs.
+#[cfg(all(unix, not(target_os = "android")))]
+const MAX_PKG_BYTES: usize = 512 * 1024 * 1024;
 
 #[cfg(all(unix, not(target_os = "android")))]
 fn url_host(_data_dir: &std::path::Path) -> &'static str {
@@ -500,55 +505,166 @@ fn apply_dmg(dmg: &[u8]) -> Result<()> {
     res
 }
 
+/// Root-trusted override of the release key for `apply-update` (dev/test
+/// feeds signed with their own key). Honoured only while root-owned and not
+/// group/world-writable — unlike config.toml, which the agent's uid owns.
+#[cfg(target_os = "linux")]
+const ROOT_PUBKEY_FILE: &str = "/etc/varde/update.pub";
+
+/// Where the root apply keeps its private copy of the verified package:
+/// root-only tmpfs, outside anything the agent's uid can write.
+#[cfg(target_os = "linux")]
+const ROOT_APPLY_DIR: &str = "/run";
+
+/// Key the root-side apply verifies with: the compiled-in release key, or
+/// the contents of `path` when that file and its directory are owned by
+/// `owner_uid` (root) and writable by nobody else. `[update] pubkey` in the
+/// data dir's config.toml is never consulted here: the agent's uid — and so
+/// any game server it runs — can write that file, and with it pick the key
+/// root installs packages under.
+#[cfg(all(unix, any(target_os = "linux", test)))]
+fn root_apply_pubkey(path: &std::path::Path, owner_uid: u32) -> Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let md = match std::fs::symlink_metadata(path) {
+        Ok(md) => md,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(RELEASE_PUBKEY.to_string()),
+        Err(e) => return Err(e).with_context(|| format!("stat {}", path.display())),
+    };
+    let trusted = |md: &std::fs::Metadata| md.uid() == owner_uid && md.mode() & 0o022 == 0;
+    if !md.is_file() || !trusted(&md) {
+        anyhow::bail!(
+            "refusing {}: must be a regular file owned by uid {owner_uid}, not group/world-writable",
+            path.display()
+        );
+    }
+    let dir = path.parent().context("key file has no directory")?;
+    let dmd = std::fs::metadata(dir).with_context(|| format!("stat {}", dir.display()))?;
+    if !trusted(&dmd) {
+        anyhow::bail!(
+            "refusing {}: its directory must be owned by uid {owner_uid}, not group/world-writable",
+            path.display()
+        );
+    }
+    let key = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let key = key.trim();
+    if key.is_empty() {
+        anyhow::bail!("{} is empty", path.display());
+    }
+    Ok(key.to_string())
+}
+
+/// Read a staged file without following a symlink or blocking on a FIFO the
+/// agent's uid planted, capped at `max` bytes.
+#[cfg(target_os = "linux")]
+fn read_staged(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    if !f.metadata()?.is_file() {
+        anyhow::bail!("{} is not a regular file", path.display());
+    }
+    let mut buf = Vec::new();
+    f.take(max as u64 + 1).read_to_end(&mut buf)?;
+    if buf.len() > max {
+        anyhow::bail!("{} exceeds {max} bytes", path.display());
+    }
+    Ok(buf)
+}
+
 /// Root-side apply invoked by varde-update.path (Type=oneshot): install the
 /// staged package with the system package manager. The package's postinst
 /// restarts the agent with the new binary.
 #[cfg(target_os = "linux")]
 pub fn apply_staged(data_dir: &std::path::Path) -> Result<()> {
+    apply_staged_with(
+        data_dir,
+        std::path::Path::new(ROOT_PUBKEY_FILE),
+        std::path::Path::new(ROOT_APPLY_DIR),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn apply_staged_with(
+    data_dir: &std::path::Path,
+    key_file: &std::path::Path,
+    private_base: &std::path::Path,
+) -> Result<()> {
     let dir = data_dir.join("update");
     let pending = dir.join(".pending");
     if !pending.exists() {
         return Ok(());
     }
-    let pkg = ["pkg.deb", "pkg.rpm"]
-        .iter()
-        .map(|n| dir.join(n))
-        .find(|p| p.exists())
+    let name = ["pkg.deb", "pkg.rpm"]
+        .into_iter()
+        .find(|n| dir.join(n).exists())
         .context("no staged package")?;
+    let pkg = dir.join(name);
     // Re-verify before root installs anything: the staging dir is
     // varde-writable, so a swapped package must fail signature check —
-    // an attacker with the agent's uid can't forge minisign bytes.
-    let cfg = crate::config::Config::load_opt(data_dir)?
-        .map(|c| c.update)
-        .unwrap_or_default();
-    let pk = minisign_verify::PublicKey::from_base64(
-        &pubkey(&cfg).context("no update pubkey configured")?,
-    )
-    .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let sig = std::fs::read(dir.join("pkg.sig")).context("staged signature missing")?;
+    // an attacker with the agent's uid can't forge minisign bytes. The key
+    // comes from root-owned places only (see root_apply_pubkey).
+    let key = root_apply_pubkey(key_file, 0)?;
+    let pk = minisign_verify::PublicKey::from_base64(&key)
+        .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
+    let sig = read_staged(&dir.join("pkg.sig"), 64 * 1024).context("staged signature")?;
     let sig = std::str::from_utf8(&sig).context("staged signature not utf-8")?;
     let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
-    let body = std::fs::read(&pkg).context("read staged package")?;
+    let body = read_staged(&pkg, MAX_PKG_BYTES).context("read staged package")?;
     pk.verify(&body, &s, false)
         .map_err(|e| anyhow::anyhow!("staged package signature invalid: {e}"))?;
-    let status = match pkg.extension().and_then(|e| e.to_str()) {
-        Some("deb") => std::process::Command::new("dpkg")
-            .args(["-i", pkg.to_str().unwrap()])
-            .status()?,
-        Some("rpm") => std::process::Command::new("rpm")
-            .args(["-U", pkg.to_str().unwrap()])
-            .status()?,
-        _ => anyhow::bail!("unknown staged package"),
-    };
-    if !status.success() {
-        // keep .pending + the package: the trigger stays armed so a re-run
-        // (or a fresh `varde-agent update`) can retry the failed install
-        anyhow::bail!("package install failed: {status}");
-    }
+    // Install the bytes just verified, never the staged path: the agent's
+    // uid could swap that file between verify and dpkg/rpm opening it.
+    let private = private_base.join(format!("varde-update.{}", std::process::id()));
+    let res = install_private_copy(&private, name, &body);
+    let _ = std::fs::remove_dir_all(&private);
+    // on failure keep .pending + the package: the trigger stays armed so a
+    // re-run (or a fresh `varde-agent update`) can retry the failed install
+    res?;
     std::fs::remove_file(&pending)?;
     std::fs::remove_file(&pkg)?;
     let _ = std::fs::remove_file(dir.join("pkg.sig"));
     println!("applied update");
+    Ok(())
+}
+
+/// Write `body` into a fresh 0700 directory as `name` (created exclusively,
+/// 0600) and install it from there.
+#[cfg(target_os = "linux")]
+fn install_private_copy(private: &std::path::Path, name: &str, body: &[u8]) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    // a leftover of a crashed run with this pid: the base is root-only, so
+    // it is ours — but a dir that can't be replaced fails the create below
+    let _ = std::fs::remove_dir_all(private);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(private)
+        .with_context(|| format!("create {}", private.display()))?;
+    let copy = private.join(name);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&copy)
+        .context("create private package copy")?;
+    f.write_all(body)?;
+    f.sync_all()?;
+    drop(f);
+    let (prog, flag) = match copy.extension().and_then(|e| e.to_str()) {
+        Some("deb") => ("dpkg", "-i"),
+        Some("rpm") => ("rpm", "-U"),
+        _ => anyhow::bail!("unknown staged package"),
+    };
+    let status = std::process::Command::new(prog)
+        .arg(flag)
+        .arg(&copy)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("package install failed: {status}");
+    }
     Ok(())
 }
 
@@ -690,5 +806,96 @@ mod tests {
         assert!(r.is_err());
         assert!(dir.join(".pending").exists(), "trigger kept for retry");
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(unix)]
+    mod root_key {
+        use super::super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn euid() -> u32 {
+            unsafe { libc::geteuid() }
+        }
+
+        fn chmod(p: &std::path::Path, mode: u32) {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+
+        /// key dir (0755) + key file (0644), both owned by the test's uid.
+        fn key_file(tmp: &std::path::Path, key: &str) -> std::path::PathBuf {
+            let dir = tmp.join("etc-varde");
+            std::fs::create_dir(&dir).unwrap();
+            chmod(&dir, 0o755);
+            let f = dir.join("update.pub");
+            std::fs::write(&f, format!("{key}\n")).unwrap();
+            chmod(&f, 0o644);
+            f
+        }
+
+        #[test]
+        fn absent_override_means_release_key() {
+            let tmp = tempfile::tempdir().unwrap();
+            let k = root_apply_pubkey(&tmp.path().join("nope/update.pub"), euid()).unwrap();
+            assert_eq!(k, RELEASE_PUBKEY);
+        }
+
+        #[test]
+        fn owner_only_override_is_used() {
+            let tmp = tempfile::tempdir().unwrap();
+            let f = key_file(tmp.path(), "RWdevkey");
+            assert_eq!(root_apply_pubkey(&f, euid()).unwrap(), "RWdevkey");
+        }
+
+        #[test]
+        fn override_owned_by_another_uid_is_refused() {
+            // in production the owner must be root (0); a file the agent's
+            // uid owns is exactly what a compromised game server could write
+            let tmp = tempfile::tempdir().unwrap();
+            let f = key_file(tmp.path(), "RWdevkey");
+            assert!(root_apply_pubkey(&f, euid().wrapping_add(1)).is_err());
+        }
+
+        #[test]
+        fn writable_override_or_dir_is_refused() {
+            let tmp = tempfile::tempdir().unwrap();
+            let f = key_file(tmp.path(), "RWdevkey");
+            chmod(&f, 0o664);
+            assert!(
+                root_apply_pubkey(&f, euid()).is_err(),
+                "group-writable file"
+            );
+            chmod(&f, 0o646);
+            assert!(
+                root_apply_pubkey(&f, euid()).is_err(),
+                "world-writable file"
+            );
+            chmod(&f, 0o644);
+            chmod(f.parent().unwrap(), 0o777);
+            assert!(root_apply_pubkey(&f, euid()).is_err(), "world-writable dir");
+            chmod(f.parent().unwrap(), 0o755);
+            assert!(root_apply_pubkey(&f, euid()).is_ok());
+        }
+
+        #[test]
+        fn symlinked_override_is_refused() {
+            let tmp = tempfile::tempdir().unwrap();
+            let f = key_file(tmp.path(), "RWdevkey");
+            let link = f.with_file_name("link.pub");
+            std::os::unix::fs::symlink(&f, &link).unwrap();
+            assert!(root_apply_pubkey(&link, euid()).is_err());
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn staged_symlink_is_not_followed() {
+            let tmp = tempfile::tempdir().unwrap();
+            let real = tmp.path().join("real");
+            std::fs::write(&real, b"bytes").unwrap();
+            let link = tmp.path().join("pkg.deb");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(read_staged(&link, 1024).is_err());
+            assert_eq!(read_staged(&real, 1024).unwrap(), b"bytes");
+            assert!(read_staged(&real, 2).is_err(), "size cap");
+        }
     }
 }

@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -40,13 +41,15 @@ type RelayConf struct {
 // Server implements gen.StrictServerInterface.
 type Server struct {
 	Store *store.Store
-	Auth  auth.Provider
+	Auth  *auth.Local
 	// Non-nil in federated mode (hosted CP): enables /v1/auth/external.
 	Federation *auth.Federation
 	Cfg        Config
 	Recon      *reconciler.Reconciler
 	RelayKey   ed25519.PrivateKey // CP signing key for relay tokens
 	Log        *slog.Logger
+
+	linkFails *failLimiter // failed device-link lookups; set by NewHandler
 }
 
 type ctxKey int
@@ -86,6 +89,19 @@ func errResp(code gen.ErrorCode, msg string, details map[string]any) error {
 	return &apiError{code: code, msg: msg}
 }
 
+// storeErr maps store.ErrConflict and store.ErrNotFound to 409 and 404 with
+// the given messages (an empty conflict message leaves ErrConflict alone);
+// other errors pass through.
+func storeErr(err error, conflict, notFound string) error {
+	switch {
+	case conflict != "" && errors.Is(err, store.ErrConflict):
+		return errResp(gen.Conflict, conflict, nil)
+	case errors.Is(err, store.ErrNotFound):
+		return errResp(gen.NotFound, notFound, nil)
+	}
+	return err
+}
+
 type apiError struct {
 	code    gen.ErrorCode
 	msg     string
@@ -102,7 +118,7 @@ func statusFor(code gen.ErrorCode) int {
 		return http.StatusForbidden
 	case gen.Unauthorized:
 		return http.StatusUnauthorized
-	case gen.StaleEpoch, gen.LatestSaveUnavailable, gen.Conflict:
+	case gen.StaleEpoch, gen.LatestSaveUnavailable, gen.NoReachableSave, gen.Conflict:
 		return http.StatusConflict
 	case gen.LimitExceeded:
 		return http.StatusForbidden
@@ -255,6 +271,10 @@ func (s *Server) agentAuth(next http.Handler) http.Handler {
 			return
 		}
 		body, err := io.ReadAll(r.Body)
+		if tooLarge(err) {
+			writeErr(w, http.StatusRequestEntityTooLarge, gen.LimitExceeded, "request body too large", nil)
+			return
+		}
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, gen.Validation, "body read failed", nil)
 			return

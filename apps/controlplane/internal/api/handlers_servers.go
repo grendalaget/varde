@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -402,8 +403,8 @@ func (s *Server) DeleteServer(ctx context.Context, req gen.DeleteServerRequestOb
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Store.DeleteServer(ctx, req.ServerId); err != nil {
-		return nil, err
+	if err := s.Store.DeleteServer(ctx, req.ServerId, s.Store.NowMs()); err != nil {
+		return nil, storeErr(err, "stop the server first", "server not found")
 	}
 	s.Recon.WakeGroup(srv.GroupID)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.delete", srv.ID, nil)
@@ -431,9 +432,6 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 		// ended 'failed'. An explicit start clears the crash-loop guard
 		// and activates normally below.
 	}
-	if err := s.Store.UpdateServerDesired(ctx, srv.ID, "running", s.Store.NowMs()); err != nil {
-		return nil, err
-	}
 	_ = s.Store.EmitEvent(ctx, s.Store.DB, srv.GroupID, &srv.ID, nil, "server.start_requested", nil)
 	_ = s.Store.Audit(ctx, s.Store.DB, &srv.GroupID, "user", u.ID, "server.start", srv.ID, nil)
 
@@ -447,14 +445,19 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 			allowOlder = *req.Body.AllowOlderSnapshot
 		}
 	}
-	srv.DesiredState = "running"
+	// desired=running is written with the execution, so a refused start
+	// leaves it as it was
 	if err := s.Recon.ActivateNormal(ctx, srv, pref, allowOlder); err != nil {
-		// roll desired back to stopped on hard failure
 		if ae := apiActivationErr(err); ae != nil {
-			_ = s.Store.UpdateServerDesired(ctx, srv.ID, "stopped", s.Store.NowMs())
 			return nil, ae
 		}
-		return nil, err
+		// a concurrent /start won the epoch bump: the start already happened
+		if !errors.Is(err, store.ErrEpochConflict) {
+			return nil, err
+		}
+		if _, aerr := s.Store.ActiveExecution(ctx, srv.ID); aerr != nil {
+			return nil, err
+		}
 	}
 	s.Recon.WakeGroup(srv.GroupID)
 	// re-read for the fresh epoch/observed state

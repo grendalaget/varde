@@ -988,9 +988,11 @@ async fn link_and_describe(app: &AppHandle) -> String {
     }
 }
 
+/// NUL-terminated UTF-16 for Win32 W calls; takes `&str` and paths alike.
 #[cfg(windows)]
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+pub(crate) fn wide(s: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    s.as_ref().encode_wide().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(windows)]
@@ -1034,27 +1036,48 @@ fn relink_window(_app: &AppHandle) {
 /// surfaces as an error the caller can show or ignore.
 #[cfg(windows)]
 fn elevate_self(arg: &str) -> Result<(), String> {
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let (verb, file, args) = (wide("runas"), wide(&exe.display().to_string()), wide(arg));
-    // SAFETY: NUL-terminated UTF-16 strings that outlive the call. Declining
-    // the UAC prompt just returns an error code (<= 32).
-    let rc = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            file.as_ptr(),
-            args.as_ptr(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
+    run_elevated(&exe, arg).map_err(|e| format!("{e:#}"))
+}
+
+/// ShellExecuteExW "runas": the only way to raise the UAC prompt —
+/// CreateProcess (std::process::Command) refuses a requireAdministrator
+/// manifest (varde-setup's) with ERROR_ELEVATION_REQUIRED. Returns once the
+/// elevated process exists; declining the prompt is an error.
+#[cfg(windows)]
+pub(crate) fn run_elevated(file: &std::path::Path, args: &str) -> anyhow::Result<()> {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
     };
-    if rc as usize > 32 {
-        Ok(())
-    } else {
-        Err("the administrator prompt was declined".to_string())
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let (verb, path, params) = (wide("runas"), wide(file), wide(args));
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        // NOCLOSEPROCESS: return only once the process exists (and hand us
+        // its handle); FLAG_NO_UI: errors come back to us, not a shell dialog
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
+        lpVerb: verb.as_ptr(),
+        lpFile: path.as_ptr(),
+        lpParameters: params.as_ptr(),
+        nShow: SW_SHOWNORMAL,
+        ..Default::default()
+    };
+    // SAFETY: `info` is sized and zero-initialised; the NUL-terminated UTF-16
+    // buffers it points to outlive the call.
+    let ok = unsafe { ShellExecuteExW(&mut info) };
+    if ok == 0 {
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() == Some(ERROR_CANCELLED as i32) {
+            anyhow::bail!("the administrator prompt was declined");
+        }
+        return Err(e.into());
     }
+    if !info.hProcess.is_null() {
+        // SAFETY: a process handle ShellExecuteExW opened for us; closed once.
+        unsafe { CloseHandle(info.hProcess) };
+    }
+    Ok(())
 }
 
 // ---- commands for the link window (typed; no generic passthrough) ----

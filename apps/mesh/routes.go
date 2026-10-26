@@ -145,7 +145,7 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			// would otherwise never be reaped.
 			for key, f := range rt.flows {
 				if f.hostNodeID != prevHost || f.epoch != prevEpoch {
-					f.close()
+					f.closeLocked()
 					delete(rt.flows, key)
 				}
 			}
@@ -155,7 +155,7 @@ func (rt *routeState) apply(r *meshv1.ServiceRoute) error {
 			go rt.reapDrainedFlows(rt.drainDeadline)
 		} else {
 			for _, f := range rt.flows {
-				f.close()
+				f.closeLocked()
 			}
 			rt.flows = map[udpFlowKey]*udpFlow{}
 		}
@@ -190,7 +190,7 @@ func (rt *routeState) endDrainLocked() {
 	rt.drainHost, rt.drainEpoch = "", 0
 	for key, f := range rt.flows {
 		if f.hostNodeID == host && f.epoch == epoch {
-			f.close()
+			f.closeLocked()
 			delete(rt.flows, key)
 		}
 	}
@@ -209,7 +209,7 @@ func (rt *routeState) closeAll() {
 	}
 	rt.udpLn = nil
 	for _, f := range rt.flows {
-		f.close()
+		f.closeLocked()
 	}
 	rt.flows = nil
 }
@@ -305,6 +305,7 @@ func spliceTCP(a, b net.Conn) {
 
 type udpFlow struct {
 	id         uint64
+	key        udpFlowKey // rt.flows entry; removed on close
 	src        *net.UDPAddr
 	hostNodeID string       // host this flow was opened under (drain scoping)
 	epoch      uint64       // epoch this flow was opened under
@@ -318,20 +319,50 @@ type udpFlow struct {
 	local      *net.UDPConn // when host==local
 }
 
+// close ends the flow and drops its rt.flows entry, so the client's next
+// packet opens a fresh flow instead of feeding one the host already forgot.
+// Caller must not hold rt.mu; use closeLocked under it.
 func (f *udpFlow) close() {
-	if f.closed.CompareAndSwap(false, true) {
-		close(f.done)
-		if f.peer != nil {
-			f.peer.removeOutboundFlow(f.id)
-		}
-		if f.stream != nil {
-			_ = f.stream.Close()
-			f.stream.CancelRead(0)
-		}
-		if f.local != nil {
-			_ = f.local.Close()
-		}
+	if !f.shutdown() || f.rt == nil {
+		return
 	}
+	f.rt.mu.Lock()
+	f.removeLocked()
+	f.rt.mu.Unlock()
+}
+
+// closeLocked is close for callers holding rt.mu.
+func (f *udpFlow) closeLocked() {
+	if f.shutdown() && f.rt != nil {
+		f.removeLocked()
+	}
+}
+
+// removeLocked deletes f's map entry unless a newer flow already took the
+// key. Caller holds rt.mu.
+func (f *udpFlow) removeLocked() {
+	if f.rt.flows[f.key] == f {
+		delete(f.rt.flows, f.key)
+	}
+}
+
+// shutdown releases the flow's resources; true only for the first call.
+func (f *udpFlow) shutdown() bool {
+	if !f.closed.CompareAndSwap(false, true) {
+		return false
+	}
+	close(f.done)
+	if f.peer != nil {
+		f.peer.removeOutboundFlow(f.id)
+	}
+	if f.stream != nil {
+		_ = f.stream.Close()
+		f.stream.CancelRead(0)
+	}
+	if f.local != nil {
+		_ = f.local.Close()
+	}
+	return true
 }
 
 func (f *udpFlow) touch() { f.lastUsed.Store(time.Now().UnixNano()) }
@@ -349,10 +380,8 @@ func (f *udpFlow) send(payload []byte) {
 		return
 	}
 	if err := conn.SendDatagram(meshproto.EncodeFlowDatagram(f.id, payload)); err != nil {
-		f.peer.bytesTx.Add(uint64(len(payload)))
 		// oversize datagrams are dropped (and counted) per spec
-		var tooLarge *quic.DatagramTooLargeError
-		if errors.As(err, &tooLarge) {
+		if tooLarge := datagramTooLarge(err); tooLarge != nil {
 			rtMetricDrop(f.rt.n)
 			f.rt.n.log.Debug("oversized UDP datagram dropped", "service", f.rt.serviceID, "direction", "client_to_host", "bytes", len(payload), "max_datagram_payload", tooLarge.MaxDatagramPayloadSize)
 			return
@@ -361,6 +390,21 @@ func (f *udpFlow) send(payload []byte) {
 		return
 	}
 	f.peer.bytesTx.Add(uint64(len(payload)))
+}
+
+// isDatagramTooLarge matches quic-go's oversize-datagram error. errors.Is
+// with a zero-valued target never matches: its Is compares
+// MaxDatagramPayloadSize.
+func isDatagramTooLarge(err error) bool {
+	return datagramTooLarge(err) != nil
+}
+
+func datagramTooLarge(err error) *quic.DatagramTooLargeError {
+	var tooLarge *quic.DatagramTooLargeError
+	if errors.As(err, &tooLarge) {
+		return tooLarge
+	}
+	return nil
 }
 
 func rtMetricDrop(n *Node) {
@@ -388,7 +432,7 @@ func (rt *routeState) udpReadLoop(c *net.UDPConn, port uint32) {
 		key := udpFlowKey{port, src.AddrPort()}
 		f := rt.flows[key]
 		rt.mu.Unlock()
-		if f == nil {
+		if f == nil || f.closed.Load() {
 			f = rt.openFlow(key, c, src, port)
 			if f == nil {
 				continue // no host; drop
@@ -398,18 +442,26 @@ func (rt *routeState) udpReadLoop(c *net.UDPConn, port uint32) {
 	}
 }
 
+// openFlow opens a flow for key. rt.mu is held only to snapshot host/epoch
+// and to insert: resolving the target takes n.mu (SetRoutes holds n.mu
+// while taking rt.mu) and the stream open can take seconds.
 func (rt *routeState) openFlow(key udpFlowKey, c *net.UDPConn, src *net.UDPAddr, port uint32) *udpFlow {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if f := rt.flows[key]; f != nil {
+	if rt.closed {
+		rt.mu.Unlock()
+		return nil
+	}
+	if f := rt.flows[key]; f != nil && !f.closed.Load() {
+		rt.mu.Unlock()
 		return f
 	}
 	host, epoch := rt.host, rt.epoch
+	rt.mu.Unlock()
 	if host == "" {
 		return nil
 	}
 	f := &udpFlow{
-		id: rt.n.flowSeq.Add(1), src: src, port: port, rt: rt,
+		id: rt.n.flowSeq.Add(1), key: key, src: src, port: port, rt: rt,
 		hostNodeID: host, epoch: epoch,
 		done: make(chan struct{}),
 	}
@@ -424,7 +476,6 @@ func (rt *routeState) openFlow(key udpFlowKey, c *net.UDPConn, src *net.UDPAddr,
 			return nil
 		}
 		f.local = lc
-		go rt.localFlowRead(f, c, lc, src)
 	} else {
 		peer := rt.n.peer(host)
 		if peer == nil {
@@ -443,15 +494,35 @@ func (rt *routeState) openFlow(key udpFlowKey, c *net.UDPConn, src *net.UDPAddr,
 		f.peer = peer
 		f.stream = st
 		peer.registerOutboundFlow(f.id, f)
+	}
+
+	rt.mu.Lock()
+	if rt.closed || rt.host != host || rt.epoch != epoch {
+		// route closed or moved while we were opening
+		rt.mu.Unlock()
+		f.close()
+		return nil
+	}
+	if other := rt.flows[key]; other != nil && !other.closed.Load() {
+		// another packet from this client won the race
+		rt.mu.Unlock()
+		f.close()
+		return other
+	}
+	rt.flows[key] = f
+	rt.mu.Unlock()
+
+	if f.local != nil {
+		go rt.localFlowRead(f, c, f.local, src)
+	} else {
 		go func() {
 			// peer closes the flow when the stream dies
 			buf := make([]byte, 1)
-			_, _ = st.Read(buf)
+			_, _ = f.stream.Read(buf)
 			f.close()
 		}()
 	}
-	rt.flows[key] = f
-	go rt.reapFlow(key, f)
+	go rt.reapFlow(f)
 	return f
 }
 
@@ -478,7 +549,7 @@ func (rt *routeState) localFlowRead(f *udpFlow, listen *net.UDPConn, lc *net.UDP
 }
 
 // reapFlow closes flows idle past the timeout.
-func (rt *routeState) reapFlow(key udpFlowKey, f *udpFlow) {
+func (rt *routeState) reapFlow(f *udpFlow) {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
@@ -488,9 +559,6 @@ func (rt *routeState) reapFlow(key udpFlowKey, f *udpFlow) {
 		case <-t.C:
 			if time.Since(time.Unix(0, f.lastUsed.Load())) > rt.n.timings.UDPFlowIdle {
 				f.close()
-				rt.mu.Lock()
-				delete(rt.flows, key)
-				rt.mu.Unlock()
 				return
 			}
 		}

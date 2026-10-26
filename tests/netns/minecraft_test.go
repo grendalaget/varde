@@ -343,15 +343,39 @@ func (e *gameEnv) waitMinecraftFrom(serverID, wantHost, clientNS string, d time.
 
 // ---------- scenario 1 ----------
 
-func TestMinecraftFailover(t *testing.T) {
+func TestMinecraftFailover(t *testing.T) { runMinecraftFailover(t, nil) }
+
+// TestMinecraftFastLeaseFailover runs the hard-kill failover with production
+// timings (5 s heartbeat, 20 s classic lease, 5 s fence margin): agents renew
+// the 8 s fast lease every second, so the replacement must be playable well
+// before a classic lease could even expire.
+func TestMinecraftFastLeaseFailover(t *testing.T) {
+	runMinecraftFailover(t, &cpOpts{
+		LeaseTTLms:  20000,
+		HeartbeatMs: 5000,
+		SuspectMs:   15000,
+		OfflineMs:   30000,
+	})
+}
+
+func runMinecraftFailover(t *testing.T, prod *cpOpts) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
 	}
-	e := newGameEnv(t, mcNodeNames)
+	var e *gameEnv
+	if prod != nil {
+		e = newGameEnvOpts(t, mcNodeNames, *prod)
+	} else {
+		e = newGameEnv(t, mcNodeNames)
+	}
 	wd := startWatchdog(t, mcNodeNames, "server.jar")
 
 	for _, n := range mcNodeNames {
-		e.enroll(n, n == "nas")
+		if prod != nil {
+			e.enrollWithMargin(n, n == "nas", 5000)
+		} else {
+			e.enroll(n, n == "nas")
+		}
 	}
 	for _, n := range mcNodeNames {
 		e.startAgent(n)
@@ -402,6 +426,9 @@ func TestMinecraftFailover(t *testing.T) {
 		return ok
 	})
 	t.Logf("RTO (kill -> first successful read): %s", rto)
+	if prod != nil && rto > 25*time.Second {
+		t.Fatalf("RTO %s with fast leases; a classic 20 s lease alone would be ~20 s", rto)
+	}
 
 	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
 	if got0 != n1 {
@@ -1753,5 +1780,56 @@ func TestMinecraftShutdownHandoff(t *testing.T) {
 	if !requested {
 		t.Fatalf("missing server.handoff_requested event: %s", body)
 	}
+	wd.check(t)
+}
+
+// TestMinecraftHotStandby: while arne hosts, the CP makes kari the hot
+// standby — kari pre-installs the deployment and receives every snapshot —
+// so after arne's namespace is killed, recovery lands on kari and restores
+// from its local copy.
+func TestMinecraftHotStandby(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, name := range mcNodeNames {
+		e.enroll(name, name == "nas")
+	}
+	for _, name := range mcNodeNames {
+		e.startAgent(name)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-hot-standby", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+
+	kariDeployments := filepath.Join(e.nodes["kari"].dataDir, "deployments")
+	waitFor(t, 5*time.Minute, "kari pre-installed the deployment", func() bool {
+		marks, _ := filepath.Glob(filepath.Join(kariDeployments, "*", ".varde-prepared"))
+		return len(marks) > 0
+	})
+	t.Logf("kari pre-installed the deployment while arne hosts")
+
+	nonce := randNonce(t)
+	ref := e.botWrite("player", svc, 0, nonce, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	// the standby's copy is what this test is about; whether the anchor
+	// also gets one depends on it being online when the save is taken
+	e.waitCommittedReplicas(serverID, "kari")
+	t.Logf("committed save replicated to the standby")
+
+	killNamespace(t, "arne")
+	killedAt := time.Now()
+	svc = e.waitMinecraft(serverID, "kari", 3*time.Minute)
+	got, blocks, ok := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
+	if !ok || got != nonce {
+		t.Fatalf("col0 after failover: ok=%v nonce=%q blocks=%v, want %q", ok, got, blocks, nonce)
+	}
+	t.Logf("failover to the standby: readable on kari %.1fs after arne was killed", time.Since(killedAt).Seconds())
 	wd.check(t)
 }

@@ -43,7 +43,7 @@ func (n *Node) BindInternalForward(peerID, name string) (string, string, error) 
 		return "", "", err
 	}
 	f := &internalForward{ln: ln, peer: peer, name: name}
-	id := fmt.Sprintf("fwd_%d", time.Now().UnixNano())
+	id := fmt.Sprintf("fwd_%d", n.forwardSeq.Add(1))
 	n.mu.Lock()
 	n.forwards[id] = f
 	n.mu.Unlock()

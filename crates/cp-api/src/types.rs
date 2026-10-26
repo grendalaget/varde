@@ -101,6 +101,9 @@ pub struct Capabilities {
     pub draining: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lease_profile: Option<String>,
+    /// Renews leases via /v1/agent/leases, so the CP may use a short TTL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_lease: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +321,9 @@ pub struct AgentDirectives {
     pub lease_ttl_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directives_digest: Option<String>,
+    /// Set when this node gets fast leases: renew at this interval.
+    #[serde(default)]
+    pub lease_renew_interval_ms: Option<i64>,
     pub node: NodeFlags,
     #[serde(default, deserialize_with = "null_vec")]
     pub executions: Vec<ExecutionDirective>,
@@ -331,6 +337,17 @@ pub struct AgentDirectives {
     pub replication_tasks: Vec<ReplicationTask>,
     #[serde(default, deserialize_with = "null_vec")]
     pub delete_snapshots: Vec<String>,
+    /// Servers this node is the hot standby for (pre-install their deployment).
+    #[serde(default, deserialize_with = "null_vec")]
+    pub standby: Vec<StandbyDirective>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandbyDirective {
+    pub server_id: String,
+    pub deployment: Deployment,
+    #[serde(default)]
+    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -706,4 +723,29 @@ pub struct CrashReportBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrashReportAck {
     pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseRef {
+    pub execution_id: String,
+    pub server_id: String,
+    pub epoch: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenewLeasesRequest {
+    pub executions: Vec<LeaseRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenewedLease {
+    pub execution_id: String,
+    pub lease_expires_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenewLeasesResponse {
+    pub server_time_unix_ms: i64,
+    #[serde(default, deserialize_with = "null_vec")]
+    pub leases: Vec<RenewedLease>,
 }

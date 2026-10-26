@@ -34,12 +34,12 @@ device_links(user_code PK, device_code_hash UNIQUE, public_key, hostname, os, ar
              state{pending,approved,consumed,expired}, group_id, node_id, approved_by, expires_at, created_at)
 nodes(id, group_id, name, public_key UNIQUE, os, arch, agent_version, lease_profile{standard,short}, hosting_enabled, anchor, priority,
       max_memory_mb, max_cpu_percent, max_storage_bytes, admin_state{active,draining,disabled},
-      last_seen_at, created_at)
+      last_seen_at, created_at, deleted_at)
 node_status(node_id PK, status_json, mesh_json, updated_at)   -- latest heartbeat payload (capabilities, endpoints, paths)
 deployments(id, group_id, game_id, spec_json, digest, created_at)          -- immutable
 servers(id, group_id, name, game_id, deployment_id, desired_state{running,stopped}, observed_state,
         replication_factor, min_commit_replicas, snapshot_interval_s, preferred_node_id, epoch BIGINT,
-        config_json, created_at, updated_at)
+        config_json, created_at, updated_at, deleted_at)
 services(id, server_id UNIQUE, group_id, loopback_ip, ports_json, UNIQUE(group_id, loopback_ip))
 server_executions(id, server_id, node_id, epoch, state, action{run,stop}, stop_reason,
                   lease_expires_at, restore_snapshot_id, placement_json, health, message,
@@ -148,6 +148,14 @@ node, with matching epoch and not `stopped/failed`, the CP extends `lease_expire
 writing the response. Executions the node reports but which are not in `executions` must be stopped immediately by the
 agent (the CP has already moved on).
 
+**Fast leases.** An agent that reports `capabilities.fast_lease` gets a short lease (`--fast-lease-ttl-ms`, default
+8 s) and `lease_renew_interval_ms` (default 1 s) in its directives. While hosting it renews every held lease via
+`POST /v1/agent/leases {executions: [{execution_id, server_id, epoch}]}` between full heartbeats; the CP applies the
+same checks as above (active, held by caller, epoch match, not ended, **lease not yet expired**), never shortens a
+lease, never changes state, and returns `{server_time_unix_ms, leases: [{execution_id, lease_expires_at_unix_ms}]}`
+(rejected executions are omitted, so their deadline simply runs out). Agents without the capability keep the 20 s
+lease, so mixed versions are safe. A dead host is detected in ~8 s instead of ~20 s.
+
 Immediate transitions use `POST /v1/agent/executions/{id}/status {server_id, epoch, state, health, message}` so the
 UI does not wait for the next heartbeat. Mismatched `(server_id, epoch, node_id)` ⇒ 409 `stale_epoch`.
 
@@ -172,7 +180,7 @@ unrecoverable prepare/restore error, with `message`).
 * A new execution is created only when the server has **no** active execution. An active execution ends only by
   (a) agent reporting `stopped`/`failed`, or (b) the reconciler observing `now > lease_expires_at` (`end_reason=lost`).
 * **Agent fencing deadline** = `local_monotonic_at_request_send + (lease_expires_at − server_time) − fence_margin`
-  (`fence_margin` default 5 s). Because the send time precedes the CP's receive time, the agent always stops *before*
+  (`fence_margin` default 5 s, or 2 s for short-profile and fast leases; always capped at half the lease TTL). Because the send time precedes the CP's receive time, the agent always stops *before*
   the CP considers the lease expired, without clock synchronisation. When the deadline passes the agent kills the game
   (graceful attempt bounded to `fence_margin/2`, then hard kill) and marks the execution `fenced` locally; it never
   uploads snapshots for it.
@@ -185,6 +193,9 @@ unrecoverable prepare/restore error, with `message`).
   to the first report — not the whole download window.
 * The short profile is an availability trade-off: if a short-profile host loses network contact for more than about
   3 s, it fences itself and loses hosting. Fencing still guarantees that only one host can serve an execution.
+* Agents that advertise `fast_lease` get `min(8 s, profile lease)` (`--fast-lease-ttl-ms`) and renew it every
+  `lease_renew_interval_ms` (1 s, `--lease-renew-interval-ms`) via `POST /v1/agent/leases` between heartbeats, so a
+  dead standard-profile host is detected in about 8 s instead of 20 s without raising the heartbeat rate.
 
 ## Reconciler
 
@@ -192,10 +203,11 @@ One goroutine, tick 1 s (and woken by API mutations / heartbeats), processes ser
 
 | Condition | Action | Observed state |
 |---|---|---|
-| active exec, lease expired | end exec `lost`; emit `lease.expired` | `recovering` (if desired running) |
+| active exec, lease expired | end exec `lost`; emit `lease.expired`. Recovery treats the lost node as offline until it checks in again (it can still look `online` for up to 15 s) | `recovering` (if desired running) |
 | desired running, no active exec | `scheduler.Place(recovery = previous exec lost)`; create exec | `starting` / `recovering` |
 | desired running, placement impossible | emit `server.unschedulable` with reasons (rate-limited) | `failed` w/ message, retried every 15 s |
 | desired stopped, active exec action=run | set `action=stop, stop_reason=user` | `stopping` |
+| server running (serving exec `running`) | keep a hot standby: the scheduler's recovery pick excluding the host (restore size + holders, deployment cached bonus), sticky while still eligible; cleared when not running. Directives tell the standby to pre-install the deployment (`standby[]`), and every snapshot replicates there. Shutdown handoffs target it first | — |
 | server running on a `draining` node, driver can hand off (Minecraft), no open migration | open a warm migration to the scheduler's pick (source excluded); emit `server.handoff_requested`. No target ⇒ nothing; the agent's fallback stop + normal recovery apply | `migrating` |
 | warm migration whose source ended after saving past the staged snapshot, before the flip | abort (incoming exec ended); recovery restarts from the newer save | `recovering` |
 | migration requested | old exec `action=stop, stop_reason=migration`; after its final snapshot is `ready` on target and old exec ended → new exec on target restoring from it | `migrating` |
@@ -206,7 +218,11 @@ Restore selection when activating:
 * **Normal start**: newest non-invalid snapshot of the server. If none of its replicas are online, refuse with
   `409 latest_save_unavailable {snapshot_id, created_at, nodes}` unless the request sets `allow_older_snapshot:true`,
   in which case use the newest available. (This is the "Alice shut down her PC with the latest save" case — we never
-  silently fork.)
+  silently fork.) If no save is reachable at all, `allow_older_snapshot` refuses with `409 no_reachable_save` instead
+  of starting an empty world: a fresh start happens only for a server with no saves. `/start` writes
+  `desired=running` in the same transaction as the epoch bump and new execution, so a refused start leaves desired
+  as it was. The reconciler also activates a desired-running server with these rules unless its previous serving
+  execution was lost; a refused activation there just waits.
 * `source_node_ids` = online nodes with a `ready` replica; the chosen host gets the snapshot as `restore`.
 
 An execution that reports `failed` while restoring ends with `end_reason=restore_failed` and is retried as a recovery
@@ -260,6 +276,18 @@ GET /healthz  GET /readyz  GET /metrics  GET /v1/version  GET /v1/relay/public-k
 Server views returned to the UI include a computed `summary`: `hosting_on {node_id,name}`, `latest_safe_save
 {snapshot_id, created_at, replicas:[{node_id,name,anchor}]}`, `latest_save` (may be newer & not yet safe),
 `only_on_one_machine: bool`, `address "127.77.12.34:25565"`, `connection` per node.
+
+Deletes (SQLite runs with `foreign_keys` on, so both dialects enforce delete order):
+* **Server**: `409 conflict` while it has an open execution or migration. Otherwise soft-deleted (`deleted_at`):
+  hidden from every lookup and the reconciler, its service/route removed, every replica of its snapshots marked
+  `deleting`. The delete ack for the last copy purges the server and its history (an hourly leader sweep catches
+  any left behind).
+* **Machine**: soft-deleted (`deleted_at`, public key released for re-enrolment); hidden from every lookup, so agent
+  calls are rejected. Its replica rows and status go; a snapshot left without a `ready` copy becomes `invalid`
+  (remaining partial copies are deleted). Its serving execution runs out its lease and ends `lost` (fencing), then
+  recovery restarts the server elsewhere; migrations onto it fail.
+* **Group**: `409 conflict` while it has servers or machines; otherwise it and every row referencing it go in one
+  transaction.
 
 Agent endpoints (`/v1/agent/*`) are in the same OpenAPI file under tag `agent`, so the Rust agent's request/response
 types can be checked against it.

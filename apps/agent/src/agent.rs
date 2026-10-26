@@ -47,6 +47,11 @@ pub struct Agent {
     /// shutdown requested: drain executions while heartbeats, the mesh, the
     /// chunk server and replication keep running; refuse new work
     pub shutting_down: AtomicBool,
+    /// per-deployment install locks: an execution and a standby pre-install
+    /// of the same deployment never download into it concurrently
+    pub prepare_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// standby pre-installs in flight (deployment ids)
+    pub standby_inflight: Mutex<std::collections::HashSet<String>>,
     /// What the control plane last told us, for local status (tray).
     pub cp_view: Mutex<CpView>,
     /// Last update-check outcome; surfaced via Status.update + heartbeat.
@@ -58,6 +63,10 @@ pub struct CpView {
     pub node_name: String,
     pub group_name: String,
     pub heartbeat_interval_ms: i64,
+    /// Lease length the CP grants this node (shorter with fast leases).
+    pub lease_ttl_ms: i64,
+    /// Set when the CP wants /v1/agent/leases renewals at this interval.
+    pub lease_renew_interval_ms: Option<i64>,
     pub last_contact_unix_ms: i64,
     /// server_id -> latest committed snapshot created_at
     pub latest_safe_save: HashMap<String, i64>,

@@ -1,81 +1,10 @@
-import { FAVICON, LOCKUP, MARK } from "./brandPaths";
-import { cx } from "./ui";
+import { FAVICON } from "@varde/ui/brandPaths";
+import { Mark, type MarkState } from "@varde/ui/Logo";
+import { cx } from "@varde/ui/ui";
 
-/**
- * Brand v1 marks. Stones use currentColor (Tåke on Natt); Glød is only the lit
- * (host) stone. "lit": the host is up. "moving": the light hops between stones
- * (failover, loading). "idle": no stone is lit (mono).
- */
-export type MarkState = "lit" | "moving" | "idle";
-
-function stoneClass(state: MarkState, slot: 1 | 2 | 3) {
-  return cx("vd-h", `vd-h${slot}`, state === "idle" && "vd-unlit");
-}
-
-/** Horizontal lockup (mark + wordmark), dark-background variant. */
-export function Logo({
-  className = "h-8",
-  title = "Varde",
-}: {
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <svg
-      viewBox={LOCKUP.viewBox}
-      className={cx("vd w-auto text-foreground", className)}
-      role="img"
-      aria-label={title}
-    >
-      <title>{title}</title>
-      <path className="vd-s" d={LOCKUP.base} />
-      <path className="vd-s" d={LOCKUP.slab} />
-      <path className={stoneClass("lit", 2)} d={LOCKUP.peer} />
-      <path className={stoneClass("lit", 1)} d={LOCKUP.host} />
-      <path className={stoneClass("lit", 3)} d={LOCKUP.cap} />
-      <path className="vd-s" d={LOCKUP.word} />
-    </svg>
-  );
-}
-
-/**
- * The cairn alone. Uses the favicon art when rendered below 32 px
- * (`small`), per the brand rules.
- */
-export function Mark({
-  state = "lit",
-  small = false,
-  className = "h-8 w-8",
-  title,
-}: {
-  state?: MarkState;
-  small?: boolean;
-  className?: string;
-  title?: string;
-}) {
-  const a11y = title
-    ? { role: "img" as const, "aria-label": title }
-    : { "aria-hidden": true as const };
-  const p = small ? FAVICON : MARK;
-  return (
-    <svg
-      viewBox={p.viewBox}
-      className={cx(
-        "vd shrink-0",
-        state === "moving" && "vd-moving",
-        className,
-      )}
-      {...a11y}
-    >
-      {title && <title>{title}</title>}
-      <path className="vd-s" d={p.base} />
-      {!small && <path className="vd-s" d={MARK.slab} />}
-      <path className={stoneClass(state, 2)} d={p.peer} />
-      <path className={stoneClass(state, 1)} d={p.host} />
-      <path className={stoneClass(state, 3)} d={p.cap} />
-    </svg>
-  );
-}
+// The brand marks are shared with the tray and installer (packages/ui);
+// what follows builds the dashboard's own status marks on top of them.
+export { Logo, Mark, type MarkState } from "@varde/ui/Logo";
 
 /** Failover loader: the lit stone hops between stones. Static when reduced motion is on. */
 export function Loader({

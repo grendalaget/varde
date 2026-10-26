@@ -27,7 +27,7 @@ pub fn capabilities(
                 .chain(runtimes::provisionable().into_iter().map(String::from))
                 .collect(),
         ),
-        cached_deployments: Some(vec![]),
+        cached_deployments: Some(crate::standby::prepared_deployments(data_dir)),
         steam_apps: Some(
             if game_cs2::steam::detect(Some(&data_dir.join("deployments"))).is_some() {
                 vec![game_cs2::APP_ID.into()]
@@ -40,6 +40,7 @@ pub fn capabilities(
         agent_started_at: Some(started_at_ms),
         draining: Some(draining),
         lease_profile: Some(lease_profile.to_string()),
+        fast_lease: Some(true),
     }
 }
 
