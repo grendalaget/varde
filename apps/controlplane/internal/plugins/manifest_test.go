@@ -119,6 +119,47 @@ func TestLoadManifestRejectsSecretDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadManifestValidatesSecretFieldTypes(t *testing.T) {
+	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
+	tests := []struct {
+		name    string
+		field   Field
+		wantErr string
+	}{
+		{
+			name:    "bool",
+			field:   Field{Name: "enabled", Type: "bool", Secret: true},
+			wantErr: "enabled: only string fields can be marked secret",
+		},
+		{
+			name:    "multiselect",
+			field:   Field{Name: "regions", Type: "multiselect", Options: []string{"eu"}, Secret: true},
+			wantErr: "regions: only string fields can be marked secret",
+		},
+		{
+			name:  "string",
+			field: Field{Name: "token", Type: "string", Secret: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			manifest.Settings = append(manifest.Settings, tt.field)
+			path := writeManifest(t, t.TempDir(), "plugin.json", manifest)
+			_, err := Load([]string{path})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Load(%q) error = %v, want error containing %q", path, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Load(%q) error = %v, want nil", path, err)
+			}
+		})
+	}
+}
+
 func TestFieldValidateRequiredValues(t *testing.T) {
 	tests := []struct {
 		name  string
