@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use executor_api::{ProcessHandle, ProcessSpec};
+use executor_api::{Executor, ProcessHandle, ProcessSpec};
 use game_driver_api::*;
 use serde_json::Value;
 
+mod install_lock;
 mod rcon;
 pub mod steam;
 mod vdf;
@@ -86,9 +87,27 @@ impl Cs2Driver {
 
     async fn update_install(ctx: &DriverContext<'_>, dir: &Path) -> Result<()> {
         tokio::fs::create_dir_all(dir).await?;
+        let lock = install_lock::open(dir)?;
+        match fs2::FileExt::try_lock_exclusive(&lock) {
+            Ok(()) => (),
+            Err(e) if e.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+                if steam_app_installed(APP_ID, dir) && steam::binary(dir).is_file() {
+                    tracing::info!(install = %dir.display(), "CS2 install in use; skipping update");
+                    return Ok(());
+                }
+                return Err("cs2: incomplete install is locked by another process".into());
+            }
+            Err(e) => return Err(e.into()),
+        }
         check_install_space(dir, fs2::available_space(dir)?)
             .map_err(|e| format!("{e} at {}", dir.display()))?;
-        ctx.runtimes.steam_app_install(APP_ID, dir).await?;
+        if let Err(error) = ctx.runtimes.steam_app_install(APP_ID, dir).await {
+            if steam_app_installed(APP_ID, dir) && steam::binary(dir).is_file() {
+                tracing::warn!(install = %dir.display(), %error, "CS2 update failed; using complete install");
+                return Ok(());
+            }
+            return Err(error);
+        }
         if !steam::binary(dir).is_file() {
             return Err("cs2: installed server binary is missing".into());
         }
@@ -554,6 +573,22 @@ impl GameDriver for Cs2Driver {
             cwd,
             stdin: !cfg!(windows),
         })
+    }
+    async fn spawn(
+        &self,
+        ctx: &DriverContext<'_>,
+        executor: &dyn Executor,
+    ) -> Result<Box<dyn ProcessHandle>> {
+        let selected = Self::selected(ctx)?;
+        if selected.as_ref().is_some_and(|install| !install.managed) {
+            return executor.spawn(&self.process_spec(ctx)?).await;
+        }
+        let dir = selected.map_or_else(|| Self::install_dir(ctx), |install| install.dir);
+        let lock = install_lock::shared(dir.clone()).await?;
+        if !steam_app_installed(APP_ID, &dir) || !steam::binary(&dir).is_file() {
+            return Err("cs2: install became incomplete before launch".into());
+        }
+        install_lock::spawn(executor, &self.process_spec(ctx)?, lock).await
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
         let map = Self::map(ctx.config)?;

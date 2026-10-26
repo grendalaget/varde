@@ -7,6 +7,8 @@ use crate::{vdf, APP_ID};
 pub struct Install {
     pub dir: PathBuf,
     pub steamclient: Option<PathBuf>,
+    #[serde(default)]
+    pub managed: bool,
 }
 
 pub fn binary(dir: &Path) -> PathBuf {
@@ -39,6 +41,7 @@ fn install(dir: PathBuf, root: &Path) -> Option<Install> {
     Some(Install {
         dir,
         steamclient: libraries.into_iter().find(|p| p.is_file()),
+        managed: false,
     })
 }
 
@@ -204,7 +207,8 @@ pub fn in_deployments(deployments: &Path) -> Option<Install> {
     dirs.sort();
     for dir in dirs {
         if game_driver_api::steam_app_installed(APP_ID, &dir) {
-            if let Some(found) = install(dir, Path::new("")) {
+            if let Some(mut found) = install(dir, Path::new("")) {
+                found.managed = true;
                 return Some(found);
             }
         }

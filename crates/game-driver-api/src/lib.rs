@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use executor_api::{ProcessHandle, ProcessSpec};
+use executor_api::{Executor, ProcessHandle, ProcessSpec};
 pub use snapshot_store::PathPattern;
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -177,6 +177,13 @@ pub trait GameDriver: Send + Sync {
     /// Write config files into `server_dir`.
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()>;
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec>;
+    async fn spawn(
+        &self,
+        ctx: &DriverContext<'_>,
+        executor: &dyn Executor,
+    ) -> Result<Box<dyn ProcessHandle>> {
+        executor.spawn(&self.process_spec(ctx)?).await
+    }
     async fn probe(&self, ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<GameHealth>;
     /// Enter the snapshot barrier; returns Live or RequiresStop.
     async fn prepare_snapshot(

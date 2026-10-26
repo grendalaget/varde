@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
-use executor_api::{Executor, OutputStream, ProcessHandle};
+use executor_api::{OutputStream, ProcessHandle};
 use game_driver_api::{
     DeploymentSpec, DriverContext, GameDriver, GameHealth, PortBinding, PortSpec, SnapshotBarrier,
 };
@@ -379,9 +379,8 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
 
         ctl.set_phase(Phase::Starting);
         report(&agent, &ctl).await;
-        let spec = driver.process_spec(&ctx).map_err(dyn_err)?;
         ctl.clear_join_code();
-        let proc = agent.executor.spawn(&spec).await.map_err(dyn_err)?;
+        let proc = driver.spawn(&ctx, &agent.executor).await.map_err(dyn_err)?;
         let proc: Arc<dyn ProcessHandle> = Arc::from(proc);
         tracing::info!(exec = %dir.execution_id, pid = proc.pid(), "game process spawned");
         ctl.set_pgid(proc.pid());

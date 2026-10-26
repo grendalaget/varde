@@ -285,6 +285,7 @@ struct UpdatingRuntimes {
     calls: std::sync::Mutex<Vec<PathBuf>>,
     steamcmd: PathBuf,
     fail: bool,
+    invalidate: bool,
 }
 
 #[async_trait]
@@ -298,6 +299,12 @@ impl RuntimeProvider for UpdatingRuntimes {
         assert!(game_driver_api::steam_app_installed(app_id, dest));
         self.calls.lock().unwrap().push(dest.to_path_buf());
         if self.fail {
+            if self.invalidate {
+                std::fs::write(
+                    dest.join("steamapps/appmanifest_730.acf"),
+                    "\"AppState\" { \"StateFlags\" \"6\" }",
+                )?;
+            }
             return Err("update failed".into());
         }
         Ok(())
@@ -308,47 +315,51 @@ impl RuntimeProvider for UpdatingRuntimes {
     }
 }
 
+fn managed_install(root: &Path, owner: &str) -> (PathBuf, PathBuf, UpdatingRuntimes) {
+    let client = fake_steam_install(&root.join("fixture"));
+    let private = root.join("deployments/current");
+    std::fs::create_dir_all(&private).unwrap();
+    let server = root.join("deployments").join(owner).join("server");
+    std::fs::create_dir_all(server.parent().unwrap()).unwrap();
+    std::fs::rename(client, &server).unwrap();
+    std::fs::create_dir_all(server.join("steamapps")).unwrap();
+    std::fs::write(
+        server.join("steamapps/appmanifest_730.acf"),
+        "\"AppState\" { \"StateFlags\" \"4\" }",
+    )
+    .unwrap();
+    let runtime = root.join("runtime");
+    std::fs::create_dir_all(runtime.join("linux64")).unwrap();
+    std::fs::write(runtime.join("linux64/steamclient.so"), "library").unwrap();
+    let runtimes = UpdatingRuntimes {
+        calls: Default::default(),
+        steamcmd: runtime.join("steamcmd"),
+        fail: false,
+        invalidate: false,
+    };
+    (private, std::fs::canonicalize(server).unwrap(), runtimes)
+}
+
 #[tokio::test]
 async fn prepare_updates_complete_own_and_previous_steamcmd_installs_each_time() {
-    for (name, fail) in [("current", false), ("previous", false), ("current", true)] {
+    for (name, fail) in [
+        ("current", false),
+        ("previous", false),
+        ("current", true),
+        ("previous", true),
+    ] {
         let root = tempfile::tempdir().unwrap();
-        let client = fake_steam_install(&root.path().join("fixture"));
-        let private = root.path().join("deployments/current");
-        std::fs::create_dir_all(&private).unwrap();
-        let owner = root.path().join("deployments").join(name);
-        std::fs::create_dir_all(&owner).unwrap();
-        let server = owner.join("server");
-        std::fs::rename(client, &server).unwrap();
-        std::fs::create_dir_all(server.join("steamapps")).unwrap();
-        std::fs::write(
-            server.join("steamapps/appmanifest_730.acf"),
-            "\"AppState\" { \"StateFlags\" \"4\" }",
-        )
-        .unwrap();
-        let runtime = root.path().join("runtime");
-        std::fs::create_dir_all(runtime.join("linux64")).unwrap();
-        std::fs::write(runtime.join("linux64/steamclient.so"), "library").unwrap();
-        let runtimes = UpdatingRuntimes {
-            calls: Default::default(),
-            steamcmd: runtime.join("steamcmd"),
-            fail,
-        };
+        let (private, server, mut runtimes) = managed_install(root.path(), name);
+        runtimes.fail = fail;
         let cfg = json!({});
         let deployment = DeploymentSpec::parse(&json!({}));
         let mut ctx = context(&private, &cfg, &deployment);
         ctx.runtimes = &runtimes;
         for _ in 0..2 {
-            let result = Cs2Driver::prepare_install(&ctx, None).await;
-            if fail {
-                assert!(result.unwrap_err().to_string().contains("update failed"));
-                assert!(!private.join("cs2-install.json").exists());
-            } else {
-                result.unwrap();
-                assert_eq!(
-                    Cs2Driver::binary(&ctx).unwrap(),
-                    steam::binary(&std::fs::canonicalize(&server).unwrap())
-                );
-                #[cfg(target_os = "linux")]
+            Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+            assert_eq!(Cs2Driver::binary(&ctx).unwrap(), steam::binary(&server));
+            #[cfg(target_os = "linux")]
+            if !fail {
                 assert_eq!(
                     std::fs::read(steam::binary(&server).with_file_name("steamclient.so")).unwrap(),
                     b"library"
@@ -360,6 +371,141 @@ async fn prepare_updates_complete_own_and_previous_steamcmd_installs_each_time()
             vec![std::fs::canonicalize(&server).unwrap(); 2]
         );
     }
+}
+
+#[tokio::test]
+async fn failed_update_that_leaves_incomplete_install_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let (private, server, mut runtimes) = managed_install(root.path(), "previous");
+    runtimes.fail = true;
+    runtimes.invalidate = true;
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(&private, &cfg, &deployment);
+    ctx.runtimes = &runtimes;
+    let error = Cs2Driver::prepare_install(&ctx, None).await.unwrap_err();
+    assert!(error.to_string().contains("update failed"));
+    assert!(!steam_app_installed(APP_ID, &server));
+    assert_eq!(runtimes.calls.lock().unwrap().len(), 1);
+    assert!(!private.join("cs2-install.json").exists());
+}
+
+struct LiveExecutor {
+    exited: tokio::sync::watch::Sender<bool>,
+    fail: bool,
+}
+
+#[async_trait]
+impl Executor for LiveExecutor {
+    fn kind(&self) -> &'static str {
+        "test"
+    }
+    async fn spawn(&self, _: &ProcessSpec) -> executor_api::Result<Box<dyn ProcessHandle>> {
+        if self.fail {
+            return Err("spawn failed".into());
+        }
+        Ok(Box::new(Process {
+            exited: Some(self.exited.clone()),
+            ..Process::default()
+        }))
+    }
+}
+
+#[tokio::test]
+async fn live_steamcmd_install_is_locked_until_last_process_exits() {
+    let root = tempfile::tempdir().unwrap();
+    let (private, server, runtimes) = managed_install(root.path(), "previous");
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(&private, &cfg, &deployment);
+    ctx.runtimes = &runtimes;
+    Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+    runtimes.calls.lock().unwrap().clear();
+    let a = LiveExecutor {
+        exited: tokio::sync::watch::channel(false).0,
+        fail: false,
+    };
+    let b = LiveExecutor {
+        exited: tokio::sync::watch::channel(false).0,
+        fail: false,
+    };
+    let first = Cs2Driver.spawn(&ctx, &a).await.unwrap();
+    let second = Cs2Driver.spawn(&ctx, &b).await.unwrap();
+    let lock = install_lock::open(&server).unwrap();
+    assert!(fs2::FileExt::try_lock_exclusive(&lock).is_err());
+    Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+    assert!(runtimes.calls.lock().unwrap().is_empty());
+    a.exited.send_replace(true);
+    first.wait().await.unwrap();
+    assert!(fs2::FileExt::try_lock_exclusive(&lock).is_err());
+    second.kill().await.unwrap();
+    second.wait().await.unwrap();
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+    fs2::FileExt::unlock(&lock).unwrap();
+    Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+    assert_eq!(runtimes.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn failed_spawn_and_dropped_process_handles_do_not_leave_stale_locks() {
+    let root = tempfile::tempdir().unwrap();
+    let (private, server, _) = managed_install(root.path(), "previous");
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let ctx = context(&private, &cfg, &deployment);
+    let lock = install_lock::open(&server).unwrap();
+    fs2::FileExt::lock_shared(&lock).unwrap();
+    Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+    fs2::FileExt::unlock(&lock).unwrap();
+    let mut executor = LiveExecutor {
+        exited: tokio::sync::watch::channel(false).0,
+        fail: true,
+    };
+    assert!(Cs2Driver.spawn(&ctx, &executor).await.is_err());
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+    fs2::FileExt::unlock(&lock).unwrap();
+    executor.fail = false;
+    let process = Cs2Driver.spawn(&ctx, &executor).await.unwrap();
+    drop(process);
+    assert!(fs2::FileExt::try_lock_exclusive(&lock).is_err());
+    executor.exited.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fs2::FileExt::try_lock_exclusive(&lock).is_err() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn launch_waits_for_updater_and_rechecks_manifest() {
+    let root = tempfile::tempdir().unwrap();
+    let (private, server, _) = managed_install(root.path(), "previous");
+    let cfg = json!({});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let ctx = context(&private, &cfg, &deployment);
+    let lock = install_lock::open(&server).unwrap();
+    fs2::FileExt::lock_shared(&lock).unwrap();
+    Cs2Driver::prepare_install(&ctx, None).await.unwrap();
+    fs2::FileExt::unlock(&lock).unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    let executor = LiveExecutor {
+        exited: tokio::sync::watch::channel(false).0,
+        fail: true,
+    };
+    let (launch, ()) = tokio::join!(Cs2Driver.spawn(&ctx, &executor), async {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        std::fs::write(
+            server.join("steamapps/appmanifest_730.acf"),
+            "\"AppState\" { \"StateFlags\" \"6\" }",
+        )
+        .unwrap();
+        fs2::FileExt::unlock(&lock).unwrap();
+    });
+    let error = launch.err().unwrap();
+    assert!(error.to_string().contains("incomplete before launch"));
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
 }
 
 #[tokio::test]
@@ -409,6 +555,7 @@ fn context<'a>(
 
 #[derive(Default)]
 struct Process {
+    exited: Option<tokio::sync::watch::Sender<bool>>,
     fail_stdin: bool,
     stall: bool,
     interrupts: AtomicUsize,
@@ -438,6 +585,12 @@ impl ProcessHandle for Process {
     }
     async fn wait(&self) -> Result<ExitStatus> {
         self.waits.fetch_add(1, Ordering::SeqCst);
+        if let Some(exited) = &self.exited {
+            let mut rx = exited.subscribe();
+            while !*rx.borrow_and_update() {
+                rx.changed().await?;
+            }
+        }
         if self.stall {
             std::future::pending().await
         } else {
@@ -456,6 +609,9 @@ impl ProcessHandle for Process {
     }
     async fn kill(&self) -> Result<()> {
         self.kills.fetch_add(1, Ordering::SeqCst);
+        if let Some(exited) = &self.exited {
+            exited.send_replace(true);
+        }
         Ok(())
     }
     fn resource_usage(&self) -> Option<ResourceUsage> {

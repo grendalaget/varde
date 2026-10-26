@@ -31,6 +31,10 @@ install budget and SteamCMD runtime requirement for those nodes. Restore and
 deployment artifact space checks still apply. Other nodes retain the SteamCMD
 fallback and 75 GB install budget; incomplete downloads count allocated bytes
 already on disk, and routine complete-install updates skip full validation.
+Varde-owned installs update only while idle: running servers hold shared OS file
+locks, and SteamCMD requires an exclusive lock. A failed update may use the
+existing install only if its manifest still reports complete and the binary exists.
+Steam-client installs remain Steam's responsibility and never run SteamCMD.
 Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
 
 The driver launches the original binary. Current Linux and Windows builds ignore
