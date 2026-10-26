@@ -12,9 +12,14 @@ impl SweepGate {
     }
 
     async fn wait(&self) -> Result<(), String> {
-        self.0.clone().wait_for(Option::is_some).await
+        self.0
+            .clone()
+            .wait_for(Option::is_some)
+            .await
             .map_err(|_| "CS2 firewall sweep task stopped".to_string())?
-            .as_ref().unwrap().clone()
+            .as_ref()
+            .unwrap()
+            .clone()
     }
 }
 
@@ -30,15 +35,21 @@ fn quote(value: &str) -> String {
 }
 
 fn sweep_script() -> String {
-    format!("$ports=@((Get-NetUDPEndpoint).LocalPort)+@((Get-NetTCPConnection | Where-Object {{ $_.State -eq 'Listen' }}).LocalPort); @($policy.Rules) | Where-Object {{ $_.Name.StartsWith({}, [StringComparison]::Ordinal) }} | ForEach-Object {{ if ($ports -notcontains [int]$_.LocalPorts) {{ $unique={}+[Guid]::NewGuid().ToString('N'); $_.Name=$unique; $policy.Rules.Remove($unique) }} else {{ Write-Warning ('Retaining CS2 rule for a port still in use: '+$_.Name) }} }}", quote(PREFIX), quote(&format!("{PREFIX}stale ")))
+    format!("$ports=@((Get-NetUDPEndpoint).LocalPort)+@((Get-NetTCPConnection | Where-Object {{ $_.State -eq 'Listen' }}).LocalPort); @($policy.Rules) | Where-Object {{ $_.Name.StartsWith({}, [StringComparison]::Ordinal) }} | Group-Object -Property Name | ForEach-Object {{ $duplicate=$_.Count -gt 1; $_.Group | ForEach-Object {{ if ($ports -notcontains [int]$_.LocalPorts) {{ $name=$_.Name; if ($duplicate) {{ $name=$name+' '+[Guid]::NewGuid().ToString('N')+' '+$_.Protocol; $_.Name=$name }}; $policy.Rules.Remove($name) }} else {{ Write-Warning ('Retaining CS2 rule for a port still in use: '+$_.Name) }} }} }}", quote(PREFIX))
 }
 
 fn cleanup_script(names: &[String; 2]) -> String {
-    format!("foreach ($name in @({},{})) {{ $policy.Rules.Remove($name) }}", quote(&names[0]), quote(&names[1]))
+    format!(
+        "foreach ($name in @({},{})) {{ $policy.Rules.Remove($name) }}",
+        quote(&names[0]),
+        quote(&names[1])
+    )
 }
 
 fn install_script(names: &[String; 2], port: u16) -> Result<String, &'static str> {
-    if port == 0 { return Err("cs2: firewall port must be nonzero"); }
+    if port == 0 {
+        return Err("cs2: firewall port must be nonzero");
+    }
     let mut script = "foreach ($p in @(1,2,4)) { if (!$policy.FirewallEnabled($p)) { throw 'Windows Firewall profile is disabled; refusing to expose CS2 ports' } }; ".to_string();
     for (name, protocol) in names.iter().zip([6, 17]) {
         script.push_str(&format!("$rule=New-Object -ComObject HNetCfg.FWRule; $rule.Name={}; $rule.Description='Varde private CS2 port'; $rule.Protocol={protocol}; $rule.LocalPorts='{port}'; $rule.Direction=1; $rule.Action=0; $rule.Profiles=2147483647; $rule.Enabled=$true; $policy.Rules.Add($rule); ", quote(name)));
@@ -50,13 +61,6 @@ fn install_script(names: &[String; 2], port: u16) -> Result<String, &'static str
 mod platform {
     use super::*;
 
-    #[test]
-    fn sweep_ignores_time_wait_and_connected_tcp_sockets() {
-        let script = sweep_script();
-        assert!(script.contains("Get-NetUDPEndpoint"));
-        assert!(script.contains("Get-NetTCPConnection | Where-Object { $_.State -eq 'Listen' }"));
-        assert!(!script.contains("(Get-NetTCPConnection).LocalPort"));
-    }
     use executor_api::*;
     use std::os::windows::process::CommandExt;
     use std::sync::Arc;
@@ -82,10 +86,13 @@ mod platform {
 
     fn startup() -> &'static SweepGate {
         static SWEEP: std::sync::OnceLock<SweepGate> = std::sync::OnceLock::new();
-        SWEEP.get_or_init(|| SweepGate::start(async {
-            async { tokio::task::spawn_blocking(|| command(&sweep_script())).await? }.await
-                .map_err(|error: executor_api::DynError| error.to_string())
-        }))
+        SWEEP.get_or_init(|| {
+            SweepGate::start(async {
+                async { tokio::task::spawn_blocking(|| command(&sweep_script())).await? }
+                    .await
+                    .map_err(|error: executor_api::DynError| error.to_string())
+            })
+        })
     }
 
     pub fn start_sweep() {
@@ -183,8 +190,17 @@ mod tests {
     #[tokio::test]
     async fn background_sweep_only_blocks_consumers_and_caches_completion() {
         let (release, work) = tokio::sync::oneshot::channel();
-        let gate = SweepGate::start(async { work.await.unwrap() });
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), gate.wait()).await.is_err());
+        let (started, running) = tokio::sync::oneshot::channel();
+        let gate = SweepGate::start(async {
+            started.send(()).unwrap();
+            work.await.unwrap()
+        });
+        running.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), gate.wait())
+                .await
+                .is_err()
+        );
         release.send(Ok(())).unwrap();
         assert_eq!(gate.wait().await, Ok(()));
         assert_eq!(gate.wait().await, Ok(()));
@@ -206,7 +222,9 @@ mod tests {
         assert!(rule_names("a\nb", 0).is_err());
         assert_eq!(quote("a'b"), "'a''b'");
         let cleanup = cleanup_script(&names);
-        for name in &names { assert!(cleanup.contains(&quote(name))); }
+        for name in &names {
+            assert!(cleanup.contains(&quote(name)));
+        }
         assert!(cleanup.contains("$policy.Rules.Remove($name)"));
         assert!(!cleanup.contains(".Name="));
         assert_eq!(cleanup_script(&names), cleanup);
@@ -219,18 +237,30 @@ mod tests {
         assert!(sweep.contains("Get-NetTCPConnection | Where-Object { $_.State -eq 'Listen' }"));
         assert!(sweep.contains("StartsWith('Varde CS2 ', [StringComparison]::Ordinal)"));
         assert!(sweep.contains("$ports -notcontains [int]$_.LocalPorts"));
-        assert!(sweep.contains("$unique='Varde CS2 stale '+[Guid]::NewGuid().ToString('N')"));
-        assert!(sweep.contains("$_.Name=$unique; $policy.Rules.Remove($unique)"));
+        assert!(sweep.contains("Group-Object -Property Name"));
+        assert!(sweep.contains("$duplicate=$_.Count -gt 1"));
+        assert!(sweep.contains("if ($duplicate) { $name=$name+' '+[Guid]::NewGuid().ToString('N')+' '+$_.Protocol; $_.Name=$name }"));
+        assert!(sweep.contains("$policy.Rules.Remove($name)"));
     }
 
     #[test]
     fn inbound_rules_cover_only_the_allocated_port_on_both_protocols() {
         let names = rule_names("server-a", 1).unwrap();
         let script = install_script(&names, 34567).unwrap();
-        for value in ["$rule.Protocol=6", "$rule.Protocol=17", "$rule.LocalPorts='34567'", "$rule.Direction=1", "$rule.Action=0", "$rule.Profiles=2147483647", "$policy.FirewallEnabled($p)"] {
+        for value in [
+            "$rule.Protocol=6",
+            "$rule.Protocol=17",
+            "$rule.LocalPorts='34567'",
+            "$rule.Direction=1",
+            "$rule.Action=0",
+            "$rule.Profiles=2147483647",
+            "$policy.FirewallEnabled($p)",
+        ] {
             assert!(script.contains(value), "missing {value}");
         }
-        for name in &names { assert!(script.contains(&quote(name))); }
+        for name in &names {
+            assert!(script.contains(&quote(name)));
+        }
         assert!(!script.contains("ApplicationName"));
         assert!(install_script(&names, 0).is_err());
     }

@@ -70,12 +70,13 @@ shim refuses launch; `VARDE_CS2_ALLOW_EXPOSED_PORT=1` explicitly opts out with a
 warning. The override is Linux-only and deliberately reintroduces exposure.
 
 On Windows the agent uses `INetFwPolicy2` through built-in PowerShell COM to add
-inbound TCP/UDP block rules named `Varde CS2 <server-id>` before spawn. Rules
+inbound TCP/UDP block rules named `Varde CS2 <server-id> <launch-id> <protocol>` before spawn. Rules
 cover the allocated port on all profiles, not the shared `cs2.exe` path. WFP
 does not filter loopback, preserving A2S and RCON. Any disabled firewall profile or
 rule-creation failures refuse launch with a warning. Rules are removed after
-exit (including failed spawn); startup sweeps stale `Varde CS2 *` rules but
-retains blocks for ports still bound. Failed cleanup leaves the block in place.
+exit (including failed spawn). A background startup sweep gates only CS2 launches,
+retaining blocks only for bound UDP endpoints or listening TCP sockets.
+Cleanup removes exact unique names; failed deletion leaves a sweepable block.
 This requires the service's existing LocalSystem privileges; Windows runtime
 verification is pending. Real gameplay over the
 mesh and gameplay packet sizes still need client validation.
