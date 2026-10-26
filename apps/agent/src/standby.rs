@@ -120,6 +120,7 @@ async fn pre_install(agent: &Agent, sd: &StandbyDirective) -> Result<()> {
         config: &config,
         ports: &[],
         memory_mb: 0,
+        addons: &[],
     };
     prepare_locked(agent, driver, &ctx).await
 }

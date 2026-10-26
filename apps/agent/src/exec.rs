@@ -2140,6 +2140,7 @@ mod requires_stop_tests {
                 config: &config,
                 ports: &bindings,
                 memory_mb: 0,
+                addons: &[],
             };
             let mut driver = StopDriver::new(live);
             driver.fail_prepare = fail_prepare;
@@ -2188,6 +2189,7 @@ mod requires_stop_tests {
             config: &config,
             ports: &bindings,
             memory_mb: 0,
+            addons: &[],
         };
         let driver = StopDriver::new(false);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
