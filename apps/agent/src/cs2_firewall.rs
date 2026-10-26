@@ -30,7 +30,7 @@ fn quote(value: &str) -> String {
 }
 
 fn sweep_script() -> String {
-    format!("$ports=@((Get-NetUDPEndpoint).LocalPort)+@((Get-NetTCPConnection).LocalPort); @($policy.Rules) | Where-Object {{ $_.Name.StartsWith({}, [StringComparison]::Ordinal) }} | ForEach-Object {{ if ($ports -notcontains [int]$_.LocalPorts) {{ $policy.Rules.Remove($_.Name) }} else {{ Write-Warning ('Retaining CS2 rule for a port still in use: '+$_.Name) }} }}", quote(PREFIX))
+    format!("$ports=@((Get-NetUDPEndpoint).LocalPort)+@((Get-NetTCPConnection | Where-Object {{ $_.State -eq 'Listen' }}).LocalPort); @($policy.Rules) | Where-Object {{ $_.Name.StartsWith({}, [StringComparison]::Ordinal) }} | ForEach-Object {{ if ($ports -notcontains [int]$_.LocalPorts) {{ $policy.Rules.Remove($_.Name) }} else {{ Write-Warning ('Retaining CS2 rule for a port still in use: '+$_.Name) }} }}", quote(PREFIX))
 }
 
 fn cleanup_prefix(owner: &str) -> String {
@@ -53,6 +53,14 @@ fn install_script(name: &str, owner: &str, port: u16) -> Result<String, &'static
 #[cfg(windows)]
 mod platform {
     use super::*;
+
+    #[test]
+    fn sweep_ignores_time_wait_and_connected_tcp_sockets() {
+        let script = sweep_script();
+        assert!(script.contains("Get-NetUDPEndpoint"));
+        assert!(script.contains("Get-NetTCPConnection | Where-Object { $_.State -eq 'Listen' }"));
+        assert!(!script.contains("(Get-NetTCPConnection).LocalPort"));
+    }
     use executor_api::*;
     use std::os::windows::process::CommandExt;
     use std::sync::Arc;
