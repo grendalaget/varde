@@ -1636,6 +1636,7 @@ dependencies = [
  "executor-native",
  "fs2",
  "game-driver-api",
+ "rand 0.8.8",
  "runtimes",
  "serde",
  "serde_json",

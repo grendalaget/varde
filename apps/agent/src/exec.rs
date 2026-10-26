@@ -20,6 +20,20 @@ use tokio::sync::watch;
 use crate::chunks;
 use crate::Agent;
 
+type ProcessExit =
+    std::result::Result<executor_api::Result<executor_api::ExitStatus>, tokio::task::JoinError>;
+
+async fn startup_exit(
+    watch: &mut tokio::task::JoinHandle<executor_api::Result<executor_api::ExitStatus>>,
+    observed: Option<ProcessExit>,
+) -> Option<ProcessExit> {
+    match observed {
+        Some(status) => Some(status),
+        None if watch.is_finished() => Some(watch.await),
+        None => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Preparing,
@@ -385,8 +399,10 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         // exec removed from execs (the fencing watchdog could never reach it)
         let mut running = false;
         let mut probe_dead = false;
+        let mut exit_status = None;
         let probe_deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < probe_deadline && !exit_watch.is_finished() {
+        while Instant::now() < probe_deadline && !exit_watch.is_finished() && exit_status.is_none()
+        {
             match driver.probe(&ctx, &*proc).await {
                 Ok(GameHealth::Healthy) => {
                     running = true;
@@ -400,7 +416,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 Ok(GameHealth::Starting) => {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {}
-                        _ = &mut exit_watch => {}
+                        st = &mut exit_watch => { exit_status = Some(st); }
                     }
                 }
                 Err(e) => {
@@ -416,8 +432,9 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             let _ = proc.kill().await;
             continue 'outer;
         }
-        if !running && exit_watch.is_finished() {
-            if let Ok(st) = (&mut exit_watch).await {
+        if !running {
+            let status = startup_exit(&mut exit_watch, exit_status.take()).await;
+            if let Some(Ok(st)) = status {
                 tracing::warn!(exec = %dir.execution_id, status = ?st, "game exited during startup");
             }
         }
@@ -1259,6 +1276,41 @@ mod requires_stop_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::broadcast;
 
+    #[tokio::test]
+    async fn startup_exit_never_repolls_a_consumed_task() {
+        for consumed in [false, true] {
+            for failed in [false, true] {
+                let mut watch = tokio::spawn(async move {
+                    if failed {
+                        return Err(std::io::Error::other("wait failed").into());
+                    }
+                    Ok(ExitStatus {
+                        code: Some(1),
+                        signal: None,
+                    })
+                });
+                while !watch.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+                let observed = if consumed {
+                    Some((&mut watch).await)
+                } else {
+                    None
+                };
+                let result = startup_exit(&mut watch, observed).await.unwrap().unwrap();
+                assert_eq!(result.is_err(), failed);
+            }
+        }
+        let mut watch = tokio::spawn(std::future::pending());
+        assert!(startup_exit(&mut watch, None).await.is_none());
+        watch.abort();
+        let observed = (&mut watch).await;
+        assert!(startup_exit(&mut watch, Some(observed))
+            .await
+            .unwrap()
+            .is_err());
+    }
+
     struct StopDriver {
         stopped: AtomicUsize,
         after_stop: bool,
@@ -1351,10 +1403,14 @@ mod requires_stop_tests {
         }
         async fn prepare_snapshot(
             &self,
-            _c: &DriverContext<'_>,
+            ctx: &DriverContext<'_>,
             _p: &dyn ProcessHandle,
         ) -> game_driver_api::Result<SnapshotBarrier> {
             self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+            if self.live_barrier {
+                std::fs::create_dir_all(ctx.server_dir.join("saves"))?;
+                std::fs::write(ctx.server_dir.join("saves/world.txt"), b"barrier")?;
+            }
             Ok(if self.live_barrier {
                 SnapshotBarrier::Live
             } else {
@@ -1725,6 +1781,15 @@ mod requires_stop_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn requires_stop_snapshots_files_written_at_exit() {
+        snapshots_capture_barrier_or_exit_files(false).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_snapshot_captures_barrier_files_before_stop() {
+        snapshots_capture_barrier_or_exit_files(true).await;
+    }
+
+    async fn snapshots_capture_barrier_or_exit_files(live: bool) {
         let tmp = tempfile::tempdir().unwrap();
         let agent = test_agent(stub_cp().await, tmp.path());
         let ctl = test_ctl();
@@ -1755,7 +1820,7 @@ mod requires_stop_tests {
             ports: &bindings,
             memory_mb: 0,
         };
-        let driver = StopDriver::new(false);
+        let driver = StopDriver::new(live);
         graceful_stop_and_snapshot(&agent, &ctl, &driver, &ctx, &proc).await;
         assert_eq!(driver.stopped.load(Ordering::SeqCst), 1);
         assert_eq!(driver.prepare_calls.load(Ordering::SeqCst), 1);
@@ -1767,6 +1832,23 @@ mod requires_stop_tests {
         assert!(
             files.iter().any(|p| p == "saves/world.txt"),
             "manifest missing exit-time save: {files:?}"
+        );
+        let restored = tmp.path().join("restored");
+        agent
+            .store
+            .restore(
+                &snaps[0],
+                &restored,
+                &[snapshot_store::PathPattern::new("saves/")],
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(restored.join("saves/world.txt")).unwrap(),
+            if live {
+                b"barrier".as_slice()
+            } else {
+                b"final".as_slice()
+            }
         );
     }
 

@@ -7,6 +7,7 @@ use executor_api::{ProcessHandle, ProcessSpec};
 use game_driver_api::*;
 use serde_json::Value;
 
+mod rcon;
 pub mod steam;
 mod vdf;
 
@@ -231,6 +232,10 @@ impl Cs2Driver {
         let (kind, mode) = Self::mode(cfg)?;
         let mut args: Vec<OsString> = vec![
             "-dedicated".into(),
+            "-nominidumps".into(),
+            "-usercon".into(),
+            "-ip".into(),
+            "127.0.0.1".into(),
             "-port".into(),
             port.to_string().into(),
             "-maxplayers".into(),
@@ -276,6 +281,82 @@ impl Cs2Driver {
             }
         }
         Ok(())
+    }
+
+    fn shared_config(ctx: &DriverContext<'_>) -> Result<Option<(PathBuf, String)>> {
+        let Some(install) = Self::selected(ctx)? else {
+            return Ok(None);
+        };
+        if ctx.server_id.is_empty()
+            || !ctx
+                .server_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        {
+            return Err(
+                "cs2: server id must contain only letters, digits, underscores and hyphens".into(),
+            );
+        }
+        let name = format!("varde_{}", ctx.server_id);
+        let path = install
+            .dir
+            .join("game/csgo/cfg")
+            .join(format!("{name}.cfg"));
+        Ok(Some((path, name)))
+    }
+
+    fn startup_command(ctx: &DriverContext<'_>) -> Result<String> {
+        let name = Self::shared_config(ctx)?.map_or_else(
+            || "varde.cfg".to_string(),
+            |(_, name)| format!("{name}.cfg"),
+        );
+        let bots = Self::number(ctx.config, "bots", 0, 0, 64)?;
+        let kick = if bots == 0 { "bot_kick; " } else { "" };
+        Ok(format!("exec {name}; {kick}bot_quota {bots}"))
+    }
+
+    fn write_shared_config(ctx: &DriverContext<'_>) -> Result<()> {
+        let Some((path, _)) = Self::shared_config(ctx)? else {
+            return Ok(());
+        };
+        let dir = Self::game_dir(ctx)?.join("cfg");
+        let mut cfg = std::fs::read_to_string(dir.join("varde.cfg"))?;
+        for name in BANS {
+            let contents = match std::fs::read_to_string(dir.join(name)) {
+                Ok(contents) => contents,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(e.into()),
+            };
+            cfg = cfg.replace(&format!("exec {name}\n"), &format!("{contents}\n"));
+        }
+        std::fs::create_dir_all(path.parent().ok_or("cs2: config path has no parent")?)?;
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)?;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            file.write_all(cfg.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        std::fs::write(path, cfg)?;
+        Ok(())
+    }
+
+    async fn remove_shared_config(ctx: &DriverContext<'_>) -> Result<()> {
+        let Some((path, _)) = Self::shared_config(ctx)? else {
+            return Ok(());
+        };
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -373,11 +454,23 @@ impl GameDriver for Cs2Driver {
     }
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
         self.validate(ctx.config)?;
+        Self::shared_config(ctx)?;
+        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-configured")).await {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
         Self::sync_bans(ctx, true).await?;
-        let path = Self::game_dir(ctx)?.join("cfg/varde.cfg");
+        let cfg_dir = Self::game_dir(ctx)?.join("cfg");
+        let path = cfg_dir.join("varde.cfg");
         let mut cfg = Self::cfg(ctx.config)?;
+        let password: String = rand::random::<[u8; 32]>()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        cfg.push_str(&format!("rcon_password \"{password}\"\n"));
         for name in BANS {
-            if path.with_file_name(name).is_file() {
+            if cfg_dir.join(name).is_file() {
                 cfg.push_str(&format!("exec {name}\n"));
             }
         }
@@ -395,7 +488,8 @@ impl GameDriver for Cs2Driver {
             file.write_all(cfg.as_bytes())?;
         }
         #[cfg(not(unix))]
-        tokio::fs::write(path, cfg).await?;
+        tokio::fs::write(&path, cfg).await?;
+        Self::write_shared_config(ctx)?;
         Ok(())
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
@@ -403,6 +497,21 @@ impl GameDriver for Cs2Driver {
         let selected = Self::selected(ctx)?;
         let program = Self::binary(ctx)?;
         let mut args = Self::args(ctx.config, ctx.local_port(PORT))?;
+        if Self::game_dir(ctx)?.join("cfg/varde.cfg").is_file() {
+            Self::write_shared_config(ctx)?;
+        }
+        match std::fs::remove_file(ctx.deployment_dir.join("cs2-configured")) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        if let Some((_, name)) = Self::shared_config(ctx)? {
+            let index = args
+                .iter()
+                .position(|arg| arg == "+exec")
+                .ok_or("cs2: missing +exec argument")?;
+            args[index + 1] = name.into();
+        }
         let cwd = if selected.is_some() {
             let game = Self::game_dir(ctx)?;
             args.splice(1..1, [OsString::from("-game"), game.into_os_string()]);
@@ -425,12 +534,25 @@ impl GameDriver for Cs2Driver {
             }
             env.push(("LD_LIBRARY_PATH".into(), std::env::join_paths(paths)?));
         }
+        if cfg!(windows) {
+            if let Some(library) = selected
+                .as_ref()
+                .and_then(|s| s.steamclient.as_ref())
+                .and_then(|p| p.parent())
+            {
+                let mut paths = vec![library.to_path_buf()];
+                if let Some(old) = std::env::var_os("PATH") {
+                    paths.extend(std::env::split_paths(&old));
+                }
+                env.push(("PATH".into(), std::env::join_paths(paths)?));
+            }
+        }
         Ok(ProcessSpec {
             program,
             args,
             env,
             cwd,
-            stdin: true,
+            stdin: !cfg!(windows),
         })
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
@@ -440,11 +562,35 @@ impl GameDriver for Cs2Driver {
             tokio::time::timeout(Duration::from_millis(500), a2s_ready(port, map)).await,
             Ok(Ok(true))
         );
-        Ok(if ready {
-            GameHealth::Healthy
+        if ready {
+            let marker = ctx.deployment_dir.join("cs2-configured");
+            if !marker.is_file() {
+                let cfg =
+                    tokio::fs::read_to_string(Self::game_dir(ctx)?.join("cfg/varde.cfg")).await?;
+                let password = cfg
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("rcon_password \"")
+                            .and_then(|s| s.strip_suffix('"'))
+                    })
+                    .ok_or("cs2: missing startup RCON credential")?;
+                let command = Self::startup_command(ctx)?;
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    rcon::exec(port, password, &command),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => return Ok(GameHealth::Starting),
+                }
+                tokio::fs::write(marker, "").await?;
+            }
+            Self::remove_shared_config(ctx).await?;
+            Ok(GameHealth::Healthy)
         } else {
-            GameHealth::Starting
-        })
+            Ok(GameHealth::Starting)
+        }
     }
     async fn prepare_snapshot(
         &self,
@@ -461,16 +607,26 @@ impl GameDriver for Cs2Driver {
     ) -> Result<()> {
         Ok(())
     }
-    async fn graceful_stop(&self, _: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
-        if p.write_stdin("quit\n").await.is_err() {
-            return p.interrupt().await;
+    async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
+        #[cfg(windows)]
+        {
+            p.kill().await?;
+            p.wait().await?;
         }
-        match tokio::time::timeout(Duration::from_secs(5), p.wait()).await {
-            Ok(result) => {
-                result?;
+        #[cfg(not(windows))]
+        {
+            if p.write_stdin("quit\n").await.is_err() {
+                p.interrupt().await?;
+            } else {
+                match tokio::time::timeout(Duration::from_secs(5), p.wait()).await {
+                    Ok(result) => {
+                        result?;
+                    }
+                    Err(_) => p.interrupt().await?,
+                }
             }
-            Err(_) => p.interrupt().await?,
         }
+        Self::remove_shared_config(_ctx).await?;
         Ok(())
     }
 }

@@ -11,6 +11,41 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 struct ExistingInstall;
+
+async fn settings(port: u16) -> Option<(String, u8)> {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.ok()?;
+    socket
+        .connect((std::net::Ipv4Addr::LOCALHOST, port))
+        .await
+        .ok()?;
+    let mut request = b"\xff\xff\xff\xffTSource Engine Query\0".to_vec();
+    let mut buf = [0; 2048];
+    for _ in 0..2 {
+        socket.send(&request).await.ok()?;
+        let n = tokio::time::timeout(Duration::from_secs(1), socket.recv(&mut buf))
+            .await
+            .ok()?
+            .ok()?;
+        if buf.get(..5)? == b"\xff\xff\xff\xffA" && n == 9 {
+            request.extend_from_slice(&buf[5..9]);
+            continue;
+        }
+        if buf.get(..5)? != b"\xff\xff\xff\xffI" {
+            return None;
+        }
+        let mut rest = buf.get(6..n)?;
+        let mut name = String::new();
+        for i in 0..4 {
+            let end = rest.iter().position(|b| *b == 0)?;
+            if i == 0 {
+                name = std::str::from_utf8(&rest[..end]).ok()?.to_string();
+            }
+            rest = &rest[end + 1..];
+        }
+        return Some((name, *rest.get(4)?));
+    }
+    None
+}
 #[async_trait]
 impl RuntimeProvider for ExistingInstall {
     fn runtime_path(&self, _: &str, _: &str) -> Option<PathBuf> {
@@ -47,8 +82,8 @@ async fn real_cs2_detected_install_concurrent_start_a2s_and_quit() {
     let tmp = tempfile::tempdir().unwrap();
     let barrier = tokio::sync::Barrier::new(2);
     tokio::join!(
-        run_instance(tmp.path(), "cs2-net-a", &barrier),
-        run_instance(tmp.path(), "cs2-net-b", &barrier)
+        run_instance(tmp.path(), "cs2-net-a", 0, &barrier),
+        run_instance(tmp.path(), "cs2-net-b", 0, &barrier)
     );
     let mut after = installation_files(&install.dir);
     let final_boot = std::fs::read(&boot).unwrap();
@@ -110,12 +145,12 @@ fn installation_files(
     files
 }
 
-async fn run_instance(root: &Path, name: &str, barrier: &tokio::sync::Barrier) {
+async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::Barrier) {
     let deployment_dir = root.join("deployments").join(name);
     std::fs::create_dir_all(&deployment_dir).unwrap();
     let server_dir = root.join("servers").join(name);
     std::fs::create_dir_all(&server_dir).unwrap();
-    let cfg = serde_json::json!({"server_name":name,"map":"de_dust2","max_players":10,"bots":0});
+    let cfg = serde_json::json!({"server_name":name,"map":"de_dust2","max_players":10,"bots":bots,"password":"cs2-test-password"});
     let deployment = DeploymentSpec::parse(&serde_json::json!({}));
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
@@ -152,7 +187,7 @@ async fn run_instance(root: &Path, name: &str, barrier: &tokio::sync::Barrier) {
     let process = executor_native::NativeExecutor.spawn(&spec).await.unwrap();
     let ready = tokio::time::timeout(Duration::from_secs(90), async {
         loop {
-            if driver.probe(&ctx, &*process).await.unwrap() == GameHealth::Healthy {
+            if matches!(driver.probe(&ctx, &*process).await, Ok(GameHealth::Healthy)) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -167,8 +202,26 @@ async fn run_instance(root: &Path, name: &str, barrier: &tokio::sync::Barrier) {
     let together = tokio::time::timeout(Duration::from_secs(100), barrier.wait())
         .await
         .is_ok();
-    let healthy_together = driver.probe(&ctx, &*process).await.unwrap() == GameHealth::Healthy;
+    let healthy_together = matches!(driver.probe(&ctx, &*process).await, Ok(GameHealth::Healthy));
     println!("CS2 concurrent {name} healthy={healthy_together}");
+    let mut observed = None;
+    if ready {
+        process
+            .write_stdin("sv_password\nbot_quota\nrcon_password\n")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                observed = settings(port).await;
+                if observed == Some((name.to_string(), cfg["bots"].as_u64().unwrap() as u8)) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await;
+    }
     if ready {
         assert_eq!(
             driver.prepare_snapshot(&ctx, &*process).await.unwrap(),
@@ -188,17 +241,32 @@ async fn run_instance(root: &Path, name: &str, barrier: &tokio::sync::Barrier) {
             || line.line.contains("LAN only")
             || line.line.contains("varde.cfg")
             || line.line.contains("MainLoop returning")
+            || line.line.contains("bot_quota =")
         {
             println!("CS2 LOG {name} {}", line.line);
         }
     }
     stop.unwrap();
     let status = status.expect("server did not stop").unwrap();
+    let password_stuck = process
+        .output_tail(1000)
+        .iter()
+        .any(|l| l.line.contains("sv_password = cs2-test-password"));
+    let rcon_disabled = process
+        .output_tail(1000)
+        .iter()
+        .any(|l| l.line.trim() == "rcon_password =");
+    println!("CS2 settings {name} A2S={observed:?} password_stuck={password_stuck} rcon_disabled={rcon_disabled}");
     println!(
         "CS2 quit {name} elapsed={:.3}s exit={status:?}",
         stopped.elapsed().as_secs_f64()
     );
     assert!(status.success());
+    let (actual_name, bots) = observed.expect("missing settings A2S reply");
+    assert_eq!(actual_name, cfg["server_name"].as_str().unwrap());
+    assert_eq!(bots as u64, cfg["bots"].as_u64().unwrap());
+    assert!(password_stuck);
+    assert!(rcon_disabled);
     assert!(
         ready && together && healthy_together,
         "server never answered with the configured map and nonzero capacity"

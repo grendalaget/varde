@@ -2,6 +2,69 @@ use super::*;
 use executor_api::{ExitStatus, OutputLine, ResourceUsage};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+fn mock_rcon(
+    listener: tokio::net::TcpListener,
+    password: String,
+    response: i32,
+) -> tokio::task::JoinHandle<String> {
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let len = stream.read_i32_le().await.unwrap();
+        let mut packet = vec![0; len as usize];
+        stream.read_exact(&mut packet).await.unwrap();
+        assert_eq!(&packet[8..packet.len() - 2], password.as_bytes());
+        if response == -3 {
+            return String::new();
+        }
+        if response == -2 {
+            stream.write_all(&4i32.to_le_bytes()).await.unwrap();
+            return String::new();
+        }
+        for (id, kind) in [(1i32, 0i32), (response, if response == 0 { 0 } else { 2 })] {
+            let mut bytes = 10i32.to_le_bytes().to_vec();
+            bytes.extend(id.to_le_bytes());
+            bytes.extend(kind.to_le_bytes());
+            bytes.extend([0, 0]);
+            stream.write_all(&bytes).await.unwrap();
+        }
+        if response != 1 {
+            return String::new();
+        }
+        let len = stream.read_i32_le().await.unwrap();
+        let mut packet = vec![0; len as usize];
+        stream.read_exact(&mut packet).await.unwrap();
+        assert_eq!(&packet[..8], &[2, 0, 0, 0, 2, 0, 0, 0]);
+        stream
+            .write_all(&[10, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        stream
+            .write_all(&[10, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        let command = String::from_utf8(packet[8..packet.len() - 2].to_vec()).unwrap();
+        let len = stream.read_i32_le().await.unwrap();
+        let mut packet = vec![0; len as usize];
+        stream.read_exact(&mut packet).await.unwrap();
+        assert_eq!(&packet[..8], &[3, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(&packet[8..packet.len() - 2], b"rcon_password \"\"");
+        command
+    })
+}
+
+#[tokio::test]
+async fn rcon_authentication_commands_and_bad_replies() {
+    for response in [1, 0, -1, -2, -3] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = mock_rcon(listener, "private-password".into(), response);
+        let result = rcon::exec(port, "private-password", "").await;
+        assert_eq!(result.is_ok(), response == 1);
+        assert_eq!(server.await.unwrap(), "");
+    }
+}
 
 // Captured by /home/ubuntu/cs2-spike/probe.py (A2S_INFO and S2C_CHALLENGE).
 const INFO_HEX: &str = "ffffffff4911436f756e7465722d537472696b6520320064655f6475737432006373676f00436f756e7465722d537472696b65203200da02024002646c0001312e34312e392e3200b1eb691a0808ce64cb4001656d7074792c696e73656375726500da02000000000000";
@@ -43,7 +106,18 @@ fn steam_library_discovery_and_vdf() {
     std::fs::create_dir_all(root.path().join("steamapps")).unwrap();
     let path = library.to_string_lossy().replace('\\', "\\\\");
     let fixture = include_str!("../tests/libraryfolders.vdf").replace("@LIBRARY@", &path);
-    std::fs::write(root.path().join("steamapps/libraryfolders.vdf"), &fixture).unwrap();
+    let empty_library = root
+        .path()
+        .join("empty library")
+        .to_string_lossy()
+        .replace('\\', "\\\\");
+    let on_disk_fixture = fixture.replace(r#"C:\\Program Files (x86)\\Steam"#, &empty_library);
+    // The on-disk copy must not point at the host's real Steam library.
+    std::fs::write(
+        root.path().join("steamapps/libraryfolders.vdf"),
+        &on_disk_fixture,
+    )
+    .unwrap();
     let parsed = vdf::parse(&fixture).unwrap();
     assert_eq!(
         parsed
@@ -101,6 +175,34 @@ fn steam_library_discovery_and_vdf() {
             .len(),
         2
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_steamclient_path_precedes_existing_path() {
+    let root = tempfile::tempdir().unwrap();
+    fake_steam_install(root.path());
+    let steamclient = root.path().join("steamclient64.dll");
+    std::fs::write(&steamclient, "steamclient").unwrap();
+
+    let install = steam::in_root(root.path()).unwrap();
+    assert_eq!(install.steamclient.as_deref(), Some(steamclient.as_path()));
+    std::fs::write(
+        root.path().join("cs2-install.json"),
+        serde_json::to_vec(&install).unwrap(),
+    )
+    .unwrap();
+
+    let cfg = json!({"server_name":"Varde"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let ctx = context(root.path(), &cfg, &deployment);
+    let spec = Cs2Driver.process_spec(&ctx).unwrap();
+    let path = spec.env.iter().find(|(key, _)| key == "PATH").unwrap();
+    let mut expected = vec![root.path().to_path_buf()];
+    if let Some(old) = std::env::var_os("PATH") {
+        expected.extend(std::env::split_paths(&old));
+    }
+    assert_eq!(std::env::split_paths(&path.1).collect::<Vec<_>>(), expected);
 }
 
 #[tokio::test]
@@ -310,6 +412,9 @@ struct Process {
     fail_stdin: bool,
     stall: bool,
     interrupts: AtomicUsize,
+    writes: AtomicUsize,
+    waits: AtomicUsize,
+    kills: AtomicUsize,
 }
 #[async_trait]
 impl ProcessHandle for Process {
@@ -317,6 +422,7 @@ impl ProcessHandle for Process {
         0
     }
     async fn write_stdin(&self, line: &str) -> Result<()> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
         assert_eq!(line, "quit\n");
         if self.fail_stdin {
             Err("closed stdin".into())
@@ -331,6 +437,7 @@ impl ProcessHandle for Process {
         vec![]
     }
     async fn wait(&self) -> Result<ExitStatus> {
+        self.waits.fetch_add(1, Ordering::SeqCst);
         if self.stall {
             std::future::pending().await
         } else {
@@ -348,6 +455,7 @@ impl ProcessHandle for Process {
         Ok(())
     }
     async fn kill(&self) -> Result<()> {
+        self.kills.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     fn resource_usage(&self) -> Option<ResourceUsage> {
@@ -374,6 +482,10 @@ fn args_cfg_and_modes() {
         let args = Cs2Driver::args(&cfg, 32123).unwrap();
         let expected: Vec<OsString> = [
             "-dedicated",
+            "-nominidumps",
+            "-usercon",
+            "-ip",
+            "127.0.0.1",
             "-port",
             "32123",
             "-maxplayers",
@@ -402,6 +514,20 @@ fn args_cfg_and_modes() {
         ]
     );
     assert!(!Cs2Driver::cfg(&cfg).unwrap().contains("0123456789"));
+}
+
+#[test]
+fn startup_commands_preserve_positive_bot_quotas() {
+    let root = tempfile::tempdir().unwrap();
+    let deployment = DeploymentSpec::parse(&json!({}));
+    for (bots, expected) in [
+        (0, "exec varde.cfg; bot_kick; bot_quota 0"),
+        (3, "exec varde.cfg; bot_quota 3"),
+    ] {
+        let cfg = json!({"bots": bots});
+        let ctx = context(root.path(), &cfg, &deployment);
+        assert_eq!(Cs2Driver::startup_command(&ctx).unwrap(), expected);
+    }
 }
 
 #[test]
@@ -625,8 +751,12 @@ async fn lifecycle_configs_bans_and_stop_fallback() {
     let driver = Cs2Driver::new();
     driver.configure(&ctx).await.unwrap();
     let spec = driver.process_spec(&ctx).unwrap();
+    #[cfg(windows)]
+    assert!(!spec.stdin);
+    #[cfg(not(windows))]
     assert!(spec.stdin);
-    assert_eq!(spec.args[2], "32123");
+    let port_arg = spec.args.iter().position(|arg| arg == "-port").unwrap();
+    assert_eq!(spec.args[port_arg + 1], "32123");
     assert_eq!(spec.cwd, root.path().join("server"));
     #[cfg(target_os = "linux")]
     assert!(spec.env.iter().any(|(key, value)| key == "LD_LIBRARY_PATH"
@@ -656,6 +786,16 @@ async fn lifecycle_configs_bans_and_stop_fallback() {
     driver.prepare_snapshot(&ctx, &p).await.unwrap();
     assert!(!persisted.exists());
     driver.resume_after_snapshot(&ctx, &p).await.unwrap();
+    #[cfg(windows)]
+    {
+        let p = Process::default();
+        driver.graceful_stop(&ctx, &p).await.unwrap();
+        assert_eq!(p.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(p.kills.load(Ordering::SeqCst), 1);
+        assert_eq!(p.waits.load(Ordering::SeqCst), 1);
+        assert_eq!(p.interrupts.load(Ordering::SeqCst), 0);
+    }
+    #[cfg(not(windows))]
     for (fail_stdin, stall, interrupts) in [(false, false, 0), (true, false, 1), (false, true, 1)] {
         let p = Process {
             fail_stdin,
@@ -665,6 +805,107 @@ async fn lifecycle_configs_bans_and_stop_fallback() {
         driver.graceful_stop(&ctx, &p).await.unwrap();
         assert_eq!(p.interrupts.load(Ordering::SeqCst), interrupts);
     }
+}
+
+#[tokio::test]
+async fn selected_install_uses_unique_shared_cfg_and_cleans_up() {
+    let root = tempfile::tempdir().unwrap();
+    let steam_root = root.path().join("steam");
+    let install_dir = fake_steam_install(&steam_root);
+    let deployment_dir = root.path().join("deployment");
+    std::fs::create_dir_all(&deployment_dir).unwrap();
+    let cfg = json!({"server_name":"Varde","password":"secret"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(&deployment_dir, &cfg, &deployment);
+    ctx.server_id = "server-123";
+    let install = steam::in_root(&steam_root).unwrap();
+    std::fs::write(
+        deployment_dir.join("cs2-install.json"),
+        serde_json::to_vec(&install).unwrap(),
+    )
+    .unwrap();
+    let bans = deployment_dir.join("game/csgo/cfg/banned_user.cfg");
+    std::fs::create_dir_all(bans.parent().unwrap()).unwrap();
+    std::fs::write(&bans, "banid 0 STEAM_0:1:123\n").unwrap();
+
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let bindings = [PortBinding {
+        service_port: PORT,
+        local_port: socket.local_addr().unwrap().port().into(),
+        protocol: GameProtocol::Udp,
+    }];
+    ctx.ports = &bindings;
+
+    let driver = Cs2Driver::new();
+    driver.configure(&ctx).await.unwrap();
+    let shared_cfg = install_dir.join("game/csgo/cfg/varde_server-123.cfg");
+    let shared = tokio::fs::read_to_string(&shared_cfg).await.unwrap();
+    assert!(shared.contains("hostname \"Varde\"\n"));
+    assert!(shared.contains("sv_password \"secret\"\n"));
+    assert!(shared.contains("banid 0 STEAM_0:1:123\n"));
+    assert!(!shared.contains("exec banned_user.cfg"));
+    assert!(!shared.contains("exec banned_ip.cfg"));
+    let private_cfg = deployment_dir.join("cs2-runtime/csgo/cfg/varde.cfg");
+    assert!(tokio::fs::read_to_string(private_cfg)
+        .await
+        .unwrap()
+        .contains("exec banned_user.cfg\n"));
+
+    let spec = driver.process_spec(&ctx).unwrap();
+    let exec = spec.args.iter().position(|arg| arg == "+exec").unwrap();
+    assert_eq!(spec.args[exec + 1], "varde_server-123");
+    assert!(!spec.args.contains(&OsString::from("varde.cfg")));
+    ctx.server_id = "invalid/id";
+    assert!(driver.process_spec(&ctx).is_err());
+    assert!(driver.configure(&ctx).await.is_err());
+    ctx.server_id = "server-123";
+
+    let listener = tokio::net::TcpListener::bind((
+        std::net::Ipv4Addr::LOCALHOST,
+        bindings[0].local_port as u16,
+    ))
+    .await
+    .unwrap();
+    let password = shared
+        .lines()
+        .find_map(|s| {
+            s.strip_prefix("rcon_password \"")
+                .and_then(|s| s.strip_suffix('"'))
+        })
+        .unwrap()
+        .to_string();
+    let rcon_server = mock_rcon(listener, password, 1);
+    let task = tokio::spawn(async move {
+        let mut buf = [0; 256];
+        let (n, addr) = socket.recv_from(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], INFO_REQUEST);
+        socket.send_to(CHALLENGE, addr).await.unwrap();
+        let (n, addr) = socket.recv_from(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], [INFO_REQUEST, &CHALLENGE[5..]].concat());
+        socket.send_to(&info(), addr).await.unwrap();
+    });
+    assert_eq!(
+        driver.probe(&ctx, &Process::default()).await.unwrap(),
+        GameHealth::Healthy
+    );
+    task.await.unwrap();
+    assert_eq!(
+        rcon_server.await.unwrap(),
+        "exec varde_server-123.cfg; bot_kick; bot_quota 0"
+    );
+    assert!(!shared_cfg.exists());
+    assert!(deployment_dir.join("cs2-configured").is_file());
+    driver.process_spec(&ctx).unwrap();
+    assert!(shared_cfg.exists());
+    assert!(!deployment_dir.join("cs2-configured").exists());
+
+    driver.configure(&ctx).await.unwrap();
+    assert!(shared_cfg.exists());
+    driver
+        .graceful_stop(&ctx, &Process::default())
+        .await
+        .unwrap();
+    assert!(!shared_cfg.exists());
 }
 
 #[tokio::test]

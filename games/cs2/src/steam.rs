@@ -22,10 +22,17 @@ fn install(dir: PathBuf, root: &Path) -> Option<Install> {
     if !binary(&dir).is_file() {
         return None;
     }
+    #[cfg(not(windows))]
     let mut libraries = vec![
         dir.join("game/bin/linuxsteamrt64/steamclient.so"),
         root.join("linux64/steamclient.so"),
     ];
+    #[cfg(windows)]
+    let libraries = vec![
+        root.join("steamclient64.dll"),
+        dir.join("game/bin/win64/steamclient64.dll"),
+    ];
+    #[cfg(not(windows))]
     for home in homes() {
         libraries.push(home.join(".steam/sdk64/steamclient.so"));
     }
@@ -85,6 +92,7 @@ pub fn in_root(root: &Path) -> Option<Install> {
     None
 }
 
+#[cfg(not(windows))]
 fn homes() -> Vec<PathBuf> {
     let homes: Vec<_> = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
@@ -171,14 +179,17 @@ pub fn detect_client() -> Option<Install> {
     if !cfg!(any(target_os = "linux", windows)) {
         return None;
     }
-    if let Some(dir) = std::env::var_os("VARDE_CS2_DIR") {
-        if let Some(found) = install(PathBuf::from(dir), Path::new("")) {
-            return Some(found);
+    // Unit tests must not see the host's Steam install or overrides.
+    if !cfg!(test) {
+        if let Some(dir) = std::env::var_os("VARDE_CS2_DIR") {
+            if let Some(found) = install(PathBuf::from(dir), Path::new("")) {
+                return Some(found);
+            }
         }
-    }
-    for root in roots() {
-        if let Some(found) = in_root(&root) {
-            return Some(found);
+        for root in roots() {
+            if let Some(found) = in_root(&root) {
+                return Some(found);
+            }
         }
     }
     None

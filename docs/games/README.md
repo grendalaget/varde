@@ -33,12 +33,13 @@ fallback and 75 GB install budget; incomplete downloads count allocated bytes
 already on disk, and routine complete-install updates skip full validation.
 Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
 
-The driver launches the original binary with
-`-game <deployment>/cs2-runtime/csgo`. A private `gameinfo.gi` mounts the
-installed content while configuration, bans, logs and runtime writes stay in
-that deployment. Private empty `autoexec.cfg`/`server.cfg` prevent execution
-of the player's own startup configuration. Driver-generated files stay outside
-steamapps, so there is no shared config to clean up on stop. CS2 itself creates
+The driver launches the original binary. Current Linux and Windows builds ignore
+the private `-game` directory, so shared installs use one uniquely named
+`game/csgo/cfg/varde_<server-id>.cfg`, containing the server settings and inline
+ban copies. It is recreated before each launch, removed after healthy startup,
+and removed again on stop. Existing user cfg/ban files are never overwritten;
+user startup cfgs can still execute. Private deployment files retain Varde's
+configuration and ban copies. CS2 itself creates
 or rewrites `steam_appid.txt` beside its executable and rewrites
 `game/csgo/cfg/boot.vcfg` without changing its content. The gated test seeds
 nonempty client-style boot settings and requires byte-identical content after
@@ -48,6 +49,8 @@ Linux library search uses
 the binary directory plus an existing `steamclient.so` from that directory,
 Steam's `linux64`, or `~/.steam/sdk64`. No library is copied into the client
 install. The SteamCMD fallback retains its deployment-local library copy.
+On Windows the directory containing `steamclient64.dll` is prepended to `PATH`.
+`-nominidumps` starts harmlessly on Linux; its Windows behavior is unverified.
 
 In CS2 open the console and run `connect <address>` using the Varde address.
 Only UDP 27015 is exposed through the mesh, not RCON or SourceTV. CS2's UDP
@@ -62,20 +65,33 @@ The agent runs as unprivileged `varde`; Ubuntu 23.10+ restricts unprivileged use
 
 Modes: casual, competitive (default), wingman, arms_race and deathmatch.
 The default map is `de_dust2`, player limit 10 (2–64), and bot quota 0 (0–64).
-Hostname, password and bot quota are written to private generated `varde.cfg`, not
-process arguments. Optional GSLT is passed via `+sv_setsteamaccount`, so it is
+Hostname, password and bot quota are written to generated configuration, not
+process arguments. After map initialization, a loopback RCON connection with a
+random per-launch credential re-executes that cfg after the game-mode defaults,
+resets the bots and applies the configured quota. The credential is held in cfg
+files, never argv, and RCON authentication is disabled again before readiness.
+The TCP control socket uses `-ip 127.0.0.1`; UDP can still bind wildcard.
+This post-map control path is real-tested on Linux, not yet on Windows.
+Positive quotas remain subject to CS2's player-join/hibernation policy: an empty
+server's A2S bot count need not immediately equal a nonzero quota. The real
+concurrent regression checks zero bots on both instances.
+Optional GSLT is passed via `+sv_setsteamaccount`, so it is
 visible to local process inspection. Catalog secret fields mask inputs, not
 stored/API configuration. Without a GSLT the server reports LAN-only operation.
 
 Readiness requires an A2S_INFO reply with the configured map and nonzero
-player capacity. Stop uses stdin `quit`, falling back to an interrupt after
-five seconds (or immediately if stdin is unavailable).
+player capacity and completion of post-map configuration. Unix stop uses stdin
+`quit`, falling back to an interrupt after five seconds (or immediately if stdin
+is unavailable). Windows uses kill-and-wait, after the live final-snapshot barrier
+has synchronized the saved ban copies. A hidden console avoids Windows stdin spam.
 There is no world save: only `game/csgo/cfg/banned_user.cfg` and `banned_ip.cfg`
 are snapshotted. The live snapshot hook copies these files into the state
 directory without stopping the game; configure restores and executes them.
 For shared installs these are the private runtime's ban files, never the
-player's files. As with standalone CS2, `writeid`/`writeip` save in-memory bans;
-the driver snapshots those saved files rather than issuing administrative commands.
+player's files. Because current builds ignore `-game`, engine `writeid`/`writeip`
+target the shared installation, not these private copies; do not use those commands
+to persist Varde bans in a shared install. The driver snapshots its private saved
+copies and does not issue `writeid`/`writeip` against the player's files.
 Generated configuration, Steam content, logs, demos and plugins are excluded.
 
 Real Linux test (two concurrently healthy instances, separate ports, no
