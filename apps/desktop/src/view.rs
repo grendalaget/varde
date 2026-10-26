@@ -20,6 +20,10 @@ pub struct TrayView {
     pub tooltip: String,
     pub headline: String,
     pub hosting: Option<String>,
+    /// The server this PC was playing on lost its host (rejoin prompt).
+    pub rejoin: Option<String>,
+    /// Address to rejoin at, once the server is back ("Copy address").
+    pub rejoin_address: Option<String>,
     pub safe_save: Option<String>,
     pub link_label: &'static str,
     pub link_enabled: bool,
@@ -42,6 +46,8 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             tooltip: "Varde: service isn't running".into(),
             headline: "Varde: service isn't running".into(),
             hosting: None,
+            rejoin: None,
+            rejoin_address: None,
             safe_save: None,
             link_label: "Link this PC…",
             link_enabled: false,
@@ -87,15 +93,22 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         pb::State::ShuttingDown => ("Link this PC…", false),
         _ => ("Link this PC…", true),
     };
-    let tooltip = match &hosting {
-        Some(h) => format!("{headline}\n{h}"),
-        None => headline.clone(),
-    };
+    let rejoin = rejoin_line(&s.rejoin, now_ms);
+    let tooltip = [Some(&headline), rejoin.as_ref(), hosting.as_ref()]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
     TrayView {
         icon,
         tooltip,
         headline,
         hosting,
+        rejoin,
+        rejoin_address: shown_rejoin(&s.rejoin)
+            .filter(|r| r.phase == "ready" && !r.address.is_empty())
+            .map(|r| r.address.clone()),
         safe_save,
         link_label,
         link_enabled,
@@ -165,6 +178,54 @@ pub fn save_line(hosting: &[pb::Hosting], now_ms: i64) -> Option<String> {
     } else {
         "No safe save yet".to_string()
     })
+}
+
+/// The player-facing state of a failover the game on this PC was caught in.
+pub fn rejoin_line(r: &[pb::Rejoin], now_ms: i64) -> Option<String> {
+    let r = shown_rejoin(r)?;
+    let name = or(&r.server_name, "the server");
+    let host = or(&r.host_name, "another PC");
+    Some(match r.phase.as_str() {
+        "host_lost" => format!(
+            "Reconnecting {name}… {} stopped answering",
+            or(&r.previous_host_name, "the host")
+        ),
+        "moving" if r.save_at_unix_ms > 0 => format!(
+            "Starting {name} on {host} from the save {}…",
+            ago(now_ms - r.save_at_unix_ms)
+        ),
+        "moving" => format!("Starting {name} on {host}…"),
+        _ => format!("{name} is back on {host}: rejoin at {}", r.address),
+    })
+}
+
+/// The one prompt the tray shows: a server ready to rejoin wins, so the
+/// line and "Copy address" always describe the same server.
+fn shown_rejoin(r: &[pb::Rejoin]) -> Option<&pb::Rejoin> {
+    r.iter().find(|r| r.phase == "ready").or(r.first())
+}
+
+/// (title, body) of the "server is back" notification.
+pub fn rejoin_notice(r: &pb::Rejoin) -> (String, String) {
+    (
+        format!(
+            "{} is back on {}",
+            or(&r.server_name, "Your server"),
+            or(&r.host_name, "another PC")
+        ),
+        format!(
+            "Rejoin at {} (same address) from your game's server list.",
+            r.address
+        ),
+    )
+}
+
+fn or<'a>(s: &'a str, fallback: &'a str) -> &'a str {
+    if s.is_empty() {
+        fallback
+    } else {
+        s
+    }
 }
 
 pub(crate) fn hosting_line(h: &[pb::Hosting]) -> Option<String> {
@@ -348,6 +409,71 @@ mod tests {
             latest_safe_save_on: vec![],
             latest_save_on: vec![],
         }
+    }
+
+    fn rejoin(phase: &str) -> pb::Rejoin {
+        pb::Rejoin {
+            server_id: "srv_1".into(),
+            server_name: "Survival".into(),
+            phase: phase.into(),
+            host_name: "Kari-PC".into(),
+            previous_host_name: "Ola-PC".into(),
+            address: "127.77.12.4:25565".into(),
+            save_at_unix_ms: 880_000,
+            since_unix_ms: 990_000,
+        }
+    }
+
+    #[test]
+    fn rejoin_prompt_follows_the_failover() {
+        let now = 1_000_000;
+        let mut s = status(pb::State::Online);
+        s.rejoin = vec![rejoin("host_lost")];
+        let v = tray_view(Some(&s), now);
+        assert_eq!(
+            v.rejoin.as_deref(),
+            Some("Reconnecting Survival… Ola-PC stopped answering")
+        );
+        assert_eq!(v.rejoin_address, None);
+        assert_eq!(
+            v.tooltip,
+            "Varde: Online · Grendalaget\nReconnecting Survival… Ola-PC stopped answering"
+        );
+
+        s.rejoin = vec![rejoin("moving")];
+        let v = tray_view(Some(&s), now);
+        assert_eq!(
+            v.rejoin.as_deref(),
+            Some("Starting Survival on Kari-PC from the save 2 min ago…")
+        );
+        assert_eq!(v.rejoin_address, None);
+
+        s.rejoin = vec![rejoin("ready")];
+        let v = tray_view(Some(&s), now);
+        assert_eq!(
+            v.rejoin.as_deref(),
+            Some("Survival is back on Kari-PC: rejoin at 127.77.12.4:25565")
+        );
+        assert_eq!(v.rejoin_address.as_deref(), Some("127.77.12.4:25565"));
+        let (title, body) = rejoin_notice(&s.rejoin[0]);
+        assert_eq!(title, "Survival is back on Kari-PC");
+        assert_eq!(
+            body,
+            "Rejoin at 127.77.12.4:25565 (same address) from your game's server list."
+        );
+
+        // two servers caught: line and Copy address name the same one
+        let mut other = rejoin("moving");
+        other.server_name = "Creative".into();
+        other.address = "127.77.9.9:25565".into();
+        s.rejoin = vec![other, rejoin("ready")];
+        let v = tray_view(Some(&s), now);
+        assert!(v.rejoin.as_deref().unwrap().starts_with("Survival is back"));
+        assert_eq!(v.rejoin_address.as_deref(), Some("127.77.12.4:25565"));
+
+        s.rejoin.clear();
+        let v = tray_view(Some(&s), now);
+        assert_eq!((v.rejoin, v.rejoin_address), (None, None));
     }
 
     #[test]

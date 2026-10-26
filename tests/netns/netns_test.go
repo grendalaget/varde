@@ -13,6 +13,7 @@ package netns
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	agentv1 "github.com/grendalaget/varde/go/gen/agent/v1"
 	meshv1 "github.com/grendalaget/varde/go/gen/mesh/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -448,6 +450,24 @@ func meshClient(t *testing.T, sock string) meshv1.MeshServiceClient {
 	}
 	t.Cleanup(func() { _ = cc.Close() })
 	return meshv1.NewMeshServiceClient(cc)
+}
+
+// agentStatus: the node's local agent status, as the tray sees it.
+func (e *gameEnv) agentStatus(name string) *agentv1.Status {
+	e.t.Helper()
+	sock := filepath.Join(e.nodes[name].dataDir, "run", "agent.sock")
+	cc, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		e.t.Fatalf("agent ipc %s: %v", sock, err)
+	}
+	defer cc.Close()
+	ctx, cancel := context.WithTimeout(e.t.Context(), 2*time.Second)
+	defer cancel()
+	r, err := agentv1.NewLocalServiceClient(cc).GetStatus(ctx, &agentv1.GetStatusRequest{})
+	if err != nil {
+		return nil
+	}
+	return r.GetStatus()
 }
 
 func peerPath(t *testing.T, sock, peerID string) meshv1.PathKind {

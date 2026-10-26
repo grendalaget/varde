@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	agentv1 "github.com/grendalaget/varde/go/gen/agent/v1"
 )
 
 var mcNodeNames = []string{"arne", "kari", "nas", "player"}
@@ -451,6 +453,101 @@ func runMinecraftFailover(t *testing.T, prod *cpOpts) {
 	if h := e.hostOf(serverID); h != e.nodes["kari"].nodeID {
 		t.Fatalf("server migrated after arne returned: host=%s", e.nodeName(h))
 	}
+	wd.check(t)
+}
+
+// TestMinecraftRejoinPrompt: the player's game is connected when its host
+// dies. The player's agent must walk the tray's rejoin prompt through the
+// failover (host lost → moving → ready, same address) and clear it once the
+// game is back on the new host.
+func TestMinecraftRejoinPrompt(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (ip netns); run via `sudo make e2e-minecraft`")
+	}
+	e := newGameEnv(t, mcNodeNames)
+	wd := startWatchdog(t, mcNodeNames, "server.jar")
+	for _, n := range mcNodeNames {
+		e.enroll(n, n == "nas")
+	}
+	for _, n := range mcNodeNames {
+		e.startAgent(n)
+	}
+	e.setHosting("nas", false)
+	e.setHosting("player", false)
+	e.setHosting("kari", false)
+	e.waitOnline(30*time.Second, mcNodeNames...)
+
+	serverID := e.createMCServer("mc-a", "arne")
+	e.seedMinecraftOps(serverID)
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/start", e.tok, map[string]any{}, 200)
+	svc := e.waitMinecraft(serverID, "arne", 6*time.Minute)
+	e.setHosting("kari", true)
+
+	n1 := randNonce(t)
+	ref := e.botWrite("player", svc, 0, n1, "")
+	apiJSON(t, "POST", e.cpURL+"/v1/servers/"+serverID+"/snapshots", e.tok, nil, 202)
+	e.waitCommitted(serverID, e.nodes["arne"].nodeID)
+
+	hold := e.startBotHold("player", svc, 600)
+	if ev := hold.nextEvent(t, 45*time.Second); ev["connected"] != true {
+		t.Fatalf("hold bot did not report connected: %v", ev)
+	}
+	// a play session counts after 15 s; nobody is prompted before that
+	time.Sleep(20 * time.Second)
+	if st := e.agentStatus("player"); st == nil || len(st.Rejoin) != 0 {
+		t.Fatalf("rejoin prompt before any failover: %v", st)
+	}
+
+	t0 := time.Now()
+	killNamespace(t, "arne")
+	var seen []string
+	var ready *agentv1.Rejoin
+	waitFor(t, 4*time.Minute, "rejoin prompt ready", func() bool {
+		st := e.agentStatus("player")
+		if st == nil || len(st.Rejoin) == 0 {
+			return false
+		}
+		r := st.Rejoin[0]
+		if len(seen) == 0 || seen[len(seen)-1] != r.Phase {
+			seen = append(seen, r.Phase)
+			t.Logf("[+%s] rejoin %s: host=%q prev=%q addr=%s save=%d",
+				time.Since(t0).Round(100*time.Millisecond), r.Phase, r.HostName, r.PreviousHostName, r.Address, r.SaveAtUnixMs)
+		}
+		if r.Phase == "ready" {
+			ready = r
+			return true
+		}
+		return false
+	})
+	order := map[string]int{"host_lost": 0, "moving": 1, "ready": 2}
+	for i := 1; i < len(seen); i++ {
+		if order[seen[i]] <= order[seen[i-1]] {
+			t.Fatalf("rejoin phases out of order: %v", seen)
+		}
+	}
+	// every netns node shares the box's hostname, so names can't tell
+	// kari from arne here; the CP integration test pins the name
+	if ready.Address != svc || ready.HostName == "" || ready.PreviousHostName == "" ||
+		ready.ServerName != "mc-a" || ready.SaveAtUnixMs == 0 {
+		t.Fatalf("ready prompt: %+v (want host names, mc-a at %s, save time)", ready, svc)
+	}
+	if e.hostOf(serverID) != e.nodes["kari"].nodeID {
+		t.Fatalf("prompt says ready but server is on %s", e.nodeName(e.hostOf(serverID)))
+	}
+	if got, _, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second); got != n1 {
+		t.Fatalf("col0 after failover: %q, want %q", got, n1)
+	}
+
+	// the game rejoins at the same address: the prompt clears
+	back := e.startBotHold("player", svc, 120)
+	if ev := back.nextEvent(t, 45*time.Second); ev["connected"] != true {
+		t.Fatalf("rejoin bot did not report connected: %v", ev)
+	}
+	waitFor(t, 60*time.Second, "rejoin prompt cleared", func() bool {
+		st := e.agentStatus("player")
+		return st != nil && len(st.Rejoin) == 0
+	})
+	t.Logf("[+%s] prompt cleared after the game rejoined", time.Since(t0).Round(100*time.Millisecond))
 	wd.check(t)
 }
 

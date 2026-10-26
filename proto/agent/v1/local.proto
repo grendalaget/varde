@@ -116,6 +116,26 @@ message Status {
   // Whether crash reports captured on this machine are uploaded to the
   // control plane. Capture to disk happens either way.
   bool crash_reporting = 14;
+  // Servers this PC was playing on whose host went away, until the player
+  // has rejoined (or gives up).
+  repeated Rejoin rejoin = 15;
+}
+
+// A server this PC's game was connected to lost its host.
+message Rejoin {
+  string server_id = 1;
+  string server_name = 2;
+  // host_lost: the host stopped answering; moving: starting on another PC;
+  // ready: running again — rejoin at the same address.
+  string phase = 3;
+  string host_name = 4;
+  string previous_host_name = 5;
+  // "127.77.x.y:port" — unchanged across the move.
+  string address = 6;
+  // The save the server resumes from (local clock); 0 = unknown.
+  int64 save_at_unix_ms = 7;
+  // When this phase began (local clock).
+  int64 since_unix_ms = 8;
 }
 
 message GetStatusRequest {}

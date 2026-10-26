@@ -17,6 +17,13 @@ window.
   this PC… / Re-link… (relaunches elevated with `--relink`; refused by the
   service while hosting), Open logs folder, Check for updates…, Start at
   login, Send crash reports, Exit Varde.
+- Rejoin prompt: when the host of a server this PC's game was connected to
+  goes away, the menu and tooltip follow the failover ("Reconnecting
+  Survival… Ola-PC stopped answering" → "Starting Survival on Kari-PC from
+  the save 2 min ago…"). Once it's back, a notification says to rejoin at
+  the same address, and the menu offers Copy address. The agent drives
+  this (`Status.rejoin`, `apps/agent/src/rejoin.rs`). Planned warm moves are
+  skipped since Minecraft `/transfer`s players itself.
 - **The window** is a single surface with two faces — only one is ever
   visible, so it reads as one window that changes content:
   - *Setup face* (`main`, mouve design-system UI in `ui/`): Varde address →

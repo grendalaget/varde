@@ -1810,6 +1810,15 @@ components:
           type: array
           items: { $ref: "#/components/schemas/GamePort" }
         host_node_id: { type: string, description: "empty = server stopped" }
+        host_node_name: { type: string }
+        host_running:
+          type: boolean
+          description: The host's execution is running (players can join).
+        restore_save_at_unix_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: created_at of the save the host's execution restored from.
         epoch: { type: integer, format: int64 }
         drain_host_node_id:
           type: string
