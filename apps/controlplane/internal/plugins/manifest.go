@@ -283,6 +283,9 @@ func validateFields(fields []Field, setting bool) error {
 		default:
 			return fmt.Errorf("%s: unsupported type %q", field.Name, field.Type)
 		}
+		if field.Secret && field.Type != "string" {
+			return fmt.Errorf("%s: only string fields can be marked secret", field.Name)
+		}
 		if (field.Type == "select" || field.Type == "multiselect") && len(field.Options) == 0 {
 			return fmt.Errorf("%s: options are required for %s", field.Name, field.Type)
 		}
