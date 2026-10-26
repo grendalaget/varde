@@ -412,9 +412,7 @@ async fn run(
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
     #[cfg(windows)]
-    cs2_firewall::sweep()
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    cs2_firewall::start_sweep();
     crash_report::install_panic_hook(
         crash::dir(&data_dir),
         "varde-agent",

@@ -1,5 +1,23 @@
 const PREFIX: &str = "Varde CS2 ";
 
+struct SweepGate(tokio::sync::watch::Receiver<Option<Result<(), String>>>);
+
+impl SweepGate {
+    fn start(work: impl std::future::Future<Output = Result<(), String>> + Send + 'static) -> Self {
+        let (done, waiting) = tokio::sync::watch::channel(None);
+        tokio::spawn(async move {
+            done.send_replace(Some(work.await));
+        });
+        Self(waiting)
+    }
+
+    async fn wait(&self) -> Result<(), String> {
+        self.0.clone().wait_for(Option::is_some).await
+            .map_err(|_| "CS2 firewall sweep task stopped".to_string())?
+            .as_ref().unwrap().clone()
+    }
+}
+
 fn rule_name(server: &str) -> Result<String, &'static str> {
     if server.is_empty() || server.len() > 200 || server.chars().any(char::is_control) {
         return Err("cs2: invalid server ID for firewall rule");
@@ -58,8 +76,16 @@ mod platform {
         Ok(())
     }
 
-    pub async fn sweep() -> Result<()> {
-        tokio::task::spawn_blocking(|| command(&sweep_script())).await?
+    fn startup() -> &'static SweepGate {
+        static SWEEP: std::sync::OnceLock<SweepGate> = std::sync::OnceLock::new();
+        SWEEP.get_or_init(|| SweepGate::start(async {
+            async { tokio::task::spawn_blocking(|| command(&sweep_script())).await? }.await
+                .map_err(|error: executor_api::Error| error.to_string())
+        }))
+    }
+
+    pub fn start_sweep() {
+        let _ = startup();
     }
 
     pub struct Rule {
@@ -76,6 +102,7 @@ mod platform {
     }
 
     pub async fn install(server: &str, port: u16) -> Result<Rule> {
+        startup().wait().await?;
         let name = rule_name(server)?.to_string();
         tokio::task::spawn_blocking(move || {
             let owner = format!("Varde CS2 launch {:032x}", rand::random::<u128>());
@@ -150,6 +177,19 @@ pub use platform::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn background_sweep_only_blocks_consumers_and_caches_completion() {
+        let (release, work) = tokio::sync::oneshot::channel();
+        let gate = SweepGate::start(async { work.await.unwrap() });
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), gate.wait()).await.is_err());
+        release.send(Ok(())).unwrap();
+        assert_eq!(gate.wait().await, Ok(()));
+        assert_eq!(gate.wait().await, Ok(()));
+        let failure = SweepGate::start(async { Err("sweep failed".to_string()) });
+        assert_eq!(failure.wait().await, Err("sweep failed".to_string()));
+        assert_eq!(failure.wait().await, Err("sweep failed".to_string()));
+    }
 
     #[test]
     fn names_and_cleanup_are_server_scoped() {
