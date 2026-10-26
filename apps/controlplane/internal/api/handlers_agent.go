@@ -122,10 +122,13 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	if b.Executions != nil {
 		execReports = *b.Executions
 	}
+	acknowledgedExecutions := make(map[string]struct{})
 	for _, er := range execReports {
 		if err := s.processExecReport(ctx, node, &er, now); err != nil {
 			s.Log.Warn("exec report rejected", "node", node.ID, "exec", er.ExecutionId, "error", err)
+			continue
 		}
+		acknowledgedExecutions[er.ExecutionId] = struct{}{}
 	}
 
 	// build directives
@@ -133,9 +136,18 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 	if err != nil {
 		return nil, err
 	}
+	digestDirectives := resp
 	claimedSnapshotRequests := make(map[string]struct{})
 	if resp.Executions != nil {
-		for _, execution := range *resp.Executions {
+		executions := make([]gen.ExecutionDirective, len(*resp.Executions))
+		copy(executions, *resp.Executions)
+		resp.Executions = &executions
+		for i := range executions {
+			execution := &executions[i]
+			if _, acknowledged := acknowledgedExecutions[execution.ExecutionId]; !acknowledged {
+				execution.SnapshotRequests = nil
+				continue
+			}
 			if execution.SnapshotRequests == nil {
 				continue
 			}
@@ -146,9 +158,8 @@ func (s *Server) AgentHeartbeat(ctx context.Context, req gen.AgentHeartbeatReque
 			}
 		}
 	}
-	digestDirectives := resp
 	if len(claimedSnapshotRequests) > 0 && resp.Executions != nil {
-		executions := append([]gen.ExecutionDirective(nil), (*resp.Executions)...)
+		executions := append([]gen.ExecutionDirective(nil), (*digestDirectives.Executions)...)
 		for i := range executions {
 			if executions[i].SnapshotRequests == nil {
 				continue
