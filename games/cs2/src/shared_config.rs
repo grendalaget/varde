@@ -1,6 +1,8 @@
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+
+const MARKER: &[u8] = b"// varde-managed:";
 
 pub struct SharedConfig {
     path: PathBuf,
@@ -33,6 +35,27 @@ fn generated_name(name: &str) -> bool {
         })
 }
 
+fn managed(path: &Path) -> io::Result<bool> {
+    let mut header = [0; MARKER.len() + 32 + 1];
+    let result = File::open(path).and_then(|mut file| file.read_exact(&mut header));
+    match result {
+        Ok(()) => Ok(header.starts_with(MARKER)
+            && header[MARKER.len()..header.len() - 1]
+                .iter()
+                .all(u8::is_ascii_hexdigit)
+            && header.last() == Some(&b'\n')),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::UnexpectedEof
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 impl SharedConfig {
     pub fn remove_on_drop(path: PathBuf) -> Self {
         Self { path, _lock: None }
@@ -53,6 +76,8 @@ impl SharedConfig {
             path,
             _lock: Some(lock),
         };
+        file.write_all(MARKER)?;
+        writeln!(file, "{:032x}", rand::random::<u128>())?;
         file.write_all(contents.as_bytes())?;
         Ok(guard)
     }
@@ -74,7 +99,9 @@ impl SharedConfig {
             let lock = lock_file(&path)?;
             match fs2::FileExt::try_lock_exclusive(&lock) {
                 Ok(()) => {
-                    remove(&path)?;
+                    if managed(&path)? {
+                        remove(&path)?;
+                    }
                 }
                 Err(error)
                     if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {}
@@ -118,9 +145,28 @@ mod tests {
             "varde_odd.name.cfg",
             "varde_é.cfg",
             "server.cfg",
+            "varde_user.cfg",
         ] {
             std::fs::write(dir.path().join(name), "config").unwrap();
         }
+        for name in ["varde_old.cfg", "varde_A-1_2.cfg"] {
+            std::fs::write(
+                dir.path().join(name),
+                format!("// varde-managed:{:032x}\nsecret", 1),
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("varde_empty.cfg"), "").unwrap();
+        std::fs::write(
+            dir.path().join("varde_partial.cfg"),
+            "// varde-managed:abc\nsecret",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("varde_bad_marker.cfg"),
+            "// varde-managed:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\nsecret",
+        )
+        .unwrap();
         std::fs::create_dir(dir.path().join("varde_directory.cfg")).unwrap();
         SharedConfig::sweep(dir.path()).unwrap();
         for name in ["varde_old.cfg", "varde_A-1_2.cfg"] {
@@ -135,6 +181,10 @@ mod tests {
             "varde_é.cfg",
             "server.cfg",
             "varde_directory.cfg",
+            "varde_user.cfg",
+            "varde_empty.cfg",
+            "varde_partial.cfg",
+            "varde_bad_marker.cfg",
         ] {
             assert!(dir.path().join(name).exists());
         }
@@ -150,7 +200,10 @@ mod tests {
         assert!(SharedConfig::write(path.clone(), "new").is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
         SharedConfig::sweep(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+        std::fs::remove_file(&path).unwrap();
         let guard = SharedConfig::write(path.clone(), "new").unwrap();
+        assert!(managed(&path).unwrap());
         assert!(SharedConfig::write(path.clone(), "other launch").is_err());
         std::fs::remove_file(&path).unwrap();
         drop(guard);

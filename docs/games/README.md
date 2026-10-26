@@ -43,7 +43,9 @@ the private `-game` directory, so shared installs use one uniquely named
 ban copies. It is created only immediately before spawn, removed after healthy
 startup, and guarded against failed/cancelled launches, process exit and stop.
 Before launch, stale files matching exactly `varde_<validated-server-id>.cfg`
-are swept; zero-byte `.varde_<server-id>.cfg.lock` sidecars protect concurrent
+and starting with a `// varde-managed:<launch-id>` marker are swept. Unmarked
+files are preserved, including ambiguous legacy files, and are never overwritten.
+Zero-byte `.varde_<server-id>.cfg.lock` sidecars protect concurrent
 launches with OS locks. Existing user cfg/ban files are never overwritten;
 user startup cfgs can still execute. Private deployment files retain Varde's
 configuration and ban copies. CS2 itself creates
