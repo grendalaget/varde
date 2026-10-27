@@ -198,6 +198,9 @@ func (r *Reconciler) Pass(ctx context.Context) (passErr error) {
 	if err := r.standbys(ctx, servers); err != nil {
 		return err
 	}
+	if err := r.seedAnchors(ctx, servers); err != nil {
+		return err
+	}
 	if err := r.shutdownHandoffs(ctx, servers); err != nil {
 		return err
 	}

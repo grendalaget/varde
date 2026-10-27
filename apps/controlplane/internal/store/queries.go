@@ -1282,6 +1282,43 @@ func (s *Store) UpsertReplica(ctx context.Context, q Querier, r *Replica) error 
 	return err
 }
 
+// AssignReplica assigns a save copy to a node unless the server is deleted
+// or the node already has a row for it. It locks the server row, so it
+// orders against DeleteServer: either the delete marks this row deleting,
+// or this sees deleted_at and assigns nothing.
+func (s *Store) AssignReplica(ctx context.Context, serverID, snapshotID, nodeID string, now int64) (bool, error) {
+	inserted := false
+	err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+		res, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE servers SET updated_at=updated_at WHERE id=? AND deleted_at IS NULL`), serverID)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+
+		res, err = tx.ExecContext(ctx, s.Rebind(
+			`INSERT INTO snapshot_replicas (snapshot_id,node_id,state,assigned_at)
+			 VALUES (?,?,'assigned',?)
+			 ON CONFLICT(snapshot_id,node_id) DO NOTHING`), snapshotID, nodeID, now)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		inserted = n > 0
+		return nil
+	})
+	return inserted, err
+}
+
 func (s *Store) ReplicasForSnapshot(ctx context.Context, snapID string) ([]Replica, error) {
 	var rs []Replica
 	err := s.q().SelectContext(ctx, &rs, s.Rebind(
