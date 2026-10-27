@@ -29,6 +29,31 @@ func TestPlacePicksOnlyEligible(t *testing.T) {
 	}
 }
 
+func TestPlaceOSNilAndEmpty(t *testing.T) {
+	windows := okNode("node_windows")
+	windows.OS = "windows"
+	for _, tc := range []struct {
+		name    string
+		oses    []string
+		wantErr bool
+	}{
+		{name: "nil is unrestricted"},
+		{name: "empty rejects every OS", oses: []string{}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			game := testGame
+			game.OS = tc.oses
+			_, err := Place(testSrv, game, []NodeView{windows}, SnapView{})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Place(OS=%v) error = %v, wantErr %v", tc.oses, err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "unsupported os windows") {
+				t.Errorf("Place(OS=%v) error = %v, want unsupported os reason", tc.oses, err)
+			}
+		})
+	}
+}
+
 func TestPlaceMinimumDisk(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
@@ -31,7 +32,11 @@ func (r *Reconciler) standbys(ctx context.Context, servers []store.Server) error
 		want := ""
 		if srv.DesiredState == "running" {
 			if active, err := s.ActiveExecution(ctx, srv.ID); err == nil && active.State == "running" {
-				want, _ = r.pickStandby(ctx, srv, active.NodeID)
+				var placementErr *scheduler.Error
+				want, err = r.pickStandby(ctx, srv, active.NodeID)
+				if err != nil && !errors.As(err, &placementErr) {
+					return err
+				}
 			}
 		}
 		cur := ""
@@ -84,8 +89,13 @@ func (r *Reconciler) seedStandby(ctx context.Context, srv *store.Server, nodeID 
 // over from host, else the scheduler's pick among the other nodes.
 func (r *Reconciler) pickStandby(ctx context.Context, srv *store.Server, host string) (string, error) {
 	if srv.StandbyNodeID != nil && *srv.StandbyNodeID != host {
-		if id, err := r.placeOff(ctx, srv, host, *srv.StandbyNodeID); err == nil {
+		id, err := r.placeOff(ctx, srv, host, *srv.StandbyNodeID)
+		if err == nil {
 			return id, nil
+		}
+		var placementErr *scheduler.Error
+		if !errors.As(err, &placementErr) {
+			return "", err
 		}
 	}
 	return r.placeOff(ctx, srv, host, "")

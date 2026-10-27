@@ -180,18 +180,18 @@ func (s *Store) DeleteGroupPlugin(ctx context.Context, groupID, pluginID string)
 func (s *Store) ListServerAddons(ctx context.Context, serverID string) ([]ServerAddon, error) {
 	var rows []ServerAddon
 	err := s.q().SelectContext(ctx, &rows, s.Rebind(
-		`SELECT server_id, plugin_id, addon_id, spec, created_at, updated_at
+		`SELECT server_id, plugin_id, addon_id, target, spec, created_at, updated_at
 		 FROM server_addons WHERE server_id=? ORDER BY plugin_id, addon_id`), serverID)
 	return rows, err
 }
 
 func (s *Store) UpsertServerAddon(ctx context.Context, row ServerAddon) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO server_addons(server_id, plugin_id, addon_id, spec, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO server_addons(server_id, plugin_id, addon_id, target, spec, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(server_id, plugin_id, addon_id) DO UPDATE SET
-		   spec=excluded.spec, updated_at=excluded.updated_at`),
-		row.ServerID, row.PluginID, row.AddonID, row.Spec, row.CreatedAt, row.UpdatedAt)
+		   target=excluded.target, spec=excluded.spec, updated_at=excluded.updated_at`),
+		row.ServerID, row.PluginID, row.AddonID, row.Target, row.Spec, row.CreatedAt, row.UpdatedAt)
 	return err
 }
 

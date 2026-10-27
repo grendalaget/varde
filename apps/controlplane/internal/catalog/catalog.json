@@ -46,6 +46,8 @@
     "min_disk_mb": 75000,
     "steam_app": 730,
     "runtimes": ["steamcmd"],
+    "addon_targets": ["game"],
+    "addon_target_os": {"game": ["linux"]},
     "config_fields": [
       { "name": "server_name", "type": "string", "required": true },
       { "name": "password", "type": "secret", "secret": true, "required": false },

@@ -6,7 +6,6 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
 	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
@@ -118,9 +117,9 @@ func (r *Reconciler) handoffTarget(ctx context.Context, srv *store.Server, sourc
 // placeOff places srv as recovery would, never on exclude; only, when set,
 // restricts the candidates to that node (an eligibility check).
 func (r *Reconciler) placeOff(ctx context.Context, srv *store.Server, exclude, only string) (string, error) {
-	game := catalog.Get(srv.GameID)
-	if game == nil {
-		return "", &scheduler.Error{Reasons: []string{"unknown game " + srv.GameID}}
+	gv, err := r.placementGameView(ctx, srv)
+	if err != nil {
+		return "", err
 	}
 	nodes, err := r.Store.ListNodes(ctx, srv.GroupID)
 	if err != nil {
@@ -149,7 +148,7 @@ func (r *Reconciler) placeOff(ctx context.Context, srv *store.Server, exclude, o
 	}
 	dec, err := scheduler.Place(
 		scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred},
-		scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB, SteamApp: game.SteamApp, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes},
+		gv,
 		views,
 		snap,
 	)

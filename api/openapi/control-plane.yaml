@@ -1885,6 +1885,11 @@ components:
         addon_targets:
           type: array
           items: { type: string }
+        addon_target_os:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
         config_fields:
           type: array
           items: { $ref: "#/components/schemas/GameConfigField" }

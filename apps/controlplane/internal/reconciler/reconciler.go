@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/grendalaget/varde/go/ids"
 
-	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
 	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
@@ -606,9 +604,9 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 	if err != nil {
 		return err
 	}
-	game := catalog.Get(srv.GameID)
-	if game == nil {
-		return fmt.Errorf("unknown game %q", srv.GameID)
+	gv, err := r.placementGameView(ctx, srv)
+	if err != nil {
+		return err
 	}
 	var views []scheduler.NodeView
 	var silent map[string]bool
@@ -633,7 +631,6 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 		snapSize = restore.StoredBytes
 	}
 	sv := scheduler.ServerView{ID: srv.ID, GameID: srv.GameID, PreferredNodeID: preferred}
-	gv := scheduler.GameView{ID: game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB, SteamApp: game.SteamApp, OS: game.OS, Arch: game.Arch, Runtimes: game.Runtimes}
 	snapView := scheduler.SnapView{RestoreBytes: snapSize, DeploymentSize: depSize}
 	var dec *scheduler.Decision
 	// recovery goes to the hot standby while it can take the server: it

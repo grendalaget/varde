@@ -1,6 +1,131 @@
 package api_test
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
+)
+
+func TestCS2GameAddonPlacementRequiresLinux(t *testing.T) {
+	e := newEnv(t)
+	windows, linux := e.newAgent("windows"), e.newAgent("linux")
+	configureCS2PlacementNode(t, e, windows, "windows")
+	configureCS2PlacementNode(t, e, linux, "linux")
+	serverID := e.createServer("cs2", "cs2 addon", map[string]any{
+		"preferred_node_id": windows.nodeID,
+		"config":            map[string]any{"server_name": "CS2 addon placement"},
+	})
+	addServerAddonTarget(t, e, serverID, "game")
+
+	host, _, _ := e.startToRunning(serverID, windows, linux)
+
+	if host != linux {
+		t.Fatalf("CS2 game addon started on %s, want Linux node %s", host.nodeID, linux.nodeID)
+	}
+}
+
+func TestCS2GameAddonIsUnschedulableOnWindowsOnly(t *testing.T) {
+	e := newEnv(t)
+	windows := e.newAgent("windows")
+	configureCS2PlacementNode(t, e, windows, "windows")
+	serverID := e.createServer("cs2", "cs2 addon", map[string]any{
+		"config": map[string]any{"server_name": "CS2 addon placement"},
+	})
+	addServerAddonTarget(t, e, serverID, "game")
+
+	resp := e.do("POST", "/v1/servers/"+serverID+"/start", map[string]any{}, e.token)
+
+	if resp.Status != 400 || !strings.Contains(string(resp.Raw), "unsupported os windows") {
+		t.Fatalf("start CS2 with game addon on Windows = %d %s, want unschedulable unsupported os windows", resp.Status, resp.Raw)
+	}
+	if got := e.activeExec(serverID); got != nil {
+		t.Fatalf("Windows-only addon server got active execution %+v", got)
+	}
+}
+
+func TestCS2WithoutAddonCanUseWindows(t *testing.T) {
+	e := newEnv(t)
+	windows := e.newAgent("windows")
+	configureCS2PlacementNode(t, e, windows, "windows")
+	serverID := e.createServer("cs2", "cs2", map[string]any{
+		"config": map[string]any{"server_name": "CS2 without addon"},
+	})
+
+	host, _, _ := e.startToRunning(serverID, windows)
+
+	if host != windows {
+		t.Fatalf("CS2 without addon started on %s, want Windows node %s", host.nodeID, windows.nodeID)
+	}
+}
+
+func TestCS2AddonStandbyAndPreinstallAvoidWindows(t *testing.T) {
+	e := newEnv(t)
+	host, windows, linuxStandby := e.newAgent("host"), e.newAgent("windows"), e.newAgent("linux-standby")
+	configureCS2PlacementNode(t, e, host, "linux")
+	configureCS2PlacementNode(t, e, windows, "windows")
+	configureCS2PlacementNode(t, e, linuxStandby, "linux")
+	for _, a := range []*agent{host, windows} {
+		e.mustOK(e.do("PATCH", "/v1/nodes/"+a.nodeID, map[string]any{"anchor": true}, e.token))
+	}
+	serverID := e.createServer("cs2", "cs2 addon", map[string]any{
+		"preferred_node_id": host.nodeID,
+		"config":            map[string]any{"server_name": "CS2 addon standby"},
+	})
+	addServerAddonTarget(t, e, serverID, "game")
+
+	actualHost, _, _ := e.startToRunning(serverID, host, windows, linuxStandby)
+	if actualHost != host {
+		t.Fatalf("CS2 game addon started on %s, want preferred Linux node %s", actualHost.nodeID, host.nodeID)
+	}
+	if got := e.standbyOf(serverID); got != linuxStandby.nodeID {
+		t.Fatalf("CS2 game addon standby = %q, want Linux node %s", got, linuxStandby.nodeID)
+	}
+
+	if _, err := e.st.DB.Exec(`UPDATE servers SET standby_node_id=? WHERE id=?`, windows.nodeID, serverID); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := windows.heartbeatCaps(nil, cs2PlacementCaps("windows"))
+	if len(d.Standby) != 0 {
+		t.Fatalf("Windows agent got standby preinstall for CS2 game addon: %+v", d.Standby)
+	}
+	e.clk.advance(testTimings.LeaseTTLMs + testTimings.OfflineAfterMs + 1000)
+	windows.heartbeatCaps(nil, cs2PlacementCaps("windows"))
+	linuxStandby.heartbeatCaps(nil, cs2PlacementCaps("linux"))
+	e.reconcile()
+	if recovered := e.activeExec(serverID); recovered == nil || recovered["node"] == windows.nodeID {
+		t.Fatalf("recovery with stale Windows standby = %+v, want Linux node", recovered)
+	}
+}
+
+func configureCS2PlacementNode(t *testing.T, e *env, a *agent, os string) {
+	t.Helper()
+	if _, err := e.st.DB.Exec(`UPDATE nodes SET os=? WHERE id=?`, os, a.nodeID); err != nil {
+		t.Fatal(err)
+	}
+	_, resp := a.heartbeatCaps(nil, cs2PlacementCaps(os))
+	if resp.Status != 200 {
+		t.Fatalf("heartbeatCaps(os=%s) = %d %s, want 200", os, resp.Status, resp.Raw)
+	}
+}
+
+func cs2PlacementCaps(os string) map[string]any {
+	c := caps()
+	c["os"] = os
+	c["runtimes"] = []string{"steamcmd"}
+	c["steam_apps"] = []int64{730}
+	return c
+}
+
+func addServerAddonTarget(t *testing.T, e *env, serverID, target string) {
+	t.Helper()
+	if err := e.st.UpsertServerAddon(t.Context(), store.ServerAddon{
+		ServerID: serverID, PluginID: "test-plugin", AddonID: "readyup",
+		Target: target, Spec: "sealed", CreatedAt: e.clk.ms, UpdatedAt: e.clk.ms,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCS2StandbyAndRecoveryUseInstalledSteamDiskPolicy(t *testing.T) {
 	for _, installed := range []bool{false, true} {

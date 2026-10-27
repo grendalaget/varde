@@ -37,11 +37,20 @@ existing install only if its manifest still reports complete and the binary exis
 Steam-client installs remain Steam's responsibility and never run SteamCMD.
 Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubuntu).
 
-The driver launches the original binary. Current Linux and Windows builds ignore
-the private `-game` directory, so shared installs use one uniquely named
-`game/csgo/cfg/varde_<server-id>.cfg`, containing the server settings and inline
-ban copies. It is created only immediately before spawn, removed after healthy
-startup, and guarded against failed/cancelled launches, process exit and stop.
+Linux servers with `game` addons use a per-server root at
+`<deployment_dir>/cs2-servers/<server-id>`. Varde copies the CS2 executable,
+gameinfo files, and config files there, then symlinks the rest of the install
+before applying addons. This mode is Linux-only. The supervisor calls
+`configure` once per execution, rebuilding the root when it starts the server.
+Automatic crash restarts reuse that root, so Ready Up can recover a match from
+its saved state.
+
+Without addons, the driver launches the original binary. Current Linux and
+Windows builds ignore the private `-game` directory, so shared installs use one
+uniquely named `game/csgo/cfg/varde_<server-id>.cfg`, containing the server
+settings and inline ban copies. It is created only immediately before spawn,
+removed after healthy startup, and guarded against failed/cancelled launches,
+process exit and stop.
 Before launch, stale files matching exactly `varde_<validated-server-id>.cfg`
 and starting with a `// varde-managed:<launch-id>` marker are swept. Unmarked
 files are preserved, including ambiguous legacy files, and are never overwritten.

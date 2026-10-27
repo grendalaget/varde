@@ -2,6 +2,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 use executor_api::{Executor, ProcessHandle, ProcessSpec};
 use game_driver_api::*;
@@ -67,6 +70,333 @@ impl Cs2Driver {
 
     fn install_dir(ctx: &DriverContext<'_>) -> PathBuf {
         ctx.deployment_dir.join("server")
+    }
+
+    fn addon_mode(ctx: &DriverContext<'_>) -> bool {
+        ctx.addons.iter().any(|addon| addon.target == "game")
+    }
+
+    fn valid_server_id(server_id: &str) -> bool {
+        !server_id.is_empty()
+            && server_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }
+
+    fn addon_root(ctx: &DriverContext<'_>) -> Result<PathBuf> {
+        if !Self::valid_server_id(ctx.server_id) {
+            return Err(
+                "cs2: server id must contain only letters, digits, underscores and hyphens".into(),
+            );
+        }
+        Ok(ctx.deployment_dir.join("cs2-servers").join(ctx.server_id))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn gameinfo_search_paths(ctx: &DriverContext<'_>) -> Result<Vec<String>> {
+        let mut paths = Vec::new();
+        for addon in ctx.addons.iter().filter(|addon| addon.target == "game") {
+            let label = format!("{}/{}", addon.plugin_id, addon.addon_id);
+            let invalid =
+                |message: &str| format!("cs2: invalid driver_options for addon {label}: {message}");
+            let options = addon
+                .driver_options
+                .as_object()
+                .ok_or_else(|| invalid("must be an object"))?;
+            if options.keys().any(|key| key != "gameinfo_search_paths") {
+                return Err(invalid("contains an unsupported option").into());
+            }
+            let Some(value) = options.get("gameinfo_search_paths") else {
+                continue;
+            };
+            let entries = value
+                .as_array()
+                .ok_or_else(|| invalid("gameinfo_search_paths must be an array"))?;
+            if entries.len() > 8 {
+                return Err(invalid("gameinfo_search_paths accepts at most eight entries").into());
+            }
+            for entry in entries {
+                let path = entry
+                    .as_str()
+                    .ok_or_else(|| invalid("gameinfo_search_paths entries must be strings"))?;
+                let Some(relative) = path.strip_prefix("csgo/") else {
+                    return Err(invalid("search paths must start with csgo/").into());
+                };
+                if relative.is_empty()
+                    || relative.split('/').any(|component| {
+                        component.is_empty()
+                            || matches!(component, "." | "..")
+                            || !component.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                            })
+                    })
+                {
+                    return Err(invalid("search paths contain an invalid path component").into());
+                }
+                paths.push(path.to_owned());
+            }
+        }
+        Ok(paths)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn insert_gameinfo_search_paths(path: &Path, search_paths: &[String]) -> Result<()> {
+        if search_paths.is_empty() {
+            return Ok(());
+        }
+        let contents = std::fs::read_to_string(path)?;
+        let mut info = vdf::parse(&contents)?;
+        let Some(filesystem) = info
+            .get_mut("GameInfo")
+            .and_then(|value| value.get_mut("FileSystem"))
+        else {
+            return Ok(());
+        };
+        let Some(vdf::Value::Object(entries)) = filesystem.get_mut("SearchPaths") else {
+            return Ok(());
+        };
+        let Some(mut insert_at) = entries.iter().position(|(key, value)| {
+            key.eq_ignore_ascii_case("Game") && value.text() == Some("csgo")
+        }) else {
+            return Ok(());
+        };
+        let mut present: Vec<String> = entries
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("Game"))
+            .filter_map(|(_, value)| value.text().map(str::to_owned))
+            .collect();
+        let first_game_csgo = insert_at;
+        for search_path in search_paths {
+            if present.iter().any(|existing| existing == search_path) {
+                continue;
+            }
+            entries.insert(
+                insert_at,
+                ("Game".to_owned(), vdf::Value::Text(search_path.clone())),
+            );
+            insert_at += 1;
+            present.push(search_path.clone());
+        }
+        if insert_at != first_game_csgo {
+            std::fs::write(path, info.render())?;
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_file(source: &Path, destination: &Path) -> Result<()> {
+        std::fs::copy(source, destination)?;
+        std::fs::set_permissions(destination, std::fs::metadata(source)?.permissions())?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn symlink(source: &Path, destination: &Path) -> Result<()> {
+        std::os::unix::fs::symlink(source, destination)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn addon_destination_files(addon: &PreparedAddon) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+        fn collect(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    collect(root, &path, files)?;
+                } else if kind.is_file() {
+                    files.push(path.strip_prefix(root)?.to_path_buf());
+                } else {
+                    return Err(format!("unsafe addon destination: {}", path.display()).into());
+                }
+            }
+            Ok(())
+        }
+
+        let root_metadata = std::fs::symlink_metadata(&addon.root)?;
+        if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+            return Err(format!("unsafe addon destination: {}", addon.root.display()).into());
+        }
+        let mut archive_files = Vec::new();
+        collect(&addon.root, &addon.root, &mut archive_files)?;
+        let mut file_keys = Vec::with_capacity(addon.files.len());
+        for (key, _) in &addon.files {
+            let valid = !key.is_empty()
+                && !key.starts_with('/')
+                && !key.contains('\\')
+                && !key.contains(':')
+                && key
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..");
+            if !valid {
+                return Err(format!("invalid addon file key: {key}").into());
+            }
+            file_keys.push(PathBuf::from(key));
+        }
+        Ok((archive_files, file_keys))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn addon_destination_exists(root: &Path, relative: &Path) -> Result<bool> {
+        let mut current = root.to_path_buf();
+        if let Some(parent) = relative.parent() {
+            for component in parent.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(format!("unsafe addon destination: {}", relative.display()).into());
+                };
+                current.push(name);
+                match std::fs::symlink_metadata(&current) {
+                    Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                        return Err(
+                            format!("unsafe addon destination: {}", current.display()).into()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        match std::fs::symlink_metadata(root.join(relative)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_addon_destinations(root: &Path, addon: &PreparedAddon) -> Result<()> {
+        let (archive_files, file_keys) = Self::addon_destination_files(addon)?;
+        for relative in archive_files {
+            if Self::addon_destination_exists(root, &relative)? {
+                return Err(format!(
+                    "cs2: addon {}/{} would replace {}",
+                    addon.plugin_id,
+                    addon.addon_id,
+                    relative.display()
+                )
+                .into());
+            }
+        }
+        let mut seen = HashSet::new();
+        for relative in file_keys {
+            if !seen.insert(relative.clone()) || Self::addon_destination_exists(root, &relative)? {
+                return Err(format!(
+                    "cs2: addon {}/{} would replace {}",
+                    addon.plugin_id,
+                    addon.addon_id,
+                    relative.display()
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn rebuild_addon_root(ctx: &DriverContext<'_>, search_paths: &[String]) -> Result<()> {
+        let root = Self::addon_root(ctx)?;
+        let source =
+            Self::selected(ctx)?.map_or_else(|| Self::install_dir(ctx), |install| install.dir);
+        let source_game = source.join("game");
+        let root_game = root.join("game");
+
+        match std::fs::remove_dir_all(&root) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+        std::fs::create_dir_all(&root_game)?;
+
+        for entry in std::fs::read_dir(&source_game)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == "bin" || name == "csgo" {
+                continue;
+            }
+            Self::symlink(&entry.path(), &root_game.join(name))?;
+        }
+
+        let source_bin = source_game.join("bin");
+        let root_bin = root_game.join("bin");
+        std::fs::create_dir_all(&root_bin)?;
+        for entry in std::fs::read_dir(&source_bin)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == "linuxsteamrt64" {
+                continue;
+            }
+            Self::symlink(&entry.path(), &root_bin.join(name))?;
+        }
+
+        let source_runtime = source_bin.join("linuxsteamrt64");
+        let root_runtime = root_bin.join("linuxsteamrt64");
+        std::fs::create_dir_all(&root_runtime)?;
+        for entry in std::fs::read_dir(&source_runtime)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let destination = root_runtime.join(&name);
+            if name == "cs2" {
+                Self::copy_file(&entry.path(), &destination)?;
+            } else {
+                Self::symlink(&entry.path(), &destination)?;
+            }
+        }
+
+        let source_csgo = source_game.join("csgo");
+        let root_csgo = root_game.join("csgo");
+        std::fs::create_dir_all(&root_csgo)?;
+        for entry in std::fs::read_dir(&source_csgo)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let destination = root_csgo.join(&name);
+            if name == "cfg" {
+                continue;
+            }
+            if name == "gameinfo.gi" || name == "gameinfo_branchspecific.gi" {
+                Self::copy_file(&entry.path(), &destination)?;
+                Self::insert_gameinfo_search_paths(&destination, search_paths)?;
+            } else {
+                Self::symlink(&entry.path(), &destination)?;
+            }
+        }
+
+        let source_cfg = source_csgo.join("cfg");
+        if !std::fs::symlink_metadata(&source_cfg)?.is_dir() {
+            return Err("cs2: install cfg path is not a directory".into());
+        }
+        let root_cfg = root_csgo.join("cfg");
+        std::fs::create_dir_all(&root_cfg)?;
+        for entry in std::fs::read_dir(&source_cfg)? {
+            let entry = entry?;
+            let destination = root_cfg.join(entry.file_name());
+            let kind = entry.file_type()?;
+            if kind.is_file() {
+                Self::copy_file(&entry.path(), &destination)?;
+            } else if kind.is_dir() || kind.is_symlink() {
+                Self::symlink(&entry.path(), &destination)?;
+            } else {
+                return Err(
+                    format!("cs2: unsupported cfg entry {}", entry.path().display()).into(),
+                );
+            }
+        }
+
+        for addon in ctx.addons.iter().filter(|addon| addon.target == "game") {
+            Self::check_addon_destinations(&root_csgo, addon)?;
+            addon.install_into(&root_csgo)?;
+        }
+        Ok(())
+    }
+
+    fn remove_addon_root(ctx: &DriverContext<'_>) -> Result<()> {
+        let root = Self::addon_root(ctx)?;
+        match std::fs::remove_dir_all(root) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     async fn prepare_install(
@@ -157,7 +487,9 @@ impl Cs2Driver {
     }
 
     fn game_dir(ctx: &DriverContext<'_>) -> Result<PathBuf> {
-        Ok(if Self::selected(ctx)?.is_some() {
+        Ok(if Self::addon_mode(ctx) {
+            Self::addon_root(ctx)?.join("game/csgo")
+        } else if Self::selected(ctx)?.is_some() {
             ctx.deployment_dir.join("cs2-runtime/csgo")
         } else {
             Self::install_dir(ctx).join("game/csgo")
@@ -344,10 +676,14 @@ impl Cs2Driver {
     }
 
     fn startup_command(ctx: &DriverContext<'_>) -> Result<String> {
-        let name = Self::shared_config(ctx)?.map_or_else(
-            || "varde.cfg".to_string(),
-            |(_, name)| format!("{name}.cfg"),
-        );
+        let name = if Self::addon_mode(ctx) {
+            "varde.cfg".to_string()
+        } else {
+            Self::shared_config(ctx)?.map_or_else(
+                || "varde.cfg".to_string(),
+                |(_, name)| format!("{name}.cfg"),
+            )
+        };
         let bots = Self::number(ctx.config, "bots", 0, 0, 64)?;
         let kick = if bots == 0 { "bot_kick; " } else { "" };
         Ok(format!("exec {name}; {kick}bot_quota {bots}"))
@@ -464,6 +800,9 @@ impl GameDriver for Cs2Driver {
             .map(|name| PathPattern::new(format!("game/csgo/cfg/{name}")))
             .collect()
     }
+    fn addon_targets(&self) -> &'static [&'static str] {
+        &["game"]
+    }
     fn validate(&self, cfg: &Value) -> Result<()> {
         if Self::string(cfg, "server_name", "")?.trim().is_empty() {
             return Err("cs2: server_name is required".into());
@@ -481,8 +820,21 @@ impl GameDriver for Cs2Driver {
         Self::prepare_install(ctx, steam::detect_client()).await
     }
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
+        let addon_mode = Self::addon_mode(ctx);
+        #[cfg(not(target_os = "linux"))]
+        if addon_mode {
+            return Err("cs2: server addons are only supported on Linux hosts".into());
+        }
         self.validate(ctx.config)?;
-        Self::shared_config(ctx)?;
+        if addon_mode {
+            #[cfg(target_os = "linux")]
+            Self::rebuild_addon_root(ctx, &Self::gameinfo_search_paths(ctx)?)?;
+        } else {
+            if Self::valid_server_id(ctx.server_id) {
+                Self::remove_addon_root(ctx)?;
+            }
+            Self::shared_config(ctx)?;
+        }
         match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-configured")).await {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -521,22 +873,38 @@ impl GameDriver for Cs2Driver {
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
         let mut env = Vec::new();
+        let addon_mode = Self::addon_mode(ctx);
         let selected = Self::selected(ctx)?;
-        let program = Self::binary(ctx)?;
+        let program = if addon_mode {
+            #[cfg(target_os = "linux")]
+            {
+                Self::addon_root(ctx)?.join("game/bin/linuxsteamrt64/cs2")
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return Err("cs2: server addons are only supported on Linux hosts".into());
+            }
+        } else {
+            Self::binary(ctx)?
+        };
         let mut args = Self::args(ctx.config, ctx.local_port(PORT))?;
         match std::fs::remove_file(ctx.deployment_dir.join("cs2-configured")) {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
         }
-        if let Some((_, name)) = Self::shared_config(ctx)? {
-            let index = args
-                .iter()
-                .position(|arg| arg == "+exec")
-                .ok_or("cs2: missing +exec argument")?;
-            args[index + 1] = name.into();
+        if !addon_mode {
+            if let Some((_, name)) = Self::shared_config(ctx)? {
+                let index = args
+                    .iter()
+                    .position(|arg| arg == "+exec")
+                    .ok_or("cs2: missing +exec argument")?;
+                args[index + 1] = name.into();
+            }
         }
-        let cwd = if selected.is_some() {
+        let cwd = if addon_mode {
+            Self::addon_root(ctx)?
+        } else if selected.is_some() {
             let game = Self::game_dir(ctx)?;
             args.splice(1..1, [OsString::from("-game"), game.into_os_string()]);
             ctx.deployment_dir.join("cs2-runtime")
@@ -600,8 +968,12 @@ impl GameDriver for Cs2Driver {
             return Err("cs2: install became incomplete before launch".into());
         }
         let spec = self.process_spec(ctx)?;
-        shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"))?;
-        let config = Self::create_shared_config(ctx)?;
+        let config = if Self::addon_mode(ctx) {
+            None
+        } else {
+            shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"))?;
+            Self::create_shared_config(ctx)?
+        };
         install_lock::spawn(executor, &spec, lock, config).await
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
@@ -635,7 +1007,9 @@ impl GameDriver for Cs2Driver {
                 }
                 tokio::fs::write(marker, "").await?;
             }
-            Self::remove_shared_config(ctx).await?;
+            if !Self::addon_mode(ctx) {
+                Self::remove_shared_config(ctx).await?;
+            }
             Ok(GameHealth::Healthy)
         } else {
             Ok(GameHealth::Starting)
@@ -657,8 +1031,12 @@ impl GameDriver for Cs2Driver {
         Ok(())
     }
     async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
-        let _cleanup = Self::shared_config(_ctx)?
-            .map(|(path, _)| shared_config::SharedConfig::remove_on_drop(path));
+        let _cleanup = if Self::addon_mode(_ctx) {
+            None
+        } else {
+            Self::shared_config(_ctx)?
+                .map(|(path, _)| shared_config::SharedConfig::remove_on_drop(path))
+        };
         #[cfg(windows)]
         {
             p.kill().await?;
@@ -677,7 +1055,9 @@ impl GameDriver for Cs2Driver {
                 }
             }
         }
-        Self::remove_shared_config(_ctx).await?;
+        if !Self::addon_mode(_ctx) {
+            Self::remove_shared_config(_ctx).await?;
+        }
         Ok(())
     }
 }

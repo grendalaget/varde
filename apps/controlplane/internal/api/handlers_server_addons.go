@@ -106,7 +106,7 @@ func (s *Server) PutServerAddon(ctx context.Context, req gen.PutServerAddonReque
 	now := s.Store.NowMs()
 	if err := s.Store.UpsertServerAddon(ctx, store.ServerAddon{
 		ServerID: srv.ID, PluginID: req.PluginId, AddonID: req.AddonId,
-		Spec: sealed, CreatedAt: now, UpdatedAt: now,
+		Target: req.Body.Target, Spec: sealed, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		return nil, err
 	}
