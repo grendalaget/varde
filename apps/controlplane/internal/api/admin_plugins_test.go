@@ -22,11 +22,15 @@ func (emptyPluginManager) Installed(context.Context) ([]store.InstalledPlugin, e
 func (emptyPluginManager) Install(context.Context, string) (store.InstalledPlugin, error) {
 	return store.InstalledPlugin{}, nil
 }
+func (emptyPluginManager) Update(context.Context, string) (store.InstalledPlugin, error) {
+	return store.InstalledPlugin{}, nil
+}
 func (emptyPluginManager) Uninstall(context.Context, string) error { return nil }
 
 type pluginListManager struct {
 	entries []plugins.CatalogEntry
 	rows    []store.InstalledPlugin
+	updated store.InstalledPlugin
 }
 
 func (m pluginListManager) Catalog() []plugins.CatalogEntry { return m.entries }
@@ -36,6 +40,9 @@ func (m pluginListManager) Installed(context.Context) ([]store.InstalledPlugin, 
 func (pluginListManager) Install(context.Context, string) (store.InstalledPlugin, error) {
 	return store.InstalledPlugin{}, nil
 }
+func (m pluginListManager) Update(context.Context, string) (store.InstalledPlugin, error) {
+	return m.updated, nil
+}
 func (pluginListManager) Uninstall(context.Context, string) error { return nil }
 
 func TestPluginAdminRequiresOperatorAndHonorsEmailAllowlist(t *testing.T) {
@@ -44,6 +51,9 @@ func TestPluginAdminRequiresOperatorAndHonorsEmailAllowlist(t *testing.T) {
 	regular := e.signup("member@example.com", "password123")
 	if response := e.do(http.MethodGet, "/v1/admin/plugins", nil, regular); response.Status != http.StatusForbidden {
 		t.Fatalf("non-operator plugin list status = %d, want 403", response.Status)
+	}
+	if response := e.do(http.MethodPost, "/v1/admin/plugins/test-plugin/update", nil, regular); response.Status != http.StatusForbidden {
+		t.Fatalf("non-operator plugin update status = %d, want 403", response.Status)
 	}
 	me := e.do(http.MethodGet, "/v1/me", nil, regular)
 	if me.Status != http.StatusOK || me.Body["operator"] != false {
@@ -69,7 +79,7 @@ func TestAdminPluginListIncludesUpgradeError(t *testing.T) {
 	e := newEnv(t)
 	e.srv.PluginManager = pluginListManager{
 		entries: []plugins.CatalogEntry{{
-			ID: "test-plugin", Name: "Test plugin", Description: "upgrade reporting",
+			ID: "test-plugin", Name: "Test plugin", Description: "update reporting",
 			Version: "2.0.0",
 		}},
 		rows: []store.InstalledPlugin{{
@@ -89,8 +99,29 @@ func TestAdminPluginListIncludesUpgradeError(t *testing.T) {
 	if !ok {
 		t.Fatalf("admin plugin list item = %T, want object", items[0])
 	}
-	if plugin["status"] != "running" || plugin["upgrade_error"] != "candidate did not become healthy" {
-		t.Fatalf("admin plugin upgrade state = %v, want running with upgrade error", plugin)
+	if plugin["status"] != "running" || plugin["upgrade_error"] != "candidate did not become healthy" ||
+		plugin["update_available"] != true {
+		t.Fatalf("admin plugin update state = %v, want running with update available and upgrade error", plugin)
+	}
+}
+
+func TestAdminUpdatePlugin(t *testing.T) {
+	e := newEnv(t)
+	e.srv.PluginManager = pluginListManager{
+		entries: []plugins.CatalogEntry{{
+			ID: "test-plugin", Name: "Test plugin", Description: "update",
+			Version: "2.0.0",
+		}},
+		updated: store.InstalledPlugin{
+			ID: "test-plugin", Version: "2.0.0", Status: "running",
+		},
+	}
+	response := e.do(http.MethodPost, "/v1/admin/plugins/test-plugin/update", nil, e.token)
+	if response.Status != http.StatusOK {
+		t.Fatalf("admin plugin update = %d %s", response.Status, response.Raw)
+	}
+	if response.Body["version"] != "2.0.0" || response.Body["update_available"] != false {
+		t.Fatalf("admin plugin update response = %v", response.Body)
 	}
 }
 

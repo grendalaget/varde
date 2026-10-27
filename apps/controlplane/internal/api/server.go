@@ -42,6 +42,7 @@ type PluginManager interface {
 	Catalog() []plugins.CatalogEntry
 	Installed(context.Context) ([]store.InstalledPlugin, error)
 	Install(context.Context, string) (store.InstalledPlugin, error)
+	Update(context.Context, string) (store.InstalledPlugin, error)
 	Uninstall(context.Context, string) error
 }
 

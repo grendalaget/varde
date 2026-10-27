@@ -61,6 +61,33 @@ func (s *Server) AdminInstallPlugin(ctx context.Context, req gen.AdminInstallPlu
 	return nil, errResp(gen.NotFound, "plugin not in catalog", nil)
 }
 
+func (s *Server) AdminUpdatePlugin(ctx context.Context, req gen.AdminUpdatePluginRequestObject) (gen.AdminUpdatePluginResponseObject, error) {
+	if _, err := s.requireOperator(ctx); err != nil {
+		return nil, err
+	}
+	if s.PluginManager == nil {
+		return nil, errResp(gen.Internal, "plugin supervisor is unavailable", nil)
+	}
+	row, err := s.PluginManager.Update(ctx, req.Id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || strings.Contains(err.Error(), "not in the catalog") {
+			return nil, errResp(gen.NotFound, err.Error(), nil)
+		}
+		if strings.Contains(err.Error(), "must be the leader") ||
+			strings.Contains(err.Error(), "not leader") ||
+			strings.Contains(err.Error(), "primary control plane") {
+			return nil, errResp(gen.PluginUnavailable, "plugin updates run on the leader", nil)
+		}
+		return nil, fmt.Errorf("update plugin: %w", err)
+	}
+	for _, entry := range s.PluginManager.Catalog() {
+		if entry.ID == req.Id {
+			return gen.AdminUpdatePlugin200JSONResponse(adminPlugin(entry, row, true)), nil
+		}
+	}
+	return nil, errResp(gen.NotFound, "plugin not in catalog", nil)
+}
+
 func (s *Server) AdminUninstallPlugin(ctx context.Context, req gen.AdminUninstallPluginRequestObject) (gen.AdminUninstallPluginResponseObject, error) {
 	if _, err := s.requireOperator(ctx); err != nil {
 		return nil, err
@@ -91,6 +118,7 @@ func adminPlugin(entry plugins.CatalogEntry, row store.InstalledPlugin, installe
 	result := gen.AdminPlugin{
 		Id: entry.ID, Name: entry.Name, Description: entry.Description, Version: entry.Version,
 		Scopes: entry.Scopes, Assets: assets, Installed: installed,
+		UpdateAvailable: installed && plugins.IsVersionNewer(entry.Version, row.Version),
 	}
 	if installed {
 		status, message := row.Status, row.Error

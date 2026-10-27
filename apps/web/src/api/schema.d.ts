@@ -781,6 +781,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/plugins/{id}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["adminUpdatePlugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins/{id}": {
         parameters: {
             query?: never;
@@ -1071,6 +1087,7 @@ export interface components {
                 };
             };
             installed: boolean;
+            update_available: boolean;
             status?: string | null;
             error?: string | null;
             upgrade_error?: string | null;
@@ -3550,6 +3567,33 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             500: components["responses"]["Error"];
+        };
+    };
+    adminUpdatePlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin updated and healthy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPlugin"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     adminUninstallPlugin: {

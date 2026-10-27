@@ -1228,6 +1228,27 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "500": { $ref: "#/components/responses/Error" }
+  /v1/admin/plugins/{id}/update:
+    post:
+      operationId: adminUpdatePlugin
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Plugin updated and healthy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlugin" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/admin/plugins/{id}:
     delete:
       operationId: adminUninstallPlugin
@@ -1681,7 +1702,7 @@ components:
               role: { $ref: "#/components/schemas/Role" }
     AdminPlugin:
       type: object
-      required: [id, name, description, version, scopes, assets, installed]
+      required: [id, name, description, version, scopes, assets, installed, update_available]
       properties:
         id: { type: string }
         name: { type: string }
@@ -1699,6 +1720,7 @@ components:
               url: { type: string }
               sha256: { type: string }
         installed: { type: boolean }
+        update_available: { type: boolean }
         status: { type: string, nullable: true }
         error: { type: string, nullable: true }
         upgrade_error: { type: string, nullable: true }
