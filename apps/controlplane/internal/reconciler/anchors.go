@@ -64,12 +64,7 @@ func (r *Reconciler) seedAnchors(ctx context.Context, servers []store.Server) er
 			if _, exists := replicas[n.ID]; exists {
 				continue
 			}
-			if err := r.Store.UpsertReplica(ctx, r.Store.DB, &store.Replica{
-				SnapshotID: newest.ID,
-				NodeID:     n.ID,
-				State:      "assigned",
-				AssignedAt: r.Store.NowMs(),
-			}); err != nil {
+			if _, err := r.Store.AssignReplica(ctx, srv.ID, newest.ID, n.ID, r.Store.NowMs()); err != nil {
 				return err
 			}
 			replicas[n.ID] = struct{}{}
