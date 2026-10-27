@@ -70,18 +70,6 @@ type managedProcess struct {
 	retired  atomic.Bool
 }
 
-type pluginUpgradeFailure struct {
-	err error
-}
-
-func (e *pluginUpgradeFailure) Error() string {
-	return e.err.Error()
-}
-
-func (e *pluginUpgradeFailure) Unwrap() error {
-	return e.err
-}
-
 type Supervisor struct {
 	opts Options
 
@@ -95,8 +83,8 @@ func New(opts Options) (*Supervisor, error) {
 	if opts.DataDir == "" {
 		return nil, errors.New("plugin supervisor data directory is required")
 	}
-	if opts.Store == nil || opts.Registry == nil || opts.Catalog == nil {
-		return nil, errors.New("plugin supervisor store, registry, and catalog are required")
+	if opts.Store == nil || opts.Registry == nil {
+		return nil, errors.New("plugin supervisor store and registry are required")
 	}
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 5 * time.Minute}
@@ -144,6 +132,9 @@ func (s *Supervisor) updateInstalledPluginUpgradeError(ctx context.Context, id, 
 }
 
 func (s *Supervisor) Catalog() []plugins.CatalogEntry {
+	if s.opts.Catalog == nil {
+		return nil
+	}
 	return s.opts.Catalog.All()
 }
 
@@ -163,20 +154,6 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 	if s.opts.Secrets == nil {
 		return store.InstalledPlugin{}, errors.New("secrets manager is not configured")
 	}
-	entry, ok := s.opts.Catalog.Get(id)
-	if !ok {
-		return store.InstalledPlugin{}, fmt.Errorf("plugin %q is not in the catalog", id)
-	}
-	if owner := staticServiceTokenOwner(s.opts.Registry, "plugin-"+id); owner != nil {
-		return store.InstalledPlugin{}, fmt.Errorf("cannot install plugin %q: service token name conflicts with static plugin %q", id, owner.ID)
-	}
-	asset, err := s.assetFor(entry)
-	if err != nil {
-		return store.InstalledPlugin{}, err
-	}
-	if isZeroDigest(asset.SHA256) {
-		return store.InstalledPlugin{}, errors.New("catalog entry not released yet")
-	}
 	if existing, err := s.opts.Store.InstalledPlugin(ctx, id); err == nil {
 		if err := s.ensureInstalled(ctx, *existing); err != nil {
 			return *existing, err
@@ -191,6 +168,23 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return *existing, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.InstalledPlugin{}, err
+	}
+	if s.opts.Catalog == nil {
+		return store.InstalledPlugin{}, errors.New("plugin catalog is unavailable")
+	}
+	entry, ok := s.opts.Catalog.Get(id)
+	if !ok {
+		return store.InstalledPlugin{}, fmt.Errorf("plugin %q is not in the catalog", id)
+	}
+	if owner := staticServiceTokenOwner(s.opts.Registry, "plugin-"+id); owner != nil {
+		return store.InstalledPlugin{}, fmt.Errorf("cannot install plugin %q: service token name conflicts with static plugin %q", id, owner.ID)
+	}
+	asset, err := s.assetFor(entry)
+	if err != nil {
+		return store.InstalledPlugin{}, err
+	}
+	if isZeroDigest(asset.SHA256) {
+		return store.InstalledPlugin{}, errors.New("catalog entry not released yet")
 	}
 	if registered, ok := s.opts.Registry.Get(id); ok {
 		return store.InstalledPlugin{}, fmt.Errorf("plugin %q is already registered from %s", id, registered.ManifestPath)
@@ -251,7 +245,8 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return store.InstalledPlugin{}, err
 	}
 	installed := &store.InstalledPlugin{
-		ID: id, Version: entry.Version, BinarySHA256: binarySHA256,
+		ID: id, Version: entry.Version, AssetURL: asset.URL, ArchiveSHA256: asset.SHA256,
+		BinarySHA256: binarySHA256, ManifestJSON: string(manifestData),
 		SealedSecret: sealed, Port: int64(port),
 		Status: installStatus, InstalledAt: now, UpdatedAt: now,
 	}
@@ -276,7 +271,7 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return store.InstalledPlugin{}, err
 	}
 
-	plugin, err := s.makePlugin(manifestData, entry, *installed)
+	plugin, err := s.makePlugin(manifestData, *installed)
 	if err != nil {
 		_ = s.opts.Store.RevokeServiceToken(ctx, token.ID)
 		_ = s.opts.Store.DeleteInstalledPlugin(ctx, id)
@@ -359,11 +354,9 @@ func (s *Supervisor) Uninstall(ctx context.Context, id string) error {
 	if err := s.opts.Store.DeleteInstalledPlugin(ctx, id); err != nil {
 		return err
 	}
-	entry, ok := s.opts.Catalog.Get(id)
-	if ok {
-		if err := os.RemoveAll(s.versionDir(entry)); err != nil {
-			return fmt.Errorf("remove plugin files: %w", err)
-		}
+	entry := plugins.CatalogEntry{ID: installed.ID, Version: installed.Version}
+	if err := os.RemoveAll(s.versionDir(entry)); err != nil {
+		return fmt.Errorf("remove plugin files: %w", err)
 	}
 	return nil
 }
@@ -388,6 +381,10 @@ func (s *Supervisor) Run(ctx context.Context) {
 func (s *Supervisor) reconcile(ctx context.Context) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	leader := s.isLeader()
+	if !leader {
+		s.stopAll()
+	}
 	installed, err := s.opts.Store.ListInstalledPlugins(ctx)
 	if err != nil {
 		s.opts.Log.Error("list installed plugins", "error", err)
@@ -398,29 +395,15 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		known[row.ID] = struct{}{}
 		if err := s.ensureInstalled(ctx, row); err != nil {
 			s.opts.Log.Error("prepare installed plugin", "plugin", row.ID, "error", err)
-			if !s.isLeader() {
-				continue
-			}
-			var upgradeFailure *pluginUpgradeFailure
-			if !errors.As(err, &upgradeFailure) {
+			if leader {
 				_ = s.updateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
-				continue
 			}
-			if fallbackErr := s.ensureInstalledVersion(ctx, row); fallbackErr != nil {
-				s.opts.Log.Error("prepare installed plugin version after upgrade failure", "plugin", row.ID, "error", fallbackErr)
-				_ = s.updateInstalledPluginStatus(ctx, row.ID, errorStatus, fallbackErr.Error())
-				continue
-			}
+			continue
 		}
-		if fresh, err := s.opts.Store.InstalledPlugin(ctx, row.ID); err == nil {
-			row = *fresh
-		}
-		if s.isLeader() {
+		if leader {
 			if err := s.startInstalled(row, false); err != nil {
 				s.opts.Log.Error("start installed plugin", "plugin", row.ID, "error", err)
 			}
-		} else {
-			s.stopInstalled(row.ID)
 		}
 	}
 	stale := make([]string, 0)
@@ -436,59 +419,15 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 }
 
 func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlugin) error {
-	entry, ok := s.opts.Catalog.Get(row.ID)
-	if !ok {
-		return fmt.Errorf("installed plugin %q is missing from catalog", row.ID)
-	}
-	versionMismatch := entry.Version != row.Version
-	if versionMismatch && s.isLeader() {
-		return s.upgradeInstalled(ctx, row, entry)
-	}
-	asset, err := s.assetFor(entry)
-	if err != nil {
-		return err
-	}
-	manifestData, _, err := s.loadOrDownload(ctx, entry, asset)
-	if err != nil {
-		return err
-	}
-	if !versionMismatch && s.isLeader() {
-		_, err = s.verifyOrRepairBinary(ctx, &row, entry, asset, filepath.Join(s.versionDir(entry), binaryName(entry.ID)))
-		if err != nil {
-			return err
-		}
-	}
-	plugin, err := s.makePlugin(manifestData, entry, row)
-	if err != nil {
-		return err
-	}
-	if existing, ok := s.opts.Registry.Get(row.ID); ok {
-		if existing.ManifestPath != "" {
-			return fmt.Errorf("installed plugin %q conflicts with static manifest %s", row.ID, existing.ManifestPath)
-		}
-		return nil
-	}
-	return s.opts.Registry.Add(plugin)
-}
-
-func (s *Supervisor) ensureInstalledVersion(ctx context.Context, row store.InstalledPlugin) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	entry := plugins.CatalogEntry{ID: row.ID, Version: row.Version}
-	versionDir := s.versionDir(entry)
-	manifestData, err := os.ReadFile(filepath.Join(versionDir, "manifest.json"))
-	if err != nil {
-		return fmt.Errorf("read installed plugin manifest: %w", err)
-	}
+	manifestData := []byte(row.ManifestJSON)
 	if err := validateArchiveManifest(manifestData, entry); err != nil {
 		return err
 	}
-	binaryPath := filepath.Join(versionDir, binaryName(row.ID))
-	if _, err := verifyInstalledBinary(row, binaryPath); err != nil {
-		return err
-	}
-	plugin, err := s.makePlugin(manifestData, entry, row)
+	plugin, err := s.makePlugin(manifestData, row)
 	if err != nil {
 		return err
 	}
@@ -496,7 +435,10 @@ func (s *Supervisor) ensureInstalledVersion(ctx context.Context, row store.Insta
 		if existing.ManifestPath != "" {
 			return fmt.Errorf("installed plugin %q conflicts with static manifest %s", row.ID, existing.ManifestPath)
 		}
-		if existing.Version == plugin.Version {
+		existingManifest, _ := json.Marshal(existing.Manifest)
+		installedManifest, _ := json.Marshal(plugin.Manifest)
+		if existing.Version == plugin.Version && existing.BaseURL == plugin.BaseURL &&
+			existing.ServiceToken == plugin.ServiceToken && string(existingManifest) == string(installedManifest) {
 			return nil
 		}
 		_, err := s.opts.Registry.ReplaceDynamic(plugin)
@@ -505,17 +447,40 @@ func (s *Supervisor) ensureInstalledVersion(ctx context.Context, row store.Insta
 	return s.opts.Registry.Add(plugin)
 }
 
-func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry) error {
-	return s.upgradeInstalledWith(ctx, current, entry, nil)
+func (s *Supervisor) Update(ctx context.Context, id string) (store.InstalledPlugin, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if !s.isLeader() {
+		return store.InstalledPlugin{}, errors.New("plugin updates are available only on the primary control plane")
+	}
+	current, err := s.opts.Store.InstalledPlugin(ctx, id)
+	if err != nil {
+		return store.InstalledPlugin{}, err
+	}
+	if s.opts.Catalog == nil {
+		return *current, errors.New("plugin catalog is unavailable")
+	}
+	entry, ok := s.opts.Catalog.Get(id)
+	if !ok {
+		return *current, fmt.Errorf("plugin %q is not in the catalog", id)
+	}
+	if !plugins.IsVersionNewer(entry.Version, current.Version) {
+		return *current, nil
+	}
+	err = s.updateInstalledWith(ctx, *current, entry, nil)
+	latest, getErr := s.opts.Store.InstalledPlugin(ctx, id)
+	if getErr != nil {
+		return *current, err
+	}
+	return *latest, err
 }
 
-func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry, afterCandidateStart func(*runningCommand)) (result error) {
+func (s *Supervisor) updateInstalledWith(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry, afterCandidateStart func(*runningCommand)) (result error) {
 	defer func() {
 		if result != nil {
 			if err := s.updateInstalledPluginUpgradeError(context.WithoutCancel(ctx), current.ID, result.Error()); err != nil {
-				s.opts.Log.Error("record plugin upgrade failure", "plugin", current.ID, "error", err)
+				s.opts.Log.Error("record plugin update failure", "plugin", current.ID, "error", err)
 			}
-			result = &pluginUpgradeFailure{err: result}
 		}
 	}()
 	asset, err := s.assetFor(entry)
@@ -539,13 +504,16 @@ func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.Ins
 	}
 	next := current
 	next.Version = entry.Version
+	next.AssetURL = asset.URL
+	next.ArchiveSHA256 = asset.SHA256
 	next.BinarySHA256 = binarySHA256
+	next.ManifestJSON = string(manifestData)
 	next.Port = int64(port)
 	next.Status = installStatus
 	next.Error = ""
 	next.UpgradeError = ""
 	next.UpdatedAt = s.opts.Store.NowMs()
-	plugin, err := s.makePlugin(manifestData, entry, next)
+	plugin, err := s.makePlugin(manifestData, next)
 	if err != nil {
 		return err
 	}
@@ -565,7 +533,7 @@ func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.Ins
 		}
 		if rowUpdateStarted {
 			if err := s.opts.Store.SetInstalledPlugin(context.WithoutCancel(ctx), &current); err != nil {
-				s.opts.Log.Error("restore installed plugin after failed upgrade", "plugin", current.ID, "error", err)
+				s.opts.Log.Error("restore installed plugin after failed update", "plugin", current.ID, "error", err)
 			}
 		}
 		stopCandidate(candidate)
@@ -639,7 +607,7 @@ func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.Ins
 			s.opts.Log.Warn("remove previous plugin version", "plugin", current.ID, "version", current.Version, "error", err)
 		}
 	}
-	s.opts.Log.Info("upgraded managed plugin", "plugin", current.ID, "version", entry.Version)
+	s.opts.Log.Info("updated managed plugin", "plugin", current.ID, "version", entry.Version)
 	return nil
 }
 
@@ -715,12 +683,18 @@ func stopCandidate(candidate *runningCommand) {
 		return
 	}
 	_ = candidate.cmd.Process.Kill()
-	<-candidate.waitResult
+	if err := <-candidate.waitResult; err != nil {
+		return
+	}
 }
 
-func (s *Supervisor) makePlugin(manifestData []byte, entry plugins.CatalogEntry, row store.InstalledPlugin) (*plugins.Plugin, error) {
+func (s *Supervisor) makePlugin(manifestData []byte, row store.InstalledPlugin) (*plugins.Plugin, error) {
 	if s.opts.Secrets == nil {
 		return nil, errors.New("secrets manager is not configured")
+	}
+	entry := plugins.CatalogEntry{ID: row.ID, Version: row.Version}
+	if err := validateArchiveManifest(manifestData, entry); err != nil {
+		return nil, err
 	}
 	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
 	if err != nil {
@@ -737,9 +711,6 @@ func (s *Supervisor) makePlugin(manifestData []byte, entry plugins.CatalogEntry,
 	plugin, err := plugins.NewWithSecret(manifestData, baseURL, secret.ServiceTokenName, []byte(secret.PluginSecret))
 	if err != nil {
 		return nil, fmt.Errorf("build plugin manifest: %w", err)
-	}
-	if plugin.ID != entry.ID {
-		return nil, fmt.Errorf("archive manifest id %q does not match catalog id %q", plugin.ID, entry.ID)
 	}
 	return plugin, nil
 }

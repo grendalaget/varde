@@ -33,11 +33,14 @@ func (s *Store) ListInstalledPlugins(ctx context.Context) ([]InstalledPlugin, er
 func (s *Store) SetInstalledPlugin(ctx context.Context, plugin *InstalledPlugin) error {
 	_, err := s.q().ExecContext(ctx, s.Rebind(`
 		INSERT INTO installed_plugins
-			(id,version,binary_sha256,sealed_secret,service_token_id,port,status,error,upgrade_error,installed_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			(id,version,asset_url,archive_sha256,binary_sha256,manifest_json,sealed_secret,service_token_id,port,status,error,upgrade_error,installed_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			version=excluded.version,
+			asset_url=excluded.asset_url,
+			archive_sha256=excluded.archive_sha256,
 			binary_sha256=excluded.binary_sha256,
+			manifest_json=excluded.manifest_json,
 			sealed_secret=excluded.sealed_secret,
 			service_token_id=excluded.service_token_id,
 			port=excluded.port,
@@ -46,7 +49,8 @@ func (s *Store) SetInstalledPlugin(ctx context.Context, plugin *InstalledPlugin)
 			upgrade_error=excluded.upgrade_error,
 			installed_at=excluded.installed_at,
 			updated_at=excluded.updated_at`),
-		plugin.ID, plugin.Version, plugin.BinarySHA256, plugin.SealedSecret, plugin.ServiceTokenID,
+		plugin.ID, plugin.Version, plugin.AssetURL, plugin.ArchiveSHA256, plugin.BinarySHA256, plugin.ManifestJSON,
+		plugin.SealedSecret, plugin.ServiceTokenID,
 		plugin.Port, plugin.Status, plugin.Error, plugin.UpgradeError, plugin.InstalledAt, plugin.UpdatedAt)
 	return err
 }
@@ -114,11 +118,14 @@ func (s *Store) CreatePluginInstall(ctx context.Context, token *ServiceToken, pl
 	plugin.ServiceTokenID = token.ID
 	_, err = tx.ExecContext(ctx, s.Rebind(`
 		INSERT INTO installed_plugins
-			(id,version,binary_sha256,sealed_secret,service_token_id,port,status,error,upgrade_error,installed_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			(id,version,asset_url,archive_sha256,binary_sha256,manifest_json,sealed_secret,service_token_id,port,status,error,upgrade_error,installed_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			version=excluded.version,
+			asset_url=excluded.asset_url,
+			archive_sha256=excluded.archive_sha256,
 			binary_sha256=excluded.binary_sha256,
+			manifest_json=excluded.manifest_json,
 			sealed_secret=excluded.sealed_secret,
 			service_token_id=excluded.service_token_id,
 			port=excluded.port,
@@ -127,7 +134,8 @@ func (s *Store) CreatePluginInstall(ctx context.Context, token *ServiceToken, pl
 			upgrade_error=excluded.upgrade_error,
 			installed_at=excluded.installed_at,
 			updated_at=excluded.updated_at`),
-		plugin.ID, plugin.Version, plugin.BinarySHA256, plugin.SealedSecret, plugin.ServiceTokenID,
+		plugin.ID, plugin.Version, plugin.AssetURL, plugin.ArchiveSHA256, plugin.BinarySHA256, plugin.ManifestJSON,
+		plugin.SealedSecret, plugin.ServiceTokenID,
 		plugin.Port, plugin.Status, plugin.Error, plugin.UpgradeError, plugin.InstalledAt, plugin.UpdatedAt)
 	if err != nil {
 		return err

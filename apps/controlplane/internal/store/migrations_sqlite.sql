@@ -103,7 +103,10 @@ CREATE TABLE IF NOT EXISTS service_tokens (
 CREATE TABLE IF NOT EXISTS installed_plugins (
     id                TEXT PRIMARY KEY,
     version           TEXT NOT NULL,
+    asset_url         TEXT NOT NULL DEFAULT '',
+    archive_sha256    TEXT NOT NULL DEFAULT '',
     binary_sha256     TEXT NOT NULL DEFAULT '',
+    manifest_json     TEXT NOT NULL DEFAULT '',
     sealed_secret     TEXT NOT NULL,
     service_token_id  TEXT NOT NULL REFERENCES service_tokens(id),
     port              BIGINT NOT NULL,

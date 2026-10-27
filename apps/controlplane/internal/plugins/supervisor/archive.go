@@ -26,28 +26,24 @@ const (
 	maxExtractFiles = 256
 )
 
-func (s *Supervisor) loadOrDownload(ctx context.Context, entry plugins.CatalogEntry, asset plugins.Asset) ([]byte, string, error) {
-	versionDir := s.versionDir(entry)
-	manifestPath := filepath.Join(versionDir, "manifest.json")
-	binaryPath := filepath.Join(versionDir, binaryName(entry.ID))
-	manifestData, manifestErr := os.ReadFile(manifestPath)
-	binaryInfo, binaryErr := os.Lstat(binaryPath)
-	if manifestErr == nil && binaryErr == nil && binaryInfo.Mode().IsRegular() {
-		return manifestData, binaryPath, nil
-	}
-	return s.downloadAndExtract(ctx, entry, asset, versionDir)
-}
-
-func (s *Supervisor) verifyOrRepairBinary(ctx context.Context, row *store.InstalledPlugin, entry plugins.CatalogEntry, asset plugins.Asset, binaryPath string) (string, error) {
+func (s *Supervisor) verifyOrRepairBinary(ctx context.Context, row *store.InstalledPlugin, binaryPath string) (string, error) {
 	if row.BinarySHA256 != "" {
 		actual, err := binaryDigest(binaryPath)
 		if err == nil && actual == row.BinarySHA256 {
 			return binaryPath, nil
 		}
 	}
-	_, binaryPath, err := s.downloadAndExtract(ctx, entry, asset, s.versionDir(entry))
+	entry := plugins.CatalogEntry{ID: row.ID, Version: row.Version}
+	asset := plugins.Asset{URL: row.AssetURL, SHA256: row.ArchiveSHA256}
+	manifestData, binaryPath, err := s.downloadAndExtract(ctx, entry, asset, s.versionDir(entry))
 	if err != nil {
 		return "", err
+	}
+	if err := validateArchiveManifest(manifestData, entry); err != nil {
+		return "", err
+	}
+	if string(manifestData) != row.ManifestJSON {
+		return "", errors.New("plugin archive manifest does not match installed manifest")
 	}
 	actual, err := binaryDigest(binaryPath)
 	if err != nil {
@@ -61,17 +57,6 @@ func (s *Supervisor) verifyOrRepairBinary(ctx context.Context, row *store.Instal
 		if err := s.opts.Store.SetInstalledPlugin(ctx, row); err != nil {
 			return "", fmt.Errorf("save verified plugin binary SHA-256: %w", err)
 		}
-	}
-	return binaryPath, nil
-}
-
-func verifyInstalledBinary(row store.InstalledPlugin, binaryPath string) (string, error) {
-	actual, err := binaryDigest(binaryPath)
-	if err != nil {
-		return "", err
-	}
-	if row.BinarySHA256 == "" || actual != row.BinarySHA256 {
-		return "", errors.New("installed plugin binary SHA-256 mismatch")
 	}
 	return binaryPath, nil
 }

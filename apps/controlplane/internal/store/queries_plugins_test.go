@@ -18,6 +18,8 @@ func TestInstalledPluginCredentialsAndTokenReuse(t *testing.T) {
 			}
 			plugin := &InstalledPlugin{
 				ID: "autotournament", Version: "0.1.0", SealedSecret: "sealed",
+				AssetURL: "https://example.test/plugin.tar.gz", ArchiveSHA256: "archive-digest",
+				BinarySHA256: "binary-digest", ManifestJSON: `{"id":"autotournament"}`,
 				Port: 7310, Status: "installing", InstalledAt: now, UpdatedAt: now,
 			}
 			if err := s.CreatePluginInstall(ctx, token, plugin); err != nil {
@@ -48,7 +50,9 @@ func TestInstalledPluginCredentialsAndTokenReuse(t *testing.T) {
 				t.Fatalf("reused token ids = %q/%q, want %q", replacement.ID, plugin.ServiceTokenID, token.ID)
 			}
 			got, err := s.InstalledPluginByServiceTokenID(ctx, token.ID)
-			if err != nil || got.SealedSecret != "sealed-again" {
+			if err != nil || got.SealedSecret != "sealed-again" || got.AssetURL != plugin.AssetURL ||
+				got.ArchiveSHA256 != plugin.ArchiveSHA256 || got.BinarySHA256 != plugin.BinarySHA256 ||
+				got.ManifestJSON != plugin.ManifestJSON {
 				t.Fatalf("installed plugin = %+v, error = %v", got, err)
 			}
 			storedToken, err := s.ServiceTokenByID(ctx, token.ID)

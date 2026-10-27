@@ -85,33 +85,13 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		}
 		s.mu.Unlock()
 	}()
-	entry, ok := s.opts.Catalog.Get(row.ID)
-	if !ok {
-		s.signalReady(process, fmt.Errorf("plugin %s is missing from catalog", row.ID))
-		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, "plugin missing from catalog")
+	entry := plugins.CatalogEntry{ID: row.ID, Version: row.Version}
+	if err := validateArchiveManifest([]byte(row.ManifestJSON), entry); err != nil {
+		s.signalReady(process, err)
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		return
 	}
-	installedVersion := entry.Version != row.Version
 	binaryPath := filepath.Join(s.pluginDir(row.ID), row.Version, binaryName(row.ID))
-	var asset plugins.Asset
-	var err error
-	if installedVersion {
-		if _, err := verifyInstalledBinary(row, binaryPath); err != nil {
-			s.signalReady(process, err)
-			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
-			return
-		}
-	} else {
-		asset, err = s.assetFor(entry)
-		if err == nil {
-			_, binaryPath, err = s.loadOrDownload(ctx, entry, asset)
-		}
-		if err != nil {
-			s.signalReady(process, err)
-			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
-			return
-		}
-	}
 	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
 	if err != nil {
 		s.signalReady(process, err)
@@ -144,11 +124,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 			return
 		}
 		var verifiedPath string
-		if installedVersion {
-			verifiedPath, err = verifyInstalledBinary(row, binaryPath)
-		} else {
-			verifiedPath, err = s.verifyOrRepairBinary(ctx, &row, entry, asset, binaryPath)
-		}
+		verifiedPath, err = s.verifyOrRepairBinary(ctx, &row, binaryPath)
 		if err != nil {
 			if ctx.Err() != nil {
 				s.markStopped(row.ID, process)

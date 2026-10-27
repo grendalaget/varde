@@ -133,6 +133,11 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	if len(installed.BinarySHA256) != 64 {
 		t.Fatalf("installed binary SHA-256 = %q, want 64 hex characters", installed.BinarySHA256)
 	}
+	if installed.Version != "1.0.0" || installed.AssetURL != assetServer.URL ||
+		installed.ArchiveSHA256 != digest || installed.ManifestJSON != string(manifest) {
+		t.Fatalf("installed version pin = version %q, URL %q, archive digest %q, manifest %q",
+			installed.Version, installed.AssetURL, installed.ArchiveSHA256, installed.ManifestJSON)
+	}
 	if _, ok := registry.Get("test-plugin"); !ok {
 		t.Fatal("installed plugin was not registered")
 	}
@@ -212,7 +217,7 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	}
 }
 
-func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
+func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	binary := buildTestPlugin(t)
 	manifestV1 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
 	manifestV2 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"2.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
@@ -240,7 +245,7 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	catalogFor := func(version, path string, archive []byte) *plugins.Catalog {
 		hash := sha256.Sum256(archive)
 		catalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
-			ID: "test-plugin", Name: "Test plugin", Description: "Supervisor upgrade test",
+			ID: "test-plugin", Name: "Test plugin", Description: "Supervisor update test",
 			Version: version, Scopes: []string{"members"},
 			Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
 				URL: assetServer.URL + path, SHA256: hex.EncodeToString(hash[:]),
@@ -290,7 +295,7 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	}
 	upgradeCtx, cancelUpgrade := context.WithCancel(context.Background())
 	var candidate *runningCommand
-	err = supervisor.upgradeInstalledWith(upgradeCtx, installed, entryV2, func(started *runningCommand) {
+	err = supervisor.updateInstalledWith(upgradeCtx, installed, entryV2, func(started *runningCommand) {
 		candidate = started
 		cancelUpgrade()
 	})
@@ -336,101 +341,48 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 		t.Fatalf("cancelled upgrade health response = %q", body)
 	}
 
-	supervisor.stopAll()
-	bootRegistry := mustEmptyRegistry(t)
-	bootSupervisor, err := New(Options{
-		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
-		Registry: bootRegistry, Catalog: catalogFor("2.0.0", "/v2-unavailable", nil),
-		Secrets: manager, HTTPClient: assetServer.Client(), HealthTimeout: time.Second,
-	})
+	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)
+	if _, err := supervisor.Update(context.Background(), "test-plugin"); err == nil {
+		t.Fatal("update with an invalid candidate succeeded")
+	}
+	current, err := db.InstalledPlugin(context.Background(), "test-plugin")
 	if err != nil {
 		t.Fatal(err)
-	}
-	defer bootSupervisor.stopAll()
-	bootSupervisor.reconcile(context.Background())
-	deadline := time.Now().Add(5 * time.Second)
-	var healthErr error
-	for time.Now().Before(deadline) {
-		if _, healthErr = tryGetTestURL(oldHealth); healthErr == nil {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if healthErr != nil {
-		t.Fatalf("boot did not start installed plugin after upgrade download failed: %v", healthErr)
-	}
-	var current *store.InstalledPlugin
-	for time.Now().Before(deadline) {
-		current, err = db.InstalledPlugin(context.Background(), "test-plugin")
-		if err == nil && current.Status == runningStatus {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current == nil {
-		t.Fatal("boot fallback installed row was not persisted")
 	}
 	if current.Version != "1.0.0" || current.Status != runningStatus || current.Error != "" {
-		t.Fatalf("boot fallback installed row = version %q, status %q, error %q; want 1.0.0/running/no error", current.Version, current.Status, current.Error)
-	}
-	if !strings.Contains(current.UpgradeError, "HTTP 404") {
-		t.Fatalf("boot fallback upgrade error = %q, want HTTP 404", current.UpgradeError)
-	}
-	if plugin, ok := bootRegistry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
-		t.Fatalf("boot fallback registry plugin: %#v, registered=%v", plugin, ok)
-	}
-	if body := getTestURL(t, oldHealth); body != "ok" {
-		t.Fatalf("boot fallback health response = %q", body)
-	}
-	supervisor = bootSupervisor
-	registry = bootRegistry
-
-	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)
-	supervisor.reconcile(context.Background())
-	current, err = db.InstalledPlugin(context.Background(), "test-plugin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.Version != "1.0.0" {
-		t.Fatalf("failed upgrade changed stored version to %q", current.Version)
-	}
-	if current.Status != runningStatus || current.Error != "" {
-		t.Fatalf("failed upgrade changed plugin status/error to %q/%q, want running/no error", current.Status, current.Error)
+		t.Fatalf("failed update changed installed state to %s/%s error %q", current.Version, current.Status, current.Error)
 	}
 	if !strings.Contains(current.UpgradeError, "start upgraded plugin") {
-		t.Fatalf("failed upgrade error = %q, want candidate-start failure", current.UpgradeError)
+		t.Fatalf("failed update error = %q, want candidate-start failure", current.UpgradeError)
 	}
 	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
-		t.Fatalf("failed upgrade changed registry plugin: %#v, registered=%v", plugin, ok)
+		t.Fatalf("failed update changed registry plugin: %#v, registered=%v", plugin, ok)
 	}
 	if body := getTestURL(t, oldHealth); body != "ok" {
-		t.Fatalf("failed upgrade health response = %q", body)
+		t.Fatalf("failed update stopped old plugin: %q", body)
 	}
 
 	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2", archiveV2)
-	supervisor.reconcile(context.Background())
-	current, err = db.InstalledPlugin(context.Background(), "test-plugin")
+	updated, err := supervisor.Update(context.Background(), "test-plugin")
 	if err != nil {
 		t.Fatal(err)
 	}
+	current = &updated
 	if current.Version != "2.0.0" || current.Port == installed.Port {
-		t.Fatalf("successful upgrade row = version %q, port %d; want 2.0.0 on a new port", current.Version, current.Port)
+		t.Fatalf("successful update row = version %q, port %d; want 2.0.0 on a new port", current.Version, current.Port)
 	}
 	if current.UpgradeError != "" {
-		t.Fatalf("successful upgrade retained upgrade error %q", current.UpgradeError)
+		t.Fatalf("successful update retained upgrade error %q", current.UpgradeError)
 	}
 	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
-		t.Fatalf("successful upgrade registry plugin: %#v, registered=%v", plugin, ok)
+		t.Fatalf("successful update registry plugin: %#v, registered=%v", plugin, ok)
 	}
 	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "1.0.0")); !os.IsNotExist(err) {
-		t.Fatalf("old version directory remains after upgrade: %v", err)
+		t.Fatalf("old version directory remains after update: %v", err)
 	}
 	newHealth := fmt.Sprintf("http://127.0.0.1:%d/healthz", current.Port)
 	if body := getTestURL(t, newHealth); body != "ok" {
-		t.Fatalf("upgraded plugin health response = %q", body)
+		t.Fatalf("updated plugin health response = %q", body)
 	}
 }
 
@@ -528,7 +480,7 @@ func TestNewRejectsStaticManifestServiceTokenCollision(t *testing.T) {
 	}
 }
 
-func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
+func TestPinnedInstalledVersionReconciliationAcrossLeadershipChanges(t *testing.T) {
 	binary := buildTestPlugin(t)
 	manifest := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin","pages":[{"id":"home","title":"Home","list":{"endpoint":"/list"}}]}`)
 	root := t.TempDir()
@@ -543,26 +495,23 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("VARDE_SECRETS_KEY", base64.StdEncoding.EncodeToString(key))
-	catalog, err := plugins.ParseCatalog([]byte(`[{"id":"test-plugin","name":"Test plugin","description":"Test","version":"1.0.0","scopes":["members"],"assets":{"` + runtime.GOOS + `/` + runtime.GOARCH + `":{"url":"https://example.com/plugin.tar.gz","sha256":"` + strings.Repeat("0", 64) + `"}}}]`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestV2 := []byte(strings.Replace(string(manifest), `"version":"1.0.0"`, `"version":"2.0.0"`, 1))
-	archiveV2 := releaseArchive(t, binary, manifestV2)
-	archiveV2SHA256 := sha256.Sum256(archiveV2)
+	archiveV1 := releaseArchive(t, binary, manifest)
+	archiveV1SHA256 := sha256.Sum256(archiveV1)
+	var archiveDownloads atomic.Int32
 	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v2" {
+		archiveDownloads.Add(1)
+		if r.URL.Path != "/v1" {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write(archiveV2)
+		_, _ = w.Write(archiveV1)
 	}))
 	defer assetServer.Close()
-	catalogV2, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
-		ID: "test-plugin", Name: "Test plugin", Description: "Test", Version: "2.0.0",
+	catalogV1, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+		ID: "test-plugin", Name: "Test plugin", Description: "Test", Version: "1.0.0",
 		Scopes: []string{"members"},
 		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
-			URL: assetServer.URL + "/v2", SHA256: hex.EncodeToString(archiveV2SHA256[:]),
+			URL: assetServer.URL + "/v1", SHA256: hex.EncodeToString(archiveV1SHA256[:]),
 		}},
 	}}))
 	if err != nil {
@@ -591,7 +540,7 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	tempSupervisor, err := New(Options{
-		DataDir: root, Store: db, Registry: mustEmptyRegistry(t), Catalog: catalog, Secrets: manager,
+		DataDir: root, Store: db, Registry: mustEmptyRegistry(t), Catalog: catalogV1, Secrets: manager,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -604,7 +553,9 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := &store.InstalledPlugin{
-		ID: "test-plugin", Version: "1.0.0", BinarySHA256: binarySHA256,
+		ID: "test-plugin", Version: "1.0.0", AssetURL: assetServer.URL + "/v1",
+		ArchiveSHA256: hex.EncodeToString(archiveV1SHA256[:]), BinarySHA256: binarySHA256,
+		ManifestJSON: string(manifest),
 		SealedSecret: sealed, Port: int64(mustPort(t)),
 		Status: installStatus, InstalledAt: now, UpdatedAt: now,
 	}
@@ -626,21 +577,26 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	leadership := &mutableTestLeader{}
 	nonLeaderRegistry := mustEmptyRegistry(t)
 	nonLeader, err := New(Options{
-		DataDir: root, Store: db, Registry: nonLeaderRegistry, Catalog: catalogV2, Secrets: manager,
+		DataDir: root, Store: db, Registry: nonLeaderRegistry, Secrets: manager,
 		Leader: leadership, ReconcileInterval: 50 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonLeaderCtx, stopNonLeader := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { nonLeader.Run(nonLeaderCtx); close(done) }()
-	time.Sleep(150 * time.Millisecond)
+	defer nonLeader.stopAll()
+	nonLeader.reconcile(context.Background())
 	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "state", "starts")); !os.IsNotExist(err) {
 		t.Fatalf("non-leader started plugin, state marker stat error = %v", err)
 	}
-	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
+	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" ||
+		len(plugin.Pages) != 1 || plugin.Pages[0].Title != "Home" {
 		t.Fatalf("non-leader registry plugin = %#v, registered=%v", plugin, ok)
+	}
+	if _, err := os.Stat(oldBinaryPath); !os.IsNotExist(err) {
+		t.Fatalf("replica unexpectedly has the installed binary: %v", err)
+	}
+	if got := archiveDownloads.Load(); got != 0 {
+		t.Fatalf("replica downloaded an asset %d times, want 0", got)
 	}
 	rowAfter, err := db.InstalledPlugin(context.Background(), row.ID)
 	if err != nil {
@@ -650,11 +606,12 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 		t.Fatalf("non-leader changed installed row: before=%#v after=%#v", *rowBefore, *rowAfter)
 	}
 	leadership.value.Store(true)
+	nonLeader.reconcile(context.Background())
 	deadline := time.Now().Add(5 * time.Second)
 	var latest *store.InstalledPlugin
 	for time.Now().Before(deadline) {
 		latest, err = db.InstalledPlugin(context.Background(), row.ID)
-		if err == nil && latest.Version == "2.0.0" && latest.Status == runningStatus {
+		if err == nil && latest.Version == "1.0.0" && latest.Status == runningStatus {
 			healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", latest.Port)
 			if _, err := tryGetTestURL(healthURL); err == nil {
 				break
@@ -665,21 +622,51 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest == nil || latest.Version != "2.0.0" || latest.Status != runningStatus || latest.Error != "" || latest.UpgradeError != "" {
-		t.Fatalf("promoted leader installed row = %#v, want version 2.0.0 running without errors", latest)
+	if latest == nil || latest.Version != "1.0.0" || latest.Status != runningStatus || latest.Error != "" || latest.UpgradeError != "" {
+		t.Fatalf("promoted leader installed row = %#v, want version 1.0.0 running without errors", latest)
 	}
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", latest.Port)
 	if _, err := tryGetTestURL(healthURL); err != nil {
-		t.Fatalf("promoted leader did not start catalog version: %v", err)
+		t.Fatalf("promoted leader did not start stored version: %v", err)
 	}
-	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
+	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
 		t.Fatalf("promoted leader registry plugin = %#v, registered=%v", plugin, ok)
 	}
-	stopNonLeader()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("promoted supervisor did not stop")
+	if got := archiveDownloads.Load(); got != 1 {
+		t.Fatalf("promoted leader downloaded the stored asset %d times, want 1", got)
+	}
+	latest.AssetURL = assetServer.URL + "/missing"
+	if err := db.SetInstalledPlugin(context.Background(), latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(versionDir, binaryName("test-plugin"))); err != nil {
+		t.Fatal(err)
+	}
+	missingCatalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+		ID: "test-plugin", Name: "Test plugin", Description: "Missing asset test", Version: "1.0.0",
+		Scopes: []string{"members"},
+		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
+			URL: assetServer.URL + "/missing", SHA256: hex.EncodeToString(archiveV1SHA256[:]),
+		}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonLeader.opts.Catalog = missingCatalog
+	leadership.value.Store(false)
+	nonLeader.reconcile(context.Background())
+	if _, err := tryGetTestURL(healthURL); err == nil {
+		t.Fatal("demoted leader left the plugin process running")
+	}
+	if got := archiveDownloads.Load(); got != 1 {
+		t.Fatalf("asset requests after demotion = %d, want no request beyond pinned recovery", got)
+	}
+	rowAfter, err = db.InstalledPlugin(context.Background(), row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rowAfter.Status != runningStatus || rowAfter.Error != "" {
+		t.Fatalf("demotion changed installed status/error to %q/%q", rowAfter.Status, rowAfter.Error)
 	}
 	if err := db.DeleteInstalledPlugin(context.Background(), "test-plugin"); err != nil {
 		t.Fatal(err)
