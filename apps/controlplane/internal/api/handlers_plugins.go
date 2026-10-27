@@ -36,6 +36,9 @@ func pluginInfo(plugin *plugins.Plugin) gen.Plugin {
 		Id: plugin.ID, Name: plugin.Name, Version: plugin.Version,
 		Settings: []gen.PluginField{}, Pages: []gen.PluginPage{},
 	}
+	if plugin.Description != "" {
+		result.Description = &plugin.Description
+	}
 	for _, field := range plugin.Settings {
 		if field.Hidden {
 			continue
@@ -66,6 +69,12 @@ func apiPluginField(field plugins.Field) gen.PluginField {
 	}
 	if field.Help != "" {
 		result.Help = &field.Help
+	}
+	if field.Label != "" {
+		result.Label = &field.Label
+	}
+	if field.Placeholder != "" {
+		result.Placeholder = &field.Placeholder
 	}
 	if field.Required {
 		result.Required = &field.Required
@@ -417,16 +426,21 @@ func (s *Server) callPlugin(ctx context.Context, groupID string, plugin *plugins
 	if err != nil {
 		return nil, pluginUnavailable(plugin)
 	}
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+	if resp.StatusCode >= http.StatusBadRequest {
 		var reply struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(responseBody, &reply) == nil && reply.Error != "" {
+		if json.Unmarshal(responseBody, &reply) == nil && reply.Error != "" &&
+			(resp.StatusCode < http.StatusInternalServerError || op == "settings") {
 			message := reply.Error
 			if runes := []rune(message); len(runes) > 300 {
 				message = string(runes[:300])
 			}
-			return nil, errResp(gen.Validation, message, nil)
+			code := gen.Validation
+			if resp.StatusCode >= http.StatusInternalServerError {
+				code = gen.PluginUnavailable
+			}
+			return nil, errResp(code, message, nil)
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !json.Valid(responseBody) {

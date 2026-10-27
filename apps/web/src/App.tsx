@@ -6,6 +6,7 @@ import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
 import { Link, match, navigate, useLocation } from "./lib/router";
 import { SessionProvider, useSession } from "./lib/session";
 import Activity from "./pages/Activity";
+import AdminPlugins from "./pages/AdminPlugins";
 import AddMachine from "./pages/AddMachine";
 import CreateGroup from "./pages/CreateGroup";
 import InvitePage from "./pages/Invite";
@@ -335,7 +336,14 @@ function Layout() {
           active: (path: string) => path === `/plugins/${plugin.id}/${page.id}`,
         })),
       ) ?? [];
-  const nav = [...NAV, ...pluginNav];
+  const operatorNav = me.operator
+    ? [{
+      to: "/admin/plugins",
+      label: "Plugins",
+      active: (path: string) => path === "/admin/plugins",
+    }]
+    : [];
+  const nav = [...NAV, ...operatorNav, ...pluginNav];
 
   let page;
   let m: Record<string, string> | null;
@@ -350,6 +358,10 @@ function Layout() {
   else if (p === "/members") page = <Members />;
   else if (p === "/activity") page = <Activity />;
   else if (p === "/settings") page = <Settings />;
+  else if (p === "/admin/plugins")
+    page = me.operator
+      ? <AdminPlugins />
+      : <ErrorNote>Operator access is required.</ErrorNote>;
   else if ((m = match("/plugins/:pluginId/:pageId", p)))
     page = <PluginPage pluginId={m.pluginId} pageId={m.pageId} />;
   else page = <p className="text-muted">Page not found.</p>;

@@ -123,6 +123,7 @@ function PluginActionForm({
               setValues((current) => updateFieldValue(current, field.name, value))
             }
             members={members}
+            showSteamHint
           />
         ))}
         <ErrorNote>{error}</ErrorNote>
