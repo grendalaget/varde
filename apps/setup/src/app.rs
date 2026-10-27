@@ -204,12 +204,14 @@ fn exit_app(app: AppHandle) {
 }
 
 pub fn run(args: Args, instdir: PathBuf, mode: Mode) {
-    // A dedicated webview profile dir under ProgramData: the shared
-    // EBWebView dir is owned by medium-IL clients (tray), and a %TEMP%
-    // profile for an elevated webview would be writable by other users.
-    let wv = crate::win::data_dir().join("WebView2-Setup");
-    let _ = std::fs::create_dir_all(&wv);
-    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &wv);
+    // A dedicated webview profile: the shared EBWebView dir is owned by
+    // medium-IL clients (tray). See setup_webview_profile for where and why.
+    // Earlier versions kept it in %ProgramData%\Varde\WebView2-Setup.
+    let _ = std::fs::remove_dir_all(crate::win::data_dir().join("WebView2-Setup"));
+    match crate::win::setup_webview_profile() {
+        Ok(wv) => std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &wv),
+        Err(e) => eprintln!("webview profile: {e:#}"),
+    }
 
     let shared = Shared {
         instdir,
