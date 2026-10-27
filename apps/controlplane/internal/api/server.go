@@ -257,21 +257,18 @@ func (s *Server) scopedActor(ctx context.Context, groupID, scope, minRole string
 			return "", "", errResp(gen.Forbidden, "service token not bound to group", nil)
 		}
 		var pluginID string
-		if s.Plugins != nil {
-			for _, plugin := range s.Plugins.All() {
-				if plugin.ServiceToken != st.Name {
-					continue
-				}
-				pluginID = plugin.ID
-				break
-			}
+		installed, err := s.Store.InstalledPluginByServiceTokenID(ctx, st.ID)
+		if err == nil {
+			pluginID = installed.ID
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return "", "", err
 		}
-		if pluginID == "" {
-			installed, err := s.Store.InstalledPluginByServiceTokenID(ctx, st.ID)
-			if err == nil {
-				pluginID = installed.ID
-			} else if !errors.Is(err, store.ErrNotFound) {
-				return "", "", err
+		if pluginID == "" && s.Plugins != nil {
+			for _, plugin := range s.Plugins.All() {
+				if plugin.ServiceToken == st.Name {
+					pluginID = plugin.ID
+					break
+				}
 			}
 		}
 		if pluginID != "" {

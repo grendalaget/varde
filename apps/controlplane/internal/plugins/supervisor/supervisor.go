@@ -106,6 +106,9 @@ func New(opts Options) (*Supervisor, error) {
 	if opts.ControlPlaneURL == "" {
 		opts.ControlPlaneURL = "http://127.0.0.1:8080"
 	}
+	if err := checkStaticServiceTokenCollisions(context.Background(), opts.Store, opts.Registry); err != nil {
+		return nil, err
+	}
 	return &Supervisor{opts: opts, running: make(map[string]*managedProcess)}, nil
 }
 
@@ -132,6 +135,9 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 	entry, ok := s.opts.Catalog.Get(id)
 	if !ok {
 		return store.InstalledPlugin{}, fmt.Errorf("plugin %q is not in the catalog", id)
+	}
+	if owner := staticServiceTokenOwner(s.opts.Registry, "plugin-"+id); owner != nil {
+		return store.InstalledPlugin{}, fmt.Errorf("cannot install plugin %q: service token name conflicts with static plugin %q", id, owner.ID)
 	}
 	asset, err := s.assetFor(entry)
 	if err != nil {
@@ -219,6 +225,9 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		if err != nil {
 			return store.InstalledPlugin{}, err
 		}
+		if owner := staticServiceTokenOwner(s.opts.Registry, token.Name); owner != nil {
+			return store.InstalledPlugin{}, fmt.Errorf("cannot install plugin %q: service token name conflicts with static plugin %q", id, owner.ID)
+		}
 		installed.SealedSecret, err = s.sealCredentials(id, credentials{
 			PluginSecret: secret, ServiceToken: serviceToken, ServiceTokenName: token.Name,
 		})
@@ -256,6 +265,41 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return *latest, nil
 	}
 	return *installed, nil
+}
+
+func staticServiceTokenOwner(registry *plugins.Registry, tokenName string) *plugins.Plugin {
+	if registry == nil {
+		return nil
+	}
+	for _, plugin := range registry.All() {
+		if plugin.ManifestPath != "" && plugin.ServiceToken == tokenName {
+			return plugin
+		}
+	}
+	return nil
+}
+
+func checkStaticServiceTokenCollisions(ctx context.Context, db *store.Store, registry *plugins.Registry) error {
+	if db == nil || registry == nil {
+		return nil
+	}
+	installed, err := db.ListInstalledPlugins(ctx)
+	if err != nil {
+		return fmt.Errorf("list installed plugins for service-token validation: %w", err)
+	}
+	for _, row := range installed {
+		token, err := db.ServiceTokenByID(ctx, row.ServiceTokenID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load service token for installed plugin %q: %w", row.ID, err)
+		}
+		if owner := staticServiceTokenOwner(registry, token.Name); owner != nil {
+			return fmt.Errorf("static plugin %q service_token conflicts with installed plugin %q", owner.ID, row.ID)
+		}
+	}
+	return nil
 }
 
 func (s *Supervisor) Uninstall(ctx context.Context, id string) error {

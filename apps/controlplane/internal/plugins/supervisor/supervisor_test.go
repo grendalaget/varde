@@ -316,6 +316,72 @@ func TestNonLeaderDoesNotSpawnInstalledPlugin(t *testing.T) {
 	}
 }
 
+func TestInstallRejectsStaticServiceTokenCollision(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open("sqlite://"+filepath.Join(root, "cp.db"), store.RealClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	registry := mustStaticRegistry(t, "static-plugin", "plugin-managed-plugin")
+	catalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+		ID: "managed-plugin", Name: "Managed", Description: "test", Version: "1.0.0",
+		Scopes: []string{"members"},
+		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
+			URL: "https://example.com/plugin.tar.gz", SHA256: strings.Repeat("0", 64),
+		}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte("x"), 32)
+	manager, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VARDE_SECRETS_KEY", base64.StdEncoding.EncodeToString(key))
+	supervisor, err := New(Options{DataDir: root, Store: db, Registry: registry, Catalog: catalog, Secrets: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supervisor.Install(context.Background(), "managed-plugin"); err == nil ||
+		!strings.Contains(err.Error(), "service token name conflicts with static plugin") {
+		t.Fatalf("Install error = %v, want static service-token collision", err)
+	}
+}
+
+func TestNewRejectsStaticManifestServiceTokenCollision(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open("sqlite://"+filepath.Join(root, "cp.db"), store.RealClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	now := db.NowMs()
+	rawToken, err := enroll.ServiceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreatePluginInstall(context.Background(), &store.ServiceToken{
+		ID: "st_managed", Name: "plugin-managed-plugin", TokenHash: enroll.Hash(rawToken),
+		ScopesJSON: `["members"]`, CreatedAt: now,
+	}, &store.InstalledPlugin{
+		ID: "managed-plugin", Version: "1.0.0", SealedSecret: "sealed",
+		Port: 7310, Status: installStatus, InstalledAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registry := mustStaticRegistry(t, "static-plugin", "plugin-managed-plugin")
+	catalog, err := plugins.ParseCatalog([]byte(`[]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{DataDir: root, Store: db, Registry: registry, Catalog: catalog}); err == nil ||
+		!strings.Contains(err.Error(), `static plugin "static-plugin" service_token conflicts`) {
+		t.Fatalf("New error = %v, want static manifest collision", err)
+	}
+}
+
 func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	binary := buildTestPlugin(t)
 	manifest := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin","pages":[{"id":"home","title":"Home","list":{"endpoint":"/list"}}]}`)
@@ -448,6 +514,23 @@ func mustEmptyRegistry(t *testing.T) *plugins.Registry {
 	t.Helper()
 	registry, err := plugins.Load(nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+func mustStaticRegistry(t *testing.T, id, serviceToken string) *plugins.Registry {
+	t.Helper()
+	registry := mustEmptyRegistry(t)
+	plugin := &plugins.Plugin{
+		Manifest: plugins.Manifest{
+			ID: id, Name: id, Version: "1.0.0", BaseURL: "http://127.0.0.1:1",
+			ServiceToken: serviceToken,
+		},
+		Secret:       []byte(strings.Repeat("s", 32)),
+		ManifestPath: "static-plugin.json",
+	}
+	if err := registry.Add(plugin); err != nil {
 		t.Fatal(err)
 	}
 	return registry

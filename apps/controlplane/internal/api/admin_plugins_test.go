@@ -142,6 +142,16 @@ func TestInstalledPluginServiceTokenMustBeEnabled(t *testing.T) {
 	if err := e.st.CreatePluginInstall(context.Background(), serviceToken, installed); err != nil {
 		t.Fatal(err)
 	}
+	if err := e.srv.Plugins.Add(&plugins.Plugin{
+		Manifest: plugins.Manifest{
+			ID: "static-plugin", Name: "Static plugin", Version: "1.0.0",
+			BaseURL: "http://127.0.0.1:7311", ServiceToken: serviceToken.Name,
+		},
+		Secret:       []byte(strings.Repeat("s", 32)),
+		ManifestPath: "static-plugin.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	path := "/v1/groups/" + e.group + "/members"
 	response := e.do(http.MethodGet, path, nil, rawToken)
 	if response.Status != http.StatusForbidden || !strings.Contains(string(response.Raw), "plugin not enabled") {
