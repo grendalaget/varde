@@ -31,7 +31,38 @@ func (s *Store) ListInstalledPlugins(ctx context.Context) ([]InstalledPlugin, er
 }
 
 func (s *Store) SetInstalledPlugin(ctx context.Context, plugin *InstalledPlugin) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(`
+	return setInstalledPlugin(ctx, s, s.q(), plugin)
+}
+
+func (s *Store) SetInstalledPluginAndTokenScopes(ctx context.Context, plugin *InstalledPlugin, scopesJSON string) error {
+	tx, err := s.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, s.Rebind(`UPDATE service_tokens SET scopes=? WHERE id=?`),
+		scopesJSON, plugin.ServiceTokenID)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return ErrNotFound
+	}
+	if err := setInstalledPlugin(ctx, s, tx, plugin); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type pluginExecContext interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func setInstalledPlugin(ctx context.Context, s *Store, q pluginExecContext, plugin *InstalledPlugin) error {
+	_, err := q.ExecContext(ctx, s.Rebind(`
 		INSERT INTO installed_plugins
 			(id,version,asset_url,archive_sha256,binary_sha256,manifest_json,sealed_secret,service_token_id,port,status,error,upgrade_error,installed_at,updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)

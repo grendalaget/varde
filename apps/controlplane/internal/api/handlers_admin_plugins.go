@@ -118,7 +118,7 @@ func adminPlugin(entry plugins.CatalogEntry, row store.InstalledPlugin, installe
 	result := gen.AdminPlugin{
 		Id: entry.ID, Name: entry.Name, Description: entry.Description, Version: entry.Version,
 		Scopes: entry.Scopes, Assets: assets, Installed: installed,
-		UpdateAvailable: installed && plugins.IsVersionNewer(entry.Version, row.Version),
+		UpdateAvailable: installed && entry.Version != row.Version,
 	}
 	if installed {
 		status, message := row.Status, row.Error

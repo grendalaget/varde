@@ -80,10 +80,10 @@ func TestAdminPluginListIncludesUpgradeError(t *testing.T) {
 	e.srv.PluginManager = pluginListManager{
 		entries: []plugins.CatalogEntry{{
 			ID: "test-plugin", Name: "Test plugin", Description: "update reporting",
-			Version: "2.0.0",
+			Version: "1.1",
 		}},
 		rows: []store.InstalledPlugin{{
-			ID: "test-plugin", Version: "1.0.0", Status: "running",
+			ID: "test-plugin", Version: "1.0", Status: "running",
 			UpgradeError: "candidate did not become healthy",
 		}},
 	}
@@ -110,17 +110,17 @@ func TestAdminUpdatePlugin(t *testing.T) {
 	e.srv.PluginManager = pluginListManager{
 		entries: []plugins.CatalogEntry{{
 			ID: "test-plugin", Name: "Test plugin", Description: "update",
-			Version: "2.0.0",
+			Version: "1.1",
 		}},
 		updated: store.InstalledPlugin{
-			ID: "test-plugin", Version: "2.0.0", Status: "running",
+			ID: "test-plugin", Version: "1.1", Status: "running",
 		},
 	}
 	response := e.do(http.MethodPost, "/v1/admin/plugins/test-plugin/update", nil, e.token)
 	if response.Status != http.StatusOK {
 		t.Fatalf("admin plugin update = %d %s", response.Status, response.Raw)
 	}
-	if response.Body["version"] != "2.0.0" || response.Body["update_available"] != false {
+	if response.Body["version"] != "1.1" || response.Body["update_available"] != false {
 		t.Fatalf("admin plugin update response = %v", response.Body)
 	}
 }

@@ -464,7 +464,7 @@ func (s *Supervisor) Update(ctx context.Context, id string) (store.InstalledPlug
 	if !ok {
 		return *current, fmt.Errorf("plugin %q is not in the catalog", id)
 	}
-	if !plugins.IsVersionNewer(entry.Version, current.Version) {
+	if entry.Version == current.Version {
 		return *current, nil
 	}
 	err = s.updateInstalledWith(ctx, *current, entry, nil)
@@ -483,6 +483,14 @@ func (s *Supervisor) updateInstalledWith(ctx context.Context, current store.Inst
 			}
 		}
 	}()
+	serviceToken, err := s.opts.Store.ServiceTokenByID(ctx, current.ServiceTokenID)
+	if err != nil {
+		return fmt.Errorf("load plugin service token: %w", err)
+	}
+	scopesJSON, err := json.Marshal(entry.Scopes)
+	if err != nil {
+		return fmt.Errorf("encode plugin service token scopes: %w", err)
+	}
 	asset, err := s.assetFor(entry)
 	if err != nil {
 		return err
@@ -532,7 +540,7 @@ func (s *Supervisor) updateInstalledWith(ctx context.Context, current store.Inst
 			s.rollbackPlugin(plugin.ID, previous, added)
 		}
 		if rowUpdateStarted {
-			if err := s.opts.Store.SetInstalledPlugin(context.WithoutCancel(ctx), &current); err != nil {
+			if err := s.opts.Store.SetInstalledPluginAndTokenScopes(context.WithoutCancel(ctx), &current, serviceToken.ScopesJSON); err != nil {
 				s.opts.Log.Error("restore installed plugin after failed update", "plugin", current.ID, "error", err)
 			}
 		}
@@ -553,10 +561,10 @@ func (s *Supervisor) updateInstalledWith(ctx context.Context, current store.Inst
 		return err
 	}
 	next.Status = runningStatus
-	rowUpdateStarted = true
-	if err := s.opts.Store.SetInstalledPlugin(ctx, &next); err != nil {
+	if err := s.opts.Store.SetInstalledPluginAndTokenScopes(ctx, &next, string(scopesJSON)); err != nil {
 		return fmt.Errorf("save upgraded plugin: %w", err)
 	}
+	rowUpdateStarted = true
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -59,6 +59,13 @@ func TestInstalledPluginCredentialsAndTokenReuse(t *testing.T) {
 			if err != nil || storedToken.TokenHash != replacement.TokenHash || storedToken.RevokedAt != nil {
 				t.Fatalf("reused service token = %+v, error = %v", storedToken, err)
 			}
+			if err := s.SetInstalledPluginAndTokenScopes(ctx, plugin, `["members","servers"]`); err != nil {
+				t.Fatal(err)
+			}
+			storedToken, err = s.ServiceTokenByID(ctx, token.ID)
+			if err != nil || !storedToken.Allows("servers") {
+				t.Fatalf("updated service token scopes = %+v, error = %v", storedToken, err)
+			}
 			if err := s.UpdateInstalledPluginStatus(ctx, plugin.ID, "running", ""); err != nil {
 				t.Fatal(err)
 			}

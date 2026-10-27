@@ -219,8 +219,8 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 
 func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	binary := buildTestPlugin(t)
-	manifestV1 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
-	manifestV2 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"2.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
+	manifestV1 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
+	manifestV2 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.1","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
 	archiveV1 := releaseArchive(t, binary, manifestV1)
 	archiveV2 := releaseArchive(t, binary, manifestV2)
 	invalidBinary := filepath.Join(t.TempDir(), binaryName("test-plugin"))
@@ -244,9 +244,13 @@ func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T
 	defer assetServer.Close()
 	catalogFor := func(version, path string, archive []byte) *plugins.Catalog {
 		hash := sha256.Sum256(archive)
+		scopes := []string{"members"}
+		if version == "1.1" {
+			scopes = append(scopes, "servers")
+		}
 		catalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
 			ID: "test-plugin", Name: "Test plugin", Description: "Supervisor update test",
-			Version: version, Scopes: []string{"members"},
+			Version: version, Scopes: scopes,
 			Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
 				URL: assetServer.URL + path, SHA256: hex.EncodeToString(hash[:]),
 			}},
@@ -272,7 +276,7 @@ func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T
 	registry := mustEmptyRegistry(t)
 	supervisor, err := New(Options{
 		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
-		Registry: registry, Catalog: catalogFor("1.0.0", "/v1", archiveV1),
+		Registry: registry, Catalog: catalogFor("1.0", "/v1", archiveV1),
 		Secrets: manager, HTTPClient: assetServer.Client(), HealthTimeout: time.Second,
 	})
 	if err != nil {
@@ -288,10 +292,10 @@ func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T
 		t.Fatalf("initial plugin health response = %q", body)
 	}
 
-	catalogV2 := catalogFor("2.0.0", "/v2", archiveV2)
+	catalogV2 := catalogFor("1.1", "/v2", archiveV2)
 	entryV2, ok := catalogV2.Get("test-plugin")
 	if !ok {
-		t.Fatal("version 2 catalog entry is missing")
+		t.Fatal("version 1.1 catalog entry is missing")
 	}
 	upgradeCtx, cancelUpgrade := context.WithCancel(context.Background())
 	var candidate *runningCommand
@@ -331,17 +335,17 @@ func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cancelledRow.Version != "1.0.0" || cancelledRow.Status != runningStatus {
+	if cancelledRow.Version != "1.0" || cancelledRow.Status != runningStatus {
 		t.Fatalf("cancelled upgrade changed installed state to %s/%s", cancelledRow.Version, cancelledRow.Status)
 	}
-	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0" {
 		t.Fatalf("cancelled upgrade changed registry plugin: %#v, registered=%v", plugin, ok)
 	}
 	if body := getTestURL(t, oldHealth); body != "ok" {
 		t.Fatalf("cancelled upgrade health response = %q", body)
 	}
 
-	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)
+	supervisor.opts.Catalog = catalogFor("1.1", "/v2-invalid", archiveV2Invalid)
 	if _, err := supervisor.Update(context.Background(), "test-plugin"); err == nil {
 		t.Fatal("update with an invalid candidate succeeded")
 	}
@@ -349,35 +353,38 @@ func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Version != "1.0.0" || current.Status != runningStatus || current.Error != "" {
+	if current.Version != "1.0" || current.Status != runningStatus || current.Error != "" {
 		t.Fatalf("failed update changed installed state to %s/%s error %q", current.Version, current.Status, current.Error)
 	}
 	if !strings.Contains(current.UpgradeError, "start upgraded plugin") {
 		t.Fatalf("failed update error = %q, want candidate-start failure", current.UpgradeError)
 	}
-	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0" {
 		t.Fatalf("failed update changed registry plugin: %#v, registered=%v", plugin, ok)
 	}
 	if body := getTestURL(t, oldHealth); body != "ok" {
 		t.Fatalf("failed update stopped old plugin: %q", body)
 	}
 
-	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2", archiveV2)
+	supervisor.opts.Catalog = catalogFor("1.1", "/v2", archiveV2)
 	updated, err := supervisor.Update(context.Background(), "test-plugin")
 	if err != nil {
 		t.Fatal(err)
 	}
 	current = &updated
-	if current.Version != "2.0.0" || current.Port == installed.Port {
-		t.Fatalf("successful update row = version %q, port %d; want 2.0.0 on a new port", current.Version, current.Port)
+	if current.Version != "1.1" || current.Port == installed.Port {
+		t.Fatalf("successful update row = version %q, port %d; want 1.1 on a new port", current.Version, current.Port)
 	}
 	if current.UpgradeError != "" {
 		t.Fatalf("successful update retained upgrade error %q", current.UpgradeError)
 	}
-	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.1" {
 		t.Fatalf("successful update registry plugin: %#v, registered=%v", plugin, ok)
 	}
-	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "1.0.0")); !os.IsNotExist(err) {
+	if token, err := db.ServiceTokenByID(context.Background(), updated.ServiceTokenID); err != nil || !token.Allows("servers") {
+		t.Fatalf("updated service token scopes do not allow servers: token=%+v error=%v", token, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "1.0")); !os.IsNotExist(err) {
 		t.Fatalf("old version directory remains after update: %v", err)
 	}
 	newHealth := fmt.Sprintf("http://127.0.0.1:%d/healthz", current.Port)
