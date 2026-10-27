@@ -3,7 +3,7 @@
 // RunAsUser equivalent the NSIS template used nsis_tauri_utils for.
 use anyhow::{anyhow, bail, Context, Result};
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStrExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use winreg::enums::*;
@@ -347,6 +347,182 @@ pub fn webview2_present() -> bool {
 
 pub fn run_bootstrapper(path: &Path) -> Result<()> {
     run_quiet(&path.to_string_lossy(), &["/silent", "/install"])
+}
+
+const WEBVIEW_PROFILE_PREFIX: &str = "varde-setup-webview-";
+
+/// A fresh user data folder for the setup window's own webview.
+///
+/// WebView2 never keeps its browser elevated: it relaunches it through
+/// Explorer with the signed-in user's unelevated token
+/// (MicrosoftEdge/WebView2Feedback#3651, #4672). In that token Administrators
+/// is deny-only, so the profile has to be writable by the signed-in user
+/// itself — a folder only SYSTEM + Administrators can open fails with "We
+/// couldn't create the data directory". That's what %ProgramData%\Varde is
+/// once any install has ACL'd it (fresh machines only worked because the
+/// folder still had ProgramData's inherited user-create rights).
+///
+/// So: a new, uniquely named dir in the Windows Temp dir (users may create
+/// entries there but can't list it), created by us so nobody else owns it,
+/// then locked to SYSTEM + Administrators + the user signed in to this
+/// session — the identity the browser processes run as, whether that's the
+/// admin who elevated or a standard user who typed an admin's credentials.
+pub fn setup_webview_profile() -> Result<PathBuf> {
+    let base = windows_dir()?.join("Temp");
+    // sweep profiles left by earlier runs whose setup process is gone; a
+    // concurrent setup's live profile is left alone
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let Some(rest) = name.strip_prefix(WEBVIEW_PROFILE_PREFIX) else {
+                continue;
+            };
+            let owner = rest.split('-').next().and_then(|p| p.parse::<u32>().ok());
+            if owner.is_some_and(|pid| pid != std::process::id() && !process_alive(pid)) {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let mut n = 0u32;
+    let dir = loop {
+        let d = base.join(format!(
+            "{WEBVIEW_PROFILE_PREFIX}{}-{stamp}-{n}",
+            std::process::id()
+        ));
+        // create_dir, not create_dir_all: a pre-created (squatted) dir must
+        // not be adopted
+        match std::fs::create_dir(&d) {
+            Ok(()) => break d,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 16 => n += 1,
+            Err(e) => return Err(e).with_context(|| format!("create {}", d.display())),
+        }
+    };
+    let user = session_user_sid()
+        .context("look up the signed-in user")?
+        .map(|s| format!("*{s}:(OI)(CI)F"));
+    acl_dir(&dir, user.as_deref())?;
+    Ok(dir)
+}
+
+/// %SystemRoot% from the OS rather than the (inheritable) environment.
+fn windows_dir() -> Result<PathBuf> {
+    use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+    let mut buf = [0u16; 260];
+    // SAFETY: the buffer is writable and its length is passed implicitly
+    let n = unsafe { GetSystemWindowsDirectoryW(Some(&mut buf)) } as usize;
+    if n == 0 || n >= buf.len() {
+        bail!("GetSystemWindowsDirectory failed");
+    }
+    Ok(PathBuf::from(OsString::from_wide(&buf[..n])))
+}
+
+fn process_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        // SAFETY: the handle is closed on every path that opened it.
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(h, &mut code).is_err() || code == STILL_ACTIVE.0 as u32;
+        let _ = CloseHandle(h);
+        alive
+    }
+}
+
+/// The SID (as a string) of the user signed in to this process's session —
+/// session user name via WTS (no TCB privilege needed, unlike
+/// WTSQueryUserToken), resolved to a SID. None when no one is signed in.
+fn session_user_sid() -> Result<Option<String>> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Security::{LookupAccountNameW, PSID, SID_NAME_USE};
+    use windows::Win32::System::RemoteDesktop::{
+        ProcessIdToSessionId, WTSDomainName, WTSFreeMemory, WTSQuerySessionInformationW,
+        WTSUserName, WTS_CURRENT_SERVER_HANDLE, WTS_INFO_CLASS,
+    };
+
+    unsafe fn session_string(session: u32, class: WTS_INFO_CLASS) -> Result<String> {
+        let mut p = PWSTR::null();
+        let mut bytes = 0u32;
+        WTSQuerySessionInformationW(
+            Some(WTS_CURRENT_SERVER_HANDLE),
+            session,
+            class,
+            &mut p,
+            &mut bytes,
+        )
+        .map_err(|e| anyhow!("WTSQuerySessionInformation: {e}"))?;
+        let s = p.to_string();
+        WTSFreeMemory(p.0.cast());
+        s.map_err(|e| anyhow!("session string: {e}"))
+    }
+
+    unsafe {
+        // SAFETY: WTS strings are freed once after copying; the SID buffer
+        // outlives every PSID pointing into it.
+        let mut session = 0u32;
+        ProcessIdToSessionId(std::process::id(), &mut session)
+            .map_err(|e| anyhow!("ProcessIdToSessionId: {e}"))?;
+        let user = session_string(session, WTSUserName)?;
+        if user.is_empty() {
+            // no one signed in to this session (e.g. a service context)
+            return Ok(None);
+        }
+        let domain = session_string(session, WTSDomainName)?;
+        let account = w(&if domain.is_empty() {
+            user
+        } else {
+            format!("{domain}\\{user}")
+        });
+
+        let (mut sid_len, mut dom_len) = (0u32, 0u32);
+        let mut kind = SID_NAME_USE::default();
+        let _ = LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(account.as_ptr()),
+            None,
+            &mut sid_len,
+            None,
+            &mut dom_len,
+            &mut kind,
+        );
+        if sid_len == 0 {
+            bail!("LookupAccountName: no size");
+        }
+        let mut sid = vec![0u64; (sid_len as usize).div_ceil(8)];
+        let mut dom = vec![0u16; dom_len.max(1) as usize];
+        LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(account.as_ptr()),
+            Some(PSID(sid.as_mut_ptr().cast())),
+            &mut sid_len,
+            Some(PWSTR(dom.as_mut_ptr())),
+            &mut dom_len,
+            &mut kind,
+        )
+        .map_err(|e| anyhow!("LookupAccountName: {e}"))?;
+        sid_string(PSID(sid.as_mut_ptr().cast())).map(Some)
+    }
+}
+
+/// # Safety
+/// `sid` must point to a valid SID.
+unsafe fn sid_string(sid: windows::Win32::Security::PSID) -> Result<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    let mut s = PWSTR::null();
+    ConvertSidToStringSidW(sid, &mut s).map_err(|e| anyhow!("ConvertSidToStringSid: {e}"))?;
+    let out = s.to_string();
+    let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+    out.map_err(|e| anyhow!("SID string: {e}"))
 }
 
 // ---- shortcuts -------------------------------------------------------------
