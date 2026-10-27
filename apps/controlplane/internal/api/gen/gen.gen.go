@@ -795,16 +795,17 @@ type AdminPlugin struct {
 		Sha256 string `json:"sha256"`
 		Url    string `json:"url"`
 	} `json:"assets"`
-	Description string   `json:"description"`
-	Error       *string  `json:"error,omitempty"`
-	Id          string   `json:"id"`
-	Installed   bool     `json:"installed"`
-	InstalledAt *int64   `json:"installed_at,omitempty"`
-	Name        string   `json:"name"`
-	Scopes      []string `json:"scopes"`
-	Status      *string  `json:"status,omitempty"`
-	UpdatedAt   *int64   `json:"updated_at,omitempty"`
-	Version     string   `json:"version"`
+	Description  string   `json:"description"`
+	Error        *string  `json:"error,omitempty"`
+	Id           string   `json:"id"`
+	Installed    bool     `json:"installed"`
+	InstalledAt  *int64   `json:"installed_at,omitempty"`
+	Name         string   `json:"name"`
+	Scopes       []string `json:"scopes"`
+	Status       *string  `json:"status,omitempty"`
+	UpdatedAt    *int64   `json:"updated_at,omitempty"`
+	UpgradeError *string  `json:"upgrade_error,omitempty"`
+	Version      string   `json:"version"`
 }
 
 // AgentDirectives defines model for AgentDirectives.

@@ -70,6 +70,18 @@ type managedProcess struct {
 	retired  atomic.Bool
 }
 
+type pluginUpgradeFailure struct {
+	err error
+}
+
+func (e *pluginUpgradeFailure) Error() string {
+	return e.err.Error()
+}
+
+func (e *pluginUpgradeFailure) Unwrap() error {
+	return e.err
+}
+
 type Supervisor struct {
 	opts Options
 
@@ -369,7 +381,10 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		known[row.ID] = struct{}{}
 		if err := s.ensureInstalled(ctx, row); err != nil {
 			s.opts.Log.Error("prepare installed plugin", "plugin", row.ID, "error", err)
-			_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
+			var upgradeFailure *pluginUpgradeFailure
+			if !errors.As(err, &upgradeFailure) {
+				_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
+			}
 			continue
 		}
 		if fresh, err := s.opts.Store.InstalledPlugin(ctx, row.ID); err == nil {
@@ -436,7 +451,10 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry) (result error) {
 	defer func() {
 		if result != nil {
-			_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, current.ID, errorStatus, result.Error())
+			if err := s.opts.Store.UpdateInstalledPluginUpgradeError(context.WithoutCancel(ctx), current.ID, result.Error()); err != nil {
+				s.opts.Log.Error("record plugin upgrade failure", "plugin", current.ID, "error", err)
+			}
+			result = &pluginUpgradeFailure{err: result}
 		}
 	}()
 	asset, err := s.assetFor(entry)
@@ -464,6 +482,7 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 	next.Port = int64(port)
 	next.Status = installStatus
 	next.Error = ""
+	next.UpgradeError = ""
 	next.UpdatedAt = s.opts.Store.NowMs()
 	plugin, err := s.makePlugin(manifestData, entry, next)
 	if err != nil {

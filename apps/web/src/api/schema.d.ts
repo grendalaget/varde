@@ -1073,6 +1073,7 @@ export interface components {
             installed: boolean;
             status?: string | null;
             error?: string | null;
+            upgrade_error?: string | null;
             /** Format: int64 */
             installed_at?: number | null;
             /** Format: int64 */

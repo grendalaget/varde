@@ -146,6 +146,7 @@ type InstalledPlugin struct {
 	Port           int64  `db:"port"`
 	Status         string `db:"status"`
 	Error          string `db:"error"`
+	UpgradeError   string `db:"upgrade_error"`
 	InstalledAt    int64  `db:"installed_at"`
 	UpdatedAt      int64  `db:"updated_at"`
 }

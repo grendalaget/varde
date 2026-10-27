@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -289,6 +290,12 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	if current.Version != "1.0.0" {
 		t.Fatalf("failed upgrade changed stored version to %q", current.Version)
 	}
+	if current.Status != runningStatus || current.Error != "" {
+		t.Fatalf("failed upgrade changed plugin status/error to %q/%q, want running/no error", current.Status, current.Error)
+	}
+	if !strings.Contains(current.UpgradeError, "start upgraded plugin") {
+		t.Fatalf("failed upgrade error = %q, want candidate-start failure", current.UpgradeError)
+	}
 	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
 		t.Fatalf("failed upgrade changed registry plugin: %#v, registered=%v", plugin, ok)
 	}
@@ -304,6 +311,9 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	}
 	if current.Version != "2.0.0" || current.Port == installed.Port {
 		t.Fatalf("successful upgrade row = version %q, port %d; want 2.0.0 on a new port", current.Version, current.Port)
+	}
+	if current.UpgradeError != "" {
+		t.Fatalf("successful upgrade retained upgrade error %q", current.UpgradeError)
 	}
 	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
 		t.Fatalf("successful upgrade registry plugin: %#v, registered=%v", plugin, ok)

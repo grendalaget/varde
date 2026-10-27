@@ -24,6 +24,20 @@ func (emptyPluginManager) Install(context.Context, string) (store.InstalledPlugi
 }
 func (emptyPluginManager) Uninstall(context.Context, string) error { return nil }
 
+type pluginListManager struct {
+	entries []plugins.CatalogEntry
+	rows    []store.InstalledPlugin
+}
+
+func (m pluginListManager) Catalog() []plugins.CatalogEntry { return m.entries }
+func (m pluginListManager) Installed(context.Context) ([]store.InstalledPlugin, error) {
+	return m.rows, nil
+}
+func (pluginListManager) Install(context.Context, string) (store.InstalledPlugin, error) {
+	return store.InstalledPlugin{}, nil
+}
+func (pluginListManager) Uninstall(context.Context, string) error { return nil }
+
 func TestPluginAdminRequiresOperatorAndHonorsEmailAllowlist(t *testing.T) {
 	e := newEnv(t)
 	e.srv.PluginManager = emptyPluginManager{}
@@ -48,6 +62,35 @@ func TestPluginAdminRequiresOperatorAndHonorsEmailAllowlist(t *testing.T) {
 	updated := e.do(http.MethodPatch, "/v1/me", map[string]any{"display_name": "Operations"}, allowlisted)
 	if updated.Status != http.StatusOK || updated.Body["operator"] != true {
 		t.Fatalf("allowlisted PATCH /v1/me = status %d, body %s", updated.Status, updated.Raw)
+	}
+}
+
+func TestAdminPluginListIncludesUpgradeError(t *testing.T) {
+	e := newEnv(t)
+	e.srv.PluginManager = pluginListManager{
+		entries: []plugins.CatalogEntry{{
+			ID: "test-plugin", Name: "Test plugin", Description: "upgrade reporting",
+			Version: "2.0.0",
+		}},
+		rows: []store.InstalledPlugin{{
+			ID: "test-plugin", Version: "1.0.0", Status: "running",
+			UpgradeError: "candidate did not become healthy",
+		}},
+	}
+	response := e.do(http.MethodGet, "/v1/admin/plugins", nil, e.token)
+	if response.Status != http.StatusOK {
+		t.Fatalf("admin plugin list = %d %s", response.Status, response.Raw)
+	}
+	items, ok := response.Body["plugins"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("admin plugin list items = %v, want one plugin", response.Body["plugins"])
+	}
+	plugin, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("admin plugin list item = %T, want object", items[0])
+	}
+	if plugin["status"] != "running" || plugin["upgrade_error"] != "candidate did not become healthy" {
+		t.Fatalf("admin plugin upgrade state = %v, want running with upgrade error", plugin)
 	}
 }
 

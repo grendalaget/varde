@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS installed_plugins (
     port              BIGINT NOT NULL,
     status            TEXT NOT NULL,
     error             TEXT NOT NULL DEFAULT '',
+    upgrade_error     TEXT NOT NULL DEFAULT '',
     installed_at      BIGINT NOT NULL,
     updated_at        BIGINT NOT NULL
 );

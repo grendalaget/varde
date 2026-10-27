@@ -1701,6 +1701,7 @@ components:
         installed: { type: boolean }
         status: { type: string, nullable: true }
         error: { type: string, nullable: true }
+        upgrade_error: { type: string, nullable: true }
         installed_at: { type: integer, format: int64, nullable: true }
         updated_at: { type: integer, format: int64, nullable: true }
 

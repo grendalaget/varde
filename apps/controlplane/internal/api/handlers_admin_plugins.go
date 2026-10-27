@@ -96,6 +96,8 @@ func adminPlugin(entry plugins.CatalogEntry, row store.InstalledPlugin, installe
 		status, message := row.Status, row.Error
 		result.Status = &status
 		result.Error = &message
+		upgradeError := row.UpgradeError
+		result.UpgradeError = &upgradeError
 		result.InstalledAt = &row.InstalledAt
 		result.UpdatedAt = &row.UpdatedAt
 	}
