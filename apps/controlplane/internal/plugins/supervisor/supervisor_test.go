@@ -642,15 +642,8 @@ func TestPinnedInstalledVersionReconciliationAcrossLeadershipChanges(t *testing.
 	if got := archiveDownloads.Load(); got != 1 {
 		t.Fatalf("promoted leader downloaded the stored asset %d times, want 1", got)
 	}
-	latest.AssetURL = assetServer.URL + "/missing"
-	if err := db.SetInstalledPlugin(context.Background(), latest); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(versionDir, binaryName("test-plugin"))); err != nil {
-		t.Fatal(err)
-	}
 	missingCatalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
-		ID: "test-plugin", Name: "Test plugin", Description: "Missing asset test", Version: "1.0.0",
+		ID: "test-plugin", Name: "Test plugin", Description: "Missing asset test", Version: "2.0.0",
 		Scopes: []string{"members"},
 		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
 			URL: assetServer.URL + "/missing", SHA256: hex.EncodeToString(archiveV1SHA256[:]),
@@ -660,13 +653,22 @@ func TestPinnedInstalledVersionReconciliationAcrossLeadershipChanges(t *testing.
 		t.Fatal(err)
 	}
 	nonLeader.opts.Catalog = missingCatalog
+	if _, err := nonLeader.Update(context.Background(), "test-plugin"); err == nil {
+		t.Fatal("update with an unavailable pinned asset succeeded")
+	}
+	if _, err := tryGetTestURL(healthURL); err != nil {
+		t.Fatalf("failed update stopped the old plugin before demotion: %v", err)
+	}
+	if got := archiveDownloads.Load(); got != 2 {
+		t.Fatalf("asset requests after failed update = %d, want 2", got)
+	}
 	leadership.value.Store(false)
 	nonLeader.reconcile(context.Background())
 	if _, err := tryGetTestURL(healthURL); err == nil {
 		t.Fatal("demoted leader left the plugin process running")
 	}
-	if got := archiveDownloads.Load(); got != 1 {
-		t.Fatalf("asset requests after demotion = %d, want no request beyond pinned recovery", got)
+	if got := archiveDownloads.Load(); got != 2 {
+		t.Fatalf("asset requests after demotion = %d, want no request beyond failed update", got)
 	}
 	rowAfter, err = db.InstalledPlugin(context.Background(), row.ID)
 	if err != nil {
@@ -674,6 +676,9 @@ func TestPinnedInstalledVersionReconciliationAcrossLeadershipChanges(t *testing.
 	}
 	if rowAfter.Status != runningStatus || rowAfter.Error != "" {
 		t.Fatalf("demotion changed installed status/error to %q/%q", rowAfter.Status, rowAfter.Error)
+	}
+	if rowAfter.UpgradeError == "" {
+		t.Fatal("failed update error was lost during demotion")
 	}
 	if err := db.DeleteInstalledPlugin(context.Background(), "test-plugin"); err != nil {
 		t.Fatal(err)
