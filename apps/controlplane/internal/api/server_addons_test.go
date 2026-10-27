@@ -152,28 +152,45 @@ func TestServerAddonRequiresSupportedCatalogTarget(t *testing.T) {
 	}
 }
 
-func TestCatalogExposesAddonTargetsOnlyForTestgame(t *testing.T) {
+func TestCatalogExposesAddonTargets(t *testing.T) {
 	e := newEnv(t)
 	resp := e.do("GET", "/v1/games", nil, e.token)
 	if resp.Status != 200 {
 		t.Fatalf("GET /v1/games = %d %s, want 200", resp.Status, resp.Raw)
 	}
 	games := resp.Body["games"].([]any)
-	foundTestgame := false
+	wantByID := map[string][]string{
+		"testgame": {"server"},
+		"cs2":      {"game"},
+	}
+	found := make(map[string]bool, len(wantByID))
 	for _, item := range games {
 		game := item.(map[string]any)
-		if game["id"] == "testgame" {
-			foundTestgame = true
-			targets, ok := game["addon_targets"].([]any)
-			if !ok || len(targets) != 1 || targets[0] != "server" {
-				t.Errorf("testgame addon_targets = %v, want [server]", game["addon_targets"])
+		id := game["id"].(string)
+		want, ok := wantByID[id]
+		if !ok {
+			if _, ok := game["addon_targets"]; ok {
+				t.Errorf("game %q unexpectedly has addon_targets: %v", id, game["addon_targets"])
 			}
-		} else if _, ok := game["addon_targets"]; ok {
-			t.Errorf("game %q unexpectedly has addon_targets: %v", game["id"], game["addon_targets"])
+			continue
+		}
+		found[id] = true
+		targets, ok := game["addon_targets"].([]any)
+		if !ok || len(targets) != len(want) {
+			t.Errorf("%s addon_targets = %v, want %v", id, game["addon_targets"], want)
+			continue
+		}
+		for i, target := range want {
+			if targets[i] != target {
+				t.Errorf("%s addon_targets = %v, want %v", id, targets, want)
+				break
+			}
 		}
 	}
-	if !foundTestgame {
-		t.Fatal("catalog response did not include testgame")
+	for id := range wantByID {
+		if !found[id] {
+			t.Errorf("catalog response did not include %s", id)
+		}
 	}
 }
 
