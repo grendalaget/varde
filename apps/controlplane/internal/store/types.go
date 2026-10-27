@@ -137,6 +137,18 @@ type ServiceToken struct {
 	RevokedAt    *int64  `db:"revoked_at"`
 }
 
+type InstalledPlugin struct {
+	ID             string `db:"id"`
+	Version        string `db:"version"`
+	SealedSecret   string `db:"sealed_secret"`
+	ServiceTokenID string `db:"service_token_id"`
+	Port           int64  `db:"port"`
+	Status         string `db:"status"`
+	Error          string `db:"error"`
+	InstalledAt    int64  `db:"installed_at"`
+	UpdatedAt      int64  `db:"updated_at"`
+}
+
 // Allows reports whether the token carries the given scope ("*" is a
 // wildcard; an unknown or malformed scope list allows nothing).
 func (t *ServiceToken) Allows(scope string) bool {

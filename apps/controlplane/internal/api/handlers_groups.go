@@ -230,7 +230,7 @@ func (s *Server) CreateInvite(ctx context.Context, req gen.CreateInviteRequestOb
 		if req.Body.Role != nil {
 			role = string(*req.Body.Role)
 		}
-		if role == "owner" && callerRole != "owner" && u.IsOperator != 1 {
+		if role == "owner" && callerRole != "owner" && !s.isOperator(u) {
 			return nil, errResp(gen.Forbidden, "owner invites require owner", nil)
 		}
 		exp = req.Body.ExpiresAt

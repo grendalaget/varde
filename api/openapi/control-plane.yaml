@@ -1187,6 +1187,63 @@ paths:
                     items: { $ref: "#/components/schemas/Group" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/admin/plugins:
+    get:
+      operationId: adminListPlugins
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      responses:
+        "200":
+          description: Plugin catalog and installation state (operator only).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plugins]
+                properties:
+                  plugins:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminPlugin" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/admin/plugins/{id}/install:
+    post:
+      operationId: adminInstallPlugin
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Plugin installed and healthy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminPlugin" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /v1/admin/plugins/{id}:
+    delete:
+      operationId: adminUninstallPlugin
+      tags: [admin]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Plugin stopped and uninstalled (operator only). }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/admin/groups/{groupId}/limits:
     put:
       operationId: adminSetGroupLimits
@@ -1609,9 +1666,10 @@ components:
         created_at: { type: integer, format: int64 }
     Me:
       type: object
-      required: [user, groups]
+      required: [user, groups, operator]
       properties:
         user: { $ref: "#/components/schemas/User" }
+        operator: { type: boolean }
         groups:
           type: array
           items:
@@ -1621,6 +1679,30 @@ components:
               group_id: { type: string }
               name: { type: string }
               role: { $ref: "#/components/schemas/Role" }
+    AdminPlugin:
+      type: object
+      required: [id, name, description, version, scopes, assets, installed]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        assets:
+          type: object
+          additionalProperties:
+            type: object
+            required: [url, sha256]
+            properties:
+              url: { type: string }
+              sha256: { type: string }
+        installed: { type: boolean }
+        status: { type: string, nullable: true }
+        error: { type: string, nullable: true }
+        installed_at: { type: integer, format: int64, nullable: true }
+        updated_at: { type: integer, format: int64, nullable: true }
 
     GroupSettings:
       type: object

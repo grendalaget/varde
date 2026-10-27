@@ -78,6 +78,14 @@ Operators create service tokens with `varde-control-plane service-token create`.
 
 Plugins are out-of-tree services and are not bundled with Varde. Review each service and its network access before enabling it.
 
+## Installing catalog plugins
+
+The control plane includes a catalog of managed plugins. Users listed in the comma-separated `VARDE_OPERATORS` email allowlist can view it at `GET /v1/admin/plugins`, install a catalog entry with `POST /v1/admin/plugins/{id}/install`, and uninstall it with `DELETE /v1/admin/plugins/{id}`. Email matching is case-insensitive. The existing first-user operator role remains supported.
+
+Install requires `VARDE_SECRETS_KEY`, a shared base64-encoded 32-byte key on every control-plane replica. The supervisor downloads the platform archive, verifies its catalog SHA-256 digest, extracts only regular files and directories, and stores its generated plugin secret and service token encrypted in the database. The child process receives its credentials through environment variables. Its `STATE_DIR` is private and persists across restarts; set `VARDE_DATA_DIR` to a persistent data directory when the default is unsuitable.
+
+Only the primary control plane starts managed plugins. Hosted LiteFS replicas replay plugin API requests to the primary using `fly-replay`; if the primary machine ID cannot be determined, the request fails rather than being applied on a replica. A plugin service token associated with an installed plugin can act only in groups where that plugin is enabled.
+
 ## Server addons
 
 A plugin may manage typed server addons through the control-plane API. Each addon declares an HTTPS archive URL, lowercase SHA-256 digest, `zip` or `tar_gz` archive type, a driver target, JSON driver options (up to 4 KiB), and up to 32 small relative files (64 KiB each and 2 MiB total). File keys use slash-separated relative paths and cannot contain traversal segments, backslashes, or colons. HTTP archive URLs are accepted only in control-plane development mode or for loopback hosts.

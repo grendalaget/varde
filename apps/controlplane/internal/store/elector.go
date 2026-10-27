@@ -128,3 +128,14 @@ func (e *PrimaryFileElector) IsLeader() bool {
 	name := strings.TrimSpace(string(b))
 	return name != "" && name == e.self
 }
+
+func (e *PrimaryFileElector) Primary() string {
+	b, err := os.ReadFile(e.path)
+	if os.IsNotExist(err) {
+		return e.self
+	}
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}

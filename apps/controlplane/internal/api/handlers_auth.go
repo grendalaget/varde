@@ -148,8 +148,9 @@ func (s *Server) GetMe(ctx context.Context, _ gen.GetMeRequestObject) (gen.GetMe
 		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
 	}
 	return gen.GetMe200JSONResponse{
-		User:   genUser(u),
-		Groups: groups,
+		User:     genUser(u),
+		Groups:   groups,
+		Operator: s.isOperator(u),
 	}, nil
 }
 

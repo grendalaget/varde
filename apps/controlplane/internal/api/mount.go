@@ -94,11 +94,47 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		case strings.HasSuffix(p, "/events/stream") && strings.HasPrefix(p, "/v1/groups/"):
 			s.userAuth(http.HandlerFunc(s.ServeSSE)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/") || p == "/healthz" || p == "/readyz":
-			s.userAuth(s.csrf(s.sessionCookies(genMux))).ServeHTTP(w, r)
+			handler := s.userAuth(s.csrf(s.sessionCookies(genMux)))
+			s.replayPluginRequests(handler).ServeHTTP(w, r)
 		default:
 			spa.ServeHTTP(w, r)
 		}
 	})
+}
+
+func (s *Server) replayPluginRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/plugins") ||
+			s.Recon == nil || s.Recon.Leader == nil || s.Recon.Leader.IsLeader() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		primary := ""
+		if s.PrimaryID != nil {
+			primary = strings.TrimSpace(s.PrimaryID())
+		}
+		if !validPrimaryID(primary) {
+			writeErr(w, http.StatusServiceUnavailable, gen.Internal, "primary control plane is unknown", nil)
+			return
+		}
+		w.Header().Set("fly-replay", "instance="+primary)
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func validPrimaryID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // maxBodyBytes is the request body cap for an API path. Crash reports carry

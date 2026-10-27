@@ -1,10 +1,11 @@
 #!/bin/sh
 # `snap set varde-control-plane <key>=<value>` maps to VARDE_* env vars.
+# The `operators` setting is a comma-separated VARDE_OPERATORS email allowlist.
 env="$SNAP_DATA/env"
 tmp="$env.tmp"
 : > "$tmp"
-for opt in listen public-url db signup auth-mode federation-secret \
-           embedded-relay embedded-relay-addr log-level; do
+for opt in listen public-url db signup auth-mode federation-secret operators \
+           data-dir embedded-relay embedded-relay-addr log-level; do
   v=$(snapctl get "$opt")
   if [ -n "$v" ]; then
     key=$(printf '%s' "$opt" | tr 'a-z-' 'A-Z_')

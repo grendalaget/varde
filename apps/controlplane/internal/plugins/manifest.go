@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 var (
@@ -158,12 +159,17 @@ type Plugin struct {
 }
 
 type Registry struct {
+	mu      sync.RWMutex
 	plugins []*Plugin
 	byID    map[string]*Plugin
+	dynamic map[string]bool
 }
 
 func Load(paths []string) (*Registry, error) {
-	registry := &Registry{byID: make(map[string]*Plugin)}
+	registry := &Registry{
+		byID:    make(map[string]*Plugin),
+		dynamic: make(map[string]bool),
+	}
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -199,7 +205,7 @@ func load(path string) (*Plugin, error) {
 		}
 		return nil, fmt.Errorf("plugin manifest %s: trailing data: %w", path, err)
 	}
-	if err := validateManifest(&manifest); err != nil {
+	if err := validateManifest(&manifest, true); err != nil {
 		return nil, fmt.Errorf("plugin manifest %s: %w", path, err)
 	}
 	manifest.BaseURL, err = normalizeBaseURL(manifest.BaseURL)
@@ -213,7 +219,49 @@ func load(path string) (*Plugin, error) {
 	return &Plugin{Manifest: manifest, Secret: secret, ManifestPath: path}, nil
 }
 
-func validateManifest(m *Manifest) error {
+func NewWithSecret(data []byte, baseURL, serviceToken string, secret []byte) (*Plugin, error) {
+	manifest, err := decodeManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(secret) < 32 {
+		return nil, errors.New("plugin secret must contain at least 32 bytes")
+	}
+	manifest.SecretEnv = ""
+	manifest.SecretFile = ""
+	if baseURL != "" {
+		manifest.BaseURL = baseURL
+	}
+	if serviceToken != "" {
+		manifest.ServiceToken = serviceToken
+	}
+	if err := validateManifest(&manifest, false); err != nil {
+		return nil, err
+	}
+	manifest.BaseURL, err = normalizeBaseURL(manifest.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Plugin{Manifest: manifest, Secret: append([]byte(nil), secret...)}, nil
+}
+
+func decodeManifest(data []byte) (Manifest, error) {
+	var manifest Manifest
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return Manifest{}, fmt.Errorf("decode: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return Manifest{}, errors.New("trailing JSON value")
+		}
+		return Manifest{}, fmt.Errorf("trailing data: %w", err)
+	}
+	return manifest, nil
+}
+
+func validateManifest(m *Manifest, requireSecretSource bool) error {
 	if !pluginIDPattern.MatchString(m.ID) {
 		return fmt.Errorf("id %q must match ^[a-z][a-z0-9-]{1,31}$", m.ID)
 	}
@@ -223,8 +271,11 @@ func validateManifest(m *Manifest) error {
 	if strings.TrimSpace(m.BaseURL) == "" {
 		return errors.New("base_url is required")
 	}
-	if (m.SecretEnv == "") == (m.SecretFile == "") {
+	if requireSecretSource && (m.SecretEnv == "") == (m.SecretFile == "") {
 		return errors.New("exactly one of secret_env or secret_file is required")
+	}
+	if !requireSecretSource && (m.SecretEnv != "" || m.SecretFile != "") {
+		return errors.New("in-memory plugin secret must not have a secret source")
 	}
 	if m.ServiceToken != "" && strings.TrimSpace(m.ServiceToken) == "" {
 		return errors.New("service_token must not be empty")
@@ -357,13 +408,75 @@ func (r *Registry) Get(id string) (*Plugin, bool) {
 	if r == nil {
 		return nil, false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	plugin, ok := r.byID[id]
 	return plugin, ok
+}
+
+func (r *Registry) Add(plugin *Plugin) error {
+	if r == nil {
+		return errors.New("plugin registry is nil")
+	}
+	if plugin == nil {
+		return errors.New("plugin must not be nil")
+	}
+	if len(plugin.Secret) < 32 {
+		return errors.New("plugin secret must contain at least 32 bytes")
+	}
+	if err := validateManifest(&plugin.Manifest, false); err != nil {
+		return err
+	}
+	baseURL, err := normalizeBaseURL(plugin.BaseURL)
+	if err != nil {
+		return err
+	}
+	plugin.BaseURL = baseURL
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.byID == nil {
+		r.byID = make(map[string]*Plugin)
+	}
+	if r.dynamic == nil {
+		r.dynamic = make(map[string]bool)
+	}
+	if _, exists := r.byID[plugin.ID]; exists {
+		return fmt.Errorf("plugin %q is already registered", plugin.ID)
+	}
+	r.byID[plugin.ID] = plugin
+	r.plugins = append(r.plugins, plugin)
+	r.dynamic[plugin.ID] = true
+	return nil
+}
+
+func (r *Registry) Remove(id string) error {
+	if r == nil {
+		return errors.New("plugin registry is nil")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.byID[id]; !exists {
+		return fmt.Errorf("plugin %q is not registered", id)
+	}
+	if !r.dynamic[id] {
+		return fmt.Errorf("plugin %q was loaded from a static manifest", id)
+	}
+	delete(r.byID, id)
+	delete(r.dynamic, id)
+	for i, plugin := range r.plugins {
+		if plugin.ID == id {
+			r.plugins = append(r.plugins[:i], r.plugins[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (r *Registry) All() []*Plugin {
 	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return append([]*Plugin(nil), r.plugins...)
 }
