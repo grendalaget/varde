@@ -45,6 +45,10 @@ func TestPluginAdminRequiresOperatorAndHonorsEmailAllowlist(t *testing.T) {
 	if me.Status != http.StatusOK || me.Body["operator"] != true {
 		t.Fatalf("allowlisted /v1/me = status %d, body %s", me.Status, me.Raw)
 	}
+	updated := e.do(http.MethodPatch, "/v1/me", map[string]any{"display_name": "Operations"}, allowlisted)
+	if updated.Status != http.StatusOK || updated.Body["operator"] != true {
+		t.Fatalf("allowlisted PATCH /v1/me = status %d, body %s", updated.Status, updated.Raw)
+	}
 }
 
 type nonLeader struct{}

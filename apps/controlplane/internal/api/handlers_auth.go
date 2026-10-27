@@ -191,5 +191,9 @@ func (s *Server) UpdateMe(ctx context.Context, req gen.UpdateMeRequestObject) (g
 			Role    gen.Role `json:"role"`
 		}{GroupId: g.ID, Name: g.Name, Role: gen.Role(m.Role)})
 	}
-	return gen.UpdateMe200JSONResponse(gen.Me{User: genUser(u), Groups: groups}), nil
+	return gen.UpdateMe200JSONResponse(gen.Me{
+		User:     genUser(u),
+		Groups:   groups,
+		Operator: s.isOperator(u),
+	}), nil
 }
