@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -54,7 +55,21 @@ func TestPluginRequestsReplayToKnownPrimary(t *testing.T) {
 	e := newEnv(t)
 	e.recon.Leader = nonLeader{}
 	e.srv.PrimaryID = func() string { return "328f00abc123" }
-	req, err := http.NewRequest(http.MethodGet, e.http.URL+"/v1/plugins", nil)
+	rawToken, err := enroll.ServiceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := e.clk.ms
+	if err := e.st.CreatePluginInstall(context.Background(), &store.ServiceToken{
+		ID: "st_replay", Name: "plugin-dynamic-plugin", TokenHash: enroll.Hash(rawToken),
+		ScopesJSON: `["members"]`, CreatedAt: now,
+	}, &store.InstalledPlugin{
+		ID: "dynamic-plugin", Version: "1.0.0", SealedSecret: "sealed",
+		Port: 7310, Status: "running", InstalledAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodGet, e.http.URL+"/v1/groups/"+e.group+"/plugins/dynamic-plugin", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,9 +82,10 @@ func TestPluginRequestsReplayToKnownPrimary(t *testing.T) {
 		response.Header.Get("fly-replay") != "instance=328f00abc123" {
 		t.Fatalf("replica response = %d, fly-replay=%q", response.StatusCode, response.Header.Get("fly-replay"))
 	}
+	_ = response.Body.Close()
 
 	e.srv.PrimaryID = func() string { return "" }
-	req, err = http.NewRequest(http.MethodGet, e.http.URL+"/v1/plugins", nil)
+	req, err = http.NewRequest(http.MethodGet, e.http.URL+"/v1/groups/"+e.group+"/plugins/dynamic-plugin", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +93,31 @@ func TestPluginRequestsReplayToKnownPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unknown-primary response = %d, want 503", response.StatusCode)
 	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "plugin runs on the leader") {
+		t.Fatal("unknown-primary response did not explain that the plugin runs on the leader")
+	}
+
+	req, err = http.NewRequest(http.MethodGet, e.http.URL+"/v1/groups/"+e.group+"/plugins/static-plugin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnauthorized || response.Header.Get("fly-replay") != "" {
+		t.Fatalf("static plugin response = %d, fly-replay=%q; expected local auth handling",
+			response.StatusCode, response.Header.Get("fly-replay"))
+	}
+	_ = response.Body.Close()
 }
 
 func TestInstalledPluginServiceTokenMustBeEnabled(t *testing.T) {
