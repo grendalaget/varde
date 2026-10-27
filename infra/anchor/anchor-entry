@@ -16,6 +16,7 @@ config="$VARDE_DATA_DIR/config.toml"
 marker="$VARDE_DATA_DIR/enrolled-machine"
 
 write_marker() {
+  mkdir -p "$VARDE_DATA_DIR"
   tmp="$marker.tmp.$$"
   printf '%s\n' "$machine_id" > "$tmp"
   mv "$tmp" "$marker"
@@ -26,20 +27,20 @@ if [ -f "$config" ]; then
     exec varde-agent run
   fi
 
-  if [ ! -f "$marker" ]; then
-    # Legacy volumes have no machine marker. Keep their existing enrollment
-    # so an image update does not restart an already enrolled anchor.
-    write_marker
-    exec varde-agent run
-  fi
-
-  enrolled_machine=$(cat "$marker")
-  if [ "$enrolled_machine" = "$machine_id" ]; then
-    exec varde-agent run
+  if [ -f "$marker" ]; then
+    enrolled_machine=$(cat "$marker")
+    if [ "$enrolled_machine" = "$machine_id" ]; then
+      exec varde-agent run
+    fi
   fi
 
   # A deleted CP node releases its public key, so keep node.key for re-enroll.
   mv "$config" "$config.stale.$machine_id"
+fi
+
+# Every Fly enrollment from this image onward writes a machine marker.
+if [ -n "$machine_id" ]; then
+  write_marker
 fi
 
 resp=$(curl -fsS --retry 20 --retry-delay 3 --retry-all-errors \
@@ -51,7 +52,4 @@ server=${cp:-$VARDE_CP_URL}
 [ -n "$token" ] || { echo "anchor-entry: bootstrap returned no enroll_token" >&2; exit 1; }
 
 varde-agent enroll --server "$server" --token "$token" --anchor
-if [ -n "$machine_id" ]; then
-  write_marker
-fi
 exec varde-agent run
