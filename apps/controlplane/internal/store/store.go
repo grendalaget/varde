@@ -93,22 +93,28 @@ func OpenWith(url string, clk Clock, opt Options) (*Store, error) {
 	}
 	s.DB = db
 	s.Dialect = map[string]string{"sqlite": "sqlite", "pgx": "postgres"}[drv]
-	mig, err := migrations.ReadFile("migrations_" + s.Dialect + ".sql")
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	if !opt.SkipMigrate {
-		if _, err := db.Exec(string(mig)); err != nil {
+		if err := s.Migrate(); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("store: migrate: %w", err)
-		}
-		if err := ensureColumns(db, s.Dialect); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("store: migrate: %w", err)
+			return nil, err
 		}
 	}
 	return s, nil
+}
+
+// Migrate applies embedded migrations and compatibility column updates.
+func (s *Store) Migrate() error {
+	mig, err := migrations.ReadFile("migrations_" + s.Dialect + ".sql")
+	if err != nil {
+		return err
+	}
+	if _, err := s.DB.Exec(string(mig)); err != nil {
+		return fmt.Errorf("store: migrate: %w", err)
+	}
+	if err := ensureColumns(s.DB, s.Dialect); err != nil {
+		return fmt.Errorf("store: migrate: %w", err)
+	}
+	return nil
 }
 
 // ensureColumns adds columns introduced after the CREATE TABLE IF NOT EXISTS

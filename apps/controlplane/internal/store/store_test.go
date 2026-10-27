@@ -98,6 +98,45 @@ func TestOpenWithSkipsMigrationsForReadOnlySQLite(t *testing.T) {
 	}
 }
 
+func TestMigrateAfterReplicaPromotion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	dbURL := "sqlite://" + dbPath
+	s, err := Open(dbURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	promoted, err := OpenWith(dbURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open promoted replica without migrations: %v", err)
+	}
+	defer func() { _ = promoted.Close() }()
+
+	assertIndex := func(want bool) {
+		t.Helper()
+		var count int
+		if err := promoted.DB.Get(&count, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, "idx_sessions_expires"); err != nil {
+			t.Fatalf("query migration index: %v", err)
+		}
+		if got := count > 0; got != want {
+			t.Fatalf("idx_sessions_expires exists = %t, want %t", got, want)
+		}
+	}
+
+	assertIndex(false)
+	if err := promoted.Migrate(); err != nil {
+		t.Fatalf("migrate after promotion: %v", err)
+	}
+	assertIndex(true)
+}
+
 func TestPruneSessions(t *testing.T) {
 	for name, s := range testStores(t) {
 		defer func() { _ = s.Close() }()

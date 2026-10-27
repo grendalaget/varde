@@ -45,6 +45,33 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func migrateOnPromotion(
+	ctx context.Context,
+	leader interface{ IsLeader() bool },
+	migrate func() error,
+	every time.Duration,
+	log *slog.Logger,
+) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := migrate(); err != nil {
+				log.Warn("failed to apply migrations after promotion to LiteFS primary", "error", err)
+				continue
+			}
+			log.Info("applied migrations after promotion to LiteFS primary")
+			return
+		}
+	}
+}
+
 // defaultDBURL keeps the sqlite db in ProgramData on Windows, where a
 // service-context install expects it, and /var/lib elsewhere.
 func defaultDBURL() string {
@@ -278,7 +305,11 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		if self == "" {
 			self, _ = os.Hostname()
 		}
-		recon.Leader = store.NewPrimaryFileElector(primaryFile, self)
+		elector := store.NewPrimaryFileElector(primaryFile, self)
+		recon.Leader = elector
+		if storeOptions.SkipMigrate {
+			go migrateOnPromotion(ctx, elector, st.Migrate, time.Second, log)
+		}
 	} else {
 		elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
 		recon.Leader = elector
