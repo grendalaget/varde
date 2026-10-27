@@ -109,7 +109,7 @@ func TestPluginRequestsReplayToKnownPrimary(t *testing.T) {
 		t.Fatal("unknown-primary response did not explain that the plugin runs on the leader")
 	}
 
-	req, err = http.NewRequest(http.MethodGet, e.http.URL+"/v1/groups/"+e.group+"/plugins/static-plugin", nil)
+	req, err = http.NewRequest(http.MethodPost, e.http.URL+"/v1/groups/"+e.group+"/plugins/static-plugin/pages/home/list", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,42 @@ func TestPluginRequestsReplayToKnownPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusUnauthorized || response.Header.Get("fly-replay") != "" {
+	_ = response.Body.Close()
+
+	registry, err := plugins.Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(&plugins.Plugin{
+		Manifest: plugins.Manifest{
+			ID: "static-plugin", Name: "Static plugin", Version: "1.0.0",
+			BaseURL: "http://127.0.0.1:7311",
+			Pages:   []plugins.Page{{ID: "home", Title: "Home", List: &plugins.List{Endpoint: "/list"}}},
+		},
+		Secret: []byte(strings.Repeat("s", 32)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Plugins = registry
+	req, err = http.NewRequest(http.MethodPost, e.http.URL+"/v1/groups/"+e.group+"/plugins/static-plugin/pages/home/list", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable ||
+		response.Header.Get("fly-replay") != "" ||
+		!strings.Contains(string(body), "VARDE_SECRETS_KEY") {
 		t.Fatalf("static plugin response = %d, fly-replay=%q; expected local auth handling",
 			response.StatusCode, response.Header.Get("fly-replay"))
 	}
-	_ = response.Body.Close()
 }
 
 func TestInstalledPluginServiceTokenMustBeEnabled(t *testing.T) {
@@ -129,6 +160,12 @@ func TestInstalledPluginServiceTokenMustBeEnabled(t *testing.T) {
 	rawToken, err := enroll.ServiceToken()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if e.srv.Plugins == nil {
+		e.srv.Plugins, err = plugins.Load(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	now := e.clk.ms
 	serviceToken := &store.ServiceToken{

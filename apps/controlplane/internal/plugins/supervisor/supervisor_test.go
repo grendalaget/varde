@@ -99,8 +99,8 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	supervisor, err := New(Options{
 		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
 		Registry: registry, Catalog: catalog, Secrets: manager, HTTPClient: assetServer.Client(),
-		HealthTimeout: 5 * time.Second, RestartMin: 25 * time.Millisecond,
-		RestartMax: 100 * time.Millisecond, ReconcileInterval: 100 * time.Millisecond,
+		HealthTimeout: 5 * time.Second, RestartMin: 500 * time.Millisecond,
+		RestartMax: 500 * time.Millisecond, ReconcileInterval: 100 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -148,12 +148,27 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 		t.Fatalf("plugin list response = %s", body)
 	}
 	binaryPath := filepath.Join(root, "plugins", "test-plugin", "1.0.0", binaryName("test-plugin"))
-	if err := os.WriteFile(binaryPath, []byte("tampered binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	crashURL := fmt.Sprintf("http://127.0.0.1:%d/crash", port)
 	if body := getTestURL(t, crashURL); !strings.Contains(body, "restarting") {
 		t.Fatalf("plugin crash response = %s", body)
+	}
+	crashDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(crashDeadline) {
+		latest, err := db.InstalledPlugin(ctx, "test-plugin")
+		if err == nil && latest.Status == errorStatus {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	latest, err := db.InstalledPlugin(ctx, "test-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Status != errorStatus {
+		t.Fatalf("plugin status after crash = %q, want %q", latest.Status, errorStatus)
+	}
+	if err := os.WriteFile(binaryPath, []byte("tampered binary"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -165,7 +180,7 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	if body := getTestURL(t, listURL); !strings.Contains(body, `"title":"start 2"`) {
 		t.Fatalf("plugin did not restart after crash, last list response = %s", body)
 	}
-	latest, err := db.InstalledPlugin(ctx, "test-plugin")
+	latest, err = db.InstalledPlugin(ctx, "test-plugin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +221,8 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	}
 	archiveV2Invalid := releaseArchive(t, invalidBinary, manifestV2)
 	archives := map[string][]byte{
-		"/v1":       archiveV1,
-		"/v2":       archiveV2,
+		"/v1":         archiveV1,
+		"/v2":         archiveV2,
 		"/v2-invalid": archiveV2Invalid,
 	}
 	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -198,7 +198,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, runningStatus, "")
 		process.healthy.Store(true)
 		s.signalReady(process, nil)
-		err := waitProcess(ctx, cmd, waitResult)
+		err = waitProcess(ctx, cmd, waitResult)
 		process.healthy.Store(false)
 		if ctx.Err() != nil {
 			s.markStopped(row.ID, process)
