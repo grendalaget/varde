@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,6 +64,77 @@ func TestOpenMigrate(t *testing.T) {
 			t.Fatalf("%s get group: %v", name, err)
 		}
 	}
+}
+
+func TestOpenWithSkipsMigrationsForReadOnlySQLite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	writableURL := "sqlite://" + dbPath
+	s, err := Open(writableURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	readOnlyURL := "sqlite://file:" + dbPath + "?mode=ro"
+	replica, err := OpenWith(readOnlyURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open read-only replica without migrations: %v", err)
+	}
+	defer func() { _ = replica.Close() }()
+
+	nodes, err := replica.ListNodes(context.Background(), "grp_empty")
+	if err != nil || len(nodes) != 0 {
+		t.Fatalf("list nodes on read-only replica: %v, %v; want no nodes", nodes, err)
+	}
+
+	if _, err := Open(readOnlyURL, nil); err == nil || !strings.Contains(err.Error(), "migrate") {
+		t.Fatalf("open read-only database with migrations: %v, want migration error", err)
+	}
+}
+
+func TestMigrateAfterReplicaPromotion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	dbURL := "sqlite://" + dbPath
+	s, err := Open(dbURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	promoted, err := OpenWith(dbURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open promoted replica without migrations: %v", err)
+	}
+	defer func() { _ = promoted.Close() }()
+
+	assertIndex := func(want bool) {
+		t.Helper()
+		var count int
+		if err := promoted.DB.Get(&count, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, "idx_sessions_expires"); err != nil {
+			t.Fatalf("query migration index: %v", err)
+		}
+		if got := count > 0; got != want {
+			t.Fatalf("idx_sessions_expires exists = %t, want %t", got, want)
+		}
+	}
+
+	assertIndex(false)
+	if err := promoted.Migrate(); err != nil {
+		t.Fatalf("migrate after promotion: %v", err)
+	}
+	assertIndex(true)
 }
 
 func TestPruneSessions(t *testing.T) {
