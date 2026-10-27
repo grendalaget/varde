@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,6 +63,38 @@ func TestOpenMigrate(t *testing.T) {
 		if err != nil || got.Name != "test" {
 			t.Fatalf("%s get group: %v", name, err)
 		}
+	}
+}
+
+func TestOpenWithSkipsMigrationsForReadOnlySQLite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	writableURL := "sqlite://" + dbPath
+	s, err := Open(writableURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	readOnlyURL := "sqlite://file:" + dbPath + "?mode=ro"
+	replica, err := OpenWith(readOnlyURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open read-only replica without migrations: %v", err)
+	}
+	defer func() { _ = replica.Close() }()
+
+	nodes, err := replica.ListNodes(context.Background(), "grp_empty")
+	if err != nil || len(nodes) != 0 {
+		t.Fatalf("list nodes on read-only replica: %v, %v; want no nodes", nodes, err)
+	}
+
+	if _, err := Open(readOnlyURL, nil); err == nil || !strings.Contains(err.Error(), "migrate") {
+		t.Fatalf("open read-only database with migrations: %v, want migration error", err)
 	}
 }
 

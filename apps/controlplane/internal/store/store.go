@@ -27,6 +27,14 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Options configures store initialization.
+type Options struct {
+	// SkipMigrate skips migrations and compatibility column updates on
+	// replicas of a single-writer replicated SQLite database such as LiteFS.
+	// The primary applies migrations.
+	SkipMigrate bool
+}
+
 type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
@@ -41,9 +49,13 @@ type Store struct {
 	Clock   Clock
 }
 
-// Open parses --db values: "sqlite:///<path>" (default) or "postgres://...".
-// Applies embedded migrations.
+// Open opens the database and applies embedded migrations.
 func Open(url string, clk Clock) (*Store, error) {
+	return OpenWith(url, clk, Options{})
+}
+
+// OpenWith opens the database with optional migration behavior.
+func OpenWith(url string, clk Clock, opt Options) (*Store, error) {
 	if clk == nil {
 		clk = RealClock
 	}
@@ -85,11 +97,13 @@ func Open(url string, clk Clock) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(string(mig)); err != nil {
-		return nil, fmt.Errorf("store: migrate: %w", err)
-	}
-	if err := ensureColumns(db, s.Dialect); err != nil {
-		return nil, fmt.Errorf("store: migrate: %w", err)
+	if !opt.SkipMigrate {
+		if _, err := db.Exec(string(mig)); err != nil {
+			return nil, fmt.Errorf("store: migrate: %w", err)
+		}
+		if err := ensureColumns(db, s.Dialect); err != nil {
+			return nil, fmt.Errorf("store: migrate: %w", err)
+		}
 	}
 	return s, nil
 }

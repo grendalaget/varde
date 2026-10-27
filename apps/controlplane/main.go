@@ -221,7 +221,19 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 			return fmt.Errorf("create db dir: %w", err)
 		}
 	}
-	st, err := store.Open(cfg.dbURL, store.RealClock)
+	primaryFile := envOr("VARDE_PRIMARY_FILE", "")
+	storeOptions := store.Options{}
+	if primaryFile != "" {
+		primaryName, err := os.ReadFile(primaryFile)
+		if err == nil {
+			storeOptions.SkipMigrate = true
+			log.Info("skipping migrations on LiteFS replica",
+				"primary", strings.TrimSpace(string(primaryName)))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read LiteFS primary file: %w", err)
+		}
+	}
+	st, err := store.OpenWith(cfg.dbURL, store.RealClock, storeOptions)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -261,7 +273,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	//     write lease (VARDE_NODE_NAME identifies us; defaults to hostname)
 	//   postgres             — session-level advisory lock via Elector.Run
 	//   sqlite               — no-op leader (single-writer by definition)
-	if primaryFile := envOr("VARDE_PRIMARY_FILE", ""); primaryFile != "" {
+	if primaryFile != "" {
 		self := envOr("VARDE_NODE_NAME", "")
 		if self == "" {
 			self, _ = os.Hostname()

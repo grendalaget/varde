@@ -48,6 +48,9 @@ fly certs add cp.varde.games             # then point the DNS record at the app
   points at LiteFS's `/litefs/.primary` and `VARDE_NODE_NAME` (set by
   `varde-cp-entry`) names this node — see `litefs.yml` and
   `apps/controlplane/internal/store/elector.go`.
+- Replicas skip migrations; the primary applies them. Set `VARDE_SECRETS_KEY`
+  as a Fly secret with the same value on every machine, or the CP tries to
+  create `secrets.key` inside `/litefs` and exits.
 
 ## Env
 
