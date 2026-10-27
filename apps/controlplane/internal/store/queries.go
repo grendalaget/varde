@@ -1282,6 +1282,43 @@ func (s *Store) UpsertReplica(ctx context.Context, q Querier, r *Replica) error 
 	return err
 }
 
+// AssignReplica assigns a save copy to a node unless the server is deleted
+// or the node already has a row for it. It locks the server row, so it
+// orders against DeleteServer: either the delete marks this row deleting,
+// or this sees deleted_at and assigns nothing.
+func (s *Store) AssignReplica(ctx context.Context, serverID, snapshotID, nodeID string, now int64) (bool, error) {
+	inserted := false
+	err := s.Tx(ctx, func(tx *sqlx.Tx) error {
+		res, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE servers SET updated_at=updated_at WHERE id=? AND deleted_at IS NULL`), serverID)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+
+		res, err = tx.ExecContext(ctx, s.Rebind(
+			`INSERT INTO snapshot_replicas (snapshot_id,node_id,state,assigned_at)
+			 VALUES (?,?,'assigned',?)
+			 ON CONFLICT(snapshot_id,node_id) DO NOTHING`), snapshotID, nodeID, now)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		inserted = n > 0
+		return nil
+	})
+	return inserted, err
+}
+
 func (s *Store) ReplicasForSnapshot(ctx context.Context, snapID string) ([]Replica, error) {
 	var rs []Replica
 	err := s.q().SelectContext(ctx, &rs, s.Rebind(
@@ -1411,6 +1448,61 @@ func (s *Store) PruneEvents(ctx context.Context, beforeMs int64) (int64, error) 
 			return total, err
 		}
 	}
+}
+
+// PruneSessions deletes expired sessions in batches and returns how many were removed.
+func (s *Store) PruneSessions(ctx context.Context, nowMs int64) (int64, error) {
+	var total int64
+	for {
+		res, err := s.q().ExecContext(ctx, s.Rebind(
+			`DELETE FROM sessions WHERE token_hash IN (
+			   SELECT token_hash FROM sessions WHERE expires_at<=? LIMIT ?)`),
+			nowMs, pruneBatch)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		total += n
+		if err != nil || n < pruneBatch {
+			return total, err
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+	}
+}
+
+// PruneExpired removes expired invites, enrollment tokens, and device links in batches.
+func (s *Store) PruneExpired(ctx context.Context, cutoffMs int64) (int64, error) {
+	queries := []string{
+		`DELETE FROM invites WHERE code IN (
+		   SELECT code FROM invites WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+		`DELETE FROM enrollment_tokens WHERE id IN (
+		   SELECT id FROM enrollment_tokens WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+		`DELETE FROM device_links WHERE user_code IN (
+		   SELECT user_code FROM device_links WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+	}
+	var total int64
+	for _, query := range queries {
+		for {
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
+			res, err := s.q().ExecContext(ctx, s.Rebind(query), cutoffMs, pruneBatch)
+			if err != nil {
+				return total, err
+			}
+			n, err := res.RowsAffected()
+			total += n
+			if err != nil {
+				return total, err
+			}
+			if n < pruneBatch {
+				break
+			}
+		}
+	}
+	return total, nil
 }
 
 func (s *Store) Audit(ctx context.Context, q Querier, groupID *string, actorType, actorID, action, target string, data any) error {

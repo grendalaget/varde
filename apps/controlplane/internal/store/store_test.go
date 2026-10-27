@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,6 +63,183 @@ func TestOpenMigrate(t *testing.T) {
 		if err != nil || got.Name != "test" {
 			t.Fatalf("%s get group: %v", name, err)
 		}
+	}
+}
+
+func TestOpenWithSkipsMigrationsForReadOnlySQLite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	writableURL := "sqlite://" + dbPath
+	s, err := Open(writableURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	readOnlyURL := "sqlite://file:" + dbPath + "?mode=ro"
+	replica, err := OpenWith(readOnlyURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open read-only replica without migrations: %v", err)
+	}
+	defer func() { _ = replica.Close() }()
+
+	nodes, err := replica.ListNodes(context.Background(), "grp_empty")
+	if err != nil || len(nodes) != 0 {
+		t.Fatalf("list nodes on read-only replica: %v, %v; want no nodes", nodes, err)
+	}
+
+	if _, err := Open(readOnlyURL, nil); err == nil || !strings.Contains(err.Error(), "migrate") {
+		t.Fatalf("open read-only database with migrations: %v, want migration error", err)
+	}
+}
+
+func TestMigrateAfterReplicaPromotion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cp.db")
+	dbURL := "sqlite://" + dbPath
+	s, err := Open(dbURL, nil)
+	if err != nil {
+		t.Fatalf("open writable database: %v", err)
+	}
+	if _, err := s.DB.Exec(`DROP INDEX idx_sessions_expires`); err != nil {
+		_ = s.Close()
+		t.Fatalf("drop index to simulate replica lag: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close writable database: %v", err)
+	}
+
+	promoted, err := OpenWith(dbURL, nil, Options{SkipMigrate: true})
+	if err != nil {
+		t.Fatalf("open promoted replica without migrations: %v", err)
+	}
+	defer func() { _ = promoted.Close() }()
+
+	assertIndex := func(want bool) {
+		t.Helper()
+		var count int
+		if err := promoted.DB.Get(&count, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, "idx_sessions_expires"); err != nil {
+			t.Fatalf("query migration index: %v", err)
+		}
+		if got := count > 0; got != want {
+			t.Fatalf("idx_sessions_expires exists = %t, want %t", got, want)
+		}
+	}
+
+	assertIndex(false)
+	if err := promoted.Migrate(); err != nil {
+		t.Fatalf("migrate after promotion: %v", err)
+	}
+	assertIndex(true)
+}
+
+func TestPruneSessions(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		userID := "usr_sessions_" + name
+		mkUser(t, s, userID)
+		if err := s.CreateSession(ctx, &Session{
+			TokenHash: "expired_" + name,
+			UserID:    userID,
+			CreatedAt: 1,
+			ExpiresAt: 100,
+		}); err != nil {
+			t.Fatalf("%s create expired session: %v", name, err)
+		}
+		if err := s.CreateSession(ctx, &Session{
+			TokenHash: "live_" + name,
+			UserID:    userID,
+			CreatedAt: 2,
+			ExpiresAt: 101,
+		}); err != nil {
+			t.Fatalf("%s create live session: %v", name, err)
+		}
+
+		n, err := s.PruneSessions(ctx, 100)
+		if err != nil || n != 1 {
+			t.Fatalf("%s prune sessions: %d %v, want 1", name, n, err)
+		}
+		if _, err := s.SessionByTokenHash(ctx, "expired_"+name); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s expired session lookup: %v, want ErrNotFound", name, err)
+		}
+		live, err := s.SessionByTokenHash(ctx, "live_"+name)
+		if err != nil || live.ExpiresAt != 101 {
+			t.Fatalf("%s live session lookup: %+v %v, want session expiring at 101", name, live, err)
+		}
+	}
+}
+
+func TestPruneExpired(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		userID := "usr_prune_expired_" + name
+		groupID := "grp_prune_expired_" + name
+		mkUser(t, s, userID)
+		if err := s.CreateGroup(ctx, &Group{
+			ID: groupID, Name: "test", Plan: "free", SettingsJSON: "{}", CreatedAt: 1,
+		}, userID); err != nil {
+			t.Fatalf("%s create group: %v", name, err)
+		}
+		exec := func(query string, args ...any) {
+			t.Helper()
+			if _, err := s.DB.Exec(s.Rebind(query), args...); err != nil {
+				t.Fatalf("%s insert prune fixture: %v", name, err)
+			}
+		}
+		rows := []struct {
+			suffix  string
+			expires any
+		}{
+			{suffix: "expired", expires: int64(99)},
+			{suffix: "later", expires: int64(101)},
+			{suffix: "never", expires: nil},
+		}
+		for _, row := range rows {
+			exec(
+				`INSERT INTO invites (code,group_id,created_by,expires_at) VALUES (?,?,?,?)`,
+				"invite_"+row.suffix+"_"+name, groupID, userID, row.expires,
+			)
+			exec(
+				`INSERT INTO enrollment_tokens (id,group_id,token_hash,created_by,expires_at) VALUES (?,?,?,?,?)`,
+				"enrollment_"+row.suffix+"_"+name, groupID, "hash_"+row.suffix+"_"+name, userID, row.expires,
+			)
+		}
+		exec(
+			`INSERT INTO device_links (user_code,device_code_hash,public_key,expires_at,created_at) VALUES (?,?,?,?,?)`,
+			"device_expired_"+name, "device_hash_expired_"+name, "public_expired_"+name, int64(99), int64(1),
+		)
+		exec(
+			`INSERT INTO device_links (user_code,device_code_hash,public_key,expires_at,created_at) VALUES (?,?,?,?,?)`,
+			"device_later_"+name, "device_hash_later_"+name, "public_later_"+name, int64(101), int64(1),
+		)
+
+		n, err := s.PruneExpired(ctx, 100)
+		if err != nil || n != 3 {
+			t.Fatalf("%s prune expired rows: %d %v, want 3", name, n, err)
+		}
+		assertRow := func(table, key, id string, want bool) {
+			t.Helper()
+			var count int
+			if err := s.DB.Get(&count, s.Rebind(
+				"SELECT COUNT(*) FROM "+table+" WHERE "+key+"=?"), id); err != nil {
+				t.Fatalf("%s count %s %s: %v", name, table, id, err)
+			}
+			if (count == 1) != want {
+				t.Fatalf("%s %s %s exists=%t, want %t", name, table, id, count == 1, want)
+			}
+		}
+		for _, row := range rows {
+			assertRow("invites", "code", "invite_"+row.suffix+"_"+name, row.suffix != "expired")
+			assertRow("enrollment_tokens", "id", "enrollment_"+row.suffix+"_"+name, row.suffix != "expired")
+		}
+		assertRow("device_links", "user_code", "device_expired_"+name, false)
+		assertRow("device_links", "user_code", "device_later_"+name, true)
 	}
 }
 
@@ -366,6 +545,156 @@ func TestDeletesAreForeignKeySafe(t *testing.T) {
 		fail("delete group", s.DeleteGroup(ctx, g.ID))
 		if _, err := s.GetGroup(ctx, g.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("%s group still found: %v", name, err)
+		}
+	}
+}
+
+func TestAssignReplicaSerializesAgainstDeleteServer(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		userID := "usr_assign_" + name
+		mkUser(t, s, userID)
+		g := &Group{ID: "grp_assign_" + name, Name: "g", Plan: "free", SettingsJSON: "{}", CreatedAt: 1}
+		if err := s.CreateGroup(ctx, g, userID); err != nil {
+			t.Fatalf("%s create group: %v", name, err)
+		}
+		nodeA, nodeB := "node_assign_a_"+name, "node_assign_b_"+name
+		for _, nodeID := range []string{nodeA, nodeB} {
+			if err := s.CreateNode(ctx, &Node{
+				ID: nodeID, GroupID: g.ID, Name: nodeID, PublicKey: "pk_" + nodeID,
+				OS: "linux", Arch: "amd64", HostingEnabled: 1, AdminState: "active", CreatedAt: 1,
+			}); err != nil {
+				t.Fatalf("%s create node %s: %v", name, nodeID, err)
+			}
+		}
+		serverID := "srv_assign_" + name
+		srv := &Server{ID: serverID, GroupID: g.ID, Name: "s", GameID: "testgame",
+			DesiredState: "stopped", ObservedState: "stopped", ConfigJSON: "{}", CreatedAt: 1, UpdatedAt: 1}
+		svc := &Service{ID: "svc_assign_" + name, ServerID: serverID, GroupID: g.ID,
+			LoopbackIP: "127.77.3.1", PortsJSON: "[]"}
+		if err := s.CreateServer(ctx, srv, svc); err != nil {
+			t.Fatalf("%s create server: %v", name, err)
+		}
+		makeSnapshot := func(snapshotID string) {
+			t.Helper()
+			if err := s.CreateSnapshotTx(ctx, s.DB, &Snapshot{
+				ID: snapshotID, ServerID: serverID, GroupID: g.ID, Epoch: 1, ExecutionID: "exec_" + snapshotID,
+				NodeID: nodeA, ManifestDigest: "digest", Reason: "scheduled", State: "committed", CreatedAt: 1,
+			}); err != nil {
+				t.Fatalf("%s create snapshot %s: %v", name, snapshotID, err)
+			}
+		}
+
+		liveSnapshot := "snap_assign_" + name
+		makeSnapshot(liveSnapshot)
+		inserted, err := s.AssignReplica(ctx, serverID, liveSnapshot, nodeB, 100)
+		if err != nil || !inserted {
+			t.Fatalf("%s initial assignment: inserted=%t err=%v, want true", name, inserted, err)
+		}
+		var assignedState string
+		if err := s.DB.GetContext(ctx, &assignedState, s.Rebind(
+			`SELECT state FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`), liveSnapshot, nodeB); err != nil {
+			t.Fatalf("%s read initial assignment: %v", name, err)
+		}
+		if assignedState != "assigned" {
+			t.Fatalf("%s initial state=%q, want assigned", name, assignedState)
+		}
+		if _, err := s.DB.ExecContext(ctx, s.Rebind(
+			`UPDATE snapshot_replicas SET state='ready', ready_at=150
+			 WHERE snapshot_id=? AND node_id=?`), liveSnapshot, nodeB); err != nil {
+			t.Fatalf("%s ready initial assignment: %v", name, err)
+		}
+		inserted, err = s.AssignReplica(ctx, serverID, liveSnapshot, nodeB, 200)
+		if err != nil || inserted {
+			t.Fatalf("%s duplicate assignment: inserted=%t err=%v, want false", name, inserted, err)
+		}
+		var existing struct {
+			State      string        `db:"state"`
+			AssignedAt int64         `db:"assigned_at"`
+			ReadyAt    sql.NullInt64 `db:"ready_at"`
+		}
+		if err := s.DB.GetContext(ctx, &existing, s.Rebind(
+			`SELECT state, assigned_at, ready_at FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`),
+			liveSnapshot, nodeB); err != nil {
+			t.Fatalf("%s read duplicate assignment: %v", name, err)
+		}
+		if existing.State != "ready" || existing.AssignedAt != 100 ||
+			!existing.ReadyAt.Valid || existing.ReadyAt.Int64 != 150 {
+			t.Fatalf("%s duplicate changed existing replica: %+v", name, existing)
+		}
+
+		deletingSnapshot := "snap_deleting_" + name
+		makeSnapshot(deletingSnapshot)
+		if err := s.UpsertReplica(ctx, s.DB, &Replica{
+			SnapshotID: deletingSnapshot, NodeID: nodeB, State: "deleting", AssignedAt: 300,
+		}); err != nil {
+			t.Fatalf("%s create deleting replica: %v", name, err)
+		}
+		inserted, err = s.AssignReplica(ctx, serverID, deletingSnapshot, nodeB, 400)
+		if err != nil || inserted {
+			t.Fatalf("%s deleting assignment: inserted=%t err=%v, want false", name, inserted, err)
+		}
+		var deleting Replica
+		if err := s.DB.GetContext(ctx, &deleting, s.Rebind(
+			`SELECT * FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`), deletingSnapshot, nodeB); err != nil {
+			t.Fatalf("%s read deleting replica: %v", name, err)
+		}
+		if deleting.State != "deleting" || deleting.AssignedAt != 300 {
+			t.Fatalf("%s deleting replica changed: %+v", name, deleting)
+		}
+
+		deletedServerSnapshot := "snap_server_delete_" + name
+		makeSnapshot(deletedServerSnapshot)
+		if err := s.UpsertReplica(ctx, s.DB, &Replica{
+			SnapshotID: deletedServerSnapshot, NodeID: nodeA, State: "ready", AssignedAt: 500,
+		}); err != nil {
+			t.Fatalf("%s create held replica: %v", name, err)
+		}
+		if err := s.DeleteServer(ctx, serverID, 600); err != nil {
+			t.Fatalf("%s delete server: %v", name, err)
+		}
+		inserted, err = s.AssignReplica(ctx, serverID, deletedServerSnapshot, nodeB, 700)
+		if err != nil || inserted {
+			t.Fatalf("%s deleted-server assignment: inserted=%t err=%v, want false", name, inserted, err)
+		}
+		var targetRows int
+		if err := s.DB.GetContext(ctx, &targetRows, s.Rebind(
+			`SELECT COUNT(*) FROM snapshot_replicas WHERE snapshot_id=? AND node_id=?`),
+			deletedServerSnapshot, nodeB); err != nil {
+			t.Fatalf("%s count deleted-server target rows: %v", name, err)
+		}
+		if targetRows != 0 {
+			t.Fatalf("%s deleted server got %d new replica rows", name, targetRows)
+		}
+		var serverRows int
+		if err := s.DB.GetContext(ctx, &serverRows, s.Rebind(
+			`SELECT COUNT(*) FROM servers WHERE id=?`), serverID); err != nil {
+			t.Fatalf("%s count deleted server: %v", name, err)
+		}
+		if serverRows != 1 {
+			t.Fatalf("%s deleted server purged before its replicas were acked: %d", name, serverRows)
+		}
+		for _, snapshotID := range []string{liveSnapshot, deletingSnapshot, deletedServerSnapshot} {
+			rows, err := s.ReplicasForSnapshot(ctx, snapshotID)
+			if err != nil {
+				t.Fatalf("%s list replicas for %s: %v", name, snapshotID, err)
+			}
+			for _, row := range rows {
+				if err := s.DeleteReplica(ctx, s.DB, snapshotID, row.NodeID); err != nil {
+					t.Fatalf("%s ack replica for %s: %v", name, snapshotID, err)
+				}
+			}
+		}
+		if err := s.PurgeDeletedServers(ctx); err != nil {
+			t.Fatalf("%s purge deleted servers: %v", name, err)
+		}
+		if err := s.DB.GetContext(ctx, &serverRows, s.Rebind(
+			`SELECT COUNT(*) FROM servers WHERE id=?`), serverID); err != nil {
+			t.Fatalf("%s recount purged server: %v", name, err)
+		}
+		if serverRows != 0 {
+			t.Fatalf("%s server remains after purge: %d", name, serverRows)
 		}
 	}
 }

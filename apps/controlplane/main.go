@@ -46,6 +46,49 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func migrateOnPromotion(
+	ctx context.Context,
+	leader interface{ IsLeader() bool },
+	migrate func() error,
+	migrationComplete chan<- struct{},
+	every time.Duration,
+	log *slog.Logger,
+) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := migrate(); err != nil {
+				log.Warn("failed to apply migrations after promotion to LiteFS primary", "error", err)
+				continue
+			}
+			close(migrationComplete)
+			log.Info("applied migrations after promotion to LiteFS primary")
+			return
+		}
+	}
+}
+
+type migrationGatedLeader struct {
+	leader   interface{ IsLeader() bool }
+	migrated <-chan struct{}
+}
+
+func (l migrationGatedLeader) IsLeader() bool {
+	select {
+	case <-l.migrated:
+		return l.leader.IsLeader()
+	default:
+		return false
+	}
+}
+
 // defaultDBURL keeps the sqlite db in ProgramData on Windows, where a
 // service-context install expects it, and /var/lib elsewhere.
 func defaultDBURL() string {
@@ -250,7 +293,19 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
-	st, err := store.Open(cfg.dbURL, store.RealClock)
+	primaryFile := envOr("VARDE_PRIMARY_FILE", "")
+	storeOptions := store.Options{}
+	if primaryFile != "" {
+		primaryName, err := os.ReadFile(primaryFile)
+		if err == nil {
+			storeOptions.SkipMigrate = true
+			log.Info("skipping migrations on LiteFS replica",
+				"primary", strings.TrimSpace(string(primaryName)))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read LiteFS primary file: %w", err)
+		}
+	}
+	st, err := store.OpenWith(cfg.dbURL, store.RealClock, storeOptions)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
@@ -291,16 +346,24 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	//   postgres             — session-level advisory lock via Elector.Run
 	//   sqlite               — no-op leader (single-writer by definition)
 	var primaryFileElector *store.PrimaryFileElector
-	if primaryFile := envOr("VARDE_PRIMARY_FILE", ""); primaryFile != "" {
+	var pluginLeader interface{ IsLeader() bool }
+	if primaryFile != "" {
 		self := envOr("VARDE_NODE_NAME", "")
 		if self == "" {
 			self, _ = os.Hostname()
 		}
 		primaryFileElector = store.NewPrimaryFileElector(primaryFile, self)
 		recon.Leader = primaryFileElector
+		pluginLeader = primaryFileElector
+		if storeOptions.SkipMigrate {
+			migrationComplete := make(chan struct{})
+			pluginLeader = migrationGatedLeader{leader: primaryFileElector, migrated: migrationComplete}
+			go migrateOnPromotion(ctx, primaryFileElector, st.Migrate, migrationComplete, time.Second, log)
+		}
 	} else {
 		elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
 		recon.Leader = elector
+		pluginLeader = elector
 		go elector.Run(ctx)
 	}
 
@@ -359,7 +422,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	pluginSupervisor, err := supervisor.New(supervisor.Options{
 		DataDir: dataDir, ControlPlaneURL: controlPlaneURL, Store: st, Registry: pluginRegistry,
 		Catalog: catalog, Secrets: secretManager, HTTPClient: outbound.NewClient(10 * time.Second),
-		Leader: recon.Leader, Log: log,
+		Leader: pluginLeader, Log: log,
 	})
 	if err != nil {
 		return fmt.Errorf("plugin supervisor: %w", err)

@@ -81,9 +81,8 @@ func (r *Reconciler) seedStandby(ctx context.Context, srv *store.Server, nodeID 
 			return nil
 		}
 	}
-	return r.Store.UpsertReplica(ctx, r.Store.DB, &store.Replica{
-		SnapshotID: restore.ID, NodeID: nodeID, State: "assigned", AssignedAt: r.Store.NowMs(),
-	})
+	_, err = r.Store.AssignReplica(ctx, srv.ID, restore.ID, nodeID, r.Store.NowMs())
+	return err
 }
 
 // pickStandby returns srv's current standby if it is still eligible to take
