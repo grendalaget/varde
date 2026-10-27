@@ -48,9 +48,14 @@ func genGame(g *catalog.Game) gen.Game {
 	if len(g.AddonTargets) > 0 {
 		addonTargets = &g.AddonTargets
 	}
+	var addonTargetOS *map[string][]string
+	if len(g.AddonTargetOS) > 0 {
+		addonTargetOS = &g.AddonTargetOS
+	}
 	out := gen.Game{
 		Id: g.ID, Name: g.Name, Ports: ports, Os: oss, Arch: g.Arch,
-		MinMemoryMb: int(g.MinMemoryMB), Runtimes: &g.Runtimes, AddonTargets: addonTargets, ConfigFields: fields,
+		MinMemoryMb: int(g.MinMemoryMB), Runtimes: &g.Runtimes, AddonTargets: addonTargets,
+		AddonTargetOs: addonTargetOS, ConfigFields: fields,
 	}
 	if g.MinDiskMB > 0 {
 		out.MinDiskMb = &g.MinDiskMB

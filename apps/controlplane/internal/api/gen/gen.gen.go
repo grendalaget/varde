@@ -1213,16 +1213,17 @@ type ExternalLoginRequest struct {
 
 // Game defines model for Game.
 type Game struct {
-	AddonTargets *[]string         `json:"addon_targets,omitempty"`
-	Arch         []string          `json:"arch"`
-	ConfigFields []GameConfigField `json:"config_fields"`
-	Id           string            `json:"id"`
-	MinDiskMb    *int64            `json:"min_disk_mb,omitempty"`
-	MinMemoryMb  int               `json:"min_memory_mb"`
-	Name         string            `json:"name"`
-	Os           []GameOs          `json:"os"`
-	Ports        []GamePort        `json:"ports"`
-	Runtimes     *[]string         `json:"runtimes,omitempty"`
+	AddonTargetOs *map[string][]string `json:"addon_target_os,omitempty"`
+	AddonTargets  *[]string            `json:"addon_targets,omitempty"`
+	Arch          []string             `json:"arch"`
+	ConfigFields  []GameConfigField    `json:"config_fields"`
+	Id            string               `json:"id"`
+	MinDiskMb     *int64               `json:"min_disk_mb,omitempty"`
+	MinMemoryMb   int                  `json:"min_memory_mb"`
+	Name          string               `json:"name"`
+	Os            []GameOs             `json:"os"`
+	Ports         []GamePort           `json:"ports"`
+	Runtimes      *[]string            `json:"runtimes,omitempty"`
 
 	// SteamApp Prefer a complete installed Steam app; otherwise provision using the catalog runtimes and min_disk_mb.
 	SteamApp *int64 `json:"steam_app,omitempty"`

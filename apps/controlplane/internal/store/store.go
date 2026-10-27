@@ -114,6 +114,7 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 		{"crash_reports", "client_ref", "TEXT NOT NULL DEFAULT ''"},
 		{"service_tokens", "group_ids", "TEXT"},
 		{"servers", "standby_node_id", "TEXT"},
+		{"server_addons", "target", "TEXT NOT NULL DEFAULT ''"},
 		{"servers", "deleted_at", "BIGINT"},
 		{"nodes", "deleted_at", "BIGINT"},
 	}

@@ -1224,6 +1224,9 @@ export interface components {
             steam_app?: number;
             runtimes?: string[];
             addon_targets?: string[];
+            addon_target_os?: {
+                [key: string]: string[];
+            };
             config_fields: components["schemas"]["GameConfigField"][];
         };
         ServerAddonSpec: {

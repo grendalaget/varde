@@ -124,6 +124,9 @@ func TestServerAddonAuthorizationAndMetadata(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("ListServerAddons() = %d rows, %v; want one row", len(rows), err)
 	}
+	if rows[0].Target != "server" {
+		t.Errorf("ListServerAddons().Target = %q, want server", rows[0].Target)
+	}
 	if strings.Contains(rows[0].Spec, "private addon text") {
 		t.Fatal("server addon spec was stored in plaintext")
 	}
@@ -163,11 +166,27 @@ func TestCatalogExposesAddonTargets(t *testing.T) {
 		"testgame": {"server"},
 		"cs2":      {"game"},
 	}
+	wantOSByID := map[string]map[string][]string{
+		"cs2": {"game": {"linux"}},
+	}
 	found := make(map[string]bool, len(wantByID))
 	for _, item := range games {
 		game := item.(map[string]any)
 		id := game["id"].(string)
 		want, ok := wantByID[id]
+		wantOS, wantOSFound := wantOSByID[id]
+		gotOS, gotOSFound := game["addon_target_os"]
+		if wantOSFound {
+			if !gotOSFound {
+				t.Errorf("%s missing addon_target_os, want %v", id, wantOS)
+			} else if got, ok := gotOS.(map[string]any); !ok {
+				t.Errorf("%s addon_target_os = %T, want map %v", id, gotOS, wantOS)
+			} else if oses, ok := got["game"].([]any); !ok || len(oses) != 1 || oses[0] != "linux" {
+				t.Errorf("%s addon_target_os = %v, want %v", id, gotOS, wantOS)
+			}
+		} else if gotOSFound {
+			t.Errorf("game %q unexpectedly has addon_target_os: %v", id, gotOS)
+		}
 		if !ok {
 			if _, ok := game["addon_targets"]; ok {
 				t.Errorf("game %q unexpectedly has addon_targets: %v", id, game["addon_targets"])

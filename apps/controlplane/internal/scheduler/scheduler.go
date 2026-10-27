@@ -17,7 +17,8 @@ type ServerView struct {
 	PreferredNodeID string
 }
 
-// GameView describes the catalog entry for the server's game.
+// GameView describes the catalog entry for the server's game. A nil OS slice
+// is unrestricted; a non-nil empty slice means no OS is eligible.
 type GameView struct {
 	ID          string
 	MinMemoryMB int64
@@ -107,7 +108,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 			reasons = append(reasons, n.ID+": missing driver "+game.ID)
 			continue
 		}
-		if len(game.OS) > 0 && !slices.Contains(game.OS, n.OS) {
+		if game.OS != nil && !slices.Contains(game.OS, n.OS) {
 			reasons = append(reasons, n.ID+": unsupported os "+n.OS)
 			continue
 		}

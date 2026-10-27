@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 )
 
 //go:embed catalog.json
@@ -30,17 +31,18 @@ type ConfigField struct {
 }
 
 type Game struct {
-	ID           string        `json:"id"`
-	Name         string        `json:"name"`
-	Ports        []Port        `json:"ports"`
-	OS           []string      `json:"os"`
-	Arch         []string      `json:"arch"`
-	MinMemoryMB  int64         `json:"min_memory_mb"`
-	MinDiskMB    int64         `json:"min_disk_mb,omitempty"`
-	SteamApp     int64         `json:"steam_app,omitempty"`
-	Runtimes     []string      `json:"runtimes"`
-	AddonTargets []string      `json:"addon_targets"`
-	ConfigFields []ConfigField `json:"config_fields"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	Ports         []Port              `json:"ports"`
+	OS            []string            `json:"os"`
+	Arch          []string            `json:"arch"`
+	MinMemoryMB   int64               `json:"min_memory_mb"`
+	MinDiskMB     int64               `json:"min_disk_mb,omitempty"`
+	SteamApp      int64               `json:"steam_app,omitempty"`
+	Runtimes      []string            `json:"runtimes"`
+	AddonTargets  []string            `json:"addon_targets"`
+	AddonTargetOS map[string][]string `json:"addon_target_os,omitempty"`
+	ConfigFields  []ConfigField       `json:"config_fields"`
 }
 
 var games []Game
@@ -49,6 +51,66 @@ func init() {
 	if err := json.Unmarshal(data, &games); err != nil {
 		panic("catalog: " + err.Error())
 	}
+	if err := validateAddonTargetOS(games); err != nil {
+		panic("catalog: " + err.Error())
+	}
+}
+
+func validateAddonTargetOS(games []Game) error {
+	for _, game := range games {
+		for target, oses := range game.AddonTargetOS {
+			if !slices.Contains(game.AddonTargets, target) {
+				return fmt.Errorf("game %q addon_target_os target %q is not in addon_targets", game.ID, target)
+			}
+			for _, os := range oses {
+				if !slices.Contains(game.OS, os) {
+					return fmt.Errorf("game %q addon_target_os target %q includes unsupported os %q", game.ID, target, os)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// PlacementOS returns the game OS values that satisfy every addon target.
+// An empty target represents a legacy addon row whose target was not stored,
+// so all target-specific OS restrictions are applied conservatively.
+func PlacementOS(game *Game, targets []string) []string {
+	if game == nil {
+		return nil
+	}
+
+	allowed := append([]string(nil), game.OS...)
+	constrained := false
+	intersect := func(targetOS []string) {
+		if !constrained {
+			allowed = append([]string{}, game.OS...)
+			constrained = true
+		}
+		filtered := make([]string, 0, len(allowed))
+		for _, os := range allowed {
+			if slices.Contains(targetOS, os) {
+				filtered = append(filtered, os)
+			}
+		}
+		allowed = filtered
+	}
+
+	for _, target := range targets {
+		if target == "" {
+			for _, targetOS := range game.AddonTargetOS {
+				intersect(targetOS)
+			}
+			continue
+		}
+		if targetOS, ok := game.AddonTargetOS[target]; ok {
+			intersect(targetOS)
+		}
+	}
+	if constrained {
+		return allowed
+	}
+	return append([]string(nil), game.OS...)
 }
 
 // All returns the catalog.

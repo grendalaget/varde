@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS server_addons (
     server_id  TEXT NOT NULL,
     plugin_id  TEXT NOT NULL,
     addon_id   TEXT NOT NULL,
+    target     TEXT NOT NULL DEFAULT '',
     spec       TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,

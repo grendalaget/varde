@@ -14,6 +14,7 @@ import (
 	"github.com/grendalaget/varde/go/relaytoken"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/scheduler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
@@ -1009,6 +1010,22 @@ func (s *Server) standbyDirectives(ctx context.Context, node *store.Node) *[]gen
 	for i := range srvs {
 		sv := &srvs[i]
 		if sv.DesiredState != "running" || sv.StandbyNodeID == nil || *sv.StandbyNodeID != node.ID || sv.DeploymentID == nil {
+			continue
+		}
+		game := catalog.Get(sv.GameID)
+		if game == nil {
+			continue
+		}
+		addons, err := s.Store.ListServerAddons(ctx, sv.ID)
+		if err != nil {
+			continue
+		}
+		targets := make([]string, 0, len(addons))
+		for _, addon := range addons {
+			targets = append(targets, addon.Target)
+		}
+		allowedOS := catalog.PlacementOS(game, targets)
+		if allowedOS != nil && !slices.Contains(allowedOS, node.OS) {
 			continue
 		}
 		dep, err := s.getDeployment(ctx, *sv.DeploymentID)

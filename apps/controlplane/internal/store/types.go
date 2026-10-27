@@ -51,6 +51,7 @@ type ServerAddon struct {
 	ServerID  string `db:"server_id"`
 	PluginID  string `db:"plugin_id"`
 	AddonID   string `db:"addon_id"`
+	Target    string `db:"target"`
 	Spec      string `db:"spec"`
 	CreatedAt int64  `db:"created_at"`
 	UpdatedAt int64  `db:"updated_at"`
