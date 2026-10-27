@@ -143,7 +143,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		if !healthy {
 			if !exited && cmd.Process != nil {
 				_ = cmd.Process.Kill()
-				<-waitResult
+				healthErr = errors.Join(healthErr, <-waitResult)
 			}
 			if ctx.Err() != nil {
 				_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, stoppedStatus, "")
