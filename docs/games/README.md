@@ -40,8 +40,10 @@ Fallback Linux hosts need SteamCMD's 32-bit runtime (`lib32gcc-s1` on Debian/Ubu
 Linux servers with `game` addons use a per-server root at
 `<deployment_dir>/cs2-servers/<server-id>`. Varde copies the CS2 executable,
 gameinfo files, and config files there, then symlinks the rest of the install
-before applying addons. This mode is Linux-only and the root is rebuilt on every
-start, so files Ready Up writes under its folder do not survive a restart.
+before applying addons. This mode is Linux-only. The supervisor calls
+`configure` once per execution, rebuilding the root when it starts the server.
+Automatic crash restarts reuse that root, so Ready Up can recover a match from
+its saved state.
 
 Without addons, the driver launches the original binary. Current Linux and
 Windows builds ignore the private `-game` directory, so shared installs use one

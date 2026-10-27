@@ -967,12 +967,35 @@ async fn addon_configure_rebuilds_and_no_addon_configure_removes_root() {
             .unwrap(),
         "Ready Up server plugin"
     );
+    let marker = root.join("game/csgo/readyup/recovery.json");
+    std::fs::write(&marker, "ready match state").unwrap();
+    for _ in 0..2 {
+        let spec = Cs2Driver.process_spec(&ctx).unwrap();
+        assert_eq!(spec.program, executable);
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "ready match state"
+        );
+
+        let executor = LiveExecutor {
+            exited: tokio::sync::watch::channel(false).0,
+            fail: false,
+        };
+        let process = Cs2Driver.spawn(&ctx, &executor).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "ready match state"
+        );
+        executor.exited.send_replace(true);
+        process.wait().await.unwrap();
+    }
     std::fs::write(steam::binary(&install), "updated executable").unwrap();
     Cs2Driver.configure(&ctx).await.unwrap();
     assert_eq!(
         std::fs::read_to_string(&executable).unwrap(),
         "updated executable"
     );
+    assert!(!marker.exists());
 
     ctx.addons = &[];
     Cs2Driver.configure(&ctx).await.unwrap();
