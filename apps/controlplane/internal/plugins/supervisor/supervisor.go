@@ -66,6 +66,7 @@ type managedProcess struct {
 	readyErr error
 	once     sync.Once
 	healthy  atomic.Bool
+	retired  atomic.Bool
 }
 
 type Supervisor struct {
@@ -352,7 +353,10 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 		return fmt.Errorf("installed plugin %q is missing from catalog", row.ID)
 	}
 	if entry.Version != row.Version {
-		return fmt.Errorf("installed plugin %s has version %s, catalog has %s", row.ID, row.Version, entry.Version)
+		if s.opts.Leader != nil && !s.opts.Leader.IsLeader() {
+			return fmt.Errorf("installed plugin %s has version %s, catalog has %s", row.ID, row.Version, entry.Version)
+		}
+		return s.upgradeInstalled(ctx, row, entry)
 	}
 	asset, err := s.assetFor(entry)
 	if err != nil {
@@ -373,6 +377,155 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 		return nil
 	}
 	return s.opts.Registry.Add(plugin)
+}
+
+func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry) (result error) {
+	defer func() {
+		if result != nil {
+			_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, current.ID, errorStatus, result.Error())
+		}
+	}()
+	asset, err := s.assetFor(entry)
+	if err != nil {
+		return err
+	}
+	manifestData, binaryPath, err := s.downloadAndExtract(ctx, entry, asset, s.versionDir(entry))
+	if err != nil {
+		return err
+	}
+	if err := validateArchiveManifest(manifestData, entry); err != nil {
+		return err
+	}
+	port, err := availableLoopbackPort()
+	if err != nil {
+		return err
+	}
+	next := current
+	next.Version = entry.Version
+	next.Port = int64(port)
+	next.Status = installStatus
+	next.Error = ""
+	next.UpdatedAt = s.opts.Store.NowMs()
+	plugin, err := s.makePlugin(manifestData, entry, next)
+	if err != nil {
+		return err
+	}
+	candidate, err := s.startCandidate(ctx, next, binaryPath)
+	if err != nil {
+		return fmt.Errorf("start upgraded plugin: %w", err)
+	}
+	previous, added, err := s.replacePlugin(plugin)
+	if err != nil {
+		stopCandidate(candidate)
+		return err
+	}
+	next.Status = runningStatus
+	if err := s.opts.Store.SetInstalledPlugin(ctx, &next); err != nil {
+		s.rollbackPlugin(plugin.ID, previous, added)
+		stopCandidate(candidate)
+		return fmt.Errorf("save upgraded plugin: %w", err)
+	}
+
+	parent := s.rootCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(parent)
+	process := &managedProcess{
+		cancel: cancel,
+		done:   make(chan struct{}),
+		ready:  make(chan struct{}),
+	}
+	process.healthy.Store(true)
+	s.signalReady(process, nil)
+
+	s.mu.Lock()
+	oldProcess := s.running[current.ID]
+	if oldProcess != nil {
+		oldProcess.retired.Store(true)
+		oldProcess.cancel()
+	}
+	s.running[current.ID] = process
+	s.mu.Unlock()
+	if oldProcess != nil {
+		<-oldProcess.done
+	}
+	go s.runProcessLoop(runCtx, next, process, candidate)
+	if oldDir := filepath.Join(s.pluginDir(current.ID), current.Version); oldDir != s.versionDir(entry) {
+		if err := os.RemoveAll(oldDir); err != nil {
+			s.opts.Log.Warn("remove previous plugin version", "plugin", current.ID, "version", current.Version, "error", err)
+		}
+	}
+	s.opts.Log.Info("upgraded managed plugin", "plugin", current.ID, "version", entry.Version)
+	return nil
+}
+
+func (s *Supervisor) startCandidate(ctx context.Context, row store.InstalledPlugin, binaryPath string) (*runningCommand, error) {
+	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("open plugin credentials: %w", err)
+	}
+	var creds credentials
+	if err := jsonUnmarshalCredentials(raw, &creds); err != nil {
+		return nil, err
+	}
+	stateDir := filepath.Join(s.pluginDir(row.ID), "state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create plugin state directory: %w", err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("secure plugin state directory: %w", err)
+	}
+	cmd := exec.Command(binaryPath)
+	cmd.Dir = stateDir
+	cmd.Env = pluginEnvironment(s.opts.ControlPlaneURL, netJoinHostPort("127.0.0.1", int(row.Port)), stateDir, creds)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start plugin candidate: %w", err)
+	}
+	candidate := &runningCommand{cmd: cmd, waitResult: make(chan error, 1)}
+	go func() { candidate.waitResult <- cmd.Wait() }()
+	healthy, exited, healthErr := s.waitHealthy(ctx, int(row.Port), candidate.waitResult)
+	if !healthy {
+		if !exited && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			healthErr = errors.Join(healthErr, <-candidate.waitResult)
+		}
+		if healthErr == nil {
+			healthErr = errors.New("plugin candidate did not become healthy")
+		}
+		return nil, healthErr
+	}
+	return candidate, nil
+}
+
+func (s *Supervisor) replacePlugin(plugin *plugins.Plugin) (*plugins.Plugin, bool, error) {
+	if current, ok := s.opts.Registry.Get(plugin.ID); ok {
+		if current.ManifestPath != "" {
+			return nil, false, fmt.Errorf("installed plugin %q conflicts with static manifest %s", plugin.ID, current.ManifestPath)
+		}
+		previous, err := s.opts.Registry.ReplaceDynamic(plugin)
+		return previous, false, err
+	}
+	if err := s.opts.Registry.Add(plugin); err != nil {
+		return nil, false, err
+	}
+	return nil, true, nil
+}
+
+func (s *Supervisor) rollbackPlugin(id string, previous *plugins.Plugin, added bool) {
+	if added {
+		_ = s.opts.Registry.Remove(id)
+	} else if previous != nil {
+		_, _ = s.opts.Registry.ReplaceDynamic(previous)
+	}
+}
+
+func stopCandidate(candidate *runningCommand) {
+	if candidate == nil || candidate.cmd == nil || candidate.cmd.Process == nil {
+		return
+	}
+	_ = candidate.cmd.Process.Kill()
+	<-candidate.waitResult
 }
 
 func (s *Supervisor) makePlugin(manifestData []byte, entry plugins.CatalogEntry, row store.InstalledPlugin) (*plugins.Plugin, error) {

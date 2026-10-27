@@ -17,6 +17,11 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
+type runningCommand struct {
+	cmd        *exec.Cmd
+	waitResult chan error
+}
+
 func (s *Supervisor) startInstalled(row store.InstalledPlugin, wait bool) error {
 	if s.opts.Leader != nil && !s.opts.Leader.IsLeader() {
 		return nil
@@ -53,7 +58,7 @@ func (s *Supervisor) startInstalled(row store.InstalledPlugin, wait bool) error 
 	s.running[row.ID] = process
 	s.mu.Unlock()
 
-	go s.runProcessLoop(runCtx, row, process)
+	go s.runProcessLoop(runCtx, row, process, nil)
 	if !wait {
 		return nil
 	}
@@ -65,7 +70,7 @@ func (s *Supervisor) startInstalled(row store.InstalledPlugin, wait bool) error 
 	}
 }
 
-func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlugin, process *managedProcess) {
+func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlugin, process *managedProcess, initial *runningCommand) {
 	defer close(process.done)
 	defer func() {
 		s.mu.Lock()
@@ -119,26 +124,38 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 	backoff := s.opts.RestartMin
 	for {
 		if ctx.Err() != nil {
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, stoppedStatus, "")
+			s.markStopped(row.ID, process)
 			s.signalReady(process, ctx.Err())
 			return
 		}
 		listen := netJoinHostPort("127.0.0.1", int(row.Port))
-		cmd := exec.CommandContext(ctx, binaryPath)
+		var cmd *exec.Cmd
+		var waitResult chan error
+		if initial != nil {
+			cmd = initial.cmd
+			waitResult = initial.waitResult
+			initial = nil
+		} else {
+			cmd = exec.CommandContext(ctx, binaryPath)
+		}
 		cmd.Dir = stateDir
 		cmd.Env = pluginEnvironment(s.opts.ControlPlaneURL, listen, stateDir, creds)
-		if err := cmd.Start(); err != nil {
-			message := fmt.Errorf("start plugin process: %w", err)
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, message.Error())
-			s.signalReady(process, message)
-			if !waitBackoff(ctx, backoff) {
-				return
+		if cmd.Process == nil {
+			if err := cmd.Start(); err != nil {
+				message := fmt.Errorf("start plugin process: %w", err)
+				_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, message.Error())
+				s.signalReady(process, message)
+				if !waitBackoff(ctx, backoff) {
+					return
+				}
+				backoff = nextBackoff(backoff, s.opts.RestartMax)
+				continue
 			}
-			backoff = nextBackoff(backoff, s.opts.RestartMax)
-			continue
 		}
-		waitResult := make(chan error, 1)
-		go func() { waitResult <- cmd.Wait() }()
+		if waitResult == nil {
+			waitResult = make(chan error, 1)
+			go func() { waitResult <- cmd.Wait() }()
+		}
 		healthy, exited, healthErr := s.waitHealthy(ctx, int(row.Port), waitResult)
 		if !healthy {
 			if !exited && cmd.Process != nil {
@@ -146,7 +163,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 				healthErr = errors.Join(healthErr, <-waitResult)
 			}
 			if ctx.Err() != nil {
-				_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, stoppedStatus, "")
+				s.markStopped(row.ID, process)
 				s.signalReady(process, ctx.Err())
 				return
 			}
@@ -167,7 +184,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		err := waitProcess(ctx, cmd, waitResult)
 		process.healthy.Store(false)
 		if ctx.Err() != nil {
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, stoppedStatus, "")
+			s.markStopped(row.ID, process)
 			return
 		}
 		if err == nil {
@@ -176,10 +193,16 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		s.opts.Log.Warn("plugin process exited; restarting", "plugin", row.ID, "error", err, "backoff", backoff)
 		if !waitBackoff(ctx, backoff) {
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, stoppedStatus, "")
+			s.markStopped(row.ID, process)
 			return
 		}
 		backoff = nextBackoff(backoff, s.opts.RestartMax)
+	}
+}
+
+func (s *Supervisor) markStopped(id string, process *managedProcess) {
+	if !process.retired.Load() {
+		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), id, stoppedStatus, "")
 	}
 }
 

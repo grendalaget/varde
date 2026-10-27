@@ -180,6 +180,114 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	}
 }
 
+func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
+	binary := buildTestPlugin(t)
+	manifestV1 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
+	manifestV2 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"2.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
+	archiveV1 := releaseArchive(t, binary, manifestV1)
+	archiveV2 := releaseArchive(t, binary, manifestV2)
+	invalidBinary := filepath.Join(t.TempDir(), binaryName("test-plugin"))
+	if err := os.WriteFile(invalidBinary, []byte("not an executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archiveV2Invalid := releaseArchive(t, invalidBinary, manifestV2)
+	archives := map[string][]byte{
+		"/v1":       archiveV1,
+		"/v2":       archiveV2,
+		"/v2-invalid": archiveV2Invalid,
+	}
+	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		archive, ok := archives[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(archive)
+	}))
+	defer assetServer.Close()
+	catalogFor := func(version, path string, archive []byte) *plugins.Catalog {
+		hash := sha256.Sum256(archive)
+		catalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+			ID: "test-plugin", Name: "Test plugin", Description: "Supervisor upgrade test",
+			Version: version, Scopes: []string{"members"},
+			Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
+				URL: assetServer.URL + path, SHA256: hex.EncodeToString(hash[:]),
+			}},
+		}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+
+	root := t.TempDir()
+	db, err := store.Open("sqlite://"+filepath.Join(root, "cp.db"), store.RealClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	key := bytes.Repeat([]byte("u"), 32)
+	manager, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VARDE_SECRETS_KEY", base64.StdEncoding.EncodeToString(key))
+	registry := mustEmptyRegistry(t)
+	supervisor, err := New(Options{
+		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
+		Registry: registry, Catalog: catalogFor("1.0.0", "/v1", archiveV1),
+		Secrets: manager, HTTPClient: assetServer.Client(), HealthTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.stopAll()
+	installed, err := supervisor.Install(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatalf("install initial version: %v", err)
+	}
+	oldHealth := fmt.Sprintf("http://127.0.0.1:%d/healthz", installed.Port)
+	if body := getTestURL(t, oldHealth); body != "ok" {
+		t.Fatalf("initial plugin health response = %q", body)
+	}
+
+	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)
+	supervisor.reconcile(context.Background())
+	current, err := db.InstalledPlugin(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version != "1.0.0" {
+		t.Fatalf("failed upgrade changed stored version to %q", current.Version)
+	}
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
+		t.Fatalf("failed upgrade changed registry plugin: %#v, registered=%v", plugin, ok)
+	}
+	if body := getTestURL(t, oldHealth); body != "ok" {
+		t.Fatalf("failed upgrade health response = %q", body)
+	}
+
+	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2", archiveV2)
+	supervisor.reconcile(context.Background())
+	current, err = db.InstalledPlugin(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version != "2.0.0" || current.Port == installed.Port {
+		t.Fatalf("successful upgrade row = version %q, port %d; want 2.0.0 on a new port", current.Version, current.Port)
+	}
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
+		t.Fatalf("successful upgrade registry plugin: %#v, registered=%v", plugin, ok)
+	}
+	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "1.0.0")); !os.IsNotExist(err) {
+		t.Fatalf("old version directory remains after upgrade: %v", err)
+	}
+	newHealth := fmt.Sprintf("http://127.0.0.1:%d/healthz", current.Port)
+	if body := getTestURL(t, newHealth); body != "ok" {
+		t.Fatalf("upgraded plugin health response = %q", body)
+	}
+}
+
 func TestNonLeaderDoesNotSpawnInstalledPlugin(t *testing.T) {
 	registry, err := plugins.Load(nil)
 	if err != nil {

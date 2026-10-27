@@ -449,6 +449,40 @@ func (r *Registry) Add(plugin *Plugin) error {
 	return nil
 }
 
+func (r *Registry) ReplaceDynamic(plugin *Plugin) (*Plugin, error) {
+	if r == nil {
+		return nil, errors.New("plugin registry is nil")
+	}
+	if plugin == nil {
+		return nil, errors.New("plugin must not be nil")
+	}
+	if len(plugin.Secret) < 32 {
+		return nil, errors.New("plugin secret must contain at least 32 bytes")
+	}
+	if err := validateManifest(&plugin.Manifest, false); err != nil {
+		return nil, err
+	}
+	baseURL, err := normalizeBaseURL(plugin.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	plugin.BaseURL = baseURL
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.dynamic[plugin.ID] {
+		return nil, fmt.Errorf("plugin %q is not dynamically registered", plugin.ID)
+	}
+	previous := r.byID[plugin.ID]
+	r.byID[plugin.ID] = plugin
+	for i, existing := range r.plugins {
+		if existing.ID == plugin.ID {
+			r.plugins[i] = plugin
+			break
+		}
+	}
+	return previous, nil
+}
+
 func (r *Registry) Remove(id string) error {
 	if r == nil {
 		return errors.New("plugin registry is nil")
