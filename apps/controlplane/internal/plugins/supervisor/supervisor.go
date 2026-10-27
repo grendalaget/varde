@@ -331,19 +331,15 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			s.stopInstalled(row.ID)
 		}
 	}
-	s.mu.Lock()
 	stale := make([]string, 0)
-	for id := range s.running {
+	for _, id := range s.opts.Registry.DynamicIDs() {
 		if _, ok := known[id]; !ok {
 			stale = append(stale, id)
 		}
 	}
-	s.mu.Unlock()
 	for _, id := range stale {
 		s.stopInstalled(id)
-		if plugin, ok := s.opts.Registry.Get(id); ok && plugin.ManifestPath == "" {
-			_ = s.opts.Registry.Remove(id)
-		}
+		_ = s.opts.Registry.Remove(id)
 	}
 }
 
@@ -353,10 +349,9 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 		return fmt.Errorf("installed plugin %q is missing from catalog", row.ID)
 	}
 	if entry.Version != row.Version {
-		if s.opts.Leader != nil && !s.opts.Leader.IsLeader() {
-			return fmt.Errorf("installed plugin %s has version %s, catalog has %s", row.ID, row.Version, entry.Version)
+		if s.opts.Leader == nil || s.opts.Leader.IsLeader() {
+			return s.upgradeInstalled(ctx, row, entry)
 		}
-		return s.upgradeInstalled(ctx, row, entry)
 	}
 	asset, err := s.assetFor(entry)
 	if err != nil {

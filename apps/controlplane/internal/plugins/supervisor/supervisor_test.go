@@ -392,8 +392,21 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "state", "starts")); !os.IsNotExist(err) {
 		t.Fatalf("non-leader started plugin, state marker stat error = %v", err)
 	}
+	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != row.Version {
+		t.Fatalf("non-leader registry plugin = %#v, registered=%v", plugin, ok)
+	}
 	stopNonLeader()
 	<-done
+	if err := db.DeleteInstalledPlugin(context.Background(), "test-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	nonLeader.reconcile(context.Background())
+	if _, ok := nonLeaderRegistry.Get("test-plugin"); ok {
+		t.Fatal("non-leader retained a registration for an uninstalled plugin")
+	}
+	if err := db.SetInstalledPlugin(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
 
 	leaderRegistry := mustEmptyRegistry(t)
 	leader, err := New(Options{

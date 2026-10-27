@@ -514,3 +514,18 @@ func (r *Registry) All() []*Plugin {
 	defer r.mu.RUnlock()
 	return append([]*Plugin(nil), r.plugins...)
 }
+
+func (r *Registry) DynamicIDs() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.dynamic))
+	for id := range r.dynamic {
+		if r.dynamic[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
