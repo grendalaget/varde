@@ -97,6 +97,144 @@ fn fake_steam_install(root: &Path) -> PathBuf {
     dir
 }
 
+const GAMEINFO_SEARCH_PATHS: &str = "\t\tSearchPaths\n\
+\t\t{\n\
+\t\t\tGame_LowViolence\tcsgo_lv // Perfect World content override\n\
+\n\
+\t\t\tGame\tcsgo\n\
+\t\t\tGame\tcore\n\
+\n\
+\t\t\tMod\t\tcsgo\n\
+\n\
+\t\t\tAddonRoot\t\t\tcsgo_addons\n\
+\t\t\tOfficialAddonRoot\tcsgo_community_addons\n\
+\t\t}\n";
+
+fn fake_addon_install(root: &Path) -> PathBuf {
+    let dir = root.join("addon-install");
+    for path in [
+        "game/bin/linuxsteamrt64",
+        "game/bin/win64",
+        "game/core",
+        "game/csgo/maps",
+        "game/csgo/cfg",
+    ] {
+        std::fs::create_dir_all(dir.join(path)).unwrap();
+    }
+    std::fs::write(
+        dir.join("game/bin/linuxsteamrt64/cs2"),
+        "original executable",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("game/bin/linuxsteamrt64/libengine2.so"),
+        "engine library",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("game/bin/linuxsteamrt64/steamclient.so"),
+        "steam library",
+    )
+    .unwrap();
+    std::fs::write(dir.join("game/bin/win64/cs2.exe"), "windows executable").unwrap();
+    std::fs::write(dir.join("game/core/core.txt"), "core").unwrap();
+    std::fs::write(dir.join("game/csgo/pak01_dir.vpk"), "pak").unwrap();
+    std::fs::write(dir.join("game/csgo/maps/de_dust2.txt"), "map").unwrap();
+    std::fs::write(dir.join("game/csgo/cfg/server.cfg"), "server config").unwrap();
+    std::fs::write(
+        dir.join("game/csgo/gameinfo.gi"),
+        format!("GameInfo\n{{\n\tFileSystem\n\t{{\n{GAMEINFO_SEARCH_PATHS}\t}}\n}}\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("game/csgo/gameinfo_branchspecific.gi"),
+        "GameInfo { FileSystem { SearchPathsOverride \"none\" } }\n",
+    )
+    .unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.join("game/bin/linuxsteamrt64/cs2"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    dir
+}
+
+fn addon_fixture(root: &Path, options: Value) -> PreparedAddon {
+    let addon_root = root.join("addon-root");
+    std::fs::create_dir_all(addon_root.join("readyup/bin/linuxsteamrt64")).unwrap();
+    std::fs::write(
+        addon_root.join("readyup/bin/linuxsteamrt64/libserver.so"),
+        "Ready Up server plugin",
+    )
+    .unwrap();
+    PreparedAddon {
+        plugin_id: "test-plugin".into(),
+        addon_id: "readyup".into(),
+        root: addon_root,
+        target: "game".into(),
+        driver_options: options,
+        files: vec![
+            ("cfg/ReadyUp/fleet.cfg".into(), "fleet settings".into()),
+            ("cfg/ReadyUp/license.cfg".into(), "license settings".into()),
+        ],
+    }
+}
+
+fn select_install(ctx: &DriverContext<'_>, dir: &Path, steamclient: Option<PathBuf>) {
+    std::fs::write(
+        ctx.deployment_dir.join("cs2-install.json"),
+        serde_json::to_vec(&steam::Install {
+            dir: dir.to_path_buf(),
+            steamclient,
+            managed: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn tree_hash(root: &Path) -> u64 {
+    fn collect(root: &Path, dir: &Path, items: &mut Vec<(PathBuf, u8, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap().to_path_buf();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                items.push((relative, 0, Vec::new()));
+                collect(root, &path, items);
+            } else if kind.is_file() {
+                items.push((relative, 1, std::fs::read(path).unwrap()));
+            } else if kind.is_symlink() {
+                items.push((
+                    relative,
+                    2,
+                    std::fs::read_link(path)
+                        .unwrap()
+                        .as_os_str()
+                        .to_string_lossy()
+                        .as_bytes()
+                        .to_vec(),
+                ));
+            }
+        }
+    }
+
+    let mut items = Vec::new();
+    collect(root, root, &mut items);
+    items.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    for item in items {
+        item.hash(&mut hash);
+    }
+    hash.finish()
+}
+
 #[test]
 fn steam_library_discovery_and_vdf() {
     let root = tempfile::tempdir().unwrap();
@@ -609,6 +747,293 @@ fn context<'a>(
         memory_mb: 4096,
         addons: &[],
     }
+}
+
+#[test]
+fn cs2_supports_game_addons() {
+    assert_eq!(Cs2Driver.addon_targets(), &["game"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn addon_root_rejects_unsafe_server_ids() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    ctx.server_id = "../outside";
+
+    let error = Cs2Driver::addon_root(&ctx).unwrap_err();
+
+    assert!(error.to_string().contains("server id"));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn addon_configure_builds_isolated_tree_and_syncs_bans() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let server_dir = tmp.path().join("server-state");
+    std::fs::create_dir_all(server_dir.join("game/csgo/cfg")).unwrap();
+    std::fs::write(
+        server_dir.join("game/csgo/cfg/banned_user.cfg"),
+        "banid 0 STEAM_0:1:123\n",
+    )
+    .unwrap();
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    ctx.server_dir = &server_dir;
+    select_install(&ctx, &install, None);
+    let addon = addon_fixture(
+        tmp.path(),
+        json!({"gameinfo_search_paths":["csgo/readyup"]}),
+    );
+    let addons = [addon];
+    ctx.addons = &addons;
+    let source_hash = tree_hash(&install);
+    let root = tmp.path().join("cs2-servers/cs2-test");
+
+    Cs2Driver.configure(&ctx).await.unwrap();
+
+    let executable = root.join("game/bin/linuxsteamrt64/cs2");
+    let metadata = std::fs::symlink_metadata(&executable).unwrap();
+    assert!(metadata.file_type().is_file());
+    assert!(!metadata.file_type().is_symlink());
+    assert_eq!(
+        metadata.permissions().mode() & 0o111,
+        std::fs::metadata(steam::binary(&install))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111
+    );
+    assert_eq!(
+        std::fs::read_to_string(executable).unwrap(),
+        "original executable"
+    );
+    for path in [
+        root.join("game/bin/linuxsteamrt64/libengine2.so"),
+        root.join("game/bin/linuxsteamrt64/steamclient.so"),
+        root.join("game/bin/win64"),
+        root.join("game/core"),
+        root.join("game/csgo/pak01_dir.vpk"),
+        root.join("game/csgo/maps"),
+    ] {
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    let server_cfg = root.join("game/csgo/cfg/server.cfg");
+    assert!(std::fs::symlink_metadata(&server_cfg)
+        .unwrap()
+        .file_type()
+        .is_file());
+    assert_eq!(
+        std::fs::read_to_string(server_cfg).unwrap(),
+        "server config"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/csgo/cfg/ReadyUp/fleet.cfg")).unwrap(),
+        "fleet settings"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/csgo/cfg/ReadyUp/license.cfg")).unwrap(),
+        "license settings"
+    );
+    assert!(root
+        .join("game/csgo/readyup/bin/linuxsteamrt64/libserver.so")
+        .is_file());
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/csgo/cfg/banned_user.cfg")).unwrap(),
+        "banid 0 STEAM_0:1:123\n"
+    );
+    let info =
+        vdf::parse(&std::fs::read_to_string(root.join("game/csgo/gameinfo.gi")).unwrap()).unwrap();
+    let entries = info
+        .get("GameInfo")
+        .unwrap()
+        .get("FileSystem")
+        .unwrap()
+        .get("SearchPaths")
+        .unwrap()
+        .entries()
+        .unwrap();
+    let csgo_index = entries
+        .iter()
+        .position(|(key, value)| key == "Game" && value.text() == Some("csgo"))
+        .unwrap();
+    assert_eq!(entries[csgo_index - 1].0, "Game");
+    assert_eq!(entries[csgo_index - 1].1.text(), Some("csgo/readyup"));
+    assert_eq!(
+        std::fs::read(install.join("game/csgo/gameinfo_branchspecific.gi")).unwrap(),
+        std::fs::read(root.join("game/csgo/gameinfo_branchspecific.gi")).unwrap()
+    );
+    assert_eq!(source_hash, tree_hash(&install));
+
+    std::fs::write(
+        root.join("game/csgo/cfg/banned_ip.cfg"),
+        "addip 0 192.0.2.1\n",
+    )
+    .unwrap();
+    Cs2Driver
+        .prepare_snapshot(&ctx, &Process::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(server_dir.join("game/csgo/cfg/banned_ip.cfg")).unwrap(),
+        "addip 0 192.0.2.1\n"
+    );
+    assert_eq!(Cs2Driver.persistent_paths(&config).len(), 2);
+    assert_eq!(source_hash, tree_hash(&install));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn addon_process_spec_uses_per_server_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    let steamclient = tmp.path().join("steam-runtime/linux64/steamclient.so");
+    std::fs::create_dir_all(steamclient.parent().unwrap()).unwrap();
+    std::fs::write(&steamclient, "steam library").unwrap();
+    select_install(&ctx, &install, Some(steamclient.clone()));
+    let addon = addon_fixture(tmp.path(), json!({}));
+    let addons = [addon];
+    ctx.addons = &addons;
+    let root = tmp.path().join("cs2-servers/cs2-test");
+
+    let spec = Cs2Driver.process_spec(&ctx).unwrap();
+
+    assert_eq!(spec.program, root.join("game/bin/linuxsteamrt64/cs2"));
+    assert_eq!(spec.cwd, root);
+    let args: Vec<String> = spec
+        .args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert!(!args.iter().any(|arg| arg == "-game"));
+    let exec = args.iter().position(|arg| arg == "+exec").unwrap();
+    assert_eq!(args[exec + 1], "varde.cfg");
+    assert!(!args.iter().any(|arg| arg == "varde_cs2-test.cfg"));
+    let library_path = &spec
+        .env
+        .iter()
+        .find(|(key, _)| key == "LD_LIBRARY_PATH")
+        .unwrap()
+        .1;
+    let paths: Vec<_> = std::env::split_paths(library_path).collect();
+    assert_eq!(paths[0], root.join("game/bin/linuxsteamrt64"));
+    assert_eq!(paths[1], steamclient.parent().unwrap().to_path_buf());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn addon_configure_rebuilds_and_no_addon_configure_removes_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    select_install(&ctx, &install, None);
+    let addon = addon_fixture(tmp.path(), json!({}));
+    let addons = [addon];
+    ctx.addons = &addons;
+    let root = tmp.path().join("cs2-servers/cs2-test");
+    let executable = root.join("game/bin/linuxsteamrt64/cs2");
+
+    Cs2Driver.configure(&ctx).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&executable).unwrap(),
+        "original executable"
+    );
+    std::fs::write(steam::binary(&install), "updated executable").unwrap();
+    Cs2Driver.configure(&ctx).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&executable).unwrap(),
+        "updated executable"
+    );
+
+    ctx.addons = &[];
+    Cs2Driver.configure(&ctx).await.unwrap();
+    assert!(!root.exists());
+    let spec = Cs2Driver.process_spec(&ctx).unwrap();
+    assert_eq!(spec.program, steam::binary(&install));
+    assert!(spec.args.iter().any(|arg| arg == "-game"));
+    let exec = spec.args.iter().position(|arg| arg == "+exec").unwrap();
+    assert_eq!(spec.args[exec + 1].to_string_lossy(), "varde_cs2-test");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn addon_driver_options_are_validated_and_name_the_addon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let options = vec![
+        json!({"gameinfo_search_paths":["../x"]}),
+        json!({"gameinfo_search_paths":["csgo/../x"]}),
+        json!({"gameinfo_search_paths":["cfg/x"]}),
+        json!({"other":true}),
+        json!({"gameinfo_search_paths":"csgo/readyup"}),
+        json!({"gameinfo_search_paths":[
+            "csgo/one", "csgo/two", "csgo/three", "csgo/four", "csgo/five",
+            "csgo/six", "csgo/seven", "csgo/eight", "csgo/nine"
+        ]}),
+        Value::Null,
+    ];
+    for options in options {
+        let addon = addon_fixture(tmp.path(), options);
+        let mut ctx = context(tmp.path(), &config, &deployment);
+        ctx.addons = std::slice::from_ref(&addon);
+        let error = Cs2Driver.configure(&ctx).await.unwrap_err().to_string();
+        assert!(error.contains("test-plugin/readyup"), "{error}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn addon_cannot_replace_a_symlinked_install_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    select_install(&ctx, &install, None);
+    let addon = addon_fixture(tmp.path(), json!({}));
+    std::fs::create_dir_all(addon.root.join("maps")).unwrap();
+    std::fs::write(addon.root.join("maps/x.txt"), "collision").unwrap();
+    ctx.addons = std::slice::from_ref(&addon);
+
+    let error = Cs2Driver.configure(&ctx).await.unwrap_err();
+
+    assert!(
+        error.to_string().contains("unsafe addon destination"),
+        "{error}"
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn addon_configure_is_linux_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let addon = addon_fixture(tmp.path(), json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    ctx.addons = std::slice::from_ref(&addon);
+
+    let error = Cs2Driver.configure(&ctx).await.unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "cs2: server addons are only supported on Linux hosts"
+    );
 }
 
 #[derive(Default)]
