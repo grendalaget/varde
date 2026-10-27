@@ -1413,6 +1413,28 @@ func (s *Store) PruneEvents(ctx context.Context, beforeMs int64) (int64, error) 
 	}
 }
 
+// PruneSessions deletes expired sessions in batches and returns how many were removed.
+func (s *Store) PruneSessions(ctx context.Context, nowMs int64) (int64, error) {
+	var total int64
+	for {
+		res, err := s.q().ExecContext(ctx, s.Rebind(
+			`DELETE FROM sessions WHERE token_hash IN (
+			   SELECT token_hash FROM sessions WHERE expires_at<=? LIMIT ?)`),
+			nowMs, pruneBatch)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		total += n
+		if err != nil || n < pruneBatch {
+			return total, err
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+	}
+}
+
 func (s *Store) Audit(ctx context.Context, q Querier, groupID *string, actorType, actorID, action, target string, data any) error {
 	b, _ := json.Marshal(data)
 	_, err := q.ExecContext(ctx, s.Rebind(

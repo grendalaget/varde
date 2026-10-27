@@ -10,7 +10,7 @@ const (
 	retentionInterval = time.Hour
 )
 
-// RunRetention prunes events older than eventRetention once at start and then
+// RunRetention prunes old events and expired sessions once at start and then
 // hourly, on the leader only (like Run). Blocks until ctx is cancelled.
 func (r *Reconciler) RunRetention(ctx context.Context) {
 	ticker := time.NewTicker(retentionInterval)
@@ -18,6 +18,7 @@ func (r *Reconciler) RunRetention(ctx context.Context) {
 	for {
 		if r.Leader == nil || r.Leader.IsLeader() {
 			r.PruneEvents(ctx)
+			r.PruneSessions(ctx)
 			// Fallback: deleted servers are purged where their last save
 			// copy goes (the delete ack, the server or machine delete);
 			// this sweeps up any a failed purge left behind.
@@ -30,6 +31,18 @@ func (r *Reconciler) RunRetention(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// PruneSessions deletes expired sessions.
+func (r *Reconciler) PruneSessions(ctx context.Context) {
+	n, err := r.Store.PruneSessions(ctx, r.Store.NowMs())
+	if err != nil {
+		r.Log.Error("prune sessions", "error", err)
+		return
+	}
+	if n > 0 {
+		r.Log.Info("pruned sessions", "deleted", n)
 	}
 }
 
