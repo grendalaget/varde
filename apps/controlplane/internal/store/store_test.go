@@ -101,6 +101,75 @@ func TestPruneSessions(t *testing.T) {
 	}
 }
 
+func TestPruneExpired(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		userID := "usr_prune_expired_" + name
+		groupID := "grp_prune_expired_" + name
+		mkUser(t, s, userID)
+		if err := s.CreateGroup(ctx, &Group{
+			ID: groupID, Name: "test", Plan: "free", SettingsJSON: "{}", CreatedAt: 1,
+		}, userID); err != nil {
+			t.Fatalf("%s create group: %v", name, err)
+		}
+		exec := func(query string, args ...any) {
+			t.Helper()
+			if _, err := s.DB.Exec(s.Rebind(query), args...); err != nil {
+				t.Fatalf("%s insert prune fixture: %v", name, err)
+			}
+		}
+		rows := []struct {
+			suffix  string
+			expires any
+		}{
+			{suffix: "expired", expires: int64(99)},
+			{suffix: "later", expires: int64(101)},
+			{suffix: "never", expires: nil},
+		}
+		for _, row := range rows {
+			exec(
+				`INSERT INTO invites (code,group_id,created_by,expires_at) VALUES (?,?,?,?)`,
+				"invite_"+row.suffix+"_"+name, groupID, userID, row.expires,
+			)
+			exec(
+				`INSERT INTO enrollment_tokens (id,group_id,token_hash,created_by,expires_at) VALUES (?,?,?,?,?)`,
+				"enrollment_"+row.suffix+"_"+name, groupID, "hash_"+row.suffix+"_"+name, userID, row.expires,
+			)
+		}
+		exec(
+			`INSERT INTO device_links (user_code,device_code_hash,public_key,expires_at,created_at) VALUES (?,?,?,?,?)`,
+			"device_expired_"+name, "device_hash_expired_"+name, "public_expired_"+name, int64(99), int64(1),
+		)
+		exec(
+			`INSERT INTO device_links (user_code,device_code_hash,public_key,expires_at,created_at) VALUES (?,?,?,?,?)`,
+			"device_later_"+name, "device_hash_later_"+name, "public_later_"+name, int64(101), int64(1),
+		)
+
+		n, err := s.PruneExpired(ctx, 100)
+		if err != nil || n != 3 {
+			t.Fatalf("%s prune expired rows: %d %v, want 3", name, n, err)
+		}
+		assertRow := func(table, key, id string, want bool) {
+			t.Helper()
+			var count int
+			if err := s.DB.Get(&count, s.Rebind(
+				"SELECT COUNT(*) FROM "+table+" WHERE "+key+"=?"), id); err != nil {
+				t.Fatalf("%s count %s %s: %v", name, table, id, err)
+			}
+			if (count == 1) != want {
+				t.Fatalf("%s %s %s exists=%t, want %t", name, table, id, count == 1, want)
+			}
+		}
+		for _, row := range rows {
+			assertRow("invites", "code", "invite_"+row.suffix+"_"+name, row.suffix != "expired")
+			assertRow("enrollment_tokens", "id", "enrollment_"+row.suffix+"_"+name, row.suffix != "expired")
+		}
+		assertRow("device_links", "user_code", "device_expired_"+name, false)
+		assertRow("device_links", "user_code", "device_later_"+name, true)
+	}
+}
+
 func TestUniquePartialIndex(t *testing.T) {
 	for name, s := range testStores(t) {
 		defer func() { _ = s.Close() }()

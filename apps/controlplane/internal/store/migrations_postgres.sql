@@ -26,8 +26,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at BIGINT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
-
 CREATE TABLE IF NOT EXISTS steam_link_states (
     nonce      TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL,
@@ -118,6 +116,11 @@ CREATE TABLE IF NOT EXISTS device_links (
     expires_at       BIGINT NOT NULL,
     created_at       BIGINT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_invites_expires ON invites(expires_at);
+CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_expires ON enrollment_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_device_links_expires ON device_links(expires_at);
 
 CREATE TABLE IF NOT EXISTS nodes (
     id              TEXT PRIMARY KEY,
