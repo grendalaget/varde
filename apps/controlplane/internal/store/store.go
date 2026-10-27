@@ -95,13 +95,16 @@ func OpenWith(url string, clk Clock, opt Options) (*Store, error) {
 	s.Dialect = map[string]string{"sqlite": "sqlite", "pgx": "postgres"}[drv]
 	mig, err := migrations.ReadFile("migrations_" + s.Dialect + ".sql")
 	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	if !opt.SkipMigrate {
 		if _, err := db.Exec(string(mig)); err != nil {
+			_ = db.Close()
 			return nil, fmt.Errorf("store: migrate: %w", err)
 		}
 		if err := ensureColumns(db, s.Dialect); err != nil {
+			_ = db.Close()
 			return nil, fmt.Errorf("store: migrate: %w", err)
 		}
 	}
