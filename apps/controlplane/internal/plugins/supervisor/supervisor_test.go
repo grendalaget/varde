@@ -335,9 +335,61 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 		t.Fatalf("cancelled upgrade health response = %q", body)
 	}
 
+	supervisor.stopAll()
+	bootRegistry := mustEmptyRegistry(t)
+	bootSupervisor, err := New(Options{
+		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
+		Registry: bootRegistry, Catalog: catalogFor("2.0.0", "/v2-unavailable", nil),
+		Secrets: manager, HTTPClient: assetServer.Client(), HealthTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bootSupervisor.stopAll()
+	bootSupervisor.reconcile(context.Background())
+	deadline := time.Now().Add(5 * time.Second)
+	var healthErr error
+	for time.Now().Before(deadline) {
+		if _, healthErr = tryGetTestURL(oldHealth); healthErr == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if healthErr != nil {
+		t.Fatalf("boot did not start installed plugin after upgrade download failed: %v", healthErr)
+	}
+	var current *store.InstalledPlugin
+	for time.Now().Before(deadline) {
+		current, err = db.InstalledPlugin(context.Background(), "test-plugin")
+		if err == nil && current.Status == runningStatus {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == nil {
+		t.Fatal("boot fallback installed row was not persisted")
+	}
+	if current.Version != "1.0.0" || current.Status != runningStatus || current.Error != "" {
+		t.Fatalf("boot fallback installed row = version %q, status %q, error %q; want 1.0.0/running/no error", current.Version, current.Status, current.Error)
+	}
+	if !strings.Contains(current.UpgradeError, "HTTP 404") {
+		t.Fatalf("boot fallback upgrade error = %q, want HTTP 404", current.UpgradeError)
+	}
+	if plugin, ok := bootRegistry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
+		t.Fatalf("boot fallback registry plugin: %#v, registered=%v", plugin, ok)
+	}
+	if body := getTestURL(t, oldHealth); body != "ok" {
+		t.Fatalf("boot fallback health response = %q", body)
+	}
+	supervisor = bootSupervisor
+	registry = bootRegistry
+
 	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)
 	supervisor.reconcile(context.Background())
-	current, err := db.InstalledPlugin(context.Background(), "test-plugin")
+	current, err = db.InstalledPlugin(context.Background(), "test-plugin")
 	if err != nil {
 		t.Fatal(err)
 	}

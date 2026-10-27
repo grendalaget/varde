@@ -65,6 +65,17 @@ func (s *Supervisor) verifyOrRepairBinary(ctx context.Context, row *store.Instal
 	return binaryPath, nil
 }
 
+func verifyInstalledBinary(row store.InstalledPlugin, binaryPath string) (string, error) {
+	actual, err := binaryDigest(binaryPath)
+	if err != nil {
+		return "", err
+	}
+	if row.BinarySHA256 == "" || actual != row.BinarySHA256 {
+		return "", errors.New("installed plugin binary SHA-256 mismatch")
+	}
+	return binaryPath, nil
+}
+
 func binaryDigest(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

@@ -384,8 +384,13 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			var upgradeFailure *pluginUpgradeFailure
 			if !errors.As(err, &upgradeFailure) {
 				_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
+				continue
 			}
-			continue
+			if fallbackErr := s.ensureInstalledVersion(ctx, row); fallbackErr != nil {
+				s.opts.Log.Error("prepare installed plugin version after upgrade failure", "plugin", row.ID, "error", fallbackErr)
+				_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, fallbackErr.Error())
+				continue
+			}
 		}
 		if fresh, err := s.opts.Store.InstalledPlugin(ctx, row.ID); err == nil {
 			row = *fresh
@@ -420,6 +425,7 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 		if s.opts.Leader == nil || s.opts.Leader.IsLeader() {
 			return s.upgradeInstalled(ctx, row, entry)
 		}
+		return s.ensureInstalledVersion(ctx, row)
 	}
 	asset, err := s.assetFor(entry)
 	if err != nil {
@@ -444,6 +450,40 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 			return fmt.Errorf("installed plugin %q conflicts with static manifest %s", row.ID, existing.ManifestPath)
 		}
 		return nil
+	}
+	return s.opts.Registry.Add(plugin)
+}
+
+func (s *Supervisor) ensureInstalledVersion(ctx context.Context, row store.InstalledPlugin) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entry := plugins.CatalogEntry{ID: row.ID, Version: row.Version}
+	versionDir := s.versionDir(entry)
+	manifestData, err := os.ReadFile(filepath.Join(versionDir, "manifest.json"))
+	if err != nil {
+		return fmt.Errorf("read installed plugin manifest: %w", err)
+	}
+	if err := validateArchiveManifest(manifestData, entry); err != nil {
+		return err
+	}
+	binaryPath := filepath.Join(versionDir, binaryName(row.ID))
+	if _, err := verifyInstalledBinary(row, binaryPath); err != nil {
+		return err
+	}
+	plugin, err := s.makePlugin(manifestData, entry, row)
+	if err != nil {
+		return err
+	}
+	if existing, ok := s.opts.Registry.Get(row.ID); ok {
+		if existing.ManifestPath != "" {
+			return fmt.Errorf("installed plugin %q conflicts with static manifest %s", row.ID, existing.ManifestPath)
+		}
+		if existing.Version == plugin.Version {
+			return nil
+		}
+		_, err := s.opts.Registry.ReplaceDynamic(plugin)
+		return err
 	}
 	return s.opts.Registry.Add(plugin)
 }

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/grendalaget/varde/apps/controlplane/internal/plugins"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
@@ -90,17 +91,26 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, "plugin missing from catalog")
 		return
 	}
-	asset, err := s.assetFor(entry)
-	if err != nil {
-		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
-		return
-	}
-	_, binaryPath, err := s.loadOrDownload(ctx, entry, asset)
-	if err != nil {
-		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
-		return
+	installedVersion := entry.Version != row.Version
+	binaryPath := filepath.Join(s.pluginDir(row.ID), row.Version, binaryName(row.ID))
+	var asset plugins.Asset
+	var err error
+	if installedVersion {
+		if _, err := verifyInstalledBinary(row, binaryPath); err != nil {
+			s.signalReady(process, err)
+			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			return
+		}
+	} else {
+		asset, err = s.assetFor(entry)
+		if err == nil {
+			_, binaryPath, err = s.loadOrDownload(ctx, entry, asset)
+		}
+		if err != nil {
+			s.signalReady(process, err)
+			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			return
+		}
 	}
 	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
 	if err != nil {
@@ -133,7 +143,12 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 			s.signalReady(process, ctx.Err())
 			return
 		}
-		verifiedPath, err := s.verifyOrRepairBinary(ctx, &row, entry, asset, binaryPath)
+		var verifiedPath string
+		if installedVersion {
+			verifiedPath, err = verifyInstalledBinary(row, binaryPath)
+		} else {
+			verifiedPath, err = s.verifyOrRepairBinary(ctx, &row, entry, asset, binaryPath)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				s.markStopped(row.ID, process)
