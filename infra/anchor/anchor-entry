@@ -11,11 +11,36 @@ set -eu
 
 : "${VARDE_BOOTSTRAP_URL:?missing VARDE_BOOTSTRAP_URL}"
 export VARDE_DATA_DIR="${VARDE_DATA_DIR:-/var/lib/varde}"
+machine_id=${FLY_MACHINE_ID:-}
+config="$VARDE_DATA_DIR/config.toml"
+marker="$VARDE_DATA_DIR/enrolled-machine"
 
-# config.toml survives on the volume across restarts; re-enrolling the
-# existing public key is rejected by the CP, so only bootstrap once.
-if [ -f "$VARDE_DATA_DIR/config.toml" ]; then
-  exec varde-agent run
+write_marker() {
+  mkdir -p "$VARDE_DATA_DIR"
+  tmp="$marker.tmp.$$"
+  printf '%s\n' "$machine_id" > "$tmp"
+  mv "$tmp" "$marker"
+}
+
+if [ -f "$config" ]; then
+  if [ -z "$machine_id" ]; then
+    exec varde-agent run
+  fi
+
+  if [ -f "$marker" ]; then
+    enrolled_machine=$(cat "$marker")
+    if [ "$enrolled_machine" = "$machine_id" ]; then
+      exec varde-agent run
+    fi
+  fi
+
+  # A deleted CP node releases its public key, so keep node.key for re-enroll.
+  mv "$config" "$config.stale.$machine_id"
+fi
+
+# Every Fly enrollment from this image onward writes a machine marker.
+if [ -n "$machine_id" ]; then
+  write_marker
 fi
 
 resp=$(curl -fsS --retry 20 --retry-delay 3 --retry-all-errors \
