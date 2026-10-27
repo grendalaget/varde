@@ -88,7 +88,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 	entry, ok := s.opts.Catalog.Get(row.ID)
 	if !ok {
 		s.signalReady(process, fmt.Errorf("plugin %s is missing from catalog", row.ID))
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, "plugin missing from catalog")
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, "plugin missing from catalog")
 		return
 	}
 	installedVersion := entry.Version != row.Version
@@ -98,7 +98,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 	if installedVersion {
 		if _, err := verifyInstalledBinary(row, binaryPath); err != nil {
 			s.signalReady(process, err)
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 			return
 		}
 	} else {
@@ -108,31 +108,31 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		}
 		if err != nil {
 			s.signalReady(process, err)
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 			return
 		}
 	}
 	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
 	if err != nil {
 		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		return
 	}
 	var creds credentials
 	if err := jsonUnmarshalCredentials(raw, &creds); err != nil {
 		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		return
 	}
 	stateDir := filepath.Join(s.pluginDir(row.ID), "state")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		return
 	}
 	if err := os.Chmod(stateDir, 0o700); err != nil {
 		s.signalReady(process, err)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		return
 	}
 
@@ -155,7 +155,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 				s.signalReady(process, ctx.Err())
 				return
 			}
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 			s.signalReady(process, err)
 			if !waitBackoff(ctx, backoff) {
 				s.markStopped(row.ID, process)
@@ -180,7 +180,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		if cmd.Process == nil {
 			if err := cmd.Start(); err != nil {
 				message := fmt.Errorf("start plugin process: %w", err)
-				_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, message.Error())
+				_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, message.Error())
 				s.signalReady(process, message)
 				if !waitBackoff(ctx, backoff) {
 					return
@@ -207,7 +207,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 			if healthErr == nil {
 				healthErr = errors.New("plugin did not become healthy")
 			}
-			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, healthErr.Error())
+			_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, healthErr.Error())
 			s.signalReady(process, healthErr)
 			if !waitBackoff(ctx, backoff) {
 				return
@@ -215,7 +215,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 			backoff = nextBackoff(backoff, s.opts.RestartMax)
 			continue
 		}
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, runningStatus, "")
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, runningStatus, "")
 		process.healthy.Store(true)
 		s.signalReady(process, nil)
 		err = waitProcess(ctx, cmd, waitResult)
@@ -227,7 +227,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 		if err == nil {
 			err = errors.New("plugin process exited")
 		}
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
 		s.opts.Log.Warn("plugin process exited; restarting", "plugin", row.ID, "error", err, "backoff", backoff)
 		if !waitBackoff(ctx, backoff) {
 			s.markStopped(row.ID, process)
@@ -239,7 +239,7 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 
 func (s *Supervisor) markStopped(id string, process *managedProcess) {
 	if !process.retired.Load() {
-		_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), id, stoppedStatus, "")
+		_ = s.updateInstalledPluginStatus(context.Background(), id, stoppedStatus, "")
 	}
 }
 

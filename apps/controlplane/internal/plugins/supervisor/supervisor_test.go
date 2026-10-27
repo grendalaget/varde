@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -546,6 +547,27 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifestV2 := []byte(strings.Replace(string(manifest), `"version":"1.0.0"`, `"version":"2.0.0"`, 1))
+	archiveV2 := releaseArchive(t, binary, manifestV2)
+	archiveV2SHA256 := sha256.Sum256(archiveV2)
+	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(archiveV2)
+	}))
+	defer assetServer.Close()
+	catalogV2, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+		ID: "test-plugin", Name: "Test plugin", Description: "Test", Version: "2.0.0",
+		Scopes: []string{"members"},
+		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
+			URL: assetServer.URL + "/v2", SHA256: hex.EncodeToString(archiveV2SHA256[:]),
+		}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	versionDir := filepath.Join(root, "plugins", "test-plugin", "1.0.0")
 	if err := os.MkdirAll(versionDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -592,11 +614,20 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	}, row); err != nil {
 		t.Fatal(err)
 	}
+	rowBefore, err := db.InstalledPlugin(context.Background(), row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
+	oldBinaryPath := filepath.Join(versionDir, binaryName("test-plugin"))
+	if err := os.Remove(oldBinaryPath); err != nil {
+		t.Fatal(err)
+	}
+	leadership := &mutableTestLeader{}
 	nonLeaderRegistry := mustEmptyRegistry(t)
 	nonLeader, err := New(Options{
-		DataDir: root, Store: db, Registry: nonLeaderRegistry, Catalog: catalog, Secrets: manager,
-		Leader: testLeader(false), ReconcileInterval: 50 * time.Millisecond,
+		DataDir: root, Store: db, Registry: nonLeaderRegistry, Catalog: catalogV2, Secrets: manager,
+		Leader: leadership, ReconcileInterval: 50 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -608,55 +639,54 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "plugins", "test-plugin", "state", "starts")); !os.IsNotExist(err) {
 		t.Fatalf("non-leader started plugin, state marker stat error = %v", err)
 	}
-	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != row.Version {
+	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
 		t.Fatalf("non-leader registry plugin = %#v, registered=%v", plugin, ok)
 	}
+	rowAfter, err := db.InstalledPlugin(context.Background(), row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *rowAfter != *rowBefore {
+		t.Fatalf("non-leader changed installed row: before=%#v after=%#v", *rowBefore, *rowAfter)
+	}
+	leadership.value.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	var latest *store.InstalledPlugin
+	for time.Now().Before(deadline) {
+		latest, err = db.InstalledPlugin(context.Background(), row.ID)
+		if err == nil && latest.Version == "2.0.0" && latest.Status == runningStatus {
+			healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", latest.Port)
+			if _, err := tryGetTestURL(healthURL); err == nil {
+				break
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest == nil || latest.Version != "2.0.0" || latest.Status != runningStatus || latest.Error != "" || latest.UpgradeError != "" {
+		t.Fatalf("promoted leader installed row = %#v, want version 2.0.0 running without errors", latest)
+	}
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", latest.Port)
+	if _, err := tryGetTestURL(healthURL); err != nil {
+		t.Fatalf("promoted leader did not start catalog version: %v", err)
+	}
+	if plugin, ok := nonLeaderRegistry.Get("test-plugin"); !ok || plugin.Version != "2.0.0" {
+		t.Fatalf("promoted leader registry plugin = %#v, registered=%v", plugin, ok)
+	}
 	stopNonLeader()
-	<-done
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("promoted supervisor did not stop")
+	}
 	if err := db.DeleteInstalledPlugin(context.Background(), "test-plugin"); err != nil {
 		t.Fatal(err)
 	}
 	nonLeader.reconcile(context.Background())
 	if _, ok := nonLeaderRegistry.Get("test-plugin"); ok {
 		t.Fatal("non-leader retained a registration for an uninstalled plugin")
-	}
-	if err := db.SetInstalledPlugin(context.Background(), row); err != nil {
-		t.Fatal(err)
-	}
-
-	leaderRegistry := mustEmptyRegistry(t)
-	leader, err := New(Options{
-		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
-		Registry: leaderRegistry, Catalog: catalog, Secrets: manager, Leader: testLeader(true),
-		HealthTimeout: 5 * time.Second, RestartMin: 25 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	leaderDone := make(chan struct{})
-	go func() {
-		leader.Run(ctx)
-		close(leaderDone)
-	}()
-	defer func() {
-		cancel()
-		select {
-		case <-leaderDone:
-		case <-time.After(3 * time.Second):
-			t.Error("leader supervisor did not stop")
-		}
-	}()
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", row.Port)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := tryGetTestURL(healthURL); err == nil {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if _, err := tryGetTestURL(healthURL); err != nil {
-		t.Fatalf("leader did not start installed plugin: %v", err)
 	}
 }
 
@@ -698,6 +728,12 @@ func mustPort(t *testing.T) int {
 type testLeader bool
 
 func (leader testLeader) IsLeader() bool { return bool(leader) }
+
+type mutableTestLeader struct {
+	value atomic.Bool
+}
+
+func (leader *mutableTestLeader) IsLeader() bool { return leader.value.Load() }
 
 type archiveEntry struct {
 	header *tar.Header

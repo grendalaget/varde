@@ -125,6 +125,24 @@ func New(opts Options) (*Supervisor, error) {
 	return &Supervisor{opts: opts, running: make(map[string]*managedProcess)}, nil
 }
 
+func (s *Supervisor) isLeader() bool {
+	return s.opts.Leader == nil || s.opts.Leader.IsLeader()
+}
+
+func (s *Supervisor) updateInstalledPluginStatus(ctx context.Context, id, status, message string) error {
+	if !s.isLeader() {
+		return nil
+	}
+	return s.opts.Store.UpdateInstalledPluginStatus(ctx, id, status, message)
+}
+
+func (s *Supervisor) updateInstalledPluginUpgradeError(ctx context.Context, id, message string) error {
+	if !s.isLeader() {
+		return nil
+	}
+	return s.opts.Store.UpdateInstalledPluginUpgradeError(ctx, id, message)
+}
+
 func (s *Supervisor) Catalog() []plugins.CatalogEntry {
 	return s.opts.Catalog.All()
 }
@@ -265,7 +283,7 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return store.InstalledPlugin{}, err
 	}
 	if err := s.startInstalled(*installed, true); err != nil {
-		_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, id, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(ctx, id, errorStatus, err.Error())
 		latest, getErr := s.opts.Store.InstalledPlugin(ctx, id)
 		if getErr == nil {
 			return *latest, err
@@ -274,7 +292,7 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 	}
 	if err := s.opts.Registry.Add(plugin); err != nil {
 		s.stopInstalled(id)
-		_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, id, errorStatus, err.Error())
+		_ = s.updateInstalledPluginStatus(ctx, id, errorStatus, err.Error())
 		return *installed, err
 	}
 	latest, err := s.opts.Store.InstalledPlugin(ctx, id)
@@ -376,26 +394,28 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		return
 	}
 	known := make(map[string]struct{}, len(installed))
-	leader := s.opts.Leader == nil || s.opts.Leader.IsLeader()
 	for _, row := range installed {
 		known[row.ID] = struct{}{}
 		if err := s.ensureInstalled(ctx, row); err != nil {
 			s.opts.Log.Error("prepare installed plugin", "plugin", row.ID, "error", err)
+			if !s.isLeader() {
+				continue
+			}
 			var upgradeFailure *pluginUpgradeFailure
 			if !errors.As(err, &upgradeFailure) {
-				_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
+				_ = s.updateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
 				continue
 			}
 			if fallbackErr := s.ensureInstalledVersion(ctx, row); fallbackErr != nil {
 				s.opts.Log.Error("prepare installed plugin version after upgrade failure", "plugin", row.ID, "error", fallbackErr)
-				_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, fallbackErr.Error())
+				_ = s.updateInstalledPluginStatus(ctx, row.ID, errorStatus, fallbackErr.Error())
 				continue
 			}
 		}
 		if fresh, err := s.opts.Store.InstalledPlugin(ctx, row.ID); err == nil {
 			row = *fresh
 		}
-		if leader {
+		if s.isLeader() {
 			if err := s.startInstalled(row, false); err != nil {
 				s.opts.Log.Error("start installed plugin", "plugin", row.ID, "error", err)
 			}
@@ -421,11 +441,8 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 		return fmt.Errorf("installed plugin %q is missing from catalog", row.ID)
 	}
 	versionMismatch := entry.Version != row.Version
-	if versionMismatch {
-		if s.opts.Leader == nil || s.opts.Leader.IsLeader() {
-			return s.upgradeInstalled(ctx, row, entry)
-		}
-		return s.ensureInstalledVersion(ctx, row)
+	if versionMismatch && s.isLeader() {
+		return s.upgradeInstalled(ctx, row, entry)
 	}
 	asset, err := s.assetFor(entry)
 	if err != nil {
@@ -435,7 +452,7 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 	if err != nil {
 		return err
 	}
-	if !versionMismatch {
+	if !versionMismatch && s.isLeader() {
 		_, err = s.verifyOrRepairBinary(ctx, &row, entry, asset, filepath.Join(s.versionDir(entry), binaryName(entry.ID)))
 		if err != nil {
 			return err
@@ -495,7 +512,7 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry, afterCandidateStart func(*runningCommand)) (result error) {
 	defer func() {
 		if result != nil {
-			if err := s.opts.Store.UpdateInstalledPluginUpgradeError(context.WithoutCancel(ctx), current.ID, result.Error()); err != nil {
+			if err := s.updateInstalledPluginUpgradeError(context.WithoutCancel(ctx), current.ID, result.Error()); err != nil {
 				s.opts.Log.Error("record plugin upgrade failure", "plugin", current.ID, "error", err)
 			}
 			result = &pluginUpgradeFailure{err: result}
