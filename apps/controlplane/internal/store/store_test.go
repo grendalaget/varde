@@ -64,6 +64,43 @@ func TestOpenMigrate(t *testing.T) {
 	}
 }
 
+func TestPruneSessions(t *testing.T) {
+	for name, s := range testStores(t) {
+		defer func() { _ = s.Close() }()
+		ctx := context.Background()
+		userID := "usr_sessions_" + name
+		mkUser(t, s, userID)
+		if err := s.CreateSession(ctx, &Session{
+			TokenHash: "expired_" + name,
+			UserID:    userID,
+			CreatedAt: 1,
+			ExpiresAt: 100,
+		}); err != nil {
+			t.Fatalf("%s create expired session: %v", name, err)
+		}
+		if err := s.CreateSession(ctx, &Session{
+			TokenHash: "live_" + name,
+			UserID:    userID,
+			CreatedAt: 2,
+			ExpiresAt: 101,
+		}); err != nil {
+			t.Fatalf("%s create live session: %v", name, err)
+		}
+
+		n, err := s.PruneSessions(ctx, 100)
+		if err != nil || n != 1 {
+			t.Fatalf("%s prune sessions: %d %v, want 1", name, n, err)
+		}
+		if _, err := s.SessionByTokenHash(ctx, "expired_"+name); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s expired session lookup: %v, want ErrNotFound", name, err)
+		}
+		live, err := s.SessionByTokenHash(ctx, "live_"+name)
+		if err != nil || live.ExpiresAt != 101 {
+			t.Fatalf("%s live session lookup: %+v %v, want session expiring at 101", name, live, err)
+		}
+	}
+}
+
 func TestUniquePartialIndex(t *testing.T) {
 	for name, s := range testStores(t) {
 		defer func() { _ = s.Close() }()

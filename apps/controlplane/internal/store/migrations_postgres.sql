@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at BIGINT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS steam_link_states (
     nonce      TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL,
