@@ -353,20 +353,20 @@ const WEBVIEW_PROFILE_PREFIX: &str = "varde-setup-webview-";
 
 /// A fresh user data folder for the setup window's own webview.
 ///
-/// Not under %ProgramData%\Varde: that tree is SYSTEM + Administrators only,
-/// and when a standard user elevates setup with an admin's credentials,
-/// WebView2 runs its browser processes as the signed-in user rather than the
-/// elevating admin — they can't open the profile and the window never comes
-/// up ("We couldn't create the data directory"). `service install` also
-/// resets ACLs under that tree mid-install, and a delete-data uninstall
-/// removes it while the webview still runs.
+/// WebView2 never keeps its browser elevated: it relaunches it through
+/// Explorer with the signed-in user's unelevated token
+/// (MicrosoftEdge/WebView2Feedback#3651, #4672). In that token Administrators
+/// is deny-only, so the profile has to be writable by the signed-in user
+/// itself — a folder only SYSTEM + Administrators can open fails with "We
+/// couldn't create the data directory". That's what %ProgramData%\Varde is
+/// once any install has ACL'd it (fresh machines only worked because the
+/// folder still had ProgramData's inherited user-create rights).
 ///
-/// Instead: a new, uniquely named dir in the Windows Temp dir (users may
-/// create entries there but can't list it), created by us so nobody else
-/// owns it, then locked to SYSTEM + Administrators plus the user signed in
-/// to this session when that's a different account from ours — the identity
-/// the browser processes run as. An elevated admin's own profile stays out
-/// of reach of its unelevated processes.
+/// So: a new, uniquely named dir in the Windows Temp dir (users may create
+/// entries there but can't list it), created by us so nobody else owns it,
+/// then locked to SYSTEM + Administrators + the user signed in to this
+/// session — the identity the browser processes run as, whether that's the
+/// admin who elevated or a standard user who typed an admin's credentials.
 pub fn setup_webview_profile() -> Result<PathBuf> {
     let base = windows_dir()?.join("Temp");
     // sweep profiles left by earlier runs whose setup process is gone; a
@@ -401,7 +401,7 @@ pub fn setup_webview_profile() -> Result<PathBuf> {
             Err(e) => return Err(e).with_context(|| format!("create {}", d.display())),
         }
     };
-    let user = other_session_user_sid()
+    let user = session_user_sid()
         .context("look up the signed-in user")?
         .map(|s| format!("*{s}:(OI)(CI)F"));
     acl_dir(&dir, user.as_deref())?;
@@ -437,19 +437,16 @@ fn process_alive(pid: u32) -> bool {
     }
 }
 
-/// The SID (as a string) of the user signed in to this process's session,
-/// if that isn't the user this process runs as — i.e. setup was elevated
-/// with someone else's credentials. Session user name via WTS (no TCB
-/// privilege needed, unlike WTSQueryUserToken), resolved to a SID.
-fn other_session_user_sid() -> Result<Option<String>> {
+/// The SID (as a string) of the user signed in to this process's session —
+/// session user name via WTS (no TCB privilege needed, unlike
+/// WTSQueryUserToken), resolved to a SID. None when no one is signed in.
+fn session_user_sid() -> Result<Option<String>> {
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{EqualSid, LookupAccountNameW, PSID, SID_NAME_USE, TOKEN_QUERY};
+    use windows::Win32::Security::{LookupAccountNameW, PSID, SID_NAME_USE};
     use windows::Win32::System::RemoteDesktop::{
         ProcessIdToSessionId, WTSDomainName, WTSFreeMemory, WTSQuerySessionInformationW,
         WTSUserName, WTS_CURRENT_SERVER_HANDLE, WTS_INFO_CLASS,
     };
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe fn session_string(session: u32, class: WTS_INFO_CLASS) -> Result<String> {
         let mut p = PWSTR::null();
@@ -468,9 +465,8 @@ fn other_session_user_sid() -> Result<Option<String>> {
     }
 
     unsafe {
-        // SAFETY: WTS strings are freed once after copying; the token handle
-        // is closed once; the SID buffers outlive every PSID pointing into
-        // them.
+        // SAFETY: WTS strings are freed once after copying; the SID buffer
+        // outlives every PSID pointing into it.
         let mut session = 0u32;
         ProcessIdToSessionId(std::process::id(), &mut session)
             .map_err(|e| anyhow!("ProcessIdToSessionId: {e}"))?;
@@ -512,44 +508,8 @@ fn other_session_user_sid() -> Result<Option<String>> {
             &mut kind,
         )
         .map_err(|e| anyhow!("LookupAccountName: {e}"))?;
-        let session_sid = PSID(sid.as_mut_ptr().cast());
-
-        let mut own = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut own)
-            .map_err(|e| anyhow!("OpenProcessToken: {e}"))?;
-        let own_user = token_user(own);
-        let _ = CloseHandle(own);
-        let own_user = own_user?;
-        if EqualSid(session_sid, sid_of(&own_user)).is_ok() {
-            return Ok(None);
-        }
-        sid_string(session_sid).map(Some)
+        sid_string(PSID(sid.as_mut_ptr().cast())).map(Some)
     }
-}
-
-/// TOKEN_USER of a token, as the raw (u64-aligned) buffer it lives in.
-///
-/// # Safety
-/// `tok` must be a valid token handle with TOKEN_QUERY access.
-unsafe fn token_user(tok: windows::Win32::Foundation::HANDLE) -> Result<Vec<u64>> {
-    use windows::Win32::Security::{GetTokenInformation, TokenUser};
-    let mut len = 0u32;
-    let _ = GetTokenInformation(tok, TokenUser, None, 0, &mut len);
-    if len == 0 {
-        bail!("GetTokenInformation(TokenUser): no size");
-    }
-    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
-    GetTokenInformation(tok, TokenUser, Some(buf.as_mut_ptr().cast()), len, &mut len)
-        .map_err(|e| anyhow!("GetTokenInformation(TokenUser): {e}"))?;
-    Ok(buf)
-}
-
-/// # Safety
-/// `buf` must hold a TOKEN_USER filled in by `token_user`.
-unsafe fn sid_of(buf: &[u64]) -> windows::Win32::Security::PSID {
-    (*(buf.as_ptr() as *const windows::Win32::Security::TOKEN_USER))
-        .User
-        .Sid
 }
 
 /// # Safety
