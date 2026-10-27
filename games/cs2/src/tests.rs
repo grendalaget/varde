@@ -143,6 +143,7 @@ fn fake_addon_install(root: &Path) -> PathBuf {
     std::fs::write(dir.join("game/csgo/pak01_dir.vpk"), "pak").unwrap();
     std::fs::write(dir.join("game/csgo/maps/de_dust2.txt"), "map").unwrap();
     std::fs::write(dir.join("game/csgo/cfg/server.cfg"), "server config").unwrap();
+    std::fs::write(dir.join("game/csgo/cfg/autoexec.cfg"), "autoexec config").unwrap();
     std::fs::write(
         dir.join("game/csgo/gameinfo.gi"),
         format!("GameInfo\n{{\n\tFileSystem\n\t{{\n{GAMEINFO_SEARCH_PATHS}\t}}\n}}\n"),
@@ -957,6 +958,15 @@ async fn addon_configure_rebuilds_and_no_addon_configure_removes_root() {
         std::fs::read_to_string(&executable).unwrap(),
         "original executable"
     );
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/csgo/cfg/ReadyUp/fleet.cfg")).unwrap(),
+        "fleet settings"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/csgo/readyup/bin/linuxsteamrt64/libserver.so"))
+            .unwrap(),
+        "Ready Up server plugin"
+    );
     std::fs::write(steam::binary(&install), "updated executable").unwrap();
     Cs2Driver.configure(&ctx).await.unwrap();
     assert_eq!(
@@ -999,6 +1009,70 @@ async fn addon_driver_options_are_validated_and_name_the_addon() {
         let error = Cs2Driver.configure(&ctx).await.unwrap_err().to_string();
         assert!(error.contains("test-plugin/readyup"), "{error}");
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn addon_files_cannot_replace_existing_cs2_files() {
+    let cases = [
+        ("archive cfg/server.cfg", "cfg/server.cfg", "archive"),
+        ("addon file cfg/autoexec.cfg", "cfg/autoexec.cfg", "files"),
+        ("archive gameinfo.gi", "gameinfo.gi", "archive"),
+    ];
+    for (name, relative, source) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let install = fake_addon_install(tmp.path());
+        let config = json!({"server_name":"Addon server"});
+        let deployment = DeploymentSpec::parse(&json!({}));
+        let mut ctx = context(tmp.path(), &config, &deployment);
+        select_install(&ctx, &install, None);
+        let mut addon = addon_fixture(tmp.path(), json!({}));
+        if source == "archive" {
+            std::fs::create_dir_all(addon.root.join(relative).parent().unwrap()).unwrap();
+            std::fs::write(addon.root.join(relative), "replacement").unwrap();
+        } else {
+            addon
+                .files
+                .push((relative.to_owned(), "replacement".to_owned()));
+        }
+        ctx.addons = std::slice::from_ref(&addon);
+
+        let error = Cs2Driver.configure(&ctx).await.unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "cs2: addon test-plugin/readyup would replace {relative}"
+            )),
+            "{name}: {error}"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn later_addon_cannot_replace_an_earlier_addon_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    select_install(&ctx, &install, None);
+    let first = addon_fixture(&tmp.path().join("first"), json!({}));
+    let mut second = addon_fixture(&tmp.path().join("second"), json!({}));
+    std::fs::remove_dir_all(first.root.join("readyup")).unwrap();
+    std::fs::remove_dir_all(second.root.join("readyup")).unwrap();
+    second.plugin_id = "another-plugin".into();
+    second.addon_id = "another-addon".into();
+    let addons = [first, second];
+    ctx.addons = &addons;
+
+    let error = Cs2Driver.configure(&ctx).await.unwrap_err().to_string();
+
+    assert!(
+        error.contains(
+            "cs2: addon another-plugin/another-addon would replace cfg/ReadyUp/fleet.cfg"
+        ),
+        "{error}"
+    );
 }
 
 #[cfg(target_os = "linux")]

@@ -2,6 +2,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 use executor_api::{Executor, ProcessHandle, ProcessSpec};
 use game_driver_api::*;
@@ -194,6 +197,91 @@ impl Cs2Driver {
     }
 
     #[cfg(target_os = "linux")]
+    fn addon_destination_files(addon: &PreparedAddon) -> Result<Vec<PathBuf>> {
+        fn collect(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    collect(root, &path, files)?;
+                } else if kind.is_file() {
+                    files.push(path.strip_prefix(root)?.to_path_buf());
+                } else {
+                    return Err(format!("unsafe addon destination: {}", path.display()).into());
+                }
+            }
+            Ok(())
+        }
+
+        let root_metadata = std::fs::symlink_metadata(&addon.root)?;
+        if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+            return Err(format!("unsafe addon destination: {}", addon.root.display()).into());
+        }
+        let mut files = Vec::new();
+        collect(&addon.root, &addon.root, &mut files)?;
+        for (key, _) in &addon.files {
+            let valid = !key.is_empty()
+                && !key.starts_with('/')
+                && !key.contains('\\')
+                && !key.contains(':')
+                && key
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..");
+            if !valid {
+                return Err(format!("invalid addon file key: {key}").into());
+            }
+            files.push(PathBuf::from(key));
+        }
+        Ok(files)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn addon_destination_exists(root: &Path, relative: &Path) -> Result<bool> {
+        let mut current = root.to_path_buf();
+        if let Some(parent) = relative.parent() {
+            for component in parent.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(format!("unsafe addon destination: {}", relative.display()).into());
+                };
+                current.push(name);
+                match std::fs::symlink_metadata(&current) {
+                    Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                        return Err(
+                            format!("unsafe addon destination: {}", current.display()).into()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        match std::fs::symlink_metadata(root.join(relative)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_addon_destinations(root: &Path, addon: &PreparedAddon) -> Result<()> {
+        let mut seen = HashSet::new();
+        for relative in Self::addon_destination_files(addon)? {
+            if !seen.insert(relative.clone()) || Self::addon_destination_exists(root, &relative)? {
+                return Err(format!(
+                    "cs2: addon {}/{} would replace {}",
+                    addon.plugin_id,
+                    addon.addon_id,
+                    relative.display()
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
     fn rebuild_addon_root(ctx: &DriverContext<'_>, search_paths: &[String]) -> Result<()> {
         let root = Self::addon_root(ctx)?;
         let source =
@@ -283,6 +371,7 @@ impl Cs2Driver {
         }
 
         for addon in ctx.addons.iter().filter(|addon| addon.target == "game") {
+            Self::check_addon_destinations(&root_csgo, addon)?;
             addon.install_into(&root_csgo)?;
         }
         Ok(())
