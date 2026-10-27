@@ -9,7 +9,15 @@ import { canAdmin, useSession } from "../lib/session";
 type Plugin = Schemas["Plugin"];
 type GroupPlugin = Schemas["GroupPlugin"];
 
-export default function PluginSettingsPanel({ className = "" }: { className?: string }) {
+export default function PluginSettingsPanel({
+  className = "",
+  pluginId,
+  onClose,
+}: {
+  className?: string;
+  pluginId?: string;
+  onClose?: () => void;
+}) {
   const { group } = useSession();
   const catalog = useLoad(() => api.GET("/v1/plugins"), []);
   const enabled = useLoad(
@@ -22,6 +30,21 @@ export default function PluginSettingsPanel({ className = "" }: { className?: st
   );
   const plugins = catalog.data?.plugins ?? [];
   if (!plugins.length) return null;
+  if (pluginId) {
+    const plugin = plugins.find((item) => item.id === pluginId);
+    if (!plugin) return null;
+    return (
+      <PluginSettings
+        plugin={plugin}
+        groupId={group.group_id}
+        canEdit={canAdmin(group.role)}
+        record={enabled.data?.plugins.find((item) => item.id === plugin.id)}
+        members={members.data?.members ?? []}
+        refresh={enabled.refresh}
+        onClose={onClose}
+      />
+    );
+  }
   return (
     <Card className={className}>
       <CardHeader title="Plugins" subtitle="Optional integrations provided by separately hosted services." />
@@ -49,6 +72,7 @@ function PluginSettings({
   record,
   members,
   refresh,
+  onClose,
 }: {
   plugin: Plugin;
   groupId: string;
@@ -56,6 +80,7 @@ function PluginSettings({
   record?: GroupPlugin;
   members: Schemas["Member"][];
   refresh: () => Promise<void>;
+  onClose?: () => void;
 }) {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
@@ -113,6 +138,7 @@ function PluginSettings({
       <CardHeader
         title={plugin.name}
         subtitle={`${plugin.version} · ${record?.enabled ? "Enabled" : "Not enabled"}`}
+        actions={onClose && <Button variant="ghost" onClick={onClose}>Close</Button>}
       />
       <div className="space-y-4 p-4">
         {plugin.settings.filter((field) => !field.hidden).map((field) => (
@@ -122,7 +148,7 @@ function PluginSettings({
               ...field,
               help: field.type === "secret" || field.secret
                 ? secretNames.includes(field.name)
-                  ? "Set — leave blank to keep."
+                  ? "Set. Leave blank to keep the current value."
                   : "Secret value."
                 : field.help,
             }}

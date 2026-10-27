@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 var (
@@ -22,15 +23,17 @@ var (
 )
 
 type Field struct {
-	Name     string   `json:"name"`
-	Type     string   `json:"type"`
-	Default  any      `json:"default,omitempty"`
-	Required bool     `json:"required,omitempty"`
-	Secret   bool     `json:"secret,omitempty"`
-	Hidden   bool     `json:"hidden,omitempty"`
-	Options  []string `json:"options,omitempty"`
-	Help     string   `json:"help,omitempty"`
-	Requires string   `json:"requires,omitempty"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Default     any      `json:"default,omitempty"`
+	Required    bool     `json:"required,omitempty"`
+	Secret      bool     `json:"secret,omitempty"`
+	Hidden      bool     `json:"hidden,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Help        string   `json:"help,omitempty"`
+	Requires    string   `json:"requires,omitempty"`
+	Label       string   `json:"label,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
 func contains(values []string, value string) bool {
@@ -143,6 +146,7 @@ type Page struct {
 type Manifest struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
+	Description  string  `json:"description,omitempty"`
 	Version      string  `json:"version"`
 	BaseURL      string  `json:"base_url"`
 	SecretEnv    string  `json:"secret_env,omitempty"`
@@ -324,6 +328,12 @@ func validateFields(fields []Field, setting bool) error {
 	for _, field := range fields {
 		if !fieldName.MatchString(field.Name) {
 			return fmt.Errorf("field name %q is invalid", field.Name)
+		}
+		if utf8.RuneCountInString(field.Label) > 60 {
+			return fmt.Errorf("%s: label must be 60 characters or fewer", field.Name)
+		}
+		if utf8.RuneCountInString(field.Placeholder) > 120 {
+			return fmt.Errorf("%s: placeholder must be 120 characters or fewer", field.Name)
 		}
 		if _, ok := names[field.Name]; ok {
 			return fmt.Errorf("duplicate field name %q", field.Name)

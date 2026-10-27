@@ -1708,6 +1708,7 @@ components:
         name: { type: string }
         description: { type: string }
         version: { type: string }
+        installed_version: { type: string, nullable: true }
         scopes:
           type: array
           items: { type: string }
@@ -1767,6 +1768,7 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
+        description: { type: string }
         version: { type: string }
         settings:
           type: array
@@ -1790,6 +1792,8 @@ components:
           type: array
           items: { type: string }
         help: { type: string }
+        label: { type: string, maxLength: 60 }
+        placeholder: { type: string, maxLength: 120 }
         requires:
           type: string
           enum: [steam_id]

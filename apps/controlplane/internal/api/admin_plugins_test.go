@@ -100,8 +100,9 @@ func TestAdminPluginListIncludesUpgradeError(t *testing.T) {
 		t.Fatalf("admin plugin list item = %T, want object", items[0])
 	}
 	if plugin["status"] != "running" || plugin["upgrade_error"] != "candidate did not become healthy" ||
+		plugin["installed_version"] != "1.0" ||
 		plugin["update_available"] != true {
-		t.Fatalf("admin plugin update state = %v, want running with update available and upgrade error", plugin)
+		t.Fatalf("admin plugin update state = %v, want the installed version, running with update available and upgrade error", plugin)
 	}
 }
 

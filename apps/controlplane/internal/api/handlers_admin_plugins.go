@@ -122,8 +122,10 @@ func adminPlugin(entry plugins.CatalogEntry, row store.InstalledPlugin, installe
 	}
 	if installed {
 		status, message := row.Status, row.Error
+		installedVersion := row.Version
 		result.Status = &status
 		result.Error = &message
+		result.InstalledVersion = &installedVersion
 		upgradeError := row.UpgradeError
 		result.UpgradeError = &upgradeError
 		result.InstalledAt = &row.InstalledAt

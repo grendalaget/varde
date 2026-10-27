@@ -1,5 +1,6 @@
 import { Checkbox } from "@heroui/react";
 import type { GameConfigField, Schemas } from "../api/client";
+import { Link } from "../lib/router";
 import { Field, inputClass, Toggle } from "./ui";
 
 type ConfigField = GameConfigField | Schemas["PluginField"];
@@ -10,16 +11,20 @@ export function ConfigInput({
   onChange,
   members = [],
   disabled = false,
+  showSteamHint = false,
 }: {
   f: ConfigField;
   value: unknown;
   onChange: (v: unknown) => void;
   members?: Schemas["Member"][];
   disabled?: boolean;
+  showSteamHint?: boolean;
 }) {
-  const label = f.name
+  const fallbackLabel = f.name
     .replace(/_/g, " ")
     .replace(/^\w/, (c) => c.toUpperCase());
+  const label = ("label" in f ? f.label?.trim() : "") || fallbackLabel;
+  const placeholder = "placeholder" in f ? f.placeholder : undefined;
   if (f.type === "bool") {
     return (
       <Toggle checked={!!value} disabled={disabled} onChange={onChange} label={label}>
@@ -99,6 +104,18 @@ export function ConfigInput({
               </Checkbox>
             );
           })}
+          {showSteamHint && requiresSteam && (
+            <p className="pt-1 text-xs text-muted">
+              Members without a Steam ID can link one in{" "}
+              <Link
+                to="/settings"
+                className="text-foreground underline decoration-muted underline-offset-2 hover:decoration-foreground"
+              >
+                Settings
+              </Link>
+              .
+            </p>
+          )}
         </div>
       </Field>
     );
@@ -131,6 +148,11 @@ export function ConfigInput({
           required={f.required}
           disabled={disabled}
           value={value == null ? "" : String(value)}
+          placeholder={
+            f.type === "string" || f.type === "secret" || f.secret
+              ? placeholder
+              : undefined
+          }
           onChange={(e) =>
             onChange(
               f.type === "int"

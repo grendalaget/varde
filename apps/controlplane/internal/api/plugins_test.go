@@ -75,10 +75,14 @@ func TestPluginSettingsListActionAndErrorMapping(t *testing.T) {
 	defer pluginServer.Close()
 
 	manifest := map[string]any{
-		"id": "fake-plugin", "name": "Fake plugin", "version": "1", "service_token": "fake-plugin-token",
+		"id": "fake-plugin", "name": "Fake plugin", "description": "Plugin for UI testing",
+		"version": "1", "service_token": "fake-plugin-token",
 		"base_url": pluginServer.URL, "secret_env": "FAKE_PLUGIN_SECRET",
 		"settings": []any{
-			map[string]any{"name": "api_key", "type": "secret", "required": true},
+			map[string]any{
+				"name": "api_key", "type": "secret", "required": true,
+				"label": "API token", "placeholder": "Paste token",
+			},
 			map[string]any{"name": "mode", "type": "select", "options": []string{"one", "two"}},
 			map[string]any{"name": "cached", "type": "string", "hidden": true},
 		},
@@ -138,9 +142,17 @@ func TestPluginSettingsListActionAndErrorMapping(t *testing.T) {
 	}
 	plugins := resp.Body["plugins"].([]any)
 	pluginInfo := plugins[0].(map[string]any)
+	if pluginInfo["description"] != "Plugin for UI testing" {
+		t.Errorf("GET /v1/plugins description = %v, want manifest description", pluginInfo["description"])
+	}
 	for _, field := range pluginInfo["settings"].([]any) {
-		if field.(map[string]any)["name"] == "cached" {
+		info := field.(map[string]any)
+		if info["name"] == "cached" {
 			t.Fatal("GET /v1/plugins exposed hidden setting")
+		}
+		if info["name"] == "api_key" &&
+			(info["label"] != "API token" || info["placeholder"] != "Paste token") {
+			t.Errorf("GET /v1/plugins field metadata = %v, want label and placeholder", info)
 		}
 	}
 
@@ -388,6 +400,12 @@ func TestPluginSettingsListActionAndErrorMapping(t *testing.T) {
 	}
 	if stored != 0 {
 		t.Errorf("failed settings PUT stored %d plugin rows, want 0", stored)
+	}
+	failStatus.Store(http.StatusBadGateway)
+	if r := e.do("PUT", "/v1/groups/"+e.group+"/plugins/fake-plugin",
+		map[string]any{"settings": map[string]any{"api_key": "bad", "mode": "one"}}, e.token); r.Status != http.StatusBadGateway ||
+		r.Body["code"] != "plugin_unavailable" || r.Body["message"] != "plugin says no" {
+		t.Errorf("plugin 5xx settings PUT = %d %s, want plugin message", r.Status, r.Raw)
 	}
 	failStatus.Store(0)
 }

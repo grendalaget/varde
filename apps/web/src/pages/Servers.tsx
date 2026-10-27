@@ -1,10 +1,13 @@
-import { api, type Server } from "../api/client";
+import { useEffect, useState } from "react";
+import { api, errorMessage, type Server } from "../api/client";
 import {
   Badge,
   Button,
   Card,
+  CardHeader,
   CopyText,
   Empty,
+  ErrorNote,
   PageHeader,
   ServerStateBadge,
 } from "../components/ui";
@@ -12,7 +15,8 @@ import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { timeAgo } from "../lib/format";
 import { Link, navigate } from "../lib/router";
-import { useSession } from "../lib/session";
+import { canAdmin, useSession } from "../lib/session";
+import PluginSettingsPanel from "./PluginSettings";
 import SaveSafety from "../components/SaveSafety";
 import { HostMarker, ServerMark } from "../components/Logo";
 import { isCrossplayEnabled, useGames } from "../lib/games";
@@ -47,6 +51,7 @@ export default function Servers() {
           </Button>
         }
       />
+      <PluginSetup />
       {!loading && servers.length === 0 && (
         <Card className="vd-enter">
           <Empty>
@@ -72,6 +77,75 @@ export default function Servers() {
         ))}
       </div>
     </>
+  );
+}
+
+function PluginSetup() {
+  const { group } = useSession();
+  const catalog = useLoad(() => api.GET("/v1/plugins"), []);
+  const enabledPlugins = useLoad(
+    () =>
+      api.GET("/v1/groups/{groupId}/plugins", {
+        params: { path: { groupId: group.group_id } },
+      }),
+    [group.group_id],
+  );
+  const refreshEnabled = enabledPlugins.refresh;
+  useEffect(() => {
+    const refresh = () => void refreshEnabled();
+    window.addEventListener("varde:plugins-changed", refresh);
+    return () => window.removeEventListener("varde:plugins-changed", refresh);
+  }, [refreshEnabled]);
+  const [setupPluginId, setSetupPluginId] = useState<string | null>(null);
+
+  if (!canAdmin(group.role)) return null;
+  if (catalog.loading || enabledPlugins.loading) return null;
+  const enabled = new Set(
+    (enabledPlugins.data?.plugins ?? [])
+      .filter((plugin) => plugin.enabled)
+      .map((plugin) => plugin.id),
+  );
+  const available = (catalog.data?.plugins ?? []).filter(
+    (plugin) => !enabled.has(plugin.id),
+  );
+  const setupError = [
+    catalog.error ? errorMessage(catalog.error) : "",
+    enabledPlugins.error ? errorMessage(enabledPlugins.error) : "",
+  ].filter(Boolean).join(" ");
+
+  return (
+    <section className="mb-6 space-y-4">
+      {setupError && <ErrorNote>{setupError}</ErrorNote>}
+      {available.length > 0 && (
+        <>
+          <h2 className="text-base font-semibold text-foreground">Set up plugins</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            {available.map((plugin) => (
+              <Card key={plugin.id}>
+                <CardHeader
+                  title={plugin.name}
+                  subtitle={plugin.description || undefined}
+                />
+                <div className="flex justify-end p-4 pt-0">
+                  <Button
+                    variant="primary"
+                    onClick={() => setSetupPluginId(plugin.id)}
+                  >
+                    Set up
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+      {setupPluginId && (
+        <PluginSettingsPanel
+          pluginId={setupPluginId}
+          onClose={() => setSetupPluginId(null)}
+        />
+      )}
+    </section>
   );
 }
 

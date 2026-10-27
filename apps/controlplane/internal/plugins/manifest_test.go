@@ -173,6 +173,35 @@ func TestLoadManifestRejectsSecretDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadManifestValidatesOptionalFieldLabelsAndPlaceholders(t *testing.T) {
+	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
+
+	t.Run("optional", func(t *testing.T) {
+		path := writeManifest(t, t.TempDir(), "plugin.json", validManifest())
+		if _, err := Load([]string{path}); err != nil {
+			t.Fatalf("Load(%q) error = %v", path, err)
+		}
+	})
+
+	t.Run("label too long", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Settings[0].Label = strings.Repeat("x", 61)
+		path := writeManifest(t, t.TempDir(), "plugin.json", manifest)
+		if _, err := Load([]string{path}); err == nil || !strings.Contains(err.Error(), "label") {
+			t.Fatalf("Load(%q) error = %v, want label length error", path, err)
+		}
+	})
+
+	t.Run("placeholder too long", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Settings[0].Placeholder = strings.Repeat("x", 121)
+		path := writeManifest(t, t.TempDir(), "plugin.json", manifest)
+		if _, err := Load([]string{path}); err == nil || !strings.Contains(err.Error(), "placeholder") {
+			t.Fatalf("Load(%q) error = %v, want placeholder length error", path, err)
+		}
+	})
+}
+
 func TestLoadManifestValidatesSecretFieldTypes(t *testing.T) {
 	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
 	tests := []struct {

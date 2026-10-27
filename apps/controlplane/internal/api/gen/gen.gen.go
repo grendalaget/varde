@@ -795,18 +795,19 @@ type AdminPlugin struct {
 		Sha256 string `json:"sha256"`
 		Url    string `json:"url"`
 	} `json:"assets"`
-	Description     string   `json:"description"`
-	Error           *string  `json:"error,omitempty"`
-	Id              string   `json:"id"`
-	Installed       bool     `json:"installed"`
-	InstalledAt     *int64   `json:"installed_at,omitempty"`
-	Name            string   `json:"name"`
-	Scopes          []string `json:"scopes"`
-	Status          *string  `json:"status,omitempty"`
-	UpdateAvailable bool     `json:"update_available"`
-	UpdatedAt       *int64   `json:"updated_at,omitempty"`
-	UpgradeError    *string  `json:"upgrade_error,omitempty"`
-	Version         string   `json:"version"`
+	Description      string   `json:"description"`
+	Error            *string  `json:"error,omitempty"`
+	Id               string   `json:"id"`
+	Installed        bool     `json:"installed"`
+	InstalledAt      *int64   `json:"installed_at,omitempty"`
+	InstalledVersion *string  `json:"installed_version,omitempty"`
+	Name             string   `json:"name"`
+	Scopes           []string `json:"scopes"`
+	Status           *string  `json:"status,omitempty"`
+	UpdateAvailable  bool     `json:"update_available"`
+	UpdatedAt        *int64   `json:"updated_at,omitempty"`
+	UpgradeError     *string  `json:"upgrade_error,omitempty"`
+	Version          string   `json:"version"`
 }
 
 // AgentDirectives defines model for AgentDirectives.
@@ -1438,11 +1439,12 @@ type ObservedState string
 
 // Plugin defines model for Plugin.
 type Plugin struct {
-	Id       string        `json:"id"`
-	Name     string        `json:"name"`
-	Pages    []PluginPage  `json:"pages"`
-	Settings []PluginField `json:"settings"`
-	Version  string        `json:"version"`
+	Description *string       `json:"description,omitempty"`
+	Id          string        `json:"id"`
+	Name        string        `json:"name"`
+	Pages       []PluginPage  `json:"pages"`
+	Settings    []PluginField `json:"settings"`
+	Version     string        `json:"version"`
 }
 
 // PluginAction defines model for PluginAction.
@@ -1467,15 +1469,17 @@ type PluginActionResponse struct {
 
 // PluginField defines model for PluginField.
 type PluginField struct {
-	Default  interface{}          `json:"default,omitempty"`
-	Help     *string              `json:"help,omitempty"`
-	Hidden   *bool                `json:"hidden,omitempty"`
-	Name     string               `json:"name"`
-	Options  *[]string            `json:"options,omitempty"`
-	Required *bool                `json:"required,omitempty"`
-	Requires *PluginFieldRequires `json:"requires,omitempty"`
-	Secret   *bool                `json:"secret,omitempty"`
-	Type     PluginFieldType      `json:"type"`
+	Default     interface{}          `json:"default,omitempty"`
+	Help        *string              `json:"help,omitempty"`
+	Hidden      *bool                `json:"hidden,omitempty"`
+	Label       *string              `json:"label,omitempty"`
+	Name        string               `json:"name"`
+	Options     *[]string            `json:"options,omitempty"`
+	Placeholder *string              `json:"placeholder,omitempty"`
+	Required    *bool                `json:"required,omitempty"`
+	Requires    *PluginFieldRequires `json:"requires,omitempty"`
+	Secret      *bool                `json:"secret,omitempty"`
+	Type        PluginFieldType      `json:"type"`
 }
 
 // PluginFieldRequires defines model for PluginField.Requires.

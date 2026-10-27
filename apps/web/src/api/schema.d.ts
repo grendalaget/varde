@@ -1079,6 +1079,7 @@ export interface components {
             name: string;
             description: string;
             version: string;
+            installed_version?: string | null;
             scopes: string[];
             assets: {
                 [key: string]: {
@@ -1136,6 +1137,7 @@ export interface components {
         Plugin: {
             id: string;
             name: string;
+            description?: string;
             version: string;
             settings: components["schemas"]["PluginField"][];
             pages: components["schemas"]["PluginPage"][];
@@ -1153,6 +1155,8 @@ export interface components {
             hidden: boolean;
             options?: string[];
             help?: string;
+            label?: string;
+            placeholder?: string;
             /** @enum {string} */
             requires?: "steam_id";
         };
