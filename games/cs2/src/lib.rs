@@ -89,6 +89,7 @@ impl Cs2Driver {
         Ok(ctx.deployment_dir.join("cs2-servers").join(ctx.server_id))
     }
 
+    #[cfg(target_os = "linux")]
     fn gameinfo_search_paths(ctx: &DriverContext<'_>) -> Result<Vec<String>> {
         let mut paths = Vec::new();
         for addon in ctx.addons.iter().filter(|addon| addon.target == "game") {
@@ -135,6 +136,7 @@ impl Cs2Driver {
         Ok(paths)
     }
 
+    #[cfg(target_os = "linux")]
     fn insert_gameinfo_search_paths(path: &Path, search_paths: &[String]) -> Result<()> {
         if search_paths.is_empty() {
             return Ok(());

@@ -97,6 +97,7 @@ fn fake_steam_install(root: &Path) -> PathBuf {
     dir
 }
 
+#[cfg(target_os = "linux")]
 const GAMEINFO_SEARCH_PATHS: &str = "\t\tSearchPaths\n\
 \t\t{\n\
 \t\t\tGame_LowViolence\tcsgo_lv // Perfect World content override\n\
@@ -110,6 +111,7 @@ const GAMEINFO_SEARCH_PATHS: &str = "\t\tSearchPaths\n\
 \t\t\tOfficialAddonRoot\tcsgo_community_addons\n\
 \t\t}\n";
 
+#[cfg(target_os = "linux")]
 fn fake_addon_install(root: &Path) -> PathBuf {
     let dir = root.join("addon-install");
     for path in [
@@ -163,6 +165,7 @@ fn fake_addon_install(root: &Path) -> PathBuf {
     dir
 }
 
+#[cfg(target_os = "linux")]
 fn addon_fixture(root: &Path, options: Value) -> PreparedAddon {
     let addon_root = root.join("addon-root");
     std::fs::create_dir_all(addon_root.join("readyup/bin/linuxsteamrt64")).unwrap();
@@ -184,6 +187,7 @@ fn addon_fixture(root: &Path, options: Value) -> PreparedAddon {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn select_install(ctx: &DriverContext<'_>, dir: &Path, steamclient: Option<PathBuf>) {
     std::fs::write(
         ctx.deployment_dir.join("cs2-install.json"),
@@ -197,6 +201,7 @@ fn select_install(ctx: &DriverContext<'_>, dir: &Path, steamclient: Option<PathB
     .unwrap();
 }
 
+#[cfg(target_os = "linux")]
 fn tree_hash(root: &Path) -> u64 {
     fn collect(root: &Path, dir: &Path, items: &mut Vec<(PathBuf, u8, Vec<u8>)>) {
         for entry in std::fs::read_dir(dir).unwrap() {
@@ -1024,7 +1029,14 @@ async fn addon_configure_is_linux_only() {
     let tmp = tempfile::tempdir().unwrap();
     let config = json!({"server_name":"Addon server"});
     let deployment = DeploymentSpec::parse(&json!({}));
-    let addon = addon_fixture(tmp.path(), json!({}));
+    let addon = PreparedAddon {
+        plugin_id: "test-plugin".into(),
+        addon_id: "readyup".into(),
+        root: tmp.path().join("addon-root"),
+        target: "game".into(),
+        driver_options: json!({}),
+        files: vec![],
+    };
     let mut ctx = context(tmp.path(), &config, &deployment);
     ctx.addons = std::slice::from_ref(&addon);
 
