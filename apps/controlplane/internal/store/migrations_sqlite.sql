@@ -100,6 +100,23 @@ CREATE TABLE IF NOT EXISTS service_tokens (
     revoked_at   BIGINT
 );
 
+CREATE TABLE IF NOT EXISTS installed_plugins (
+    id                TEXT PRIMARY KEY,
+    version           TEXT NOT NULL,
+    asset_url         TEXT NOT NULL DEFAULT '',
+    archive_sha256    TEXT NOT NULL DEFAULT '',
+    binary_sha256     TEXT NOT NULL DEFAULT '',
+    manifest_json     TEXT NOT NULL DEFAULT '',
+    sealed_secret     TEXT NOT NULL,
+    service_token_id  TEXT NOT NULL REFERENCES service_tokens(id),
+    port              BIGINT NOT NULL,
+    status            TEXT NOT NULL,
+    error             TEXT NOT NULL DEFAULT '',
+    upgrade_error     TEXT NOT NULL DEFAULT '',
+    installed_at      BIGINT NOT NULL,
+    updated_at        BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS device_links (
     user_code        TEXT PRIMARY KEY,
     device_code_hash TEXT NOT NULL UNIQUE,

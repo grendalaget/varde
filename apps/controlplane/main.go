@@ -29,6 +29,7 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/auth"
 	"github.com/grendalaget/varde/apps/controlplane/internal/outbound"
 	"github.com/grendalaget/varde/apps/controlplane/internal/plugins"
+	"github.com/grendalaget/varde/apps/controlplane/internal/plugins/supervisor"
 	"github.com/grendalaget/varde/apps/controlplane/internal/reconciler"
 	"github.com/grendalaget/varde/apps/controlplane/internal/secrets"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
@@ -49,6 +50,7 @@ func migrateOnPromotion(
 	ctx context.Context,
 	leader interface{ IsLeader() bool },
 	migrate func() error,
+	migrationComplete chan<- struct{},
 	every time.Duration,
 	log *slog.Logger,
 ) {
@@ -66,9 +68,24 @@ func migrateOnPromotion(
 				log.Warn("failed to apply migrations after promotion to LiteFS primary", "error", err)
 				continue
 			}
+			close(migrationComplete)
 			log.Info("applied migrations after promotion to LiteFS primary")
 			return
 		}
+	}
+}
+
+type migrationGatedLeader struct {
+	leader   interface{ IsLeader() bool }
+	migrated <-chan struct{}
+}
+
+func (l migrationGatedLeader) IsLeader() bool {
+	select {
+	case <-l.migrated:
+		return l.leader.IsLeader()
+	default:
+		return false
 	}
 }
 
@@ -102,6 +119,19 @@ func sqlitePath(url string) string {
 	return p
 }
 
+func loopbackURL(listen, publicURL string) string {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		if parsed, parseErr := url.Parse(publicURL); parseErr == nil {
+			port = parsed.Port()
+		}
+	}
+	if port == "" {
+		port = "8080"
+	}
+	return "http://127.0.0.1:" + port
+}
+
 // relayFlags collects repeatable --relay id=…,addr=… flags.
 type relayFlags []api.RelayConf
 
@@ -130,6 +160,7 @@ func (r *relayFlags) Set(v string) error {
 type serveCfg struct {
 	listen           string
 	dbURL            string
+	dataDir          string
 	secretsKeyFile   string
 	publicURL        string
 	steamAPIKey      string
@@ -161,6 +192,7 @@ func serveFlags() (*flag.FlagSet, *serveCfg) {
 	fs := flag.NewFlagSet("varde-control-plane", flag.ExitOnError)
 	fs.StringVar(&cfg.listen, "listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
+	fs.StringVar(&cfg.dataDir, "data-dir", envOr("VARDE_DATA_DIR", ""), "directory for control-plane plugin data")
 	fs.StringVar(&cfg.secretsKeyFile, "secrets-key-file", envOr("VARDE_SECRETS_KEY_FILE", ""), "file containing the 32-byte secrets encryption key")
 	fs.StringVar(&cfg.publicURL, "public-url", envOr("VARDE_PUBLIC_URL", "http://localhost:8080"), "external base URL for device-link verification")
 	fs.StringVar(&cfg.steamAPIKey, "steam-api-key", envOr("VARDE_STEAM_API_KEY", ""), "optional Steam Web API key for profile details")
@@ -248,6 +280,19 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 			return fmt.Errorf("create db dir: %w", err)
 		}
 	}
+	dataDir := cfg.dataDir
+	if dataDir == "" {
+		if p := sqlitePath(cfg.dbURL); p != "" {
+			dataDir = filepath.Dir(p)
+		} else if runtime.GOOS == "windows" && os.Getenv("ProgramData") != "" {
+			dataDir = filepath.Join(os.Getenv("ProgramData"), "VardeCP")
+		} else {
+			dataDir = "/var/lib/varde-cp"
+		}
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
 	primaryFile := envOr("VARDE_PRIMARY_FILE", "")
 	storeOptions := store.Options{}
 	if primaryFile != "" {
@@ -300,19 +345,25 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	//     write lease (VARDE_NODE_NAME identifies us; defaults to hostname)
 	//   postgres             — session-level advisory lock via Elector.Run
 	//   sqlite               — no-op leader (single-writer by definition)
+	var primaryFileElector *store.PrimaryFileElector
+	var pluginLeader interface{ IsLeader() bool }
 	if primaryFile != "" {
 		self := envOr("VARDE_NODE_NAME", "")
 		if self == "" {
 			self, _ = os.Hostname()
 		}
-		elector := store.NewPrimaryFileElector(primaryFile, self)
-		recon.Leader = elector
+		primaryFileElector = store.NewPrimaryFileElector(primaryFile, self)
+		recon.Leader = primaryFileElector
+		pluginLeader = primaryFileElector
 		if storeOptions.SkipMigrate {
-			go migrateOnPromotion(ctx, elector, st.Migrate, time.Second, log)
+			migrationComplete := make(chan struct{})
+			pluginLeader = migrationGatedLeader{leader: primaryFileElector, migrated: migrationComplete}
+			go migrateOnPromotion(ctx, primaryFileElector, st.Migrate, migrationComplete, time.Second, log)
 		}
 	} else {
 		elector := st.NewElector(0x7661726465637000 /* "vardecp\0" */, log)
 		recon.Leader = elector
+		pluginLeader = elector
 		go elector.Run(ctx)
 	}
 
@@ -363,17 +414,37 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		return fmt.Errorf("unknown auth mode %q (want local|federated)", cfg.authMode)
 	}
 
+	catalog, err := plugins.LoadCatalog()
+	if err != nil {
+		return fmt.Errorf("plugin catalog: %w", err)
+	}
+	controlPlaneURL := loopbackURL(cfg.listen, cfg.publicURL)
+	pluginSupervisor, err := supervisor.New(supervisor.Options{
+		DataDir: dataDir, ControlPlaneURL: controlPlaneURL, Store: st, Registry: pluginRegistry,
+		Catalog: catalog, Secrets: secretManager, HTTPClient: outbound.NewClient(10 * time.Second),
+		Leader: pluginLeader, Log: log,
+	})
+	if err != nil {
+		return fmt.Errorf("plugin supervisor: %w", err)
+	}
+	var primaryID func() string
+	if primaryFileElector != nil {
+		primaryID = primaryFileElector.Primary
+	}
+
 	srv := &api.Server{
-		Store:      st,
-		Auth:       local,
-		Federation: fed,
-		Secrets:    secretManager,
-		Plugins:    pluginRegistry,
-		PluginHTTP: outbound.NewClient(10 * time.Second),
-		Cfg:        api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Dev: cfg.dev, Timings: timings, Relays: cfg.relays, Version: version},
-		Recon:      recon,
-		RelayKey:   relayKey,
-		Log:        log,
+		Store:         st,
+		Auth:          local,
+		Federation:    fed,
+		Secrets:       secretManager,
+		Plugins:       pluginRegistry,
+		PluginManager: pluginSupervisor,
+		PluginHTTP:    outbound.NewClient(10 * time.Second),
+		Cfg:           api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Dev: cfg.dev, Timings: timings, Relays: cfg.relays, Version: version, Operators: api.ParseOperatorEmails(os.Getenv("VARDE_OPERATORS"))},
+		Recon:         recon,
+		PrimaryID:     primaryID,
+		RelayKey:      relayKey,
+		Log:           log,
 	}
 
 	handler := api.NewHandler(srv, webui.Handler())
@@ -386,6 +457,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 
 	go recon.Run(ctx)
 	go recon.RunRetention(ctx)
+	go pluginSupervisor.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

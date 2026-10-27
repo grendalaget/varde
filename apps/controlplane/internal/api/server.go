@@ -35,6 +35,15 @@ type Config struct {
 	Timings     reconciler.Timings
 	Relays      []RelayConf
 	Version     string
+	Operators   map[string]struct{}
+}
+
+type PluginManager interface {
+	Catalog() []plugins.CatalogEntry
+	Installed(context.Context) ([]store.InstalledPlugin, error)
+	Install(context.Context, string) (store.InstalledPlugin, error)
+	Update(context.Context, string) (store.InstalledPlugin, error)
+	Uninstall(context.Context, string) error
 }
 
 // RelayConf is one --relay id=…,addr=… entry.
@@ -52,10 +61,12 @@ type Server struct {
 	Cfg            Config
 	Secrets        *secrets.Manager
 	Plugins        *plugins.Registry
+	PluginManager  PluginManager
 	PluginHTTP     *http.Client
 	SteamOpenIDURL string
 	SteamAPIBase   string
 	Recon          *reconciler.Reconciler
+	PrimaryID      func() string
 	RelayKey       ed25519.PrivateKey // CP signing key for relay tokens
 	Log            *slog.Logger
 
@@ -202,7 +213,7 @@ func (s *Server) requireRole(ctx context.Context, groupID string, min string) (*
 	}
 	role, err := s.Store.MemberRole(ctx, groupID, u.ID)
 	if err != nil {
-		if u.IsOperator == 1 {
+		if s.isOperator(u) {
 			return u, "owner", nil
 		}
 		return nil, "", errResp(gen.Forbidden, "not a member of this group", nil)
@@ -212,6 +223,28 @@ func (s *Server) requireRole(ctx context.Context, groupID string, min string) (*
 		return nil, "", errResp(gen.Forbidden, "insufficient role", nil)
 	}
 	return u, role, nil
+}
+
+func ParseOperatorEmails(value string) map[string]struct{} {
+	operators := make(map[string]struct{})
+	for _, email := range strings.Split(value, ",") {
+		email = strings.ToLower(strings.TrimSpace(email))
+		if email != "" {
+			operators[email] = struct{}{}
+		}
+	}
+	return operators
+}
+
+func (s *Server) isOperator(user *store.User) bool {
+	if user == nil {
+		return false
+	}
+	if user.IsOperator == 1 {
+		return true
+	}
+	_, ok := s.Cfg.Operators[strings.ToLower(strings.TrimSpace(user.Email))]
+	return ok
 }
 
 // scopedActor authorizes either a service token carrying the given scope or
@@ -224,11 +257,23 @@ func (s *Server) scopedActor(ctx context.Context, groupID, scope, minRole string
 		if !st.AllowsGroup(groupID) {
 			return "", "", errResp(gen.Forbidden, "service token not bound to group", nil)
 		}
-		for _, plugin := range s.Plugins.All() {
-			if plugin.ServiceToken != st.Name {
-				continue
+		var pluginID string
+		installed, err := s.Store.InstalledPluginByServiceTokenID(ctx, st.ID)
+		if err == nil {
+			pluginID = installed.ID
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return "", "", err
+		}
+		if pluginID == "" && s.Plugins != nil {
+			for _, plugin := range s.Plugins.All() {
+				if plugin.ServiceToken == st.Name {
+					pluginID = plugin.ID
+					break
+				}
 			}
-			if _, err := s.Store.GroupPlugin(ctx, groupID, plugin.ID); errors.Is(err, sql.ErrNoRows) {
+		}
+		if pluginID != "" {
+			if _, err := s.Store.GroupPlugin(ctx, groupID, pluginID); errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrNotFound) {
 				return "", "", errResp(gen.Forbidden, "plugin not enabled for group", nil)
 			} else if err != nil {
 				return "", "", err
@@ -250,7 +295,7 @@ func (s *Server) requireOperator(ctx context.Context) (*store.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	if u.IsOperator != 1 {
+	if !s.isOperator(u) {
 		return nil, errResp(gen.Forbidden, "operator only", nil)
 	}
 	return u, nil

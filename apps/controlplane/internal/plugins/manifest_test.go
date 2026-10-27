@@ -62,6 +62,60 @@ func TestLoadManifestNormalizesAndReadsSecret(t *testing.T) {
 	}
 }
 
+func TestNewWithSecretOverridesRuntimeValues(t *testing.T) {
+	manifest, err := json.Marshal(validManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := strings.Repeat("s", 32)
+	plugin, err := NewWithSecret(manifest, "http://127.0.0.1:7310/", "plugin-fake-plugin", []byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plugin.BaseURL != "http://127.0.0.1:7310" || plugin.ServiceToken != "plugin-fake-plugin" {
+		t.Fatalf("runtime values = base URL %q, token %q", plugin.BaseURL, plugin.ServiceToken)
+	}
+	if plugin.SecretEnv != "" || plugin.SecretFile != "" || string(plugin.Secret) != secret {
+		t.Fatalf("in-memory secret configuration = env %q file %q secret length %d", plugin.SecretEnv, plugin.SecretFile, len(plugin.Secret))
+	}
+}
+
+func TestRegistryProtectsStaticPluginsAndRemovesDynamicPlugins(t *testing.T) {
+	t.Setenv("FAKE_PLUGIN_SECRET", strings.Repeat("s", 32))
+	path := writeManifest(t, t.TempDir(), "plugin.json", validManifest())
+	registry, err := Load([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Remove("fake-plugin"); err == nil || !strings.Contains(err.Error(), "static manifest") {
+		t.Fatalf("Remove(static) error = %v, want static manifest error", err)
+	}
+	manifest, err := json.Marshal(validManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic, err := NewWithSecret(manifest, "http://127.0.0.1:9001", "plugin-fake-plugin-dynamic", []byte(strings.Repeat("d", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic.ID = "dynamic-plugin"
+	if err := registry.Add(dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get(dynamic.ID); !ok {
+		t.Fatal("dynamic plugin missing after Add")
+	}
+	if err := registry.Remove(dynamic.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get(dynamic.ID); ok {
+		t.Fatal("dynamic plugin remains after Remove")
+	}
+	if err := registry.Remove(dynamic.ID); err == nil {
+		t.Fatal("Remove(missing) unexpectedly succeeded")
+	}
+}
+
 func TestLoadManifestReadsRelativeSecretFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "secret"), []byte(strings.Repeat("f", 32)+"\r\n"), 0o600); err != nil {

@@ -16,8 +16,14 @@ func TestPrimaryFileElector(t *testing.T) {
 	if !e.IsLeader() {
 		t.Fatal("absent primary file should lead (we are the primary)")
 	}
+	if e.Primary() != "node-a" {
+		t.Fatalf("primary id without file = %q, want node-a", e.Primary())
+	}
 	if err := os.WriteFile(p, []byte("node-b\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if e.Primary() != "node-b" {
+		t.Fatalf("primary id from file = %q, want node-b", e.Primary())
 	}
 	if e.IsLeader() {
 		t.Fatal("another node's name should not lead")
@@ -39,6 +45,9 @@ func TestPrimaryFileElector(t *testing.T) {
 	}
 	if e.IsLeader() {
 		t.Fatal("empty primary file is ambiguous and should not lead")
+	}
+	if e.Primary() != "" {
+		t.Fatalf("primary id from empty file = %q, want empty", e.Primary())
 	}
 	if err := os.Remove(p); err != nil {
 		t.Fatal(err)

@@ -789,6 +789,26 @@ func (e UpdateNodeJSONBodyAdminState) Valid() bool {
 	}
 }
 
+// AdminPlugin defines model for AdminPlugin.
+type AdminPlugin struct {
+	Assets map[string]struct {
+		Sha256 string `json:"sha256"`
+		Url    string `json:"url"`
+	} `json:"assets"`
+	Description     string   `json:"description"`
+	Error           *string  `json:"error,omitempty"`
+	Id              string   `json:"id"`
+	Installed       bool     `json:"installed"`
+	InstalledAt     *int64   `json:"installed_at,omitempty"`
+	Name            string   `json:"name"`
+	Scopes          []string `json:"scopes"`
+	Status          *string  `json:"status,omitempty"`
+	UpdateAvailable bool     `json:"update_available"`
+	UpdatedAt       *int64   `json:"updated_at,omitempty"`
+	UpgradeError    *string  `json:"upgrade_error,omitempty"`
+	Version         string   `json:"version"`
+}
+
 // AgentDirectives defines model for AgentDirectives.
 type AgentDirectives struct {
 	DeleteSnapshots *[]string `json:"delete_snapshots,omitempty"`
@@ -1333,7 +1353,8 @@ type Me struct {
 		Name    string `json:"name"`
 		Role    Role   `json:"role"`
 	} `json:"groups"`
-	User User `json:"user"`
+	Operator bool `json:"operator"`
+	User     User `json:"user"`
 }
 
 // Member defines model for Member.
@@ -1994,6 +2015,18 @@ type ServerInterface interface {
 
 	// (PUT /v1/admin/groups/{groupId}/limits)
 	AdminSetGroupLimits(w http.ResponseWriter, r *http.Request, groupId GroupId)
+
+	// (GET /v1/admin/plugins)
+	AdminListPlugins(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /v1/admin/plugins/{id})
+	AdminUninstallPlugin(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /v1/admin/plugins/{id}/install)
+	AdminInstallPlugin(w http.ResponseWriter, r *http.Request, id string)
+
+	// (POST /v1/admin/plugins/{id}/update)
+	AdminUpdatePlugin(w http.ResponseWriter, r *http.Request, id string)
 	// AgentSubmitCrashReport Upload one crash report captured on this machine.
 	// (POST /v1/agent/crash-reports)
 	AgentSubmitCrashReport(w http.ResponseWriter, r *http.Request)
@@ -2268,6 +2301,98 @@ func (siw *ServerInterfaceWrapper) AdminSetGroupLimits(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AdminSetGroupLimits(w, r, groupId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdminListPlugins operation middleware
+func (siw *ServerInterfaceWrapper) AdminListPlugins(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdminListPlugins(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdminUninstallPlugin operation middleware
+func (siw *ServerInterfaceWrapper) AdminUninstallPlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdminUninstallPlugin(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdminInstallPlugin operation middleware
+func (siw *ServerInterfaceWrapper) AdminInstallPlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdminInstallPlugin(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdminUpdatePlugin operation middleware
+func (siw *ServerInterfaceWrapper) AdminUpdatePlugin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdminUpdatePlugin(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4177,6 +4302,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/crash-reports", wrapper.ListCrashReports)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/crash-reports/{reportId}", wrapper.GetCrashReport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/groups", wrapper.AdminListGroups)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/plugins", wrapper.AdminListPlugins)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/plugins/{id}/install", wrapper.AdminInstallPlugin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/plugins/{id}/update", wrapper.AdminUpdatePlugin)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/admin/plugins/{id}", wrapper.AdminUninstallPlugin)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/admin/groups/{groupId}/limits", wrapper.AdminSetGroupLimits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/device", wrapper.AgentEnrollDevice)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agent/enroll/device/poll", wrapper.AgentEnrollDevicePoll)
@@ -4349,6 +4478,327 @@ func (response AdminSetGroupLimits403JSONResponse) VisitAdminSetGroupLimitsRespo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListPluginsRequestObject struct {
+}
+
+type AdminListPluginsResponseObject interface {
+	VisitAdminListPluginsResponse(w http.ResponseWriter) error
+}
+
+type AdminListPlugins200JSONResponse struct {
+	Plugins []AdminPlugin `json:"plugins"`
+}
+
+func (response AdminListPlugins200JSONResponse) VisitAdminListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListPlugins401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AdminListPlugins401JSONResponse) VisitAdminListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListPlugins403JSONResponse Error
+
+func (response AdminListPlugins403JSONResponse) VisitAdminListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminListPlugins503JSONResponse Error
+
+func (response AdminListPlugins503JSONResponse) VisitAdminListPluginsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUninstallPluginRequestObject struct {
+	Id string `json:"id"`
+}
+
+type AdminUninstallPluginResponseObject interface {
+	VisitAdminUninstallPluginResponse(w http.ResponseWriter) error
+}
+
+type AdminUninstallPlugin204Response struct {
+}
+
+func (response AdminUninstallPlugin204Response) VisitAdminUninstallPluginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type AdminUninstallPlugin401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AdminUninstallPlugin401JSONResponse) VisitAdminUninstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUninstallPlugin403JSONResponse Error
+
+func (response AdminUninstallPlugin403JSONResponse) VisitAdminUninstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUninstallPlugin404JSONResponse Error
+
+func (response AdminUninstallPlugin404JSONResponse) VisitAdminUninstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUninstallPlugin503JSONResponse Error
+
+func (response AdminUninstallPlugin503JSONResponse) VisitAdminUninstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPluginRequestObject struct {
+	Id string `json:"id"`
+}
+
+type AdminInstallPluginResponseObject interface {
+	VisitAdminInstallPluginResponse(w http.ResponseWriter) error
+}
+
+type AdminInstallPlugin200JSONResponse AdminPlugin
+
+func (response AdminInstallPlugin200JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPlugin401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AdminInstallPlugin401JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPlugin403JSONResponse Error
+
+func (response AdminInstallPlugin403JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPlugin404JSONResponse Error
+
+func (response AdminInstallPlugin404JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPlugin409JSONResponse Error
+
+func (response AdminInstallPlugin409JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminInstallPlugin500JSONResponse Error
+
+func (response AdminInstallPlugin500JSONResponse) VisitAdminInstallPluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePluginRequestObject struct {
+	Id string `json:"id"`
+}
+
+type AdminUpdatePluginResponseObject interface {
+	VisitAdminUpdatePluginResponse(w http.ResponseWriter) error
+}
+
+type AdminUpdatePlugin200JSONResponse AdminPlugin
+
+func (response AdminUpdatePlugin200JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePlugin401JSONResponse struct{ ErrorJSONResponse }
+
+func (response AdminUpdatePlugin401JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePlugin403JSONResponse Error
+
+func (response AdminUpdatePlugin403JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePlugin404JSONResponse Error
+
+func (response AdminUpdatePlugin404JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePlugin500JSONResponse Error
+
+func (response AdminUpdatePlugin500JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AdminUpdatePlugin503JSONResponse Error
+
+func (response AdminUpdatePlugin503JSONResponse) VisitAdminUpdatePluginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -8133,6 +8583,18 @@ type StrictServerInterface interface {
 
 	// (PUT /v1/admin/groups/{groupId}/limits)
 	AdminSetGroupLimits(ctx context.Context, request AdminSetGroupLimitsRequestObject) (AdminSetGroupLimitsResponseObject, error)
+
+	// (GET /v1/admin/plugins)
+	AdminListPlugins(ctx context.Context, request AdminListPluginsRequestObject) (AdminListPluginsResponseObject, error)
+
+	// (DELETE /v1/admin/plugins/{id})
+	AdminUninstallPlugin(ctx context.Context, request AdminUninstallPluginRequestObject) (AdminUninstallPluginResponseObject, error)
+
+	// (POST /v1/admin/plugins/{id}/install)
+	AdminInstallPlugin(ctx context.Context, request AdminInstallPluginRequestObject) (AdminInstallPluginResponseObject, error)
+
+	// (POST /v1/admin/plugins/{id}/update)
+	AdminUpdatePlugin(ctx context.Context, request AdminUpdatePluginRequestObject) (AdminUpdatePluginResponseObject, error)
 	// AgentSubmitCrashReport Upload one crash report captured on this machine.
 	// (POST /v1/agent/crash-reports)
 	AgentSubmitCrashReport(ctx context.Context, request AgentSubmitCrashReportRequestObject) (AgentSubmitCrashReportResponseObject, error)
@@ -8476,6 +8938,108 @@ func (sh *strictHandler) AdminSetGroupLimits(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(AdminSetGroupLimitsResponseObject); ok {
 		if err := validResponse.VisitAdminSetGroupLimitsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminListPlugins operation middleware
+func (sh *strictHandler) AdminListPlugins(w http.ResponseWriter, r *http.Request) {
+	var request AdminListPluginsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminListPlugins(ctx, request.(AdminListPluginsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminListPlugins")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AdminListPluginsResponseObject); ok {
+		if err := validResponse.VisitAdminListPluginsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminUninstallPlugin operation middleware
+func (sh *strictHandler) AdminUninstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
+	var request AdminUninstallPluginRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminUninstallPlugin(ctx, request.(AdminUninstallPluginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminUninstallPlugin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AdminUninstallPluginResponseObject); ok {
+		if err := validResponse.VisitAdminUninstallPluginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminInstallPlugin operation middleware
+func (sh *strictHandler) AdminInstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
+	var request AdminInstallPluginRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminInstallPlugin(ctx, request.(AdminInstallPluginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminInstallPlugin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AdminInstallPluginResponseObject); ok {
+		if err := validResponse.VisitAdminInstallPluginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AdminUpdatePlugin operation middleware
+func (sh *strictHandler) AdminUpdatePlugin(w http.ResponseWriter, r *http.Request, id string) {
+	var request AdminUpdatePluginRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AdminUpdatePlugin(ctx, request.(AdminUpdatePluginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AdminUpdatePlugin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AdminUpdatePluginResponseObject); ok {
+		if err := validResponse.VisitAdminUpdatePluginResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

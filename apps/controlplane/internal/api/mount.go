@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 // NewHandler builds the root handler: agent endpoints behind the signature
@@ -94,11 +95,77 @@ func NewHandler(s *Server, spa http.Handler) http.Handler {
 		case strings.HasSuffix(p, "/events/stream") && strings.HasPrefix(p, "/v1/groups/"):
 			s.userAuth(http.HandlerFunc(s.ServeSSE)).ServeHTTP(w, r)
 		case strings.HasPrefix(p, "/v1/") || p == "/healthz" || p == "/readyz":
-			s.userAuth(s.csrf(s.sessionCookies(genMux))).ServeHTTP(w, r)
+			handler := s.userAuth(s.csrf(s.sessionCookies(genMux)))
+			s.replayPluginRequests(handler).ServeHTTP(w, r)
 		default:
 			spa.ServeHTTP(w, r)
 		}
 	})
+}
+
+func (s *Server) replayPluginRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Recon == nil || s.Recon.Leader == nil || s.Recon.Leader.IsLeader() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		managed, err := s.managedPluginRequest(r)
+		if err != nil {
+			writeErr(w, http.StatusServiceUnavailable, gen.Internal, "plugin routing state is unavailable", nil)
+			return
+		}
+		if !managed {
+			next.ServeHTTP(w, r)
+			return
+		}
+		primary := ""
+		if s.PrimaryID != nil {
+			primary = strings.TrimSpace(s.PrimaryID())
+		}
+		if !validPrimaryID(primary) {
+			writeErr(w, http.StatusServiceUnavailable, gen.Internal, "plugin runs on the leader, but the primary control plane is unknown", nil)
+			return
+		}
+		w.Header().Set("fly-replay", "instance="+primary)
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func (s *Server) managedPluginRequest(r *http.Request) (bool, error) {
+	if r.URL.Path == "/v1/admin/plugins" || strings.HasPrefix(r.URL.Path, "/v1/admin/plugins/") {
+		return true, nil
+	}
+	segments := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	for index, segment := range segments {
+		if segment != "plugins" || index+1 >= len(segments) {
+			continue
+		}
+		pluginID := segments[index+1]
+		if pluginID == "" {
+			continue
+		}
+		_, err := s.Store.InstalledPlugin(r.Context(), pluginID)
+		if errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	return false, nil
+}
+
+func validPrimaryID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // maxBodyBytes is the request body cap for an API path. Crash reports carry

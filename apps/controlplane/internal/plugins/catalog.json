@@ -1,0 +1,35 @@
+[
+  {
+    "id": "autotournament",
+    "name": "Auto Tournament",
+    "description": "Connects Varde groups, CS2 servers, Auto Tournament, and Ready Up.",
+    "version": "0.1.0",
+    "scopes": ["members", "steam_ids", "servers", "server_addons", "events"],
+    "assets": {
+      "linux/amd64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-linux-amd64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "linux/arm64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-linux-arm64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "darwin/amd64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-darwin-amd64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "darwin/arm64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-darwin-arm64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "windows/amd64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-windows-amd64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "windows/arm64": {
+        "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-windows-arm64.tar.gz",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+]

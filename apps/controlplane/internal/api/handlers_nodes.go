@@ -483,12 +483,12 @@ func (s *Server) UpdateNode(ctx context.Context, req gen.UpdateNodeRequestObject
 	}
 	// members may manage "own" nodes (name/hosting toggle); admin+ for admin_state
 	role, rerr := s.Store.MemberRole(ctx, n.GroupID, u.ID)
-	if rerr != nil && u.IsOperator != 1 {
+	if rerr != nil && !s.isOperator(u) {
 		return nil, errResp(gen.Forbidden, "not a member of this group", nil)
 	}
 	// node ownership: the enrolling user, or admin/owner of the group, or an
 	// operator. Nodes with no owner (pre-column enrollments) are admin-only.
-	adminish := role == "admin" || role == "owner" || u.IsOperator == 1
+	adminish := role == "admin" || role == "owner" || s.isOperator(u)
 	owned := n.OwnerUserID != nil && *n.OwnerUserID == u.ID
 	if !adminish && !owned {
 		return nil, errResp(gen.Forbidden, "not the node owner", nil)
@@ -497,7 +497,7 @@ func (s *Server) UpdateNode(ctx context.Context, req gen.UpdateNodeRequestObject
 	if b == nil {
 		return nil, errResp(gen.Validation, "missing body", nil)
 	}
-	if b.AdminState != nil && role != "admin" && role != "owner" && u.IsOperator != 1 {
+	if b.AdminState != nil && role != "admin" && role != "owner" && !s.isOperator(u) {
 		return nil, errResp(gen.Forbidden, "admin_state requires admin", nil)
 	}
 	if b.Name != nil {
@@ -507,7 +507,7 @@ func (s *Server) UpdateNode(ctx context.Context, req gen.UpdateNodeRequestObject
 		n.HostingEnabled = b2i(*b.HostingEnabled)
 	}
 	if b.Anchor != nil {
-		if role != "admin" && role != "owner" && u.IsOperator != 1 {
+		if role != "admin" && role != "owner" && !s.isOperator(u) {
 			return nil, errResp(gen.Forbidden, "anchor requires admin", nil)
 		}
 		n.Anchor = b2i(*b.Anchor)
