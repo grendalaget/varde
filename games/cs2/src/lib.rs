@@ -197,7 +197,7 @@ impl Cs2Driver {
     }
 
     #[cfg(target_os = "linux")]
-    fn addon_destination_files(addon: &PreparedAddon) -> Result<Vec<PathBuf>> {
+    fn addon_destination_files(addon: &PreparedAddon) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
         fn collect(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             for entry in std::fs::read_dir(dir)? {
                 let entry = entry?;
@@ -218,8 +218,9 @@ impl Cs2Driver {
         if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
             return Err(format!("unsafe addon destination: {}", addon.root.display()).into());
         }
-        let mut files = Vec::new();
-        collect(&addon.root, &addon.root, &mut files)?;
+        let mut archive_files = Vec::new();
+        collect(&addon.root, &addon.root, &mut archive_files)?;
+        let mut file_keys = Vec::with_capacity(addon.files.len());
         for (key, _) in &addon.files {
             let valid = !key.is_empty()
                 && !key.starts_with('/')
@@ -231,9 +232,9 @@ impl Cs2Driver {
             if !valid {
                 return Err(format!("invalid addon file key: {key}").into());
             }
-            files.push(PathBuf::from(key));
+            file_keys.push(PathBuf::from(key));
         }
-        Ok(files)
+        Ok((archive_files, file_keys))
     }
 
     #[cfg(target_os = "linux")]
@@ -266,8 +267,20 @@ impl Cs2Driver {
 
     #[cfg(target_os = "linux")]
     fn check_addon_destinations(root: &Path, addon: &PreparedAddon) -> Result<()> {
+        let (archive_files, file_keys) = Self::addon_destination_files(addon)?;
+        for relative in archive_files {
+            if Self::addon_destination_exists(root, &relative)? {
+                return Err(format!(
+                    "cs2: addon {}/{} would replace {}",
+                    addon.plugin_id,
+                    addon.addon_id,
+                    relative.display()
+                )
+                .into());
+            }
+        }
         let mut seen = HashSet::new();
-        for relative in Self::addon_destination_files(addon)? {
+        for relative in file_keys {
             if !seen.insert(relative.clone()) || Self::addon_destination_exists(root, &relative)? {
                 return Err(format!(
                     "cs2: addon {}/{} would replace {}",

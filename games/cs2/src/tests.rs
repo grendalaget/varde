@@ -1049,6 +1049,34 @@ async fn addon_files_cannot_replace_existing_cs2_files() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn addon_files_can_overlay_their_own_archive_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    let config = json!({"server_name":"Addon server"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    select_install(&ctx, &install, None);
+    let mut addon = addon_fixture(tmp.path(), json!({}));
+    let archive_file = addon.root.join("cfg/ReadyUp/fleet.cfg");
+    std::fs::create_dir_all(archive_file.parent().unwrap()).unwrap();
+    std::fs::write(&archive_file, "archive settings").unwrap();
+    addon.files[0].1 = "overlay settings".into();
+    ctx.addons = std::slice::from_ref(&addon);
+
+    Cs2Driver.configure(&ctx).await.unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(
+            tmp.path()
+                .join("cs2-servers/cs2-test/game/csgo/cfg/ReadyUp/fleet.cfg")
+        )
+        .unwrap(),
+        "overlay settings"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn later_addon_cannot_replace_an_earlier_addon_file() {
     let tmp = tempfile::tempdir().unwrap();
     let install = fake_addon_install(tmp.path());
