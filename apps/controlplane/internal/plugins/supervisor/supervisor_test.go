@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -279,6 +280,59 @@ func TestCatalogUpgradeKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	oldHealth := fmt.Sprintf("http://127.0.0.1:%d/healthz", installed.Port)
 	if body := getTestURL(t, oldHealth); body != "ok" {
 		t.Fatalf("initial plugin health response = %q", body)
+	}
+
+	catalogV2 := catalogFor("2.0.0", "/v2", archiveV2)
+	entryV2, ok := catalogV2.Get("test-plugin")
+	if !ok {
+		t.Fatal("version 2 catalog entry is missing")
+	}
+	upgradeCtx, cancelUpgrade := context.WithCancel(context.Background())
+	var candidate *runningCommand
+	err = supervisor.upgradeInstalledWith(upgradeCtx, installed, entryV2, func(started *runningCommand) {
+		candidate = started
+		cancelUpgrade()
+	})
+	cancelUpgrade()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled upgrade error = %v, want context canceled", err)
+	}
+	if candidate == nil {
+		t.Fatal("candidate process was not started before cancellation")
+	}
+	if candidate.cmd.ProcessState == nil {
+		t.Fatal("candidate process was not waited after cancellation")
+	}
+	if candidate.cmd.ProcessState.Success() {
+		t.Fatalf("candidate process exited successfully after cancellation: %v", candidate.cmd.ProcessState)
+	}
+	var candidateAddress string
+	for _, environment := range candidate.cmd.Env {
+		if strings.HasPrefix(environment, "LISTEN=") {
+			candidateAddress = strings.TrimPrefix(environment, "LISTEN=")
+			break
+		}
+	}
+	if candidateAddress == "" {
+		t.Fatal("candidate process has no LISTEN address")
+	}
+	connection, err := net.DialTimeout("tcp", candidateAddress, 100*time.Millisecond)
+	if err == nil {
+		_ = connection.Close()
+		t.Fatal("candidate process is still listening after cancellation")
+	}
+	cancelledRow, err := db.InstalledPlugin(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelledRow.Version != "1.0.0" || cancelledRow.Status != runningStatus {
+		t.Fatalf("cancelled upgrade changed installed state to %s/%s", cancelledRow.Version, cancelledRow.Status)
+	}
+	if plugin, ok := registry.Get("test-plugin"); !ok || plugin.Version != "1.0.0" {
+		t.Fatalf("cancelled upgrade changed registry plugin: %#v, registered=%v", plugin, ok)
+	}
+	if body := getTestURL(t, oldHealth); body != "ok" {
+		t.Fatalf("cancelled upgrade health response = %q", body)
 	}
 
 	supervisor.opts.Catalog = catalogFor("2.0.0", "/v2-invalid", archiveV2Invalid)

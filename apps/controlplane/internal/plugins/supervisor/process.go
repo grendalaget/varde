@@ -73,6 +73,11 @@ func (s *Supervisor) startInstalled(row store.InstalledPlugin, wait bool) error 
 func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlugin, process *managedProcess, initial *runningCommand) {
 	defer close(process.done)
 	defer func() {
+		if initial != nil {
+			stopCandidate(initial)
+		}
+	}()
+	defer func() {
 		s.mu.Lock()
 		if s.running[row.ID] == process {
 			delete(s.running, row.ID)

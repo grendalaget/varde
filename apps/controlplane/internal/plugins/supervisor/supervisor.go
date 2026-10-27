@@ -448,7 +448,11 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 	return s.opts.Registry.Add(plugin)
 }
 
-func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry) (result error) {
+func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry) error {
+	return s.upgradeInstalledWith(ctx, current, entry, nil)
+}
+
+func (s *Supervisor) upgradeInstalledWith(ctx context.Context, current store.InstalledPlugin, entry plugins.CatalogEntry, afterCandidateStart func(*runningCommand)) (result error) {
 	defer func() {
 		if result != nil {
 			if err := s.opts.Store.UpdateInstalledPluginUpgradeError(context.WithoutCancel(ctx), current.ID, result.Error()); err != nil {
@@ -492,16 +496,44 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 	if err != nil {
 		return fmt.Errorf("start upgraded plugin: %w", err)
 	}
-	previous, added, err := s.replacePlugin(plugin)
-	if err != nil {
+	adopted := false
+	var previous *plugins.Plugin
+	var added, registryChanged, rowUpdateStarted bool
+	defer func() {
+		if adopted {
+			return
+		}
+		if registryChanged {
+			s.rollbackPlugin(plugin.ID, previous, added)
+		}
+		if rowUpdateStarted {
+			if err := s.opts.Store.SetInstalledPlugin(context.WithoutCancel(ctx), &current); err != nil {
+				s.opts.Log.Error("restore installed plugin after failed upgrade", "plugin", current.ID, "error", err)
+			}
+		}
 		stopCandidate(candidate)
+	}()
+	if afterCandidateStart != nil {
+		afterCandidateStart(candidate)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	previous, added, err = s.replacePlugin(plugin)
+	if err != nil {
+		return err
+	}
+	registryChanged = true
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	next.Status = runningStatus
+	rowUpdateStarted = true
 	if err := s.opts.Store.SetInstalledPlugin(ctx, &next); err != nil {
-		s.rollbackPlugin(plugin.ID, previous, added)
-		stopCandidate(candidate)
 		return fmt.Errorf("save upgraded plugin: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	parent := s.rootCtx
@@ -518,17 +550,33 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 	s.signalReady(process, nil)
 
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		cancel()
+		return err
+	}
 	oldProcess := s.running[current.ID]
+	s.running[current.ID] = process
+	if err := ctx.Err(); err != nil {
+		if oldProcess == nil {
+			delete(s.running, current.ID)
+		} else {
+			s.running[current.ID] = oldProcess
+		}
+		s.mu.Unlock()
+		cancel()
+		return err
+	}
 	if oldProcess != nil {
 		oldProcess.retired.Store(true)
-		oldProcess.cancel()
-	}
-	s.running[current.ID] = process
-	s.mu.Unlock()
-	if oldProcess != nil {
-		<-oldProcess.done
 	}
 	go s.runProcessLoop(runCtx, next, process, candidate)
+	adopted = true
+	s.mu.Unlock()
+	if oldProcess != nil {
+		oldProcess.cancel()
+		<-oldProcess.done
+	}
 	if oldDir := filepath.Join(s.pluginDir(current.ID), current.Version); oldDir != s.versionDir(entry) {
 		if err := os.RemoveAll(oldDir); err != nil {
 			s.opts.Log.Warn("remove previous plugin version", "plugin", current.ID, "version", current.Version, "error", err)
