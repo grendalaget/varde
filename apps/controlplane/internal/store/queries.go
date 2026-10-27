@@ -1435,6 +1435,39 @@ func (s *Store) PruneSessions(ctx context.Context, nowMs int64) (int64, error) {
 	}
 }
 
+// PruneExpired removes expired invites, enrollment tokens, and device links in batches.
+func (s *Store) PruneExpired(ctx context.Context, cutoffMs int64) (int64, error) {
+	queries := []string{
+		`DELETE FROM invites WHERE code IN (
+		   SELECT code FROM invites WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+		`DELETE FROM enrollment_tokens WHERE id IN (
+		   SELECT id FROM enrollment_tokens WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+		`DELETE FROM device_links WHERE user_code IN (
+		   SELECT user_code FROM device_links WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?)`,
+	}
+	var total int64
+	for _, query := range queries {
+		for {
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
+			res, err := s.q().ExecContext(ctx, s.Rebind(query), cutoffMs, pruneBatch)
+			if err != nil {
+				return total, err
+			}
+			n, err := res.RowsAffected()
+			total += n
+			if err != nil {
+				return total, err
+			}
+			if n < pruneBatch {
+				break
+			}
+		}
+	}
+	return total, nil
+}
+
 func (s *Store) Audit(ctx context.Context, q Querier, groupID *string, actorType, actorID, action, target string, data any) error {
 	b, _ := json.Marshal(data)
 	_, err := q.ExecContext(ctx, s.Rebind(
