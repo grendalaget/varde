@@ -127,6 +127,9 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	if installed.Status != runningStatus {
 		t.Fatalf("installed status = %q, want %q", installed.Status, runningStatus)
 	}
+	if len(installed.BinarySHA256) != 64 {
+		t.Fatalf("installed binary SHA-256 = %q, want 64 hex characters", installed.BinarySHA256)
+	}
 	if _, ok := registry.Get("test-plugin"); !ok {
 		t.Fatal("installed plugin was not registered")
 	}
@@ -144,6 +147,10 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	if body := getTestURL(t, listURL); !strings.Contains(body, `"title":"start 1"`) {
 		t.Fatalf("plugin list response = %s", body)
 	}
+	binaryPath := filepath.Join(root, "plugins", "test-plugin", "1.0.0", binaryName("test-plugin"))
+	if err := os.WriteFile(binaryPath, []byte("tampered binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	crashURL := fmt.Sprintf("http://127.0.0.1:%d/crash", port)
 	if body := getTestURL(t, crashURL); !strings.Contains(body, "restarting") {
 		t.Fatalf("plugin crash response = %s", body)
@@ -157,6 +164,13 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	}
 	if body := getTestURL(t, listURL); !strings.Contains(body, `"title":"start 2"`) {
 		t.Fatalf("plugin did not restart after crash, last list response = %s", body)
+	}
+	latest, err := db.InstalledPlugin(ctx, "test-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.BinarySHA256 != installed.BinarySHA256 {
+		t.Fatalf("repaired binary SHA-256 = %q, want %q", latest.BinarySHA256, installed.BinarySHA256)
 	}
 
 	if err := supervisor.Uninstall(ctx, "test-plugin"); err != nil {
@@ -415,6 +429,10 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(versionDir, binaryName("test-plugin")), binaryData, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	binarySHA256, err := binaryDigest(filepath.Join(versionDir, binaryName("test-plugin")))
+	if err != nil {
+		t.Fatal(err)
+	}
 	serviceToken, err := enroll.ServiceToken()
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +451,8 @@ func TestBootStartsInstalledPluginOnlyOnLeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := &store.InstalledPlugin{
-		ID: "test-plugin", Version: "1.0.0", SealedSecret: sealed, Port: int64(mustPort(t)),
+		ID: "test-plugin", Version: "1.0.0", BinarySHA256: binarySHA256,
+		SealedSecret: sealed, Port: int64(mustPort(t)),
 		Status: installStatus, InstalledAt: now, UpdatedAt: now,
 	}
 	if err := db.CreatePluginInstall(context.Background(), &store.ServiceToken{

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/grendalaget/varde/apps/controlplane/internal/plugins"
+	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
 const (
@@ -35,6 +36,53 @@ func (s *Supervisor) loadOrDownload(ctx context.Context, entry plugins.CatalogEn
 		return manifestData, binaryPath, nil
 	}
 	return s.downloadAndExtract(ctx, entry, asset, versionDir)
+}
+
+func (s *Supervisor) verifyOrRepairBinary(ctx context.Context, row *store.InstalledPlugin, entry plugins.CatalogEntry, asset plugins.Asset, binaryPath string) (string, error) {
+	if row.BinarySHA256 != "" {
+		actual, err := binaryDigest(binaryPath)
+		if err == nil && actual == row.BinarySHA256 {
+			return binaryPath, nil
+		}
+	}
+	_, binaryPath, err := s.downloadAndExtract(ctx, entry, asset, s.versionDir(entry))
+	if err != nil {
+		return "", err
+	}
+	actual, err := binaryDigest(binaryPath)
+	if err != nil {
+		return "", err
+	}
+	if row.BinarySHA256 != "" && actual != row.BinarySHA256 {
+		return "", fmt.Errorf("plugin binary SHA-256 mismatch after re-download: got %s", actual)
+	}
+	if row.BinarySHA256 == "" {
+		row.BinarySHA256 = actual
+		if err := s.opts.Store.SetInstalledPlugin(ctx, row); err != nil {
+			return "", fmt.Errorf("save verified plugin binary SHA-256: %w", err)
+		}
+	}
+	return binaryPath, nil
+}
+
+func binaryDigest(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect plugin binary: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("plugin binary is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open plugin binary: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("hash plugin binary: %w", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func (s *Supervisor) downloadAndExtract(ctx context.Context, entry plugins.CatalogEntry, asset plugins.Asset, versionDir string) ([]byte, string, error) {

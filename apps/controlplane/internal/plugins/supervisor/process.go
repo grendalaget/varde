@@ -128,6 +128,23 @@ func (s *Supervisor) runProcessLoop(ctx context.Context, row store.InstalledPlug
 			s.signalReady(process, ctx.Err())
 			return
 		}
+		verifiedPath, err := s.verifyOrRepairBinary(ctx, &row, entry, asset, binaryPath)
+		if err != nil {
+			if ctx.Err() != nil {
+				s.markStopped(row.ID, process)
+				s.signalReady(process, ctx.Err())
+				return
+			}
+			_ = s.opts.Store.UpdateInstalledPluginStatus(context.Background(), row.ID, errorStatus, err.Error())
+			s.signalReady(process, err)
+			if !waitBackoff(ctx, backoff) {
+				s.markStopped(row.ID, process)
+				return
+			}
+			backoff = nextBackoff(backoff, s.opts.RestartMax)
+			continue
+		}
+		binaryPath = verifiedPath
 		listen := netJoinHostPort("127.0.0.1", int(row.Port))
 		var cmd *exec.Cmd
 		var waitResult chan error

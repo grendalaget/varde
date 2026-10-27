@@ -174,7 +174,10 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 	if err != nil {
 		return store.InstalledPlugin{}, err
 	}
-	_ = binaryPath
+	binarySHA256, err := binaryDigest(binaryPath)
+	if err != nil {
+		return store.InstalledPlugin{}, err
+	}
 	if err := validateArchiveManifest(manifestData, entry); err != nil {
 		return store.InstalledPlugin{}, err
 	}
@@ -217,7 +220,8 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 		return store.InstalledPlugin{}, err
 	}
 	installed := &store.InstalledPlugin{
-		ID: id, Version: entry.Version, SealedSecret: sealed, Port: int64(port),
+		ID: id, Version: entry.Version, BinarySHA256: binarySHA256,
+		SealedSecret: sealed, Port: int64(port),
 		Status: installStatus, InstalledAt: now, UpdatedAt: now,
 	}
 	if err := s.opts.Store.CreatePluginInstall(ctx, token, installed); errors.Is(err, store.ErrConflict) {
@@ -367,6 +371,9 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 			_ = s.opts.Store.UpdateInstalledPluginStatus(ctx, row.ID, errorStatus, err.Error())
 			continue
 		}
+		if fresh, err := s.opts.Store.InstalledPlugin(ctx, row.ID); err == nil {
+			row = *fresh
+		}
 		if leader {
 			if err := s.startInstalled(row, false); err != nil {
 				s.opts.Log.Error("start installed plugin", "plugin", row.ID, "error", err)
@@ -392,7 +399,8 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 	if !ok {
 		return fmt.Errorf("installed plugin %q is missing from catalog", row.ID)
 	}
-	if entry.Version != row.Version {
+	versionMismatch := entry.Version != row.Version
+	if versionMismatch {
 		if s.opts.Leader == nil || s.opts.Leader.IsLeader() {
 			return s.upgradeInstalled(ctx, row, entry)
 		}
@@ -404,6 +412,12 @@ func (s *Supervisor) ensureInstalled(ctx context.Context, row store.InstalledPlu
 	manifestData, _, err := s.loadOrDownload(ctx, entry, asset)
 	if err != nil {
 		return err
+	}
+	if !versionMismatch {
+		_, err = s.verifyOrRepairBinary(ctx, &row, entry, asset, filepath.Join(s.versionDir(entry), binaryName(entry.ID)))
+		if err != nil {
+			return err
+		}
 	}
 	plugin, err := s.makePlugin(manifestData, entry, row)
 	if err != nil {
@@ -432,6 +446,10 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 	if err != nil {
 		return err
 	}
+	binarySHA256, err := binaryDigest(binaryPath)
+	if err != nil {
+		return err
+	}
 	if err := validateArchiveManifest(manifestData, entry); err != nil {
 		return err
 	}
@@ -441,6 +459,7 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 	}
 	next := current
 	next.Version = entry.Version
+	next.BinarySHA256 = binarySHA256
 	next.Port = int64(port)
 	next.Status = installStatus
 	next.Error = ""
@@ -500,6 +519,13 @@ func (s *Supervisor) upgradeInstalled(ctx context.Context, current store.Install
 }
 
 func (s *Supervisor) startCandidate(ctx context.Context, row store.InstalledPlugin, binaryPath string) (*runningCommand, error) {
+	actualDigest, err := binaryDigest(binaryPath)
+	if err != nil {
+		return nil, err
+	}
+	if row.BinarySHA256 == "" || actualDigest != row.BinarySHA256 {
+		return nil, errors.New("plugin candidate binary SHA-256 mismatch")
+	}
 	raw, err := s.opts.Secrets.Open(row.SealedSecret, credentialAAD+row.ID)
 	if err != nil {
 		return nil, fmt.Errorf("open plugin credentials: %w", err)

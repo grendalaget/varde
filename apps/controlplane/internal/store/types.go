@@ -140,6 +140,7 @@ type ServiceToken struct {
 type InstalledPlugin struct {
 	ID             string `db:"id"`
 	Version        string `db:"version"`
+	BinarySHA256   string `db:"binary_sha256"`
 	SealedSecret   string `db:"sealed_secret"`
 	ServiceTokenID string `db:"service_token_id"`
 	Port           int64  `db:"port"`
