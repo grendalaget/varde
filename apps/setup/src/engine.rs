@@ -17,8 +17,6 @@ pub struct InstallOpts {
     pub silent: bool,
     pub relaunch: bool,
     pub relaunch_args: String,
-    /// interactive install: launch the tray (--link when unlinked) at the end
-    pub launch_tray: bool,
 }
 
 /// Step ids the UI renders; keep this list stable — progress is index/total.
@@ -341,15 +339,19 @@ pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> R
     if o.silent && o.relaunch {
         // /R + /ARGS — the updater's post-install relaunch of the tray
         let _ = win::launch_as_user(&o.instdir.join(win::MAIN_BINARY), &o.relaunch_args);
-    } else if o.launch_tray {
-        let args = if win::data_dir().join("config.toml").exists() {
-            ""
-        } else {
-            "--link"
-        };
-        let _ = win::launch_as_user(&o.instdir.join(win::MAIN_BINARY), args);
     }
     Ok(())
+}
+
+/// Interactive finish (the "Open Varde" tick): start the tray as the
+/// signed-in user, straight into linking when this PC isn't linked yet.
+pub fn launch_tray(instdir: &Path) -> Result<()> {
+    let args = if win::data_dir().join("config.toml").exists() {
+        ""
+    } else {
+        "--link"
+    };
+    win::launch_as_user(&instdir.join(win::MAIN_BINARY), args)
 }
 
 pub(crate) fn extract_one(name: &str, dest: &Path) -> Result<()> {

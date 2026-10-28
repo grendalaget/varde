@@ -118,7 +118,6 @@ fn start_install(app: AppHandle, state: tauri::State<Shared>, autostart: bool, c
         silent: false,
         relaunch: false,
         relaunch_args: String::new(),
-        launch_tray: true,
     };
     let app2 = app.clone();
     let tx_cell2 = state.confirm_tx.clone();
@@ -196,11 +195,19 @@ fn start_uninstall(app: AppHandle, state: tauri::State<Shared>, delete_data: boo
 /// would leave services/files half-applied, so exit requests are refused.
 static BUSY: AtomicBool = AtomicBool::new(false);
 
+/// `launch`: the finish screen's "Open Varde" tick; the tray starts as
+/// setup closes.
 #[tauri::command]
-fn exit_app(app: AppHandle) {
-    if !BUSY.load(Ordering::SeqCst) {
-        app.exit(0);
+fn exit_app(app: AppHandle, state: tauri::State<Shared>, launch: bool) {
+    if BUSY.load(Ordering::SeqCst) {
+        return;
     }
+    if launch {
+        if let Err(e) = engine::launch_tray(&state.instdir) {
+            eprintln!("launch tray: {e:#}");
+        }
+    }
+    app.exit(0);
 }
 
 pub fn run(args: Args, instdir: PathBuf, mode: Mode) {

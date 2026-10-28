@@ -110,7 +110,6 @@ mod imp {
             silent: true,
             relaunch: args.relaunch,
             relaunch_args: args.relaunch_args.clone(),
-            launch_tray: false,
         };
         let mut prog = |id: &str| log!("[setup] {id}");
         let mut confirm = |_: &str| false; // silent never asks; Inno default was No

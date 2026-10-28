@@ -23,7 +23,7 @@ const INSTALL_LABELS: Record<string, string> = {
   registry: "Registering Varde",
   services: "Starting Varde",
   shortcuts: "Creating shortcuts",
-  launch: "Launching Varde",
+  launch: "Finishing up",
 };
 const UNINSTALL_LABELS: Record<string, string> = {
   drain: "Stopping Varde",
@@ -95,6 +95,7 @@ export default function App() {
   const [cp, setCp] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [deleteData, setDeleteData] = useState(false);
+  const [launch, setLaunch] = useState(true);
   const started = useRef(false);
 
   useEffect(() => {
@@ -148,6 +149,12 @@ export default function App() {
     }
   };
 
+  // every way out of the window honours the finish screen's "Open Varde"
+  const close = () =>
+    void invoke("exit_app", {
+      launch: screen === "done" && !isUninstall && launch,
+    });
+
   const answer = (accept: boolean) => {
     void invoke("answer_http", { accept });
     setConfirmUrl(null);
@@ -165,7 +172,7 @@ export default function App() {
         <Logo className="h-4 opacity-80" />
         {screen !== "progress" && (
           <button
-            onClick={() => void invoke("exit_app")}
+            onClick={close}
             aria-label="Close"
             className="grid h-7 w-9 place-items-center rounded-md text-muted transition-colors hover:bg-surface-tertiary hover:text-foreground"
           >
@@ -381,13 +388,27 @@ export default function App() {
               {isUninstall
                 ? "This PC no longer runs Varde."
                 : state?.will_link
-                  ? "Varde is opening to link this PC."
+                  ? "Next, link this PC to your Varde."
                   : "Varde is up to date and running."}
             </p>
+            {!isUninstall && (
+              <div className="vd-fade vd-d-3 mt-6 w-full text-left">
+                <Option
+                  checked={launch}
+                  onChange={setLaunch}
+                  title="Open Varde"
+                  desc={
+                    state?.will_link
+                      ? "Opens when you close setup, ready to link this PC"
+                      : "Opens when you close setup"
+                  }
+                />
+              </div>
+            )}
             <Button
               variant="primary"
               className="vd-fade vd-d-3 mt-7 w-40"
-              onClick={() => void invoke("exit_app")}
+              onClick={close}
             >
               Done
             </Button>
@@ -407,7 +428,7 @@ export default function App() {
               <Button
                 variant="secondary"
                 className="w-40"
-                onClick={() => void invoke("exit_app")}
+                onClick={close}
               >
                 Close
               </Button>
