@@ -134,6 +134,8 @@ func (s *Server) ServeSSE(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-s.Draining:
+				return
 			case <-heartbeat.C:
 				_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 				flusher.Flush()

@@ -169,6 +169,8 @@ func (s *Server) AgentDirectivesWait(ctx context.Context, req gen.AgentDirective
 			return gen.AgentDirectivesWait200JSONResponse(gen.AgentDirectivesWait{
 				Digest: digest, Changed: digest != req.Params.Digest,
 			}), nil
+		case <-s.Draining:
+			return gen.AgentDirectivesWait200JSONResponse(gen.AgentDirectivesWait{Digest: digest}), nil
 		case <-changed:
 		case <-fallback.C:
 		}

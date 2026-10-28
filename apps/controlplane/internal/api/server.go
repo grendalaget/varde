@@ -69,6 +69,9 @@ type Server struct {
 	PrimaryID      func() string
 	RelayKey       ed25519.PrivateKey // CP signing key for relay tokens
 	Log            *slog.Logger
+	// Closed when the control plane shuts down: long-polls and SSE streams
+	// return, or http.Server.Shutdown would wait out their full timeout.
+	Draining <-chan struct{}
 
 	linkFails *failLimiter // failed device-link lookups; set by NewHandler
 }
