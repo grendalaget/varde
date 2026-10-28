@@ -349,8 +349,8 @@ func TestMinecraftFailover(t *testing.T) { runMinecraftFailover(t, nil) }
 
 // TestMinecraftFastLeaseFailover runs the hard-kill failover with production
 // timings (5 s heartbeat, 20 s classic lease, 5 s fence margin): agents renew
-// the 8 s fast lease every second, so the replacement must be playable well
-// before a classic lease could even expire.
+// the 8 s fast lease every second, so the replacement must start well before
+// a classic lease could even expire.
 func TestMinecraftFastLeaseFailover(t *testing.T) {
 	runMinecraftFailover(t, &cpOpts{
 		LeaseTTLms:  20000,
@@ -428,8 +428,16 @@ func runMinecraftFailover(t *testing.T, prod *cpOpts) {
 		return ok
 	})
 	t.Logf("RTO (kill -> first successful read): %s", rto)
-	if prod != nil && rto > 25*time.Second {
-		t.Fatalf("RTO %s with fast leases; a classic 20 s lease alone would be ~20 s", rto)
+	if prod != nil {
+		// Measured to the replacement's start, not the first read: Minecraft
+		// boot + bot login add a noisy 12-17 s on CI that leases don't touch.
+		at, ok := wd.transitionTime("", "kari")
+		if !ok {
+			t.Fatal("watchdog never saw server.jar start on kari")
+		}
+		if takeover := at.Sub(t0); takeover > 15*time.Second {
+			t.Fatalf("server.jar started on kari %s after the kill with fast leases; a classic 20 s lease alone would be ~20 s", takeover)
+		}
 	}
 
 	got0, blocks0, _ := e.waitBotRead("player", svc, 0, ref, 30*time.Second)
