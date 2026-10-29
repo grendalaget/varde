@@ -445,6 +445,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		PrimaryID:     primaryID,
 		RelayKey:      relayKey,
 		Log:           log,
+		Draining:      ctx.Done(),
 	}
 
 	handler := api.NewHandler(srv, webui.Handler())

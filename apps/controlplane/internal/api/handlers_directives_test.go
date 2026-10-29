@@ -473,3 +473,26 @@ func TestAgentDirectivesWaitRequiresSignature(t *testing.T) {
 		t.Fatalf("unsigned wait status = %d, want 401", r.Status)
 	}
 }
+
+func TestAgentDirectivesWaitEndsOnDrain(t *testing.T) {
+	e := newEnv(t)
+	drain := make(chan struct{})
+	e.srv.Draining = drain
+	a := e.newAgent("n1")
+	digest := a.currentDirectivesDigest()
+	result := startDirectiveWait(a, digest)
+
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := e.http.Config.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown with an open directive wait: %v", err)
+	}
+	r := <-result
+	if r.response.Status != http.StatusOK {
+		t.Fatalf("wait during drain: %d %s", r.response.Status, r.response.Raw)
+	}
+	if got, changed := decodeWaitResponse(t, r.response); changed || got != digest {
+		t.Fatalf("wait during drain = (%q, %t), want (%q, false)", got, changed, digest)
+	}
+}
