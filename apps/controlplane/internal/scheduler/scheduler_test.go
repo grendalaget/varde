@@ -272,3 +272,10 @@ func TestReplicationTargets(t *testing.T) {
 		t.Fatal("not deterministic")
 	}
 }
+
+func TestEmptyGroupSaysAddAMachine(t *testing.T) {
+	_, err := Place(testSrv, testGame, nil, SnapView{})
+	if err == nil || !strings.Contains(err.Error(), "no machines yet") {
+		t.Fatalf("empty group error = %v, want a hint to add a machine", err)
+	}
+}
