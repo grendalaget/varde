@@ -1,5 +1,5 @@
 import { cx } from "@varde/ui/ui";
-import { StateCairn } from "./Logo";
+import { Mark, StateCairn } from "./Logo";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 // Shared with the tray and installer (packages/ui); the rest of this file is
@@ -29,16 +29,25 @@ export function CardHeader({
   title,
   actions,
   subtitle,
+  icon,
 }: {
   title: ReactNode;
   actions?: ReactNode;
   subtitle?: ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-separator px-4 py-3">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
+      <div className="flex min-w-0 items-center gap-3">
+        {icon && (
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-default text-muted ring-1 ring-inset ring-border">
+            {icon}
+          </span>
+        )}
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
+        </div>
       </div>
       {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
     </div>
@@ -185,11 +194,138 @@ export function WarnNote({ children }: { children: ReactNode }) {
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
+export function Empty({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <div className="vd-fade px-4 py-10 text-center text-sm text-muted">
-      {children}
+    <div className="vd-fade flex flex-col items-center gap-4 px-6 py-12 text-center">
+      <Mark state="idle" className="h-10 w-10 text-skifer-600" />
+      <div className="max-w-sm text-sm text-muted">{children}</div>
+      {action}
     </div>
+  );
+}
+
+/** Highlighted note with optional actions, e.g. "this group has no machines". */
+export function Callout({
+  title,
+  children,
+  actions,
+  tone = "accent",
+}: {
+  title: ReactNode;
+  children?: ReactNode;
+  actions?: ReactNode;
+  tone?: "accent" | "violet";
+}) {
+  return (
+    <div
+      role="status"
+      className={cx(
+        "vd-enter mb-6 flex flex-wrap items-center gap-4 rounded-2xl border px-5 py-4",
+        tone === "accent"
+          ? "border-accent/30 bg-accent-soft"
+          : "border-violet/30 bg-violet/10",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <h2 className="font-semibold text-foreground">{title}</h2>
+        {children && <p className="mt-0.5 text-sm text-muted">{children}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+/** Initials on a colour picked from the name, for people and groups. */
+export function Avatar({
+  name,
+  className = "size-8 rounded-full text-xs",
+}: {
+  name: string;
+  className?: string;
+}) {
+  let hue = 0;
+  for (const c of name) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "grid shrink-0 place-items-center font-semibold text-natt shadow-[inset_0_1px_0_rgb(255_255_255/0.3)]",
+        className,
+      )}
+      style={{
+        background: `linear-gradient(145deg, oklch(80% 0.09 ${hue}), oklch(62% 0.11 ${hue}))`,
+      }}
+    >
+      {initials || "?"}
+    </span>
+  );
+}
+
+/** A radio option drawn as a card; group several under role="radiogroup". */
+export function ChoiceCard({
+  selected,
+  onSelect,
+  title,
+  sub,
+  disabled,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  sub?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cx(
+        "flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors duration-200 ease-vd-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50",
+        selected
+          ? "border-accent/70 bg-accent-soft"
+          : "border-separator bg-surface hover:border-field-border",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cx(
+          "grid size-4 shrink-0 place-items-center rounded-full border-2 transition-colors",
+          selected ? "border-accent" : "border-field-border",
+        )}
+      >
+        <span
+          className={cx(
+            "size-1.5 rounded-full bg-accent transition-transform duration-200 ease-vd-spring",
+            selected ? "scale-100" : "scale-0",
+          )}
+        />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium text-foreground">
+          {title}
+        </span>
+        {sub && (
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            {sub}
+          </span>
+        )}
+      </span>
+    </button>
   );
 }
 
@@ -205,7 +341,7 @@ export function PageHeader({
   return (
     <div className="vd-enter mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-display text-[1.75rem] leading-tight font-semibold tracking-tight text-foreground">
           {title}
         </h1>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
@@ -286,5 +422,15 @@ export function CopyText({
         </svg>
       </span>
     </button>
+  );
+}
+
+/** Warm Glød wash across the top of a page; parent must be relative. */
+export function TopGlow() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(60%_100%_at_50%_0%,color-mix(in_oklab,var(--accent)_7%,transparent),transparent)]"
+    />
   );
 }

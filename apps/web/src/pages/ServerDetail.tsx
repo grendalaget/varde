@@ -11,16 +11,20 @@ import {
   Button,
   Card,
   CardHeader,
+  ChoiceCard,
   CopyText,
+  cx,
+  Dot,
   Empty,
   ErrorNote,
   Field,
   inputClass,
-  PageHeader,
   ServerStateBadge,
   WarnNote,
 } from "../components/ui";
-import { HostMarker, PageLoader, ServerMark } from "../components/Logo";
+import { HostMarker, PageLoader } from "../components/Logo";
+import { GameMark } from "../components/GameMark";
+import { Icon } from "../components/icons";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { bytes, dateTime, timeAgo } from "../lib/format";
@@ -29,8 +33,15 @@ import { canAdmin, useNodeName, useSession } from "../lib/session";
 import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "../components/ConfigInput";
+import { isWideField } from "../lib/configField";
 import SaveSafety from "../components/SaveSafety";
-import { isCrossplayEnabled, useGames } from "../lib/games";
+import {
+  askedFields,
+  gameBackdrop,
+  isCrossplayEnabled,
+  useGames,
+  withServerName,
+} from "../lib/games";
 
 type Tab = "overview" | "saves" | "logs" | "settings" | "details";
 
@@ -91,20 +102,36 @@ export default function ServerDetail({ id }: { id: string }) {
 
   return (
     <>
-      <div className="mb-2 text-sm">
-        <Link to="/" className="text-muted hover:text-foreground">
-          ← Servers
+      <div className="mb-3 text-sm">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-1.5 text-muted transition-colors hover:text-foreground"
+        >
+          <Icon name="back" className="size-3.5" />
+          Servers
         </Link>
       </div>
-      <PageHeader
-        title={
-          <span className="flex flex-wrap items-center gap-3">
-            <ServerMark state={s.observed_state} className="h-9 w-9" />
-            {s.name} <ServerStateBadge state={s.observed_state} />
-          </span>
-        }
-        subtitle={games.name(s.game_id)}
-        actions={
+      <header className="vd-enter relative mb-5 overflow-hidden rounded-2xl border border-separator bg-surface shadow-surface">
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{ background: gameBackdrop(s.game_id) }}
+        />
+        <div className="relative flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <GameMark id={s.game_id} name={games.name(s.game_id)} size="lg" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <h1 className="truncate font-display text-[1.75rem] leading-tight font-semibold tracking-tight text-foreground">
+                  {s.name}
+                </h1>
+                <ServerStateBadge state={s.observed_state} />
+              </div>
+              <p className="mt-0.5 text-sm text-muted">
+                {games.name(s.game_id)}
+              </p>
+            </div>
+          </div>
           <Actions
             s={s}
             onChange={() => {
@@ -112,19 +139,24 @@ export default function ServerDetail({ id }: { id: string }) {
               void execs.refresh();
             }}
           />
-        }
-      />
-      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-separator [scrollbar-width:none]">
+        </div>
+      </header>
+      <div
+        role="tablist"
+        className="mb-6 flex w-fit max-w-full gap-1 overflow-x-auto rounded-full border border-separator bg-surface p-1 [scrollbar-width:none]"
+      >
         {tabs.map(([t, label]) => (
           <button
             key={t}
+            role="tab"
+            aria-selected={tab === t}
             onClick={() => setTab(t)}
-            className={
-              "-mb-px border-b-2 px-3 py-2 text-sm transition-colors duration-200 ease-vd-out " +
-              (tab === t
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted hover:text-foreground")
-            }
+            className={cx(
+              "shrink-0 rounded-full px-3.5 py-1.5 text-sm transition-colors duration-200 ease-vd-out",
+              tab === t
+                ? "bg-default font-medium text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]"
+                : "text-muted hover:text-foreground",
+            )}
           >
             {label}
           </button>
@@ -637,7 +669,7 @@ function ServerSettings({
           params: { path: { serverId: s.id } },
           body: {
             name,
-            config,
+            config: withServerName(game, config, name),
             replication_factor: rf,
             min_commit_replicas: mcr,
             snapshot_interval_s: interval,
@@ -658,44 +690,77 @@ function ServerSettings({
     >
       <Card>
         <CardHeader title="Game" />
-        <div className="space-y-4 p-4">
-          <Field label="Server name">
-            <input
-              className={inputClass}
-              disabled={!admin}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          {game?.config_fields.map((f) => (
-            <ConfigInput
+        <div className="grid gap-x-5 gap-y-5 p-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Field
+              label="Server name"
+              help={
+                askedFields(game).length < (game?.config_fields.length ?? 0)
+                  ? "Shown in Varde and in the game's server list."
+                  : undefined
+              }
+            >
+              <input
+                className={inputClass}
+                disabled={!admin}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+          </div>
+          {askedFields(game).map((f) => (
+            <div
               key={f.name}
-              f={f}
-              value={config[f.name]}
-              onChange={(v) => setConfig((c) => ({ ...c, [f.name]: v }))}
-            />
+              className={isWideField(f) ? "sm:col-span-2" : undefined}
+            >
+              <ConfigInput
+                f={f}
+                value={config[f.name]}
+                onChange={(v) => setConfig((c) => ({ ...c, [f.name]: v }))}
+              />
+            </div>
           ))}
         </div>
       </Card>
       <Card>
         <CardHeader title="Hosting & saves" />
         <div className="grid gap-4 p-4 sm:grid-cols-2">
-          <Field label="Preferred machine">
-            <select
-              className={inputClass}
-              value={preferred}
-              onChange={(e) => setPreferred(e.target.value)}
+          <div className="sm:col-span-2">
+            <Field
+              group
+              label="Preferred machine"
+              help="Varde prefers this machine when it's online, and uses another one otherwise."
             >
-              <option value="">Any machine</option>
-              {nodes
-                .filter((n) => n.hosting_enabled)
-                .map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.name}
-                  </option>
-                ))}
-            </select>
-          </Field>
+              <div
+                role="radiogroup"
+                aria-label="Preferred machine"
+                className="grid gap-2.5 sm:grid-cols-2"
+              >
+                <ChoiceCard
+                  selected={preferred === ""}
+                  onSelect={() => setPreferred("")}
+                  title="Any machine"
+                  sub="Recommended"
+                />
+                {nodes
+                  .filter((n) => n.hosting_enabled)
+                  .map((n) => (
+                    <ChoiceCard
+                      key={n.id}
+                      selected={preferred === n.id}
+                      onSelect={() => setPreferred(n.id)}
+                      title={n.name}
+                      sub={
+                        <>
+                          <Dot tone={n.online ? "green" : "neutral"} />
+                          {n.online ? "Online" : "Offline"}
+                        </>
+                      }
+                    />
+                  ))}
+              </div>
+            </Field>
+          </div>
           <Field label="Save every (seconds)">
             <input
               type="number"

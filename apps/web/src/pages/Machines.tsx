@@ -4,13 +4,16 @@ import type { paths } from "../api/schema";
 import {
   Badge,
   Button,
+  Callout,
   Card,
+  cx,
   Dot,
   Empty,
   ErrorNote,
   PageHeader,
   Toggle,
 } from "../components/ui";
+import { Icon } from "../components/icons";
 import { Ember } from "../components/Logo";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
@@ -57,16 +60,27 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <div className="vd-enter mb-4 rounded-md border border-separator bg-surface px-4 py-3 text-sm text-foreground">
-          <span className="font-medium text-foreground">Tip:</span> add an{" "}
-          <span className="text-violet-300">always-on backup</span> (a NAS, home
-          server or small VPS). It always has the latest save, even when
+        <Callout tone="violet" title="Tip: add an always-on backup">
+          A NAS, home server or small VPS always has the latest save, even when
           everyone's PC is off.
-        </div>
+        </Callout>
       )}
       {nodes.length === 0 ? (
         <Card>
-          <Empty>No machines yet. Add your PC to get started.</Empty>
+          <Empty
+            action={
+              canAdmin(group.role) && (
+                <Button
+                  variant="primary"
+                  onClick={() => navigate("/machines/add")}
+                >
+                  Add a machine
+                </Button>
+              )
+            }
+          >
+            No machines yet. Add your PC to get started.
+          </Empty>
         </Card>
       ) : (
         <div className="vd-stagger space-y-3">
@@ -110,32 +124,34 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
     }
     setOpt((o) => ({ ...o, ...body }));
     // catch() first: a rejected request must not wedge the queue
-    queue.current = queue.current.catch(() => {}).then(async () => {
-      const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
-        params: { path: { nodeId: n.id } },
-        body,
-      });
-      if (error) {
-        setErr(errorMessage(error));
-      } else {
-        // a refresh failure must not strand the optimistic value — the next
-        // refresh reconciles the switch with the server anyway
-        await refreshNodes().catch(() => {});
-      }
-      setOpt((o) => {
-        const next = { ...o };
-        for (const k of keys) {
-          const left = (pending.current.get(k) ?? 1) - 1;
-          if (left > 0) {
-            pending.current.set(k, left);
-          } else {
-            pending.current.delete(k);
-            delete next[k];
-          }
+    queue.current = queue.current
+      .catch(() => {})
+      .then(async () => {
+        const { error } = await api.PATCH("/v1/nodes/{nodeId}", {
+          params: { path: { nodeId: n.id } },
+          body,
+        });
+        if (error) {
+          setErr(errorMessage(error));
+        } else {
+          // a refresh failure must not strand the optimistic value — the next
+          // refresh reconciles the switch with the server anyway
+          await refreshNodes().catch(() => {});
         }
-        return next;
+        setOpt((o) => {
+          const next = { ...o };
+          for (const k of keys) {
+            const left = (pending.current.get(k) ?? 1) - 1;
+            if (left > 0) {
+              pending.current.set(k, left);
+            } else {
+              pending.current.delete(k);
+              delete next[k];
+            }
+          }
+          return next;
+        });
       });
-    });
   }
 
   const hostingEnabled = opt.hosting_enabled ?? n.hosting_enabled;
@@ -146,8 +162,25 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-4 px-4 py-3">
-        <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-0 sm:flex-1">
-          <Dot tone={liveTone(n)} />
+        <div className="flex min-w-0 basis-full items-center gap-3.5 sm:basis-0 sm:flex-1">
+          <span className="relative shrink-0">
+            <span
+              className={cx(
+                "grid size-10 place-items-center rounded-xl ring-1 ring-inset transition-colors duration-300",
+                hosting.length > 0
+                  ? "bg-glod/15 text-glod ring-glod/30"
+                  : "bg-default text-muted ring-border",
+              )}
+            >
+              <Icon
+                name={n.os === "android" ? "phone" : "machine"}
+                className="size-[22px]"
+              />
+            </span>
+            <span className="absolute -right-0.5 -bottom-0.5 flex rounded-full ring-[2.5px] ring-surface">
+              <Dot tone={liveTone(n)} />
+            </span>
+          </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="truncate font-medium text-foreground">

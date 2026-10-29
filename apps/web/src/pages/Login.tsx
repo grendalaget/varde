@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api/client";
 import { Logo } from "../components/Logo";
-import { Button, ErrorNote, Field, inputClass } from "../components/ui";
+import { Button, ErrorNote, Field, inputClass, TopGlow } from "../components/ui";
 
 export default function Login({
   onAuthed,
@@ -50,8 +50,9 @@ export default function Login({
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-field p-6 text-foreground">
-      <div className="w-full max-w-sm">
+    <main className="relative flex min-h-screen items-center justify-center bg-field p-6 text-foreground">
+      <TopGlow />
+      <div className="relative w-full max-w-sm">
         <div className="vd-enter mb-8 flex flex-col items-center gap-3 text-center">
           <h1 className="vd-hover mb-2">
             <Logo className="h-16" />

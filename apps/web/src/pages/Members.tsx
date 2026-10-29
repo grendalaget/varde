@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api/client";
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -90,14 +91,20 @@ export default function Members() {
               key={m.user_id}
               className="flex items-center justify-between gap-3 px-4 py-3"
             >
-              <div>
-                <div className="font-medium text-foreground">
-                  {m.display_name}
-                  {m.user_id === me.user.id && (
-                    <span className="text-muted"> (you)</span>
-                  )}
+              <div className="flex min-w-0 items-center gap-3">
+                <Avatar
+                  name={m.display_name}
+                  className="size-9 rounded-full text-xs"
+                />
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">
+                    {m.display_name}
+                    {m.user_id === me.user.id && (
+                      <span className="text-muted"> (you)</span>
+                    )}
+                  </div>
+                  <div className="truncate text-xs text-muted">{m.email}</div>
                 </div>
-                <div className="text-xs text-muted">{m.email}</div>
               </div>
               <div className="flex items-center gap-2">
                 {/* admins manage non-owners; only owners manage owners */}
@@ -106,7 +113,8 @@ export default function Members() {
                 (m.role !== "owner" || owner) ? (
                   <>
                     <select
-                      className="rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150"
+                      aria-label={`Role for ${m.display_name}`}
+                      className="rounded-field border border-field-border bg-field px-3 py-1 text-sm text-field-foreground shadow-field transition-colors duration-150 hover:bg-field-hover"
                       value={m.role}
                       onChange={async (e) => {
                         const { error } = await api.PATCH(
@@ -149,7 +157,7 @@ export default function Members() {
                 ) : (
                   <>
                     <Badge tone={m.role === "owner" ? "violet" : "neutral"}>
-                      {m.role}
+                      {m.role[0].toUpperCase() + m.role.slice(1)}
                     </Badge>
                     {m.user_id === me.user.id && (
                       <Button
