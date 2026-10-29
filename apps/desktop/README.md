@@ -35,8 +35,8 @@ window.
   - *Dashboard face* (`dashboard`): the control-plane dashboard loaded as an
     external webview inside the same window — the tray never opens a
     browser. It has no IPC access (remote), keeps its own cookies (sign-in
-    persists), and navigates only when the control-plane origin changes
-    (e.g. re-link).
+    persists), and opens on this PC's group (`?group=`). It navigates only
+    when the control-plane origin or the PC's group changes (e.g. re-link).
   - The face is picked by the PC's state (`view::facet`): linked and
     reachable → dashboard; linking, signing in, pending approval, offline or
     service-down → setup. Finishing a link morphs the window into the

@@ -306,6 +306,7 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
         .map(|s| s.control_plane_url.clone())
         .filter(|u| !u.is_empty());
     let link_pending = s.as_ref().is_some_and(|s| s.link.is_some());
+    let group = s.as_ref().map(|s| s.group_id.clone()).unwrap_or_default();
     if let Some(st) = &s {
         notify_rejoin(app, &st.rejoin);
     }
@@ -335,12 +336,18 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
                     .unwrap()
                     .as_ref()
                     .is_some_and(|(_, at)| at.elapsed() < FED_HANDOFF_TTL);
+                // re-linked into another group on the same CP
+                let want = Some(group.as_str()).filter(|g| !g.is_empty());
+                let group_moved = prev
+                    .as_ref()
+                    .is_some_and(|p| group_param(p).as_deref() != want);
                 if still_on_cp
                     && (prev
                         .as_ref()
                         .map(|p| p.origin() != parsed.origin())
                         .unwrap_or(true)
-                        || handoff_pending)
+                        || handoff_pending
+                        || group_moved)
                 {
                     // dashboard_load_url attaches a fresh sign-in token —
                     // a re-link to the same CP re-auths the open window.
@@ -890,6 +897,18 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
     // fragments in the configured address never propagate either: only
     // the handoff carries one.
     url.set_fragment(None);
+    // open on this PC's own group, not whichever one the browser used last
+    let group = app
+        .state::<State>()
+        .status
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|s| s.group_id.clone())
+        .unwrap_or_default();
+    if !group.is_empty() {
+        url.query_pairs_mut().clear().append_pair("group", &group);
+    }
     let mut handoff = false;
     if tauri::Url::parse(agent_ipc::DEFAULT_CP_URL)
         .map(|hosted| hosted.origin() == url.origin())
@@ -901,6 +920,13 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
         }
     }
     Some((url, handoff))
+}
+
+/// The group a dashboard URL opens on (`?group=`, see dashboard_load_url).
+fn group_param(u: &tauri::Url) -> Option<String> {
+    u.query_pairs()
+        .find(|(k, _)| k == "group")
+        .map(|(_, v)| v.into_owned())
 }
 
 /// The dashboard lives in the app, not the browser: a plain external
@@ -918,12 +944,19 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
     if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
         // a re-link may have moved the group to another control plane or
-        // carried a fresh sign-in token — same origin otherwise keeps
-        // the user's place in the dashboard
+        // group, or carried a fresh sign-in token — otherwise keep the
+        // user's place in the dashboard
+        let last = app
+            .state::<State>()
+            .dashboard_origin
+            .lock()
+            .unwrap()
+            .clone();
         if handoff
             || w.url()
                 .map(|u| u.origin() != parsed.origin())
                 .unwrap_or(true)
+            || last.as_ref().map(group_param) != Some(group_param(&parsed))
         {
             *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
             w.navigate(parsed).map_err(|e| e.to_string())?;
