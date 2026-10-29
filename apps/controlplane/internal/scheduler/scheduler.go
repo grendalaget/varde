@@ -75,7 +75,9 @@ type Error struct {
 	Reasons []string
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("unschedulable: %v", e.Reasons) }
+func (e *Error) Error() string {
+	return "No machine can run this server: " + strings.Join(e.Reasons, "; ")
+}
 
 // Place picks the node for a server. recovery=false means normal start.
 // Deterministic: candidates sorted by node_id, equal scores keep node_id
@@ -195,7 +197,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 
 	if best == nil {
 		if len(reasons) == 0 {
-			reasons = []string{"no nodes in group"}
+			reasons = []string{"this group has no machines yet (add one on the Machines page)"}
 		}
 		return nil, &Error{Reasons: reasons}
 	}

@@ -20,6 +20,7 @@ type Port struct {
 
 type ConfigField struct {
 	Name     string   `json:"name"`
+	Label    string   `json:"label,omitempty"`
 	Type     string   `json:"type"` // string|int|bool|select|secret
 	Default  any      `json:"default,omitempty"`
 	Required bool     `json:"required,omitempty"`

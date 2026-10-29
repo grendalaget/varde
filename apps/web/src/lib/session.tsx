@@ -9,6 +9,8 @@ export type Session = {
   refreshMe: () => Promise<void>;
   selectGroup: (id: string) => void;
   nodes: Node[];
+  /** false until this group's first nodes fetch lands */
+  nodesLoaded: boolean;
   refreshNodes: () => Promise<void>;
 };
 

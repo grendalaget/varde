@@ -1954,6 +1954,7 @@ components:
       required: [name, type]
       properties:
         name: { type: string }
+        label: { type: string, description: "display name; clients fall back to a prettified name" }
         type:
           type: string
           enum: [string, int, bool, select, secret]

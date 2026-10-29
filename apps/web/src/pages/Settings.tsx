@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage, type Schemas } from "../api/client";
 import {
+  Avatar,
   Button,
   Card,
   CardHeader,
@@ -129,15 +130,21 @@ export default function Settings() {
       >
         <Card>
           <CardHeader title="Group" />
-          <div className="space-y-4 p-4">
-            <Field label="Name">
-              <input
-                className={inputClass}
-                disabled={!admin}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </Field>
+          <div className="flex items-end gap-4 p-4">
+            <Avatar
+              name={name || group.name}
+              className="size-12 rounded-xl text-sm"
+            />
+            <div className="min-w-0 flex-1">
+              <Field label="Name">
+                <input
+                  className={inputClass}
+                  disabled={!admin}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </Field>
+            </div>
           </div>
         </Card>
         <Card>
@@ -196,6 +203,21 @@ export default function Settings() {
       <Card className="mt-6">
         <CardHeader title="Your profile" />
         <div className="space-y-4 p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar
+              name={me.user.display_name}
+              className="size-11 rounded-full text-sm"
+            />
+            <div className="min-w-0">
+              <p className="truncate font-medium text-foreground">
+                {me.user.display_name}
+              </p>
+              <p className="truncate text-xs text-muted">{me.user.email}</p>
+            </div>
+          </div>
+          <div className="border-t border-separator pt-4 text-xs font-medium uppercase tracking-wider text-muted">
+            Steam
+          </div>
           {me.user.steam_id ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">

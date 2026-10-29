@@ -11,6 +11,7 @@ import {
   PageHeader,
   Toggle,
 } from "../components/ui";
+import { Icon } from "../components/icons";
 import { useLoad } from "../lib/data";
 import { dateTime } from "../lib/format";
 import { navigate } from "../lib/router";
@@ -57,10 +58,14 @@ export default function AddMachine() {
 
   return (
     <>
-      <PageHeader title="Add a machine" />
+      <PageHeader
+        title="Add a machine"
+        subtitle="Link a PC with the code it shows, or enroll a machine without a screen using a token."
+      />
       <div className="vd-stagger space-y-6">
         <Card>
           <CardHeader
+            icon={<Icon name="machine" className="size-[18px]" />}
             title="A gaming PC or laptop"
             subtitle="Install Varde on that PC. Varde shows a short code there and opens this dashboard: enter the code here if it isn't filled in."
           />
@@ -86,6 +91,7 @@ export default function AddMachine() {
         </Card>
         <Card>
           <CardHeader
+            icon={<Icon name="servers" className="size-[18px]" />}
             title="A server, NAS or VPS (no screen)"
             subtitle="Create a one-time token and use it in the enroll command on that machine."
           />

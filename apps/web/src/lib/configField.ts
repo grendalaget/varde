@@ -29,3 +29,13 @@ export function updateFieldValue(
   else next[name] = value;
   return next;
 }
+
+/** Fields that read better across both columns of a two-column form. */
+export function isWideField(f: ConfigField) {
+  return (
+    f.type === "bool" ||
+    f.type === "multiselect" ||
+    f.type === "member_multiselect" ||
+    (f.help?.length ?? 0) > 50
+  );
+}

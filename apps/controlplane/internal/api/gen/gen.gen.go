@@ -1255,8 +1255,11 @@ type GameOs string
 
 // GameConfigField defines model for GameConfigField.
 type GameConfigField struct {
-	Default  interface{}         `json:"default,omitempty"`
-	Help     *string             `json:"help,omitempty"`
+	Default interface{} `json:"default,omitempty"`
+	Help    *string     `json:"help,omitempty"`
+
+	// Label display name; clients fall back to a prettified name
+	Label    *string             `json:"label,omitempty"`
 	Name     string              `json:"name"`
 	Options  *[]string           `json:"options,omitempty"`
 	Required *bool               `json:"required,omitempty"`

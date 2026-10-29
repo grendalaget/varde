@@ -131,7 +131,7 @@ export function ConfigInput({
         >
           {(f.options ?? []).map((o) => (
             <option key={String(o)} value={String(o)}>
-              {String(o)}
+              {optionLabel(String(o))}
             </option>
           ))}
         </select>
@@ -166,4 +166,11 @@ export function ConfigInput({
       )}
     </Field>
   );
+}
+
+/** "arms_race" → "Arms race"; anything that isn't a plain word id is shown as-is. */
+function optionLabel(o: string) {
+  return /^[a-z]+(_[a-z]+)*$/.test(o)
+    ? (o[0].toUpperCase() + o.slice(1)).replace(/_/g, " ")
+    : o;
 }

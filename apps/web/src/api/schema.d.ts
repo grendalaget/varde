@@ -1285,6 +1285,8 @@ export interface components {
         };
         GameConfigField: {
             name: string;
+            /** @description display name; clients fall back to a prettified name */
+            label?: string;
             /** @enum {string} */
             type: "string" | "int" | "bool" | "select" | "secret";
             default?: unknown;

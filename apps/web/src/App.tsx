@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, type Me, type Node } from "./api/client";
 import { Logo, PageLoader } from "./components/Logo";
-import { Button, cx, Dot, ErrorNote } from "./components/ui";
+import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
+import { Icon, type IconName } from "./components/icons";
 import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
 import { Link, match, navigate, useLocation } from "./lib/router";
 import { SessionProvider, useSession } from "./lib/session";
@@ -45,9 +46,25 @@ export default function App() {
     enabled: boolean;
     site_session: boolean;
   } | null>(null);
-  const [groupId, setGroupId] = useState<string | null>(() =>
-    localStorage.getItem(GROUP_KEY),
+  // The desktop app opens the dashboard on the PC's own group (?group=).
+  // Not persisted: switching groups here still sticks, and an id the user
+  // isn't in falls back to their first group below.
+  const [groupId, setGroupId] = useState<string | null>(
+    () =>
+      new URLSearchParams(window.location.search).get("group") ??
+      localStorage.getItem(GROUP_KEY),
   );
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("group")) return;
+    params.delete("group");
+    const q = params.toString();
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + (q ? `?${q}` : "") + window.location.hash,
+    );
+  }, []);
   const loc = useLocation();
 
   const refreshMe = useCallback(async () => {
@@ -246,15 +263,20 @@ function GroupShell({
   selectGroup: (id: string) => void;
 }) {
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodesLoaded, setNodesLoaded] = useState(false);
   const refreshNodes = useCallback(async () => {
     const { data } = await api.GET("/v1/groups/{groupId}/nodes", {
       params: { path: { groupId: group.group_id } },
     });
-    if (data) setNodes(data.nodes);
+    if (data) {
+      setNodes(data.nodes);
+      setNodesLoaded(true);
+    }
   }, [group.group_id]);
 
   useEffect(() => {
     setNodes([]);
+    setNodesLoaded(false);
     void refreshNodes();
     const t = setInterval(() => void refreshNodes(), 15000);
     return () => clearInterval(t);
@@ -263,8 +285,16 @@ function GroupShell({
   useOnEvent((e) => e.type.startsWith("node."), refreshNodes);
 
   const session = useMemo(
-    () => ({ me, group, refreshMe, selectGroup, nodes, refreshNodes }),
-    [me, group, refreshMe, selectGroup, nodes, refreshNodes],
+    () => ({
+      me,
+      group,
+      refreshMe,
+      selectGroup,
+      nodes,
+      nodesLoaded,
+      refreshNodes,
+    }),
+    [me, group, refreshMe, selectGroup, nodes, nodesLoaded, refreshNodes],
   );
 
   return (
@@ -274,29 +304,39 @@ function GroupShell({
   );
 }
 
-const NAV = [
+const NAV: {
+  to: string;
+  label: string;
+  icon: IconName;
+  active: (p: string) => boolean;
+}[] = [
   {
     to: "/",
     label: "Servers",
+    icon: "servers",
     active: (p: string) => p === "/" || p.startsWith("/servers"),
   },
   {
     to: "/machines",
+    icon: "machine",
     label: "Machines",
     active: (p: string) => p.startsWith("/machines"),
   },
   {
     to: "/members",
+    icon: "members",
     label: "Members",
     active: (p: string) => p.startsWith("/members"),
   },
   {
     to: "/activity",
+    icon: "activity",
     label: "Activity",
     active: (p: string) => p.startsWith("/activity"),
   },
   {
     to: "/settings",
+    icon: "settings",
     label: "Settings",
     active: (p: string) => p.startsWith("/settings"),
   },
@@ -333,6 +373,7 @@ function Layout() {
         plugin.pages.map((page) => ({
           to: `/plugins/${plugin.id}/${page.id}`,
           label: page.title,
+          icon: "box" as const,
           active: (path: string) => path === `/plugins/${plugin.id}/${page.id}`,
         })),
       ) ?? [];
@@ -340,6 +381,7 @@ function Layout() {
     ? [{
       to: "/admin/plugins",
       label: "Plugins",
+      icon: "plugins" as const,
       active: (path: string) => path === "/admin/plugins",
     }]
     : [];
@@ -372,17 +414,26 @@ function Layout() {
         <>
           <Link
             to="/"
-            className="vd-hover mb-6 hidden px-2 pt-1 md:block"
+            className="vd-hover mb-5 hidden px-2 pt-1 md:block"
             aria-label="Varde home"
           >
             <Logo className="h-8" />
           </Link>
-          <label className="mb-4 px-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted">
-              Group
+          <label className="relative mb-4 flex items-center gap-2.5 rounded-xl border border-separator bg-background/50 p-2 transition-colors duration-150 focus-within:border-field-border-focus hover:border-field-border">
+            <Avatar name={group.name} className="size-8 rounded-lg text-xs" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[11px] font-medium uppercase tracking-wider text-muted">
+                Group
+              </span>
+              <span className="block truncate text-sm font-medium text-foreground">
+                {group.name}
+              </span>
             </span>
+            <Icon name="chevrons" className="size-4 shrink-0 text-muted" />
+            {/* native select over the card: keyboard and screen readers get the real control */}
             <select
-              className="mt-1 w-full rounded-field border border-field-border bg-field px-2 py-1.5 text-sm text-field-foreground shadow-field"
+              aria-label="Group"
+              className="absolute inset-0 cursor-pointer opacity-0"
               value={group.group_id}
               onChange={(e) => {
                 if (e.target.value === "__new") navigate("/settings?new=1");
@@ -401,31 +452,54 @@ function Layout() {
             </select>
           </label>
           <nav className="vd-stagger flex flex-col gap-0.5">
-            {nav.map((n) => (
-              <Link
-                key={n.to}
-                to={n.to}
-                className={cx(
-                  "rounded-md px-2 py-1.5 text-sm transition-all duration-200 ease-vd-out hover:translate-x-0.5",
-                  n.active(p)
-                    ? "bg-default font-medium text-foreground"
-                    : "text-muted hover:bg-surface-secondary hover:text-foreground",
-                )}
-              >
-                {n.label}
-              </Link>
-            ))}
+            {nav.map((n) => {
+              const active = n.active(p);
+              return (
+                <Link
+                  key={n.to}
+                  to={n.to}
+                  className={cx(
+                    "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors duration-150 ease-vd-out",
+                    active
+                      ? "bg-default font-medium text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]"
+                      : "text-muted hover:bg-surface-secondary hover:text-foreground",
+                  )}
+                >
+                  <Icon
+                    name={n.icon}
+                    className={cx(
+                      "size-[18px] shrink-0 transition-colors duration-150",
+                      active
+                        ? "text-accent"
+                        : "text-muted group-hover:text-foreground",
+                    )}
+                  />
+                  <span className="truncate">{n.label}</span>
+                </Link>
+              );
+            })}
           </nav>
-          <div className="mt-auto space-y-3 px-2 text-xs text-muted">
-            <div className="flex items-center gap-2" title="Live updates">
-              <span className={connected ? "vd-pulse" : undefined}>
-                <Dot tone={connected ? "green" : "warn"} />
-              </span>
-              {connected ? "Live" : "Reconnecting…"}
+          <div className="mt-auto flex items-center gap-2.5 rounded-xl border border-separator bg-background/50 p-2.5">
+            <Avatar name={me.user.display_name} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-foreground">
+                {me.user.display_name}
+              </div>
+              <div
+                className="flex items-center gap-1.5 text-xs text-muted"
+                title="Live updates"
+              >
+                <span className={connected ? "vd-pulse" : undefined}>
+                  <Dot tone={connected ? "green" : "warn"} />
+                </span>
+                {connected ? "Live" : "Reconnecting…"}
+              </div>
             </div>
-            <div className="truncate text-muted">{me.user.display_name}</div>
             <button
-              className="text-muted transition-colors duration-150 hover:text-foreground"
+              type="button"
+              title="Sign out"
+              aria-label="Sign out"
+              className="rounded-lg p-1.5 text-muted transition-colors duration-150 hover:bg-surface-secondary hover:text-foreground"
               onClick={async () => {
                 await api.POST("/v1/auth/logout");
                 // A domain-wide site cookie would auto-bounce straight back
@@ -434,7 +508,7 @@ function Layout() {
                 window.location.href = "/";
               }}
             >
-              Sign out
+              <Icon name="signout" className="size-[18px]" />
             </button>
           </div>
         </>
@@ -505,8 +579,9 @@ function Shell({
       >
         {sidebar}
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8">
-        <div className="mx-auto max-w-5xl">{children}</div>
+      <main className="relative min-w-0 flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+        <TopGlow />
+        <div className="relative mx-auto max-w-5xl">{children}</div>
       </main>
     </div>
   );
@@ -514,8 +589,9 @@ function Shell({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
-      <div className="w-full max-w-sm">{children}</div>
+    <main className="relative flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <TopGlow />
+      <div className="relative w-full max-w-sm">{children}</div>
     </main>
   );
 }

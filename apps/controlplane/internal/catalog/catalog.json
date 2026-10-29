@@ -26,14 +26,14 @@
     "runtimes": ["java"],
     "config_fields": [
       { "name": "version", "type": "select", "options": ["1.21.4", "1.21.1", "1.20.6"], "default": "1.21.4", "required": true },
-      { "name": "eula_accepted", "type": "bool", "default": false, "required": true, "help": "you must accept the Minecraft EULA to run a server" },
+      { "name": "eula_accepted", "label": "Accept the Minecraft EULA", "type": "bool", "default": false, "required": true, "help": "you must accept the Minecraft EULA to run a server" },
       { "name": "max_players", "type": "int", "default": 20, "required": false },
       { "name": "difficulty", "type": "select", "options": ["peaceful", "easy", "normal", "hard"], "default": "normal" },
-      { "name": "gamemode", "type": "select", "options": ["survival", "creative", "adventure", "spectator"], "default": "survival" },
-      { "name": "view_distance", "type": "int", "default": 10 },
+      { "name": "gamemode", "label": "Game mode", "type": "select", "options": ["survival", "creative", "adventure", "spectator"], "default": "survival" },
+      { "name": "view_distance", "label": "View distance (chunks)", "type": "int", "default": 10 },
       { "name": "online_mode", "type": "bool", "default": false, "help": "off for peer-hosted play without Mojang auth" },
-      { "name": "motd", "type": "string", "default": "A Varde server" },
-      { "name": "seed", "type": "string", "required": false }
+      { "name": "motd", "label": "Message of the day", "type": "string", "default": "A Varde server" },
+      { "name": "seed", "label": "World seed", "type": "string", "required": false }
     ]
   },
   {
@@ -54,8 +54,8 @@
       { "name": "game_mode", "type": "select", "options": ["casual", "competitive", "wingman", "arms_race", "deathmatch"], "default": "competitive" },
       { "name": "map", "type": "string", "default": "de_dust2" },
       { "name": "max_players", "type": "int", "default": 10, "min": 2, "max": 64 },
-      { "name": "bots", "type": "int", "default": 0, "min": 0, "max": 64, "help": "bot quota (0 disables bots)" },
-      { "name": "gslt", "type": "secret", "secret": true, "required": false, "help": "Steam Game Server Login Token; without it the server is LAN-only (connections through Varde count as local)" }
+      { "name": "bots", "type": "int", "default": 0, "min": 0, "max": 64, "help": "0 for none" },
+      { "name": "gslt", "label": "Steam server token (GSLT)", "type": "secret", "secret": true, "required": false, "help": "Steam Game Server Login Token; without it the server is LAN-only (connections through Varde count as local)" }
     ]
   },
   {
@@ -73,10 +73,10 @@
       { "name": "server_name", "type": "string", "required": true },
       { "name": "world_name", "type": "string", "required": true },
       { "name": "password", "type": "secret", "required": true, "secret": true, "help": "server password (5+ chars)" },
-      { "name": "public", "type": "bool", "default": false, "help": "list on Steam community servers" },
+      { "name": "public", "label": "List publicly", "type": "bool", "default": false, "help": "list on Steam community servers" },
       { "name": "crossplay", "type": "bool", "default": false, "help": "Crossplay (Xbox/PS5/Game Pass): players join with a join code instead of the Varde address" },
-      { "name": "modifiers", "type": "select", "options": ["normal", "casual", "easy", "hard", "hardcore", "immersive", "hammer"], "default": "normal" },
-      { "name": "save_interval_s", "type": "int", "default": 300, "min": 60, "max": 3600, "help": "seconds between Valheim world saves (60-3600)" }
+      { "name": "modifiers", "label": "World modifiers", "type": "select", "options": ["normal", "casual", "easy", "hard", "hardcore", "immersive", "hammer"], "default": "normal" },
+      { "name": "save_interval_s", "label": "World save interval (seconds)", "type": "int", "default": 300, "min": 60, "max": 3600, "help": "60 to 3600" }
     ]
   }
 ]

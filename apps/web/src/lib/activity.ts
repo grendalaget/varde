@@ -34,7 +34,7 @@ export function describeEvent(
     case "server.save_unavailable":
       return "Waiting for the newest save: it's only on offline machines";
     case "server.unschedulable":
-      return `No machine can host it right now${d.reasons ? ` (${JSON.stringify(d.reasons)})` : ""}`;
+      return `No machine can host it right now${Array.isArray(d.reasons) ? `: ${d.reasons.join("; ")}` : ""}`;
     case "server.move":
     case "migration.started":
       return "Moving server";

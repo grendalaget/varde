@@ -18,7 +18,8 @@ import { Link, navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
 import PluginSettingsPanel from "./PluginSettings";
 import SaveSafety from "../components/SaveSafety";
-import { HostMarker, ServerMark } from "../components/Logo";
+import { HostMarker } from "../components/Logo";
+import { GameGlow, GameMark } from "../components/GameMark";
 import { isCrossplayEnabled, useGames } from "../lib/games";
 
 export default function Servers() {
@@ -54,15 +55,18 @@ export default function Servers() {
       <PluginSetup />
       {!loading && servers.length === 0 && (
         <Card className="vd-enter">
-          <Empty>
-            No servers yet.{" "}
-            <Link
-              to="/servers/new"
-              className="text-foreground underline decoration-muted underline-offset-2 hover:decoration-foreground"
-            >
-              Create your first one
-            </Link>
-            .
+          <Empty
+            action={
+              <Button
+                variant="primary"
+                onClick={() => navigate("/servers/new")}
+              >
+                Create your first server
+              </Button>
+            }
+          >
+            No servers yet. Pick a game and Varde runs it on one of your group's
+            machines.
           </Empty>
         </Card>
       )}
@@ -111,14 +115,18 @@ function PluginSetup() {
   const setupError = [
     catalog.error ? errorMessage(catalog.error) : "",
     enabledPlugins.error ? errorMessage(enabledPlugins.error) : "",
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section className="mb-6 space-y-4">
       {setupError && <ErrorNote>{setupError}</ErrorNote>}
       {available.length > 0 && (
         <>
-          <h2 className="text-base font-semibold text-foreground">Set up plugins</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            Set up plugins
+          </h2>
           <div className="grid gap-4 md:grid-cols-2">
             {available.map((plugin) => (
               <Card key={plugin.id}>
@@ -162,19 +170,29 @@ function ServerCard({
   return (
     <Link
       to={`/servers/${s.id}`}
-      className="block rounded-2xl border border-separator bg-surface p-4 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-lg hover:shadow-black/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+      className="group relative block overflow-hidden rounded-2xl border border-separator bg-surface p-5 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-[0_18px_50px_-24px_rgb(0_0_0/0.8)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ServerMark state={s.observed_state} />
+      <GameGlow
+        id={s.game_id}
+        className={
+          s.observed_state === "running"
+            ? "opacity-25"
+            : "opacity-[0.06] group-hover:opacity-15"
+        }
+      />
+      <div className="relative flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <GameMark id={s.game_id} name={gameName} />
           <div className="min-w-0">
-            <h3 className="truncate font-semibold text-foreground">{s.name}</h3>
-            <p className="text-xs text-muted">{gameName}</p>
+            <h3 className="truncate text-[15px] font-semibold text-foreground">
+              {s.name}
+            </h3>
+            <p className="truncate text-xs text-muted">{gameName}</p>
           </div>
         </div>
         <ServerStateBadge state={s.observed_state} />
       </div>
-      <dl className="mt-4 space-y-2 text-sm">
+      <dl className="relative mt-5 space-y-2.5 border-t border-separator pt-4 text-sm">
         <Row label="Hosting on">
           {sum.hosting_on ? (
             <HostMarker
@@ -237,7 +255,7 @@ function ServerCard({
           )}
         </Row>
       </dl>
-      <div className="mt-3">
+      <div className="relative mt-3">
         <SaveSafety summary={sum} compact />
       </div>
       {s.desired_state === "running" && s.observed_state === "failed" && (
