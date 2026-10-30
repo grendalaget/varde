@@ -32,6 +32,20 @@ export function useSession(): Session {
   return s;
 }
 
+/** This PC's node id when the dashboard runs in the desktop app (?node=).
+ * Read once at load: the app reloads the page when it changes. Kept in tab
+ * storage so a reload of that window still knows. */
+export const thisNode: string | null = (() => {
+  const key = "varde.this-node";
+  const n = new URLSearchParams(window.location.search).get("node");
+  try {
+    if (n) sessionStorage.setItem(key, n);
+    return n ?? sessionStorage.getItem(key);
+  } catch {
+    return n;
+  }
+})();
+
 export function canAdmin(role: string) {
   return role === "owner" || role === "admin";
 }

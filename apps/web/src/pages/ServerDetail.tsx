@@ -29,7 +29,7 @@ import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { bytes, dateTime, timeAgo } from "../lib/format";
 import { Link, navigate } from "../lib/router";
-import { canAdmin, useNodeName, useSession } from "../lib/session";
+import { canAdmin, thisNode, useNodeName, useSession } from "../lib/session";
 import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "../components/ConfigInput";
@@ -78,6 +78,12 @@ export default function ServerDetail({ id }: { id: string }) {
     },
   );
   const games = useGames();
+  const { group, selectGroup } = useSession();
+  const gid = server.data?.group_id;
+  // a link can open a server from another group: show that group's machines
+  useEffect(() => {
+    if (gid && gid !== group.group_id) selectGroup(gid);
+  }, [gid, group.group_id, selectGroup]);
 
   if (server.error && !server.data) {
     return (
@@ -188,7 +194,7 @@ export default function ServerDetail({ id }: { id: string }) {
 }
 
 function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
-  const { nodes } = useSession();
+  const { group, nodes, refreshNodes } = useSession();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<{ msg: string; code?: string } | null>(null);
   const [moving, setMoving] = useState(false);
@@ -201,7 +207,6 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
       n.online &&
       n.id !== hostId,
   );
-
   async function run(name: string, fn: () => Promise<{ error?: unknown }>) {
     setBusy(name);
     setErr(null);
@@ -221,6 +226,57 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         body: allowOlder ? { allow_older_snapshot: true } : {},
       }),
     );
+
+  // A start no machine could take: offer the fix, this PC first.
+  function startFix() {
+    if (err?.code !== "unschedulable") return null;
+    const here = nodes.find((n) => n.id === thisNode);
+    if (here && !here.hosting_enabled) {
+      return {
+        msg: "This PC isn't allowed to host servers. Let it host and start the server here?",
+        label: "Let this PC host",
+        go: () =>
+          run("fix", async () => {
+            const r = await api.PATCH("/v1/nodes/{nodeId}", {
+              params: { path: { nodeId: here.id } },
+              body: { hosting_enabled: true },
+            });
+            if (r.error) return r;
+            await refreshNodes();
+            return api.POST("/v1/servers/{serverId}/start", {
+              params: { path: { serverId: s.id } },
+              body: {},
+            });
+          }),
+      };
+    }
+    if (nodes.some((n) => n.hosting_enabled && n.admin_state === "active"))
+      return null;
+    // the approval page only offers groups the user administers
+    if (thisNode && !here && canAdmin(group.role)) {
+      return {
+        msg: `This PC is linked to another group. Move it to ${group.name} to run the server here? It stops hosting for its current group.`,
+        label: "Move this PC here",
+        // the desktop app catches this and starts the re-link
+        go: () =>
+          window.location.assign(
+            `varde://relink?group=${encodeURIComponent(group.group_id)}`,
+          ),
+      };
+    }
+    return nodes.length === 0
+      ? {
+          msg: `${group.name} has no machines yet. Add this PC (or another machine) to run the server?`,
+          label: "Add a machine",
+          go: () => navigate("/machines/add"),
+        }
+      : {
+          msg: `None of ${group.name}'s machines are allowed to host servers. Turn on hosting for one of them?`,
+          label: "Open machines",
+          go: () => navigate("/machines"),
+        };
+  }
+  const fix = startFix();
 
   return (
     <div className="relative flex flex-col items-end gap-2">
@@ -299,8 +355,17 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
               ? "The latest save is on a machine that's offline right now. Wait for it to come back, or start from the newest save that's available (recent progress may be lost)."
               : err.code === "no_reachable_save"
                 ? "No save is reachable right now. Wait for the machine holding it to come back online."
-                : err.msg}
+                : (fix?.msg ?? err.msg)}
           </ErrorNote>
+          {fix && (
+            <Button
+              variant="primary"
+              busy={busy === "fix"}
+              onClick={() => void fix.go()}
+            >
+              {fix.label}
+            </Button>
+          )}
           {err.code === "latest_save_unavailable" && (
             <Button variant="danger" onClick={() => void start(true)}>
               Start from an older save
