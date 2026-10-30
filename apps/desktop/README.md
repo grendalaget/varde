@@ -35,8 +35,15 @@ window.
   - *Dashboard face* (`dashboard`): the control-plane dashboard loaded as an
     external webview inside the same window — the tray never opens a
     browser. It has no IPC access (remote), keeps its own cookies (sign-in
-    persists), and opens on this PC's group (`?group=`). It navigates only
-    when the control-plane origin or the PC's group changes (e.g. re-link).
+    persists), and opens on this PC's group and says which PC this is
+    (`?group=&node=`). It navigates only when the control-plane origin or
+    the PC's node changes (e.g. re-link).
+  - *Move this PC here*: when a start can't be placed and this PC is in
+    another group, the dashboard navigates to `varde://relink?group=<id>`.
+    The window's navigation guard catches it (it's never loaded) and starts
+    a re-link: `--relink-start` elevated on Windows, in-process on macOS.
+    The code then opens as `/link?code=…&group=…` in the dashboard, which
+    stays the visible face until the link ends.
   - The face is picked by the PC's state (`view::facet`): linked and
     reachable → dashboard; linking, signing in, pending approval, offline or
     service-down → setup. Finishing a link morphs the window into the
@@ -50,9 +57,10 @@ The address comes from the service: its control-plane URL once linked, before
 that the one the installer chose (`%ProgramData%\Varde\server.url`).
 
 Flags: `--link` (installer; opens the window and starts linking with the
-service's address), `--relink`, `--autostart` (login; exits if the user
-turned it off), `--service-start`/`--service-stop` (elevated headless service
-control on Windows).
+service's address), `--relink`, `--relink-start` (elevated headless re-link
+for "Move this PC here"), `--autostart` (login; exits if the user turned it
+off), `--service-start`/`--service-stop` (elevated headless service control on
+Windows).
 
 ## UI (`ui/`)
 

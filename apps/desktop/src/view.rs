@@ -350,14 +350,17 @@ impl From<&pb::Status> for UiStatus {
 
 /// Command line: `--link` (installer: open the link window and start linking
 /// with the address the service reports), `--relink` (elevated re-link
-/// window), `--autostart`, `--service-start` / `--service-stop` (elevated
-/// headless service control; start also restarts a running-but-dead one).
+/// window), `--relink-start` (elevated headless re-link for the dashboard's
+/// "Move this PC here"), `--autostart`, `--service-start` / `--service-stop`
+/// (elevated headless service control; start also restarts a running-but-dead
+/// one).
 /// A `varde://` URL arrives from the protocol handler when the browser
 /// returns a federated sign-in token.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
     pub relink: bool,
+    pub relink_start: bool,
     pub autostart: bool,
     pub service_start: bool,
     pub service_stop: bool,
@@ -376,6 +379,7 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
                 let _ = it.next_if(|n| !n.starts_with("--"));
             }
             "--relink" => l.relink = true,
+            "--relink-start" => l.relink_start = true,
             "--autostart" => l.autostart = true,
             "--service-start" => l.service_start = true,
             "--service-stop" => l.service_stop = true,
@@ -645,6 +649,8 @@ mod tests {
         let l = p(&["--link", "--autostart"]);
         assert!(l.open_link && l.autostart);
         assert!(p(&["--relink"]).relink);
+        let l = p(&["--relink-start"]);
+        assert!(l.relink_start && !l.relink);
         assert!(p(&["--service-start"]).service_start);
         assert!(p(&["--service-stop"]).service_stop);
         let l = p(&["varde://auth/callback?token=t.jwt"]);

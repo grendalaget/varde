@@ -56,8 +56,9 @@ export default function App() {
   );
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (!params.has("group")) return;
+    if (!params.has("group") && !params.has("node")) return;
     params.delete("group");
+    params.delete("node"); // read by lib/session's thisNode
     const q = params.toString();
     history.replaceState(
       null,

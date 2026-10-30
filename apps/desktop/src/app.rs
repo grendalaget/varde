@@ -69,7 +69,23 @@ pub(crate) struct State {
     /// Cleared by cancel_varde_login mid-flight: approve_link checks it
     /// before starting a new link so a cancelled sign-in can't still link.
     fed_active: std::sync::atomic::AtomicBool,
+    /// The dashboard asked to move this PC into a group (varde://relink):
+    /// its re-link code is approved there, not on the setup face.
+    move_to: Mutex<Option<MoveTo>>,
 }
+
+/// A move the dashboard asked for: the target group, the link code opened
+/// for approval ("" until the agent has one), and when it was asked.
+struct MoveTo {
+    group: String,
+    code: String,
+    at: std::time::Instant,
+}
+
+/// A move whose re-link never showed a code (the helper failed, or UAC sat
+/// unanswered) stops waiting after this, so a later re-link from the tray
+/// isn't taken for it.
+const MOVE_START_TTL: Duration = Duration::from_secs(300);
 
 /// A CP session minted by `/v1/auth/external`, held across the confirm
 /// and pick-a-group stages.
@@ -115,6 +131,15 @@ pub fn run() {
             message_box(&format!(
                 "Varde couldn't {action} its service. Restart Varde and try again.\n\n{e:#}"
             ));
+            std::process::exit(1);
+        }
+        return;
+    }
+    // Elevated headless re-link for the dashboard's "Move this PC here":
+    // start it and exit — the tray instance opens the code for approval.
+    if launch.relink_start {
+        if let Err(e) = tauri::async_runtime::block_on(relink_start()) {
+            message_box(&e);
             std::process::exit(1);
         }
         return;
@@ -306,7 +331,8 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
         .map(|s| s.control_plane_url.clone())
         .filter(|u| !u.is_empty());
     let link_pending = s.as_ref().is_some_and(|s| s.link.is_some());
-    let group = s.as_ref().map(|s| s.group_id.clone()).unwrap_or_default();
+    let node = s.as_ref().map(|s| s.node_id.clone()).unwrap_or_default();
+    sync_move(app, s.as_ref());
     if let Some(st) = &s {
         notify_rejoin(app, &st.rejoin);
     }
@@ -336,18 +362,18 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
                     .unwrap()
                     .as_ref()
                     .is_some_and(|(_, at)| at.elapsed() < FED_HANDOFF_TTL);
-                // re-linked into another group on the same CP
-                let want = Some(group.as_str()).filter(|g| !g.is_empty());
-                let group_moved = prev
+                // re-linked on the same CP: a new node, maybe in another group
+                let want = Some(node.as_str()).filter(|n| !n.is_empty());
+                let relinked = prev
                     .as_ref()
-                    .is_some_and(|p| group_param(p).as_deref() != want);
+                    .is_some_and(|p| query_param(p, "node").as_deref() != want);
                 if still_on_cp
                     && (prev
                         .as_ref()
                         .map(|p| p.origin() != parsed.origin())
                         .unwrap_or(true)
                         || handoff_pending
-                        || group_moved)
+                        || relinked)
                 {
                     // dashboard_load_url attaches a fresh sign-in token —
                     // a re-link to the same CP re-auths the open window.
@@ -562,6 +588,16 @@ fn cp_url(app: &AppHandle) -> Option<String> {
 fn desired_facet(app: &AppHandle) -> Facet {
     let st = app.state::<State>();
     let status = st.status.lock().unwrap().clone();
+    // a move the dashboard asked for is approved in the dashboard
+    let moving = st
+        .move_to
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|m| !m.code.is_empty());
+    if moving && status.as_ref().is_some_and(|s| s.link.is_some()) {
+        return Facet::Dashboard;
+    }
     view::facet(
         status.as_ref(),
         st.fed_active.load(std::sync::atomic::Ordering::SeqCst),
@@ -897,17 +933,21 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
     // fragments in the configured address never propagate either: only
     // the handoff carries one.
     url.set_fragment(None);
-    // open on this PC's own group, not whichever one the browser used last
-    let group = app
+    // open on this PC's own group, not whichever one the browser used last,
+    // and say which PC this is (the dashboard offers it when a start fails)
+    let (group, node) = app
         .state::<State>()
         .status
         .lock()
         .unwrap()
         .as_ref()
-        .map(|s| s.group_id.clone())
+        .map(|s| (s.group_id.clone(), s.node_id.clone()))
         .unwrap_or_default();
     if !group.is_empty() {
-        url.query_pairs_mut().clear().append_pair("group", &group);
+        url.query_pairs_mut()
+            .clear()
+            .append_pair("group", &group)
+            .append_pair("node", &node);
     }
     let mut handoff = false;
     if tauri::Url::parse(agent_ipc::DEFAULT_CP_URL)
@@ -922,11 +962,109 @@ fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
     Some((url, handoff))
 }
 
-/// The group a dashboard URL opens on (`?group=`, see dashboard_load_url).
-fn group_param(u: &tauri::Url) -> Option<String> {
+/// A query parameter of a dashboard URL (`?group=`, `?node=`; see
+/// dashboard_load_url).
+fn query_param(u: &tauri::Url, key: &str) -> Option<String> {
     u.query_pairs()
-        .find(|(k, _)| k == "group")
+        .find(|(k, _)| k == key)
         .map(|(_, v)| v.into_owned())
+}
+
+/// `varde://relink?group=<id>`: the dashboard's "Move this PC here".
+fn move_request(u: &tauri::Url) -> Option<String> {
+    if u.scheme() != "varde" || u.host_str() != Some("relink") {
+        return None;
+    }
+    query_param(u, "group").filter(|g| !g.is_empty())
+}
+
+/// The dashboard's "Move this PC here": start a re-link (through the
+/// elevated helper on Windows, where the agent runs as SYSTEM). publish()
+/// then opens its code for approval in the dashboard, group picked.
+fn request_move(app: &AppHandle, group: String) {
+    *app.state::<State>().move_to.lock().unwrap() = Some(MoveTo {
+        group,
+        code: String::new(),
+        at: std::time::Instant::now(),
+    });
+    let h = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // the helper reports its own errors; declining UAC needs none
+        #[cfg(windows)]
+        let r: Result<(), String> = tauri::async_runtime::spawn_blocking(|| {
+            elevate_self("--relink-start").map_err(|_| String::new())
+        })
+        .await
+        .unwrap_or(Err(String::new()));
+        #[cfg(target_os = "macos")]
+        let r = relink_start().await;
+        if let Err(e) = r {
+            *h.state::<State>().move_to.lock().unwrap() = None;
+            if !e.is_empty() {
+                let _ = tauri::async_runtime::spawn_blocking(move || message_box(&e)).await;
+            }
+        }
+    });
+}
+
+/// Ask the agent to re-link to the control plane it's on. It needs an
+/// administrator: the elevated helper on Windows, the user's own agent on
+/// macOS. Refused while this PC hosts a server.
+async fn relink_start() -> Result<(), String> {
+    let mut c = agent_ipc::connect(&agent_ipc::default_endpoint())
+        .await
+        .map_err(|_| "The Varde service on this PC isn't running.".to_string())?;
+    let s = c
+        .get_status(pb::GetStatusRequest {})
+        .await
+        .map_err(grpc_err)?
+        .into_inner()
+        .status
+        .unwrap_or_default();
+    c.start_link(pb::StartLinkRequest {
+        control_plane_url: s.control_plane_url,
+        relink: true,
+    })
+    .await
+    .map_err(grpc_err)?;
+    Ok(())
+}
+
+/// Follow a dashboard-requested move: once the agent has a code, open its
+/// approval in the dashboard with the group picked; done when the link ends.
+fn sync_move(app: &AppHandle, s: Option<&pb::Status>) {
+    let st = app.state::<State>();
+    let mut mv = st.move_to.lock().unwrap();
+    let Some(m) = mv.as_mut() else {
+        return;
+    };
+    let code = s
+        .and_then(|s| s.link.as_ref())
+        .map(|l| l.user_code.as_str())
+        .unwrap_or_default();
+    if code.is_empty() {
+        // approved, expired or cancelled — or it never started
+        if !m.code.is_empty() || m.at.elapsed() > MOVE_START_TTL {
+            *mv = None;
+        }
+        return;
+    }
+    if m.code == code {
+        return;
+    }
+    m.code = code.to_string();
+    // dashboard_origin stays on the old node, so the finished re-link
+    // still re-navigates the window to the new one
+    let base = st.dashboard_origin.lock().unwrap().clone();
+    if let (Some(mut u), Some(w)) = (base, app.get_webview_window(DASHBOARD_WINDOW)) {
+        u.set_path("/link");
+        u.set_fragment(None);
+        u.query_pairs_mut()
+            .clear()
+            .append_pair("code", code)
+            .append_pair("group", &m.group);
+        let _ = w.navigate(u);
+    }
 }
 
 /// The dashboard lives in the app, not the browser: a plain external
@@ -956,7 +1094,7 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
             || w.url()
                 .map(|u| u.origin() != parsed.origin())
                 .unwrap_or(true)
-            || last.as_ref().map(group_param) != Some(group_param(&parsed))
+            || last.as_ref().map(|l| query_param(l, "node")) != Some(query_param(&parsed, "node"))
         {
             *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
             w.navigate(parsed).map_err(|e| e.to_string())?;
@@ -984,6 +1122,12 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         .on_navigation({
             let ah = app.clone();
             move |u| {
+                // "Move this PC here" in the dashboard: re-link into that
+                // group, approved back in this window. Never loaded.
+                if let Some(group) = move_request(u) {
+                    request_move(&ah, group);
+                    return false;
+                }
                 // Tauri serves the bundled UI from http(s)://tauri.localhost
                 // — a control-plane URL pointing there would load the local
                 // app pages, privileged IPC bridge included, inside this
