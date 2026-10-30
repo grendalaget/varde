@@ -32,6 +32,7 @@ type GameView struct {
 // NodeView is what Place needs to know about a candidate node.
 type NodeView struct {
 	ID                string
+	Name              string // shown in reasons; ID when empty
 	Online            bool
 	Draining          bool // agent is draining executions on shutdown
 	AdminState        string
@@ -90,40 +91,41 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 	var best *Decision
 
 	for _, n := range sorted {
+		who := cmp.Or(n.Name, n.ID)
 		if !n.Online {
-			reasons = append(reasons, n.ID+": offline")
+			reasons = append(reasons, who+": offline")
 			continue
 		}
 		if n.Draining {
-			reasons = append(reasons, n.ID+": shutting down")
+			reasons = append(reasons, who+": shutting down")
 			continue
 		}
 		if n.AdminState != "active" {
-			reasons = append(reasons, n.ID+": admin_state="+n.AdminState)
+			reasons = append(reasons, who+": admin_state="+n.AdminState)
 			continue
 		}
 		if !n.HostingEnabled {
-			reasons = append(reasons, n.ID+": hosting disabled")
+			reasons = append(reasons, who+": hosting disabled")
 			continue
 		}
 		if !slices.Contains(n.Drivers, game.ID) {
-			reasons = append(reasons, n.ID+": missing driver "+game.ID)
+			reasons = append(reasons, who+": missing driver "+game.ID)
 			continue
 		}
 		if game.OS != nil && !slices.Contains(game.OS, n.OS) {
-			reasons = append(reasons, n.ID+": unsupported os "+n.OS)
+			reasons = append(reasons, who+": unsupported os "+n.OS)
 			continue
 		}
 		if len(game.Arch) > 0 && !slices.Contains(game.Arch, n.Arch) {
-			reasons = append(reasons, n.ID+": unsupported arch "+n.Arch)
+			reasons = append(reasons, who+": unsupported arch "+n.Arch)
 			continue
 		}
 		if n.MemoryAvailableMB < game.MinMemoryMB {
-			reasons = append(reasons, n.ID+": insufficient memory")
+			reasons = append(reasons, who+": insufficient memory")
 			continue
 		}
 		if n.MaxMemoryMB != nil && game.MinMemoryMB > *n.MaxMemoryMB {
-			reasons = append(reasons, n.ID+": over max_memory_mb")
+			reasons = append(reasons, who+": over max_memory_mb")
 			continue
 		}
 		installed := game.SteamApp != 0 && slices.Contains(n.SteamApps, game.SteamApp)
@@ -133,7 +135,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 		}
 		need := snap.RestoreBytes*2 + max(snap.DeploymentSize, minimum)
 		if need > 0 && n.DiskFreeBytes < need {
-			reasons = append(reasons, n.ID+": insufficient disk")
+			reasons = append(reasons, who+": insufficient disk")
 			continue
 		}
 		// Runtime: any game runtime must be present.
@@ -146,7 +148,7 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 				}
 			}
 			if !ok {
-				reasons = append(reasons, n.ID+": missing runtime")
+				reasons = append(reasons, who+": missing runtime")
 				continue
 			}
 		}

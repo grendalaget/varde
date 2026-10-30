@@ -829,6 +829,7 @@ func (r *Reconciler) onlineNodeIDs(ctx context.Context, groupID string) (map[str
 func (r *Reconciler) nodeView(ctx context.Context, n *store.Node, restore *store.Snapshot, sources []string) scheduler.NodeView {
 	v := scheduler.NodeView{
 		ID:             n.ID,
+		Name:           n.Name,
 		Online:         r.Liveness(n) == "online",
 		AdminState:     n.AdminState,
 		HostingEnabled: n.HostingEnabled == 1,

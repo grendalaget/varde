@@ -279,3 +279,13 @@ func TestEmptyGroupSaysAddAMachine(t *testing.T) {
 		t.Fatalf("empty group error = %v, want a hint to add a machine", err)
 	}
 }
+
+func TestReasonsNameTheMachine(t *testing.T) {
+	n := okNode("node_x")
+	n.Name = "Living room PC"
+	n.Online = false
+	_, err := Place(testSrv, testGame, []NodeView{n}, SnapView{})
+	if err == nil || !strings.Contains(err.Error(), "Living room PC: offline") {
+		t.Fatalf("error = %v, want the machine's name", err)
+	}
+}
