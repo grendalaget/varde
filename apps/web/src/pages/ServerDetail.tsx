@@ -188,7 +188,7 @@ export default function ServerDetail({ id }: { id: string }) {
 }
 
 function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
-  const { nodes } = useSession();
+  const { group, nodes } = useSession();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<{ msg: string; code?: string } | null>(null);
   const [moving, setMoving] = useState(false);
@@ -201,6 +201,10 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
       n.online &&
       n.id !== hostId,
   );
+  // a start can't place anywhere: offer to add a machine (or turn on hosting)
+  const noHosts =
+    err?.code === "unschedulable" &&
+    !nodes.some((n) => n.hosting_enabled && n.admin_state === "active");
 
   async function run(name: string, fn: () => Promise<{ error?: unknown }>) {
     setBusy(name);
@@ -299,8 +303,22 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
               ? "The latest save is on a machine that's offline right now. Wait for it to come back, or start from the newest save that's available (recent progress may be lost)."
               : err.code === "no_reachable_save"
                 ? "No save is reachable right now. Wait for the machine holding it to come back online."
-                : err.msg}
+                : noHosts && nodes.length === 0
+                  ? `${group.name} has no machines yet. Add this PC (or another machine) to run the server?`
+                  : noHosts
+                    ? `None of ${group.name}'s machines are allowed to host servers. Turn on hosting for one of them?`
+                    : err.msg}
           </ErrorNote>
+          {noHosts && (
+            <Button
+              variant="primary"
+              onClick={() =>
+                navigate(nodes.length === 0 ? "/machines/add" : "/machines")
+              }
+            >
+              {nodes.length === 0 ? "Add a machine" : "Open machines"}
+            </Button>
+          )}
           {err.code === "latest_save_unavailable" && (
             <Button variant="danger" onClick={() => void start(true)}>
               Start from an older save
