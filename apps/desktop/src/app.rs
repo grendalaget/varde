@@ -1115,7 +1115,8 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
         .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
         // inside the window: the control-plane origin itself, plus
         // https://*.varde.games — the hosted-CP sign-in bounces through
-        // /federate/cp and account/billing live there. Anything else
+        // /federate/cp and account/billing live there — and
+        // https://steamcommunity.com for linking Steam. Anything else
         // stays out of the app chrome (an off-origin page must never
         // impersonate the dashboard, and the local frontend's command
         // bridge is unreachable either way).
@@ -1153,10 +1154,15 @@ fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
                                     |(a, b)| a.eq_ignore_ascii_case(b),
                                 ))
                     });
+                // Steam's OpenID sign-in (Settings → link Steam) stays in this
+                // window: its callback needs this webview's CP session cookie
                 on_cp
                     || u.scheme() == "https"
-                        && u.domain()
-                            .is_some_and(|d| d == "varde.games" || d.ends_with(".varde.games"))
+                        && u.domain().is_some_and(|d| {
+                            d == "varde.games"
+                                || d.ends_with(".varde.games")
+                                || d == "steamcommunity.com"
+                        })
             }
         })
         // window.open()/target=_blank (docs, community, a deep link into
