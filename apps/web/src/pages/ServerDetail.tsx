@@ -78,6 +78,12 @@ export default function ServerDetail({ id }: { id: string }) {
     },
   );
   const games = useGames();
+  const { group, selectGroup } = useSession();
+  const gid = server.data?.group_id;
+  // a link can open a server from another group: show that group's machines
+  useEffect(() => {
+    if (gid && gid !== group.group_id) selectGroup(gid);
+  }, [gid, group.group_id, selectGroup]);
 
   if (server.error && !server.data) {
     return (
