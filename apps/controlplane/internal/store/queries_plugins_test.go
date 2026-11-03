@@ -4,7 +4,41 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestIsMissingTableRecognizesPostgresUndefinedTable(t *testing.T) {
+	err := &pgconn.PgError{Code: "42P01"}
+	if !isMissingTable(err, "installed_plugins") {
+		t.Fatalf("isMissingTable(%v, installed_plugins) = false, want true", err)
+	}
+}
+
+func TestInstalledPluginReadsTolerateMissingTable(t *testing.T) {
+	s, err := Open("sqlite://"+t.TempDir()+"/t.db", nil)
+	if err != nil {
+		t.Fatalf("sqlite open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := s.DB.Exec(`DROP TABLE installed_plugins`); err != nil {
+		t.Fatalf("drop installed_plugins: %v", err)
+	}
+
+	ctx := context.Background()
+	plugins, err := s.ListInstalledPlugins(ctx)
+	if err != nil || plugins != nil {
+		t.Fatalf("ListInstalledPlugins() = (%#v, %v), want (nil, nil)", plugins, err)
+	}
+	plugin, err := s.InstalledPlugin(ctx, "missing")
+	if plugin != nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InstalledPlugin(missing) = (%#v, %v), want (nil, ErrNotFound)", plugin, err)
+	}
+	plugin, err = s.InstalledPluginByServiceTokenID(ctx, "missing")
+	if plugin != nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InstalledPluginByServiceTokenID(missing) = (%#v, %v), want (nil, ErrNotFound)", plugin, err)
+	}
+}
 
 func TestInstalledPluginCredentialsAndTokenReuse(t *testing.T) {
 	for name, s := range testStores(t) {

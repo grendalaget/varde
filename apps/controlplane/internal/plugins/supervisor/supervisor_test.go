@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -418,6 +419,30 @@ func TestNonLeaderDoesNotSpawnInstalledPlugin(t *testing.T) {
 	}
 	if len(supervisor.running) != 0 {
 		t.Fatalf("non-leader process count = %d, want zero", len(supervisor.running))
+	}
+}
+
+func TestNewAndFollowerReconcileWithMissingInstalledPluginsTable(t *testing.T) {
+	db, err := store.Open("sqlite://"+filepath.Join(t.TempDir(), "cp.db"), store.RealClock)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.DB.Exec(`DROP TABLE installed_plugins`); err != nil {
+		t.Fatalf("drop installed_plugins: %v", err)
+	}
+
+	var logs bytes.Buffer
+	supervisor, err := New(Options{
+		DataDir: t.TempDir(), Store: db, Registry: mustEmptyRegistry(t),
+		Leader: testLeader(false), Log: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatalf("New() with missing installed_plugins table: %v", err)
+	}
+	supervisor.reconcile(context.Background())
+	if strings.Contains(logs.String(), "list installed plugins") {
+		t.Fatalf("follower reconcile logged an installed plugin read error: %s", logs.String())
 	}
 }
 

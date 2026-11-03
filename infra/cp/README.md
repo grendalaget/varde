@@ -49,9 +49,12 @@ fly certs add cp.varde.games             # then point the DNS record at the app
   `varde-cp-entry`) names this node — see `litefs.yml` and
   `apps/controlplane/internal/store/elector.go`.
 - Replicas skip migrations at startup; a replica promoted to primary applies
-  them once it holds the LiteFS lease. Set `VARDE_SECRETS_KEY` as a Fly secret
-  with the same value on every machine, or the CP tries to create `secrets.key`
-  inside `/litefs` and exits.
+  them once it holds the LiteFS lease. During a rolling deploy, a replica may
+  run new code against the old schema until the primary is updated, so code
+  must tolerate tables or columns added by newer migrations being absent on
+  replicas. Set `VARDE_SECRETS_KEY` as a Fly secret with the same value on
+  every machine, or the CP tries to create `secrets.key` inside `/litefs` and
+  exits.
 
 ## Env
 
