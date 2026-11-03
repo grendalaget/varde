@@ -11,6 +11,12 @@ import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
 import { Icon, type IconName } from "./components/icons";
 import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
 import { Link, match, navigate, useLocation } from "./lib/router";
+import {
+  FED_RETURN_KEY,
+  FED_RETURN_TTL_MS,
+  SIGNED_OUT_KEY,
+  usePlatform,
+} from "./lib/platform";
 import { SessionProvider, useSession } from "./lib/session";
 import Activity from "./pages/Activity";
 import AdminPlugins from "./pages/AdminPlugins";
@@ -31,20 +37,11 @@ import { useLoad } from "./lib/data";
 const GROUP_KEY = "varde.group";
 // The site's federated sign-in bounce mints a token and hands it back in the
 // URL fragment. Kept in sync with auth.FederationIssuer on the CP.
-const VARDE_SITE = "https://varde.games";
 // Set once per tab so a failed exchange can't loop the bounce forever.
 const FED_AUTO_KEY = "varde.fed-auto";
-// Set by an explicit sign-out: a domain-wide site cookie would otherwise
-// bounce the user straight back into a fresh CP session.
-const SIGNED_OUT_KEY = "varde.signed-out";
-// Where to return after the federated bounce. Kept in tab storage on this
-// origin: putting it in `next` would hand paths like /invite/<code> to the
-// site's logs. Stored as `path|timestamp` — a stale value (sign-in abandoned
-// at the site) must not hijack a later, unrelated exchange.
-const FED_RETURN_KEY = "varde.fed-return";
-const FED_RETURN_TTL_MS = 15 * 60 * 1000;
 
 export default function App() {
+  const platform = usePlatform();
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fedError, setFedError] = useState<string | null>(null);
@@ -57,6 +54,7 @@ export default function App() {
   // isn't in falls back to their first group below.
   const [groupId, setGroupId] = useState<string | null>(
     () =>
+      platform.thisGroupId ??
       new URLSearchParams(window.location.search).get("group") ??
       localStorage.getItem(GROUP_KEY),
   );
@@ -88,9 +86,17 @@ export default function App() {
     setMe(data);
   }, []);
 
+  useEffect(() => {
+    const onSessionChanged = () => void refreshMe();
+    window.addEventListener("varde:session-changed", onSessionChanged);
+    return () =>
+      window.removeEventListener("varde:session-changed", onSessionChanged);
+  }, [refreshMe]);
+
   // The site hands the federation token back in the fragment so it never
   // reaches server logs or referers; exchange it for a CP session.
   const exchangeFedToken = useCallback(async () => {
+    if (platform.kind === "desktop") return;
     const m = window.location.hash.match(/^#fed_token=(.+)$/);
     if (!m) return;
     history.replaceState(
@@ -115,10 +121,13 @@ export default function App() {
     ) {
       navigate(path, true);
     }
-  }, [refreshMe]);
+  }, [platform.kind, refreshMe]);
 
   useEffect(() => {
-    if (window.location.hash.startsWith("#fed_token=")) {
+    if (
+      platform.kind === "web" &&
+      window.location.hash.startsWith("#fed_token=")
+    ) {
       void exchangeFedToken();
     } else {
       // mounted without a token: the bounce chain is over — any stored
@@ -126,26 +135,20 @@ export default function App() {
       sessionStorage.removeItem(FED_RETURN_KEY);
       void refreshMe();
     }
-  }, [exchangeFedToken, refreshMe]);
+  }, [exchangeFedToken, platform.kind, refreshMe]);
 
   // A token pasted into an already-open tab is a fragment-only navigation -
   // no remount, so catch it via hashchange too.
   useEffect(() => {
+    if (platform.kind === "desktop") return;
     const onHash = () => void exchangeFedToken();
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, [exchangeFedToken]);
+  }, [exchangeFedToken, platform.kind]);
 
   const continueWithVarde = useCallback(() => {
-    sessionStorage.removeItem(SIGNED_OUT_KEY);
-    // Preserve the current path (e.g. /invite/<code>) across the bounce —
-    // locally, so invite codes never reach the site's query logs.
-    sessionStorage.setItem(
-      FED_RETURN_KEY,
-      `${window.location.pathname + window.location.search}|${Date.now()}`,
-    );
-    window.location.assign(`${VARDE_SITE}/federate/cp?next=/`);
-  }, []);
+    platform.signInWithVarde();
+  }, [platform]);
 
   // Logged out on a federated CP: if the browser already has a domain-wide
   // varde.games session, bounce to the site once - it mints a token and
@@ -163,6 +166,7 @@ export default function App() {
         if (dead || !f) return;
         setFed(f);
         if (
+          platform.kind === "web" &&
           f.enabled &&
           f.site_session &&
           !fedError &&
@@ -177,7 +181,7 @@ export default function App() {
     return () => {
       dead = true;
     };
-  }, [me, fedError, continueWithVarde]);
+  }, [me, fedError, continueWithVarde, platform]);
 
   const selectGroup = useCallback((id: string) => {
     localStorage.setItem(GROUP_KEY, id);

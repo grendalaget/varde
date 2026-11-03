@@ -29,10 +29,11 @@ import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { bytes, dateTime, timeAgo } from "../lib/format";
 import { Link, navigate } from "../lib/router";
-import { canAdmin, thisNode, useNodeName, useSession } from "../lib/session";
+import { canAdmin, useNodeName, useSession, useThisNode } from "../lib/session";
 import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "../components/ConfigInput";
+import { usePlatform } from "../lib/platform";
 import { isWideField } from "../lib/configField";
 import SaveSafety from "../components/SaveSafety";
 import {
@@ -195,6 +196,8 @@ export default function ServerDetail({ id }: { id: string }) {
 
 function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
   const { group, nodes, refreshNodes } = useSession();
+  const thisNode = useThisNode();
+  const { moveThisPc } = usePlatform();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<{ msg: string; code?: string } | null>(null);
   const [moving, setMoving] = useState(false);
@@ -257,11 +260,7 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
       return {
         msg: `This PC is linked to another group. Move it to ${group.name} to run the server here? It stops hosting for its current group.`,
         label: "Move this PC here",
-        // the desktop app catches this and starts the re-link
-        go: () =>
-          window.location.assign(
-            `varde://relink?group=${encodeURIComponent(group.group_id)}`,
-          ),
+        go: () => moveThisPc(group.group_id),
       };
     }
     return nodes.length === 0

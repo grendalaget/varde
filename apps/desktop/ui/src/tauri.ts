@@ -2,7 +2,7 @@
 // page scripts run). In a plain browser — vite dev/preview — a small mock
 // stands in so the views can be exercised without the service: pick a canned
 // status with ?state=not_linked|linking|online|hosting|offline|locked|noagent
-// (locked = an administrator's pending re-link).
+// (locked = an administrator's pending re-link), or ?face=dashboard.
 
 export interface UiStatus {
   state: string;
@@ -128,6 +128,7 @@ const canned: Record<string, UiStatus | null> = {
 function mock(): TauriGlobal {
   const state =
     new URLSearchParams(window.location.search).get("state") ?? "not_linked";
+  const face = new URLSearchParams(window.location.search).get("face");
   // keyed by event name like the real bridge: an emit must only reach the
   // listeners for that event
   const listeners = new Map<string, Set<Handler<unknown>>>();
@@ -149,6 +150,32 @@ function mock(): TauriGlobal {
           `invoke ${cmd} ${JSON.stringify(args)}`,
         ];
         switch (cmd) {
+          case "get_face":
+            return Promise.resolve({
+              facet: face === "dashboard" ? "dashboard" : "setup",
+              cp_url: "http://localhost:5174",
+              group_id: "grp_mock",
+              node_id: "node_mock",
+            } as T);
+          case "cp_fetch": {
+            const request = args?.request as
+              | { method: string; path: string; body?: string }
+              | undefined;
+            if (!request) return Promise.reject(new Error("missing request"));
+            return fetch(request.path, {
+              method: request.method,
+              body: request.method === "GET" ? undefined : request.body,
+            }).then(async (response) =>
+              ({
+                status: response.status,
+                body: await response.text(),
+              }) as T,
+            );
+          }
+          case "cp_events_subscribe":
+            return Promise.resolve(1 as T);
+          case "cp_events_unsubscribe":
+            return Promise.resolve(undefined as T);
           case "get_status":
             return Promise.resolve(canned[state] as T);
           case "link_defaults":
@@ -225,6 +252,8 @@ function mock(): TauriGlobal {
             emit("status", canned.not_linked);
             return Promise.resolve(undefined as T);
           case "open_varde":
+          case "begin_varde_signin":
+          case "request_move_here":
           case "open_url":
           case "start_service":
           case "stop_service":
@@ -254,6 +283,7 @@ function mock(): TauriGlobal {
 }
 
 const tauri: TauriGlobal = window.__TAURI__ ?? mock();
+if (!window.__TAURI__) window.__TAURI__ = tauri;
 
 export const invoke = tauri.core.invoke;
 export const listen = tauri.event.listen;

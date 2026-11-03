@@ -29,7 +29,6 @@ pub struct TrayView {
     pub link_enabled: bool,
     /// Re-link (needs an administrator) rather than a first link.
     pub relink: bool,
-    pub dashboard_url: Option<String>,
     /// The agent service answered: it can be stopped, not started.
     pub service_running: bool,
     /// "Update to x.y.z" when the agent's checker found a newer release.
@@ -52,7 +51,6 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             link_label: "Link this PC…",
             link_enabled: false,
             relink: false,
-            dashboard_url: None,
             service_running: false,
             update_label: None,
             crash_reporting: true,
@@ -113,7 +111,6 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         link_label,
         link_enabled,
         relink: linked,
-        dashboard_url: (!s.control_plane_url.is_empty()).then(|| s.control_plane_url.clone()),
         service_running: true,
         crash_reporting: s.crash_reporting,
         update_label: s
@@ -521,7 +518,6 @@ mod tests {
         assert!(v.link_enabled && !v.relink);
         let v = tray_view(None, 0);
         assert!(!v.link_enabled);
-        assert_eq!(v.dashboard_url, None);
     }
 
     #[test]

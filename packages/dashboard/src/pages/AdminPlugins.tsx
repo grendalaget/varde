@@ -3,11 +3,46 @@ import { api, errorMessage, type Schemas } from "../api/client";
 import { Badge, Button, Card, CardHeader, ErrorNote, PageHeader } from "../components/ui";
 import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
+import { usePlatform, type DashboardPlatform } from "../lib/platform";
 
 type AdminPlugin = Schemas["AdminPlugin"];
 type Action = "install" | "update" | "uninstall";
 
 export default function AdminPlugins({ operator }: { operator: boolean }) {
+  const platform = usePlatform();
+  if (platform.kind === "desktop") {
+    return <DesktopPluginInstalls platform={platform} />;
+  }
+  return <WebAdminPlugins operator={operator} />;
+}
+
+function DesktopPluginInstalls({
+  platform,
+}: {
+  platform: DashboardPlatform;
+}) {
+  return (
+    <Card>
+      <CardHeader title="Plugin installs" />
+      <div className="space-y-4 p-4">
+        <p className="text-sm text-muted">
+          Installing and updating plugins is managed on your control
+          plane&rsquo;s web dashboard.
+        </p>
+        <Button
+          variant="primary"
+          onClick={() =>
+            platform.openExternal(`${platform.cpOrigin}/admin/plugins`)
+          }
+        >
+          Open plugin installs
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function WebAdminPlugins({ operator }: { operator: boolean }) {
   const plugins = useLoad(() => api.GET("/v1/admin/plugins"), []);
   const [pending, setPending] = useState<{ id: string; action: Action } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});

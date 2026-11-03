@@ -16,9 +16,11 @@ import { useLoad } from "../lib/data";
 import { dateTime } from "../lib/format";
 import { navigate } from "../lib/router";
 import { useSession } from "../lib/session";
+import { usePlatform } from "../lib/platform";
 
 export default function AddMachine() {
   const { group } = useSession();
+  const { cpOrigin } = usePlatform();
   const [code, setCode] = useState("");
   const [anchor, setAnchor] = useState(true);
   const [hosting, setHosting] = useState(false);
@@ -118,14 +120,14 @@ export default function AddMachine() {
               <div className="vd-pop">
                 <Field label="Run this on the machine (the token is shown only once)">
                   <CopyText
-                    text={`sudo varde-agent enroll --server ${window.location.origin} --token ${token}`}
+                    text={`sudo varde-agent enroll --server ${cpOrigin} --token ${token}`}
                   />
                 </Field>
                 <p className="mt-3 text-sm text-muted">
                   On the Varde app?{" "}
                   <a
                     className="text-accent underline"
-                    href={`varde://enroll?server=${encodeURIComponent(window.location.origin)}&code=${token}`}
+                    href={`varde://enroll?server=${encodeURIComponent(cpOrigin)}&code=${token}`}
                   >
                     Open the app with this token
                   </a>

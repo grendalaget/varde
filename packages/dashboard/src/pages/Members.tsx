@@ -13,9 +13,11 @@ import {
 import { useLoad } from "../lib/data";
 import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
+import { usePlatform } from "../lib/platform";
 
 export default function Members() {
   const { group, me, refreshMe } = useSession();
+  const { cpOrigin } = usePlatform();
   const admin = canAdmin(group.role);
   const owner = group.role === "owner";
   const [invite, setInvite] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export default function Members() {
                   },
                 );
                 if (error || !data) setErr(errorMessage(error));
-                else setInvite(`${window.location.origin}/invite/${data.code}`);
+                else setInvite(`${cpOrigin}/invite/${data.code}`);
               }}
             >
               Invite friends

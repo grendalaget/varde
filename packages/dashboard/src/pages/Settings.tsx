@@ -15,6 +15,7 @@ import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
 import { navigate, useLocation } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
+import { usePlatform } from "../lib/platform";
 import CreateGroup from "./CreateGroup";
 import PluginSettingsPanel from "./PluginSettings";
 
@@ -22,6 +23,7 @@ type GroupSettings = Schemas["GroupSettings"];
 
 export default function Settings() {
   const { group, me, refreshMe, selectGroup } = useSession();
+  const { linkSteam } = usePlatform();
   const loc = useLocation();
   const admin = canAdmin(group.role);
   const g = useLoad(
@@ -258,10 +260,11 @@ export default function Settings() {
             </div>
           ) : (
             <Button
-              variant="primary"
-              className="w-full sm:w-auto"
-              type="button"
-              busy={profileBusy}
+                variant="primary"
+                className="w-full sm:w-auto"
+                type="button"
+                disabled={!linkSteam}
+                busy={profileBusy}
               onClick={async () => {
                 setProfileBusy(true);
                 setProfileError(null);
@@ -269,11 +272,16 @@ export default function Settings() {
                 const { data, error } = await api.POST("/v1/me/steam/link");
                 setProfileBusy(false);
                 if (error) setProfileError(errorMessage(error));
-                else if (data) window.location.href = data.redirect_url;
+                else if (data) linkSteam?.(data.redirect_url);
               }}
             >
               Sign in through Steam
             </Button>
+          )}
+          {!me.user.steam_id && !linkSteam && (
+            <p className="mt-2 text-sm text-muted">
+              Steam linking from the app is coming in the next update.
+            </p>
           )}
           <ErrorNote>{profileError}</ErrorNote>
           {profileMessage && <p className="text-sm text-emerald-400">{profileMessage}</p>}

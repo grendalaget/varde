@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { Me, Node } from "../api/client";
+import { usePlatform } from "./platform";
 
 export type MeGroup = Me["groups"][number];
 
@@ -32,19 +33,21 @@ export function useSession(): Session {
   return s;
 }
 
-/** This PC's node id when the dashboard runs in the desktop app (?node=).
- * Read once at load: the app reloads the page when it changes. Kept in tab
- * storage so a reload of that window still knows. */
-export const thisNode: string | null = (() => {
+const queryNode = (() => {
   const key = "varde.this-node";
-  const n = new URLSearchParams(window.location.search).get("node");
+  const node = new URLSearchParams(window.location.search).get("node");
   try {
-    if (n) sessionStorage.setItem(key, n);
-    return n ?? sessionStorage.getItem(key);
+    if (node) sessionStorage.setItem(key, node);
+    return node ?? sessionStorage.getItem(key);
   } catch {
-    return n;
+    return node;
   }
 })();
+
+export function useThisNode(): string | null {
+  const { thisNodeId } = usePlatform();
+  return thisNodeId ?? queryNode;
+}
 
 export function canAdmin(role: string) {
   return role === "owner" || role === "admin";

@@ -7,8 +7,13 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "./",
+  server: {
+    proxy: {
+      "/v1": { target: "http://localhost:8090", changeOrigin: false },
+    },
+  },
   build: {
-    // emit every asset as a file: the Tauri CSP allows 'self' only
+    // Keep scripts and fonts on the app origin, which the CSP allows.
     assetsInlineLimit: 0,
   },
 });

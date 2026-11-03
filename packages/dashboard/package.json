@@ -15,6 +15,7 @@
     "./lib/events": "./src/lib/events.tsx",
     "./lib/format": "./src/lib/format.ts",
     "./lib/games": "./src/lib/games.ts",
+    "./lib/platform": "./src/lib/platform.tsx",
     "./lib/router": "./src/lib/router.tsx",
     "./lib/session": "./src/lib/session.tsx",
     "./pages/*": "./src/pages/*.tsx"

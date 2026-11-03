@@ -32,24 +32,21 @@ window.
     running" with a Start button. An administrator's pending re-link shows
     "An administrator is re-linking this PC" instead of Cancel outside the
     elevated window. Without WebView2 it falls back to message boxes.
-  - *Dashboard face* (`dashboard`): the control-plane dashboard loaded as an
-    external webview inside the same window — the tray never opens a
-    browser. It has no IPC access (remote), keeps its own cookies (sign-in
-    persists), and opens on this PC's group and says which PC this is
-    (`?group=&node=`). It navigates only when the control-plane origin or
-    the PC's node changes (e.g. re-link).
+  - *Dashboard face*: the shared `@varde/dashboard` app rendered in the
+    local webview. API requests and group events use the native transport;
+    the session token stays in the desktop app's native storage. The
+    dashboard opens on this PC's group and knows which PC this is.
   - *Move this PC here*: when a start can't be placed and this PC is in
-    another group, the dashboard navigates to `varde://relink?group=<id>`.
-    The window's navigation guard catches it (it's never loaded) and starts
-    a re-link: `--relink-start` elevated on Windows, in-process on macOS.
-    The code then opens as `/link?code=…&group=…` in the dashboard, which
-    stays the visible face until the link ends.
+    another group, the dashboard asks the app to start a re-link:
+    `--relink-start` elevated on Windows, in-process on macOS. The code then
+    opens at `/link?code=…&group=…` in the dashboard, which stays the visible
+    face until the link ends.
   - The face is picked by the PC's state (`view::facet`): linked and
     reachable → dashboard; linking, signing in, pending approval, offline or
     service-down → setup. Finishing a link morphs the window into the
     dashboard. On macOS the Dock icon appears only while a window is open.
 - Closing the window minimizes to the tray (the webview stays alive, so the
-  dashboard keeps its place and sign-in). **Exit Varde** is the only way
+  dashboard keeps its place). **Exit Varde** is the only way
   out: it confirms first while this PC is hosting, drains and stops the
   service — the mesh goes with it — and quits the app.
 
@@ -77,7 +74,8 @@ bun --cwd apps/desktop/ui run build
 
 In a plain browser the UI runs on a mock bridge; pick a canned status with
 `?state=not_linked|linking|online|hosting|offline|locked|noagent` (`locked`
-shows the "an administrator is re-linking this PC" state).
+shows the "an administrator is re-linking this PC" state), or use
+`?face=dashboard` to exercise the shared dashboard.
 
 `ui/src/assets/fonts`: Schibsted Grotesk (OFL, see `fonts/OFL.txt`).
 

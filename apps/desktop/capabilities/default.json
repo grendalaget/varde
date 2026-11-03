@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "App window (Fluent UI): core events only; commands are typed. The dashboard window loads the control plane remotely and needs no IPC.",
+  "description": "App window with setup and native dashboard faces; commands are typed and core events carry status, face, and dashboard navigation updates.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }

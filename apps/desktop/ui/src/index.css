@@ -3,6 +3,7 @@
 @import "@varde/ui/mouve.css";
 /* Logo/ui components live in packages/ui, outside this app's scanned root */
 @source "../../../../packages/ui/src";
+@source "../../../../packages/dashboard/src";
 /* pro component layer omitted: the app uses no pro components */
 
 /*
@@ -17,6 +18,8 @@
   --color-papir: #f4efed;
   --color-glod: #ff5b1f;
   --color-warn: #f7b750;
+  --color-info: oklch(70% 0.065 240);
+  --color-violet: oklch(70% 0.08 293);
   --color-skifer-50: #fcfcfc;
   --color-skifer-100: #ebe5e3;
   --color-skifer-200: #c9c1be;
@@ -135,6 +138,11 @@
   --chart-3: oklch(70% 0.16 37.96);
   --chart-4: oklch(78% 0.12 37.96);
   --chart-5: oklch(85% 0.08 37.96);
+}
+
+select option {
+  background-color: var(--surface);
+  color: var(--foreground);
 }
 
 html {
@@ -463,4 +471,11 @@ body {
    semantic state, so vd-h1 stays Glød unless explicitly unlit (idle). */
 .vd-h1:not(.vd-unlit) {
   fill: var(--vd-ember);
+}
+
+.vd-fallen {
+  fill: var(--danger, #fb7185);
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  transform: translate(1px, 0.5px) rotate(22deg);
 }

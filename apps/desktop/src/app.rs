@@ -22,12 +22,7 @@ use crate::svcctl;
 use crate::view::{self, Facet, Icon, TrayView, UiStatus};
 
 const TRAY_ID: &str = "varde";
-/// One face of the Varde window (mouve UI in ui/): linking, this-PC status,
-/// service start when it's down.
 const MAIN_WINDOW: &str = "main";
-/// The other face: the control-plane dashboard as an external webview
-/// (remote — it gets no IPC bridge), not a browser tab.
-const DASHBOARD_WINDOW: &str = "dashboard";
 
 static ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 static ICON_HOSTING: &[u8] = include_bytes!("../icons/tray-hosting.png");
@@ -45,15 +40,9 @@ pub(crate) struct State {
     auto_link: std::sync::atomic::AtomicBool,
     /// Elevated `--relink` instance: link window only, no tray.
     relink: bool,
-    /// CP origin the dashboard webview was last pointed at — publish()
-    /// retargets only while it's still sitting there (an auth bounce off
-    /// to varde.games must not be yanked back mid-sign-in).
-    dashboard_origin: Mutex<Option<tauri::Url>>,
-    /// Fresh varde.games federation JWT, kept briefly after a hosted
-    /// sign-in: the dashboard webview loads with it as #fed_token= and
-    /// exchanges it for its own session cookie, so the window opens
-    /// already signed in — the app and CP share one auth backend.
-    fed_handoff: Mutex<Option<(String, std::time::Instant)>>,
+    face: Mutex<Option<Facet>>,
+    /// One-shot authorization for a dashboard-only federated sign-in callback.
+    fed_signin_only: Mutex<Option<std::time::Instant>>,
     /// Federated sign-in paused at "pick a group": the CP session waits here
     /// for `finish_varde_login`.
     fed: Mutex<Option<FedPending>>,
@@ -85,6 +74,19 @@ struct MoveTo {
     group: String,
     code: String,
     at: std::time::Instant,
+}
+
+#[derive(Serialize, Clone)]
+struct FaceInfo {
+    facet: String,
+    cp_url: String,
+    group_id: String,
+    node_id: String,
+}
+
+#[derive(Serialize, Clone)]
+struct DashboardNavigate {
+    path: String,
 }
 
 /// A move whose re-link never showed a code (the helper failed, or UAC sat
@@ -209,6 +211,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
+            get_face,
             link_defaults,
             start_link,
             cancel_link,
@@ -223,7 +226,8 @@ pub fn run() {
             cancel_varde_login,
             federated_state,
             finish_varde_login,
-            // The remote dashboard webview has no IPC capability and cannot call these.
+            request_move_here,
+            begin_varde_signin,
             cp_fetch,
             cp_events_subscribe,
             cp_events_unsubscribe
@@ -335,12 +339,6 @@ async fn tick(app: AppHandle) {
 
 fn publish(app: &AppHandle, s: Option<pb::Status>) {
     let ui = s.as_ref().map(|st| UiStatus::from_status(st, now_ms()));
-    let cp = s
-        .as_ref()
-        .map(|s| s.control_plane_url.clone())
-        .filter(|u| !u.is_empty());
-    let link_pending = s.as_ref().is_some_and(|s| s.link.is_some());
-    let node = s.as_ref().map(|s| s.node_id.clone()).unwrap_or_default();
     sync_move(app, s.as_ref());
     if let Some(st) = &s {
         notify_rejoin(app, &st.rejoin);
@@ -348,53 +346,6 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
     *app.state::<State>().status.lock().unwrap() = s;
     render(app, false);
     let _ = app.emit_to(MAIN_WINDOW, "status", ui);
-    // a re-link to another control plane retargets an existing dashboard
-    // webview — but only once no link is pending, and only while the
-    // webview still sits on the previous CP origin: status carries the
-    // proposed address during a re-link, and mid-flight (a varde.games
-    // sign-in bounce) the webview is off-origin — yanking it back would
-    // lose the sign-in.
-    if !link_pending {
-        if let (Some(u), Some(w)) = (cp, app.get_webview_window(DASHBOARD_WINDOW)) {
-            if let Ok(parsed) = tauri::Url::parse(&u) {
-                let st = app.state::<State>();
-                let prev = st.dashboard_origin.lock().unwrap().clone();
-                let still_on_cp = w
-                    .url()
-                    .ok()
-                    .zip(prev.as_ref())
-                    .map(|(cur, p)| cur.origin() == p.origin())
-                    .unwrap_or(false);
-                let handoff_pending = st
-                    .fed_handoff
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|(_, at)| at.elapsed() < FED_HANDOFF_TTL);
-                // re-linked on the same CP: a new node, maybe in another group
-                let want = Some(node.as_str()).filter(|n| !n.is_empty());
-                let relinked = prev
-                    .as_ref()
-                    .is_some_and(|p| query_param(p, "node").as_deref() != want);
-                if still_on_cp
-                    && (prev
-                        .as_ref()
-                        .map(|p| p.origin() != parsed.origin())
-                        .unwrap_or(true)
-                        || handoff_pending
-                        || relinked)
-                {
-                    // dashboard_load_url attaches a fresh sign-in token —
-                    // a re-link to the same CP re-auths the open window.
-                    let url = dashboard_load_url(app, &u)
-                        .map(|(u, _)| u)
-                        .unwrap_or(parsed);
-                    *st.dashboard_origin.lock().unwrap() = Some(url.clone());
-                    let _ = w.navigate(url);
-                }
-            }
-        }
-    }
     sync_visible_facet(app);
 }
 
@@ -403,24 +354,13 @@ fn publish(app: &AppHandle, s: Option<pb::Status>) {
 /// offline or unlinking drops a showing dashboard back to setup. Hidden
 /// windows stay hidden — a status tick must never create one.
 fn sync_visible_facet(app: &AppHandle) {
-    let visible = |l: &str| {
-        app.get_webview_window(l)
-            .map(|w| w.is_visible().unwrap_or(false))
-            .unwrap_or(false)
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
     };
-    let (main, dashboard) = (visible(MAIN_WINDOW), visible(DASHBOARD_WINDOW));
-    if !main && !dashboard {
+    if !window.is_visible().unwrap_or(false) {
         return;
     }
-    match desired_facet(app) {
-        Facet::Dashboard if main => {
-            let _ = swap_to_dashboard(app);
-        }
-        Facet::Setup if dashboard => {
-            open_main_window(app);
-        }
-        _ => {}
-    }
+    set_face(app, desired_facet(app));
     dock_sync(app);
 }
 
@@ -829,42 +769,92 @@ fn desired_facet(app: &AppHandle) -> Facet {
     )
 }
 
-/// "Open Varde": raise the app's single window on the face that matches
-/// the PC's state — the dashboard while linked, the link/status UI
-/// otherwise — and hide the other webview. Only one is ever visible, so
-/// the app reads as one window whose content changes.
-/// Morph the visible setup window into the dashboard, taking its spot
-/// on screen. Setup goes down only once the dashboard is really up, so
-/// a failed open leaves it in place.
-fn swap_to_dashboard(app: &AppHandle) -> bool {
-    // read setup's position while it's still visible — a hidden window
-    // may not report it
-    let at = app
-        .get_webview_window(MAIN_WINDOW)
-        .filter(|w| w.is_visible().unwrap_or(false))
-        .and_then(|w| w.outer_position().ok());
-    let swapped = cp_url(app)
-        .map(|u| open_dashboard_window(app, &u).is_ok())
-        .unwrap_or(false);
-    if swapped {
-        if let (Some(p), Some(d)) = (at, app.get_webview_window(DASHBOARD_WINDOW)) {
-            let _ = d.set_position(p);
+fn face_info(app: &AppHandle, facet: Facet) -> FaceInfo {
+    let status = app.state::<State>().status.lock().unwrap().clone();
+    FaceInfo {
+        facet: match facet {
+            Facet::Setup => "setup",
+            Facet::Dashboard => "dashboard",
+        }
+        .to_string(),
+        cp_url: status
+            .as_ref()
+            .map(|status| status.control_plane_url.clone())
+            .unwrap_or_default(),
+        group_id: status
+            .as_ref()
+            .map(|status| status.group_id.clone())
+            .unwrap_or_default(),
+        node_id: status
+            .as_ref()
+            .map(|status| status.node_id.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn set_face(app: &AppHandle, facet: Facet) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    let state = app.state::<State>();
+    let previous = {
+        let mut current = state.face.lock().unwrap();
+        let previous = *current;
+        *current = Some(facet);
+        previous
+    };
+    if previous != Some(facet) {
+        match facet {
+            Facet::Setup => {
+                let _ = window.unmaximize();
+                let _ = window.set_maximizable(false);
+                let size = tauri::LogicalSize::new(440.0, 540.0);
+                let _ = window.set_min_size(Some(size));
+                let _ = window.set_resizable(false);
+                let _ = window.set_size(size);
+            }
+            Facet::Dashboard => {
+                let _ = window.set_maximizable(true);
+                let min_size = tauri::LogicalSize::new(720.0, 480.0);
+                let size = tauri::LogicalSize::new(1200.0, 800.0);
+                let _ = window.set_min_size(Some(min_size));
+                let _ = window.set_resizable(true);
+                let _ = window.set_size(size);
+                if previous == Some(Facet::Setup) {
+                    let _ = window.center();
+                }
+            }
         }
     }
-    swapped
+    let _ = app.emit_to(MAIN_WINDOW, "facet", face_info(app, facet));
+}
+
+#[tauri::command]
+fn get_face(app: AppHandle) -> FaceInfo {
+    let facet = app
+        .state::<State>()
+        .face
+        .lock()
+        .unwrap()
+        .unwrap_or_else(|| desired_facet(&app));
+    face_info(&app, facet)
 }
 
 fn open_varde_window(app: &AppHandle) {
-    let dashboard = desired_facet(app) == Facet::Dashboard && swap_to_dashboard(app);
-    if !dashboard {
+    if app.get_webview_window(MAIN_WINDOW).is_none() {
         open_main_window(app);
+    }
+    set_face(app, desired_facet(app));
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
     dock_sync(app);
 }
 
-/// Closing a window hides it to the tray instead of ending Varde — only
-/// Exit shuts the app down. The dashboard keeps its webview (and sign-in)
-/// across hides, so reopening is instant.
+/// Closing the window hides it to the tray instead of ending Varde — only
+/// Exit shuts the app down.
 fn hide_to_tray(w: &WebviewWindow) {
     let w2 = w.clone();
     w.on_window_event(move |event| {
@@ -884,10 +874,9 @@ fn dock_sync(app: &AppHandle) {
     if app.state::<State>().relink {
         return;
     }
-    let visible = [MAIN_WINDOW, DASHBOARD_WINDOW]
-        .iter()
-        .filter_map(|l| app.get_webview_window(l))
-        .any(|w| w.is_visible().unwrap_or(false));
+    let visible = app
+        .get_webview_window(MAIN_WINDOW)
+        .is_some_and(|window| window.is_visible().unwrap_or(false));
     let policy = if visible {
         tauri::ActivationPolicy::Regular
     } else {
@@ -1050,12 +1039,8 @@ fn logs_dir() -> std::path::PathBuf {
 }
 
 fn open_main_window(app: &AppHandle) {
-    // one window ever: a varde:// callback or sign-in must morph an open
-    // dashboard away, not stack on top of it
-    if let Some(d) = app.get_webview_window(DASHBOARD_WINDOW) {
-        let _ = d.hide();
-    }
     if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
+        set_face(app, Facet::Setup);
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -1086,6 +1071,31 @@ fn open_main_window(app: &AppHandle) {
             // webview's alpha to composite)
             .transparent(glass)
             .initialization_script(format!("window.__VARDE_GLASS__ = {};", glass))
+            .on_navigation({
+                let ah = app.clone();
+                move |url| {
+                    let own_origin = (url.scheme() == "tauri"
+                        && url.host_str() == Some("localhost"))
+                        || (matches!(url.scheme(), "http" | "https")
+                            && url.domain().is_some_and(|domain| {
+                                domain.eq_ignore_ascii_case("tauri.localhost")
+                            }));
+                    if own_origin {
+                        return true;
+                    }
+                    if matches!(url.scheme(), "http" | "https") {
+                        let _ = ah.opener().open_url(url.as_str(), None::<&str>);
+                    }
+                    false
+                }
+            })
+            .on_new_window({
+                let ah = app.clone();
+                move |url, _features| {
+                    let _ = ah.opener().open_url(url.as_str(), None::<&str>);
+                    tauri::webview::NewWindowResponse::Deny
+                }
+            })
             .on_page_load({
                 let app = app.clone();
                 move |_window, payload| {
@@ -1141,83 +1151,12 @@ fn open_main_window(app: &AppHandle) {
                 let _ = w;
             })
             .is_ok();
-    if !built {
+    if built {
+        set_face(app, Facet::Setup);
+    } else {
         // no WebView2: link with message boxes instead
         tauri::async_runtime::spawn(fallback_link(app.clone()));
     }
-}
-
-/// A federation JWT the site mints is replayable while unexpired — keep
-/// the margin tighter than its ~5-minute life.
-const FED_HANDOFF_TTL: Duration = Duration::from_secs(240);
-
-/// Take a still-fresh sign-in token: one shot only, used or not.
-fn fresh_handoff_token(app: &AppHandle) -> Option<String> {
-    let st = app.state::<State>();
-    let mut g = st.fed_handoff.lock().unwrap();
-    match g.as_ref() {
-        Some((_, at)) if at.elapsed() < FED_HANDOFF_TTL => g.take().map(|(t, _)| t),
-        _ => None,
-    }
-}
-
-/// URL to point the dashboard at — `cp`, plus #fed_token= when a fresh
-/// hosted sign-in is waiting: the CP web app exchanges the fragment for
-/// its own session cookie on load, so the window opens signed in as the
-/// same account the app just linked with. The bool says whether that
-/// handoff was attached — the only reason to ever re-navigate an
-/// already-open dashboard.
-fn dashboard_load_url(app: &AppHandle, cp: &str) -> Option<(tauri::Url, bool)> {
-    let mut url = tauri::Url::parse(cp).ok()?;
-    // The token only ever goes to the hosted control plane — its audience
-    // is that CP, and anywhere else a web app could be made to POST it
-    // back to a server that replays it against the real one. Stray
-    // fragments in the configured address never propagate either: only
-    // the handoff carries one.
-    url.set_fragment(None);
-    // open on this PC's own group, not whichever one the browser used last,
-    // and say which PC this is (the dashboard offers it when a start fails)
-    let (group, node) = app
-        .state::<State>()
-        .status
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|s| (s.group_id.clone(), s.node_id.clone()))
-        .unwrap_or_default();
-    if !group.is_empty() {
-        url.query_pairs_mut()
-            .clear()
-            .append_pair("group", &group)
-            .append_pair("node", &node);
-    }
-    let mut handoff = false;
-    if tauri::Url::parse(agent_ipc::DEFAULT_CP_URL)
-        .map(|hosted| hosted.origin() == url.origin())
-        .unwrap_or(false)
-    {
-        if let Some(token) = fresh_handoff_token(app) {
-            url.set_fragment(Some(&format!("fed_token={token}")));
-            handoff = true;
-        }
-    }
-    Some((url, handoff))
-}
-
-/// A query parameter of a dashboard URL (`?group=`, `?node=`; see
-/// dashboard_load_url).
-fn query_param(u: &tauri::Url, key: &str) -> Option<String> {
-    u.query_pairs()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.into_owned())
-}
-
-/// `varde://relink?group=<id>`: the dashboard's "Move this PC here".
-fn move_request(u: &tauri::Url) -> Option<String> {
-    if u.scheme() != "varde" || u.host_str() != Some("relink") {
-        return None;
-    }
-    query_param(u, "group").filter(|g| !g.is_empty())
 }
 
 /// The dashboard's "Move this PC here": start a re-link (through the
@@ -1247,6 +1186,20 @@ fn request_move(app: &AppHandle, group: String) {
             }
         }
     });
+}
+
+#[tauri::command]
+fn request_move_here(app: AppHandle, group_id: String) -> Result<(), String> {
+    if group_id.is_empty()
+        || group_id.len() > 64
+        || !group_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err("group ID is not valid".into());
+    }
+    request_move(&app, group_id);
+    Ok(())
 }
 
 /// Ask the agent to re-link to the control plane it's on. It needs an
@@ -1295,134 +1248,17 @@ fn sync_move(app: &AppHandle, s: Option<&pb::Status>) {
         return;
     }
     m.code = code.to_string();
-    // dashboard_origin stays on the old node, so the finished re-link
-    // still re-navigates the window to the new one
-    let base = st.dashboard_origin.lock().unwrap().clone();
-    if let (Some(mut u), Some(w)) = (base, app.get_webview_window(DASHBOARD_WINDOW)) {
-        u.set_path("/link");
-        u.set_fragment(None);
-        u.query_pairs_mut()
-            .clear()
-            .append_pair("code", code)
-            .append_pair("group", &m.group);
-        let _ = w.navigate(u);
-    }
-}
-
-/// The dashboard lives in the app, not the browser: a plain external
-/// webview on the control-plane address (it can't reach app commands —
-/// remote IPC is off — and keeps its own cookies, so the sign-in sticks).
-fn open_dashboard_window(app: &AppHandle, url: &str) -> Result<(), String> {
-    // one window ever — but only take the setup window down once the
-    // dashboard is really up: a failed open leaves it where it was
-    let hide_main = |app: &AppHandle| {
-        if let Some(m) = app.get_webview_window(MAIN_WINDOW) {
-            let _ = m.hide();
-        }
-    };
-    let (parsed, handoff) =
-        dashboard_load_url(app, url).ok_or_else(|| format!("bad control-plane address: {url}"))?;
-    if let Some(w) = app.get_webview_window(DASHBOARD_WINDOW) {
-        // a re-link may have moved the group to another control plane or
-        // group, or carried a fresh sign-in token — otherwise keep the
-        // user's place in the dashboard
-        let last = app
-            .state::<State>()
-            .dashboard_origin
-            .lock()
-            .unwrap()
-            .clone();
-        if handoff
-            || w.url()
-                .map(|u| u.origin() != parsed.origin())
-                .unwrap_or(true)
-            || last.as_ref().map(|l| query_param(l, "node")) != Some(query_param(&parsed, "node"))
-        {
-            *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
-            w.navigate(parsed).map_err(|e| e.to_string())?;
-        }
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-        hide_main(app);
-        return Ok(());
-    }
-    *app.state::<State>().dashboard_origin.lock().unwrap() = Some(parsed.clone());
-    WebviewWindowBuilder::new(app, DASHBOARD_WINDOW, WebviewUrl::External(parsed))
-        .title("Varde")
-        .inner_size(1200.0, 800.0)
-        .min_inner_size(720.0, 480.0)
-        .center()
-        .theme(Some(tauri::Theme::Dark))
-        .background_color(tauri::window::Color(0x10, 0x16, 0x1a, 0xff))
-        // inside the window: the control-plane origin itself, plus
-        // https://*.varde.games — the hosted-CP sign-in bounces through
-        // /federate/cp and account/billing live there — and
-        // https://steamcommunity.com for linking Steam. Anything else
-        // stays out of the app chrome (an off-origin page must never
-        // impersonate the dashboard, and the local frontend's command
-        // bridge is unreachable either way).
-        .on_navigation({
-            let ah = app.clone();
-            move |u| {
-                // "Move this PC here" in the dashboard: re-link into that
-                // group, approved back in this window. Never loaded.
-                if let Some(group) = move_request(u) {
-                    request_move(&ah, group);
-                    return false;
-                }
-                // Tauri serves the bundled UI from http(s)://tauri.localhost
-                // — a control-plane URL pointing there would load the local
-                // app pages, privileged IPC bridge included, inside this
-                // webview. It's never a real dashboard.
-                if u.domain()
-                    .is_some_and(|h| h.eq_ignore_ascii_case("tauri.localhost"))
-                {
-                    return false;
-                }
-                let st = ah.state::<State>();
-                let on_cp = st
-                    .dashboard_origin
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|d| {
-                        u.origin() == d.origin()
-                            // a self-hosted CP may terminate TLS in front:
-                            // allow http→https on the same host only
-                            || (d.scheme() == "http"
-                                && u.scheme() == "https"
-                                && u.domain().zip(d.domain()).is_some_and(
-                                    |(a, b)| a.eq_ignore_ascii_case(b),
-                                ))
-                    });
-                // Steam's OpenID sign-in (Settings → link Steam) stays in this
-                // window: its callback needs this webview's CP session cookie
-                on_cp
-                    || u.scheme() == "https"
-                        && u.domain().is_some_and(|d| {
-                            d == "varde.games"
-                                || d.ends_with(".varde.games")
-                                || d == "steamcommunity.com"
-                        })
-            }
-        })
-        // window.open()/target=_blank (docs, community, a deep link into
-        // varde.games account/billing) belongs in the user's browser,
-        // not a chromeless popup
-        .on_new_window({
-            let ah = app.clone();
-            move |u, _features| {
-                let _ = ah.opener().open_url(u.as_str(), None::<&str>);
-                tauri::webview::NewWindowResponse::Deny
-            }
-        })
-        .build()
-        .map(|w| {
-            hide_to_tray(&w);
-            hide_main(app);
-        })
-        .map_err(|e| e.to_string())
+    let mut url = tauri::Url::parse("http://localhost").expect("valid URL");
+    url.set_path("/link");
+    url.query_pairs_mut()
+        .append_pair("code", code)
+        .append_pair("group", &m.group);
+    let path = format!("{}?{}", url.path(), url.query().unwrap_or_default());
+    let _ = app.emit_to(
+        MAIN_WINDOW,
+        "dashboard-navigate",
+        DashboardNavigate { path },
+    );
 }
 
 async fn fallback_link(app: AppHandle) {
@@ -1738,6 +1574,46 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
     let Some(token) = deep_link_token(url) else {
         return;
     };
+    let sign_in_only = app
+        .state::<State>()
+        .fed_signin_only
+        .lock()
+        .unwrap()
+        .take()
+        .is_some_and(|expires| std::time::Instant::now() <= expires);
+    if sign_in_only {
+        open_varde_window(app);
+        let h = app.clone();
+        tauri::async_runtime::spawn(async move {
+            match fed_exchange(token).await {
+                Ok((session, _, _)) => {
+                    let Some(pc_cp) = cp_url(&h) else {
+                        let _ = h.emit_to(
+                            MAIN_WINDOW,
+                            "cp-session-error",
+                            "This PC isn't linked to a Varde server yet.",
+                        );
+                        return;
+                    };
+                    let expected = agent_ipc::DEFAULT_CP_URL.trim().trim_end_matches('/');
+                    if pc_cp.trim().trim_end_matches('/') != expected {
+                        let _ = h.emit_to(
+                            MAIN_WINDOW,
+                            "cp-session-error",
+                            "Varde sign-in is only available for PCs linked to cp.varde.games.",
+                        );
+                        return;
+                    }
+                    save_session(&h, &pc_cp, &session);
+                    let _ = h.emit_to(MAIN_WINDOW, "cp-session", ());
+                }
+                Err(error) => {
+                    let _ = h.emit_to(MAIN_WINDOW, "cp-session-error", error.message);
+                }
+            }
+        });
+        return;
+    }
     // mark the flow before the window morph: a status tick between the
     // two would otherwise pull the just-shown setup back to the dashboard
     app.state::<State>()
@@ -1760,8 +1636,6 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
                     .fed_seq
                     .load(std::sync::atomic::Ordering::SeqCst) => {}
             Ok((session, cp_url, user)) => {
-                *h.state::<State>().fed_handoff.lock().unwrap() =
-                    Some((token, std::time::Instant::now()));
                 *h.state::<State>().fed.lock().unwrap() = Some(FedPending {
                     session,
                     cp_url,
@@ -1874,15 +1748,30 @@ async fn begin_varde_login(app: AppHandle) -> Result<(), String> {
     app.state::<State>()
         .fed_seq
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    // and any token still waiting to authenticate the dashboard: a new
-    // sign-in must not land on the previous account's session
-    *app.state::<State>().fed_handoff.lock().unwrap() = None;
+    *app.state::<State>().fed_signin_only.lock().unwrap() = None;
     emit_fed(&app, FedEvent::WaitingBrowser);
     app.opener()
         .open_url(SITE_DESKTOP_URL, None::<&str>)
         .map_err(|_| {
             "Couldn't open your browser. Check your default browser, then try again.".to_string()
         })
+}
+
+#[tauri::command]
+fn begin_varde_signin(app: AppHandle) -> Result<(), String> {
+    *app.state::<State>().fed_signin_only.lock().unwrap() =
+        Some(std::time::Instant::now() + Duration::from_secs(10 * 60));
+    if app
+        .opener()
+        .open_url(SITE_DESKTOP_URL, None::<&str>)
+        .is_err()
+    {
+        *app.state::<State>().fed_signin_only.lock().unwrap() = None;
+        return Err(
+            "Couldn't open your browser. Check your default browser, then try again.".to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// The confirm card approved: continue with the session the exchange
@@ -1921,8 +1810,6 @@ async fn cancel_varde_login(app: AppHandle) -> Result<(), String> {
         .store(false, std::sync::atomic::Ordering::SeqCst);
     *app.state::<State>().fed.lock().unwrap() = None;
     *app.state::<State>().fed_last.lock().unwrap() = None;
-    // a cancelled sign-in must not authenticate the dashboard either
-    *app.state::<State>().fed_handoff.lock().unwrap() = None;
     // invalidate any exchange still in flight so it can't reappear
     app.state::<State>()
         .fed_seq
