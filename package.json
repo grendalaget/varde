@@ -9,6 +9,7 @@
     "apps/web",
     "apps/desktop/ui",
     "apps/setup/ui",
+    "packages/dashboard",
     "packages/ui",
     "tests/minecraft-bot"
   ],

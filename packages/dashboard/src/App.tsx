@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorMessage, type Me, type Node } from "./api/client";
+import {
+  api,
+  errorMessage,
+  fetchWithApiTransport,
+  type Me,
+  type Node,
+} from "./api/client";
 import { Logo, PageLoader } from "./components/Logo";
 import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
 import { Icon, type IconName } from "./components/icons";
@@ -147,7 +153,11 @@ export default function App() {
   useEffect(() => {
     if (me !== null) return;
     let dead = false;
-    fetch("/v1/federated/state", { credentials: "same-origin" })
+    fetchWithApiTransport(
+      new Request(new URL("/v1/federated/state", window.location.href), {
+        credentials: "same-origin",
+      }),
+    )
       .then((r) => (r.ok ? r.json() : null))
       .then((f) => {
         if (dead || !f) return;
@@ -474,7 +484,7 @@ function Layout() {
                   {g.name}
                 </option>
               ))}
-              <option value="__new">+ New group…</option>
+              <option value="__new">New group</option>
             </select>
           </label>
           <nav className="vd-stagger flex flex-col gap-0.5">

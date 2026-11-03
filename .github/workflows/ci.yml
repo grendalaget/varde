@@ -116,6 +116,8 @@ jobs:
       # shared by web, tray and installer UIs (each build compiles it)
       - run: bun run --filter "@varde/ui" lint
       - run: bun run --filter "@varde/ui" typecheck
+      - run: bun run --filter "@varde/dashboard" lint
+      - run: bun run --filter "@varde/dashboard" typecheck
 
   contracts:
     runs-on: ubuntu-latest
@@ -139,12 +141,11 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
       - run: bun install --frozen-lockfile
-      - run: bun add --cwd apps/web -d openapi-typescript
       - name: check generated files are up to date
         run: |
           buf generate
-          bun run --filter "@varde/web" gen:api
-          git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts
+          bun run --filter "@varde/dashboard" gen:api
+          git diff --exit-code -- go/gen packages/dashboard/src/api/schema.d.ts
 
   windows-installer:
     runs-on: windows-latest

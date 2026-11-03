@@ -74,7 +74,7 @@ export default function CreateGroup({
             required
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="e.g. …/invite/x7k2m9 or x7k2m9"
+            placeholder="Invite link or code, like x7k2m9"
           />
         </Field>
         <Button type="submit" className="w-full">

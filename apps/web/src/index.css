@@ -3,6 +3,7 @@
 @import "@varde/ui/mouve.css";
 /* Logo/ui components live in packages/ui, outside this app's scanned root */
 @source "../../../packages/ui/src";
+@source "../../../packages/dashboard/src";
 /* pro component layer omitted: the app uses no pro components */
 
 /*
@@ -139,6 +140,11 @@
   --chart-3: oklch(70% 0.16 37.96);
   --chart-4: oklch(78% 0.12 37.96);
   --chart-5: oklch(85% 0.08 37.96);
+}
+
+select option {
+  background-color: var(--surface);
+  color: var(--foreground);
 }
 
 html {

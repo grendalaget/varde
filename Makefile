@@ -18,7 +18,7 @@ android:
 
 gen:
 	buf generate
-	bun run --filter "@varde/web" gen:api
+	bun run --filter "@varde/dashboard" gen:api
 
 build:
 	bun run --filter "@varde/desktop-ui" build
@@ -97,7 +97,7 @@ package: build
 	done
 
 check-gen: gen gen-go-api
-	@git diff --exit-code -- go/gen apps/web/src/api/schema.d.ts \
+	@git diff --exit-code -- go/gen packages/dashboard/src/api/schema.d.ts \
 		apps/controlplane/internal/api/gen \
 		|| (echo "generated files are stale; run 'make gen' and commit" && exit 1)
 

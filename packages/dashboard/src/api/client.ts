@@ -1,9 +1,22 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
 
+export type ApiTransport = (request: Request) => Promise<Response>;
+
+let transport: ApiTransport = (request) => globalThis.fetch(request);
+
+export function setApiTransport(next: ApiTransport) {
+  transport = next;
+}
+
+export function fetchWithApiTransport(request: Request): Promise<Response> {
+  return transport(request);
+}
+
 export const api = createClient<paths>({
   baseUrl: "/",
   credentials: "same-origin",
+  fetch: (request) => transport(request),
 });
 
 export type Schemas = components["schemas"];

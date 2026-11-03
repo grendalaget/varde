@@ -1,9 +1,9 @@
 import "@fontsource-variable/inter";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App";
+import App from "@varde/dashboard/App";
 import "./index.css";
-import { RouterProvider } from "./lib/router";
+import { RouterProvider } from "@varde/dashboard/lib/router";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
