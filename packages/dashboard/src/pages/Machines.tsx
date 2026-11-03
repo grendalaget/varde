@@ -19,7 +19,7 @@ import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
 import { bytes, rtt, timeAgo } from "../lib/format";
 import { navigate } from "../lib/router";
-import { canAdmin, useSession } from "../lib/session";
+import { canAdmin, useSession, useThisNode } from "../lib/session";
 
 type NodePatch = NonNullable<
   paths["/v1/nodes/{nodeId}"]["patch"]["requestBody"]
@@ -29,6 +29,7 @@ type Conn = { node_id: string; name?: string; path: string; rtt_us?: number };
 
 export default function Machines() {
   const { nodes, group } = useSession();
+  const thisNodeId = useThisNode();
   const hasAnchor = nodes.some((n) => n.anchor);
   const servers = useLoad(
     () =>
@@ -85,7 +86,12 @@ export default function Machines() {
       ) : (
         <div className="vd-stagger space-y-3">
           {nodes.map((n) => (
-            <MachineRow key={n.id} n={n} hosting={hosting.get(n.id) ?? []} />
+            <MachineRow
+              key={n.id}
+              n={n}
+              hosting={hosting.get(n.id) ?? []}
+              isThisPc={n.id === thisNodeId}
+            />
           ))}
         </div>
       )}
@@ -98,7 +104,15 @@ function liveTone(n: Node) {
   return l === "online" ? "green" : l === "suspect" ? "warn" : "neutral";
 }
 
-function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
+function MachineRow({
+  n,
+  hosting,
+  isThisPc,
+}: {
+  n: Node;
+  hosting: string[];
+  isThisPc: boolean;
+}) {
   const { group, refreshNodes } = useSession();
   const admin = canAdmin(group.role);
   const [err, setErr] = useState<string | null>(null);
@@ -186,6 +200,7 @@ function MachineRow({ n, hosting }: { n: Node; hosting: string[] }) {
               <span className="truncate font-medium text-foreground">
                 {n.name}
               </span>
+              {isThisPc && <Badge>This PC</Badge>}
               {hosting.length > 0 && (
                 <Badge
                   tone="host"

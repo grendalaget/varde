@@ -36,6 +36,7 @@ export type ApiError = Schemas["Error"];
 
 /** Extracts a human-readable message from an openapi-fetch error payload. */
 export function errorMessage(err: unknown): string {
+  if (typeof err === "string" && err) return err;
   if (err && typeof err === "object" && "message" in err) {
     return String((err as { message: unknown }).message);
   }

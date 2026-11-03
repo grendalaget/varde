@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
+use tauri::webview::{Cookie, NewWindowResponse};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
@@ -23,6 +24,7 @@ use crate::view::{self, Facet, Icon, TrayView, UiStatus};
 
 const TRAY_ID: &str = "varde";
 const MAIN_WINDOW: &str = "main";
+const STEAM_WINDOW: &str = "steam";
 
 static ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 static ICON_HOSTING: &[u8] = include_bytes!("../icons/tray-hosting.png");
@@ -244,7 +246,8 @@ pub fn run() {
             begin_varde_signin,
             cp_fetch,
             cp_events_subscribe,
-            cp_events_unsubscribe
+            cp_events_unsubscribe,
+            open_steam_link
         ])
         .setup(move |app| {
             let h = app.handle().clone();
@@ -2017,6 +2020,121 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|_| {
         "Couldn't open your browser. Check your default browser, then try again.".to_string()
     })
+}
+
+fn steam_session_cookie(callback_origin: &str, session: &str) -> Result<Cookie<'static>, String> {
+    let callback = tauri::Url::parse(callback_origin).map_err(|_| "Invalid control-plane URL.")?;
+    let host = callback.host_str().ok_or("Invalid control-plane URL.")?;
+    if host.starts_with('.') {
+        return Err("Invalid control-plane URL.".into());
+    }
+    // Wry's WebView2 and WKWebView backends treat a dot-less cookie domain as host-only.
+    Ok(Cookie::build(("varde_session", session.to_string()))
+        .domain(host.to_string())
+        .path("/")
+        .http_only(true)
+        .same_site(tauri::webview::cookie::SameSite::Lax)
+        .secure(callback.scheme() == "https")
+        .build())
+}
+
+fn delete_steam_session_cookie(window: &WebviewWindow, callback_origin: &str) {
+    match steam_session_cookie(callback_origin, "") {
+        Ok(cookie) => {
+            if let Err(error) = window.delete_cookie(cookie) {
+                tracing::warn!(%error, "failed to delete Steam-link session cookie");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "failed to construct Steam-link session cookie"),
+    }
+}
+
+#[tauri::command]
+async fn open_steam_link(app: AppHandle) -> Result<(), String> {
+    let cp =
+        cp_url(&app).ok_or_else(|| "This PC isn't linked to a Varde server yet.".to_string())?;
+    let session = load_session(&app, &cp).ok_or_else(|| "Sign in to Varde first.".to_string())?;
+    let response: serde_json::Value = cp_api::CpClient::new(&cp)
+        .map_err(|error| error.to_string())?
+        .with_bearer(session.clone())
+        .json("POST", "/v1/me/steam/link", None::<&serde_json::Value>)
+        .await
+        .map_err(|error| error.to_string())?;
+    let invalid_link = || "The Varde server returned an invalid Steam link.".to_string();
+    let redirect_url = response
+        .get("redirect_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(invalid_link)?
+        .to_string();
+    if !cp_api::steam_login_url_allowed(&redirect_url) {
+        return Err(invalid_link());
+    }
+    let callback_origin =
+        cp_api::steam_callback_origin(&redirect_url, &cp).ok_or_else(invalid_link)?;
+    let steam_url = tauri::Url::parse(&redirect_url).map_err(|_| invalid_link())?;
+
+    if let Some(existing) = app.get_webview_window(STEAM_WINDOW) {
+        delete_steam_session_cookie(&existing, &callback_origin);
+        existing.close().map_err(|error| error.to_string())?;
+    }
+
+    let callback_for_navigation = callback_origin.clone();
+    let app_for_navigation = app.clone();
+    let mut builder =
+        WebviewWindowBuilder::new(&app, STEAM_WINDOW, WebviewUrl::External(steam_url))
+            .title("Link Steam")
+            .inner_size(720.0, 760.0)
+            .center()
+            .theme(Some(tauri::Theme::Dark))
+            .on_navigation(move |url| {
+                match cp_api::steam_navigation(url.as_str(), &callback_for_navigation) {
+                    cp_api::SteamNav::Allow => true,
+                    cp_api::SteamNav::Finish { query } => {
+                        if let Some(window) = app_for_navigation.get_webview_window(STEAM_WINDOW) {
+                            delete_steam_session_cookie(&window, &callback_for_navigation);
+                        }
+                        let path = format!("/settings?{query}");
+                        if let Some(window) = app_for_navigation.get_webview_window(MAIN_WINDOW) {
+                            let _ = window.emit("dashboard-navigate", DashboardNavigate { path });
+                        }
+                        if let Some(window) = app_for_navigation.get_webview_window(STEAM_WINDOW) {
+                            let _ = window.close();
+                        }
+                        false
+                    }
+                    cp_api::SteamNav::External => {
+                        let _ = app_for_navigation
+                            .opener()
+                            .open_url(url.as_str(), None::<&str>);
+                        false
+                    }
+                }
+            })
+            .on_new_window({
+                let app = app.clone();
+                move |url, _features| {
+                    let _ = app.opener().open_url(url.as_str(), None::<&str>);
+                    NewWindowResponse::Deny
+                }
+            });
+    if let Some(parent) = app.get_webview_window(MAIN_WINDOW) {
+        builder = builder.parent(&parent).map_err(|error| error.to_string())?;
+    }
+    let window = builder.build().map_err(|error| error.to_string())?;
+    let window_for_close = window.clone();
+    let callback_for_close = callback_origin.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            delete_steam_session_cookie(&window_for_close, &callback_for_close);
+        }
+    });
+    let cookie = steam_session_cookie(&callback_origin, &session)?;
+    if let Err(error) = window.set_cookie(cookie) {
+        delete_steam_session_cookie(&window, &callback_origin);
+        let _ = window.close();
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]

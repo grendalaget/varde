@@ -269,10 +269,13 @@ export default function Settings() {
                 setProfileBusy(true);
                 setProfileError(null);
                 setProfileMessage(null);
-                const { data, error } = await api.POST("/v1/me/steam/link");
-                setProfileBusy(false);
-                if (error) setProfileError(errorMessage(error));
-                else if (data) linkSteam?.(data.redirect_url);
+                try {
+                  if (linkSteam) await linkSteam();
+                } catch (error) {
+                  setProfileError(errorMessage(error));
+                } finally {
+                  setProfileBusy(false);
+                }
               }}
             >
               Sign in through Steam

@@ -46,10 +46,38 @@ export default function Dashboard({ face }: { face: FaceInfo }) {
           (error: unknown) => setSessionError(String(error)),
         );
       },
-      linkSteam: null,
+      linkSteam: () => invoke<void>("open_steam_link"),
     }),
     [face.cp_url, face.group_id, face.node_id, setSessionError],
   );
+
+  useEffect(() => {
+    const openExternalAnchor = (event: MouseEvent) => {
+      const primaryClick = event.type === "click" && event.button === 0;
+      const middleClick = event.type === "auxclick" && event.button === 1;
+      if (!primaryClick && !middleClick) return;
+      if (!(event.target instanceof Element)) return;
+
+      const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor) return;
+
+      const url = new URL(anchor.href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return;
+      if (anchor.target.toLowerCase() !== "_blank" && url.origin === window.location.origin) {
+        return;
+      }
+
+      event.preventDefault();
+      platform.openExternal(url.href);
+    };
+
+    document.addEventListener("click", openExternalAnchor, true);
+    document.addEventListener("auxclick", openExternalAnchor, true);
+    return () => {
+      document.removeEventListener("click", openExternalAnchor, true);
+      document.removeEventListener("auxclick", openExternalAnchor, true);
+    };
+  }, [platform]);
 
   useEffect(() => {
     document.body.style.background = "var(--background)";

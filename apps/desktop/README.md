@@ -45,6 +45,11 @@ window.
     reachable → dashboard; linking, signing in, pending approval, offline or
     service-down → setup. Finishing a link morphs the window into the
     dashboard. On macOS the Dock icon appears only while a window is open.
+
+Steam linking opens a temporary `Link Steam` window and gives it the CP session
+as an HttpOnly, SameSite=Lax cookie scoped to the CP host. The app deletes the
+cookie when linking returns to Settings or when the Steam window closes.
+
 - Closing the window minimizes to the tray (the webview stays alive, so the
   dashboard keeps its place). **Exit Varde** is the only way
   out: it confirms first while this PC is hosting, drains and stops the

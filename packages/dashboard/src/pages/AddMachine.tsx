@@ -20,7 +20,7 @@ import { usePlatform } from "../lib/platform";
 
 export default function AddMachine() {
   const { group } = useSession();
-  const { cpOrigin } = usePlatform();
+  const { cpOrigin, kind } = usePlatform();
   const [code, setCode] = useState("");
   const [anchor, setAnchor] = useState(true);
   const [hosting, setHosting] = useState(false);
@@ -123,15 +123,17 @@ export default function AddMachine() {
                     text={`sudo varde-agent enroll --server ${cpOrigin} --token ${token}`}
                   />
                 </Field>
-                <p className="mt-3 text-sm text-muted">
-                  On the Varde app?{" "}
-                  <a
-                    className="text-accent underline"
-                    href={`varde://enroll?server=${encodeURIComponent(cpOrigin)}&code=${token}`}
-                  >
-                    Open the app with this token
-                  </a>
-                </p>
+                {kind !== "desktop" && (
+                  <p className="mt-3 text-sm text-muted">
+                    On the Varde app?{" "}
+                    <a
+                      className="text-accent underline"
+                      href={`varde://enroll?server=${encodeURIComponent(cpOrigin)}&code=${token}`}
+                    >
+                      Open the app with this token
+                    </a>
+                  </p>
+                )}
               </div>
             )}
             {(tokens.data?.tokens.length ?? 0) > 0 && (

@@ -289,6 +289,8 @@ function mock(): TauriGlobal {
           case "apply_update":
           case "close_window":
             return Promise.resolve(undefined as T);
+          case "open_steam_link":
+            return Promise.resolve(undefined as T);
           default:
             return Promise.reject(new Error(`mock: unknown command ${cmd}`));
         }

@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
+import { api, errorMessage } from "../api/client";
 
 export type DashboardPlatform = {
   kind: "web" | "desktop";
@@ -8,7 +9,7 @@ export type DashboardPlatform = {
   signInWithVarde(): void;
   openExternal(url: string): void;
   moveThisPc(groupId: string): void;
-  linkSteam: ((redirectUrl: string) => void) | null;
+  linkSteam: (() => Promise<void>) | null;
 };
 
 export const FED_RETURN_KEY = "varde.fed-return";
@@ -38,8 +39,10 @@ export const webPlatform: DashboardPlatform = {
       `varde://relink?group=${encodeURIComponent(groupId)}`,
     );
   },
-  linkSteam(redirectUrl) {
-    window.location.href = redirectUrl;
+  async linkSteam() {
+    const { data, error } = await api.POST("/v1/me/steam/link");
+    if (error) throw new Error(errorMessage(error));
+    if (data) window.location.href = data.redirect_url;
   },
 };
 
