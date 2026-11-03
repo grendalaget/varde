@@ -6,10 +6,13 @@ use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
+use hyper::header::HeaderValue;
 use hyper::{Method, Request, Response, Uri};
 use hyper_util::rt::TokioIo;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::sign;
+use crate::sse::{SseEvent, SseParser};
 use crate::types::ErrorBody;
 
 #[derive(Debug, thiserror::Error)]
@@ -208,77 +211,14 @@ impl CpClient {
             .ok_or_else(|| Error::Url(uri.to_string()))?
             .to_string();
         let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
-        let mut req = Request::builder()
-            .method(method)
-            .uri(&uri)
-            .header("host", host.clone())
-            .header("content-type", "application/json")
-            .header("content-length", body_bytes.len().to_string());
-        if send_auth {
-            if let Some(tok) = &self.bearer {
-                req = req.header("authorization", format!("Bearer {tok}"));
-            }
-            if let (Some(key), Some(node)) = (&self.node_key, &self.node_id) {
-                let ts = now_ms();
-                // the CP verifies the signature over the URL path only
-                let sig = sign::sign(key, method.as_str(), uri.path(), ts, body_bytes);
-                req = req
-                    .header(sign::HDR_NODE, node.as_str())
-                    .header(sign::HDR_TIMESTAMP, ts.to_string())
-                    .header(sign::HDR_SIGNATURE, sig);
-            }
-        }
-        let req = req
-            .body(Full::new(Bytes::from(body_bytes.to_vec())))
-            .map_err(|e| Error::Http(e.to_string()))?;
-
-        let stream = tokio::time::timeout(
-            Duration::from_secs(15),
-            tokio::net::TcpStream::connect((host.as_str(), port)),
-        )
-        .await
-        .map_err(|_| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "connect timeout",
-            ))
-        })?
-        .map_err(Error::Io)?;
+        let req = self.build_request(method, &uri, &host, body_bytes, send_auth)?;
+        let stream = connect_tcp(&host, port).await?;
 
         // deadline for handshake + send + response body — a peer that
         // accepts the connection then stalls must not hang the caller
         let exchange = async move {
-            let resp: Response<Incoming> = if https {
-                let cfg = rustls_client_config()?;
-                let server_name = rustls::pki_types::ServerName::try_from(host.clone())
-                    .map_err(|e| Error::Url(format!("{host}: {e}")))?;
-                let tls = tokio_rustls::TlsConnector::from(cfg)
-                    .connect(server_name, stream)
-                    .await
-                    .map_err(Error::Io)?;
-                let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
-                    .await
-                    .map_err(|e| Error::Http(e.to_string()))?;
-                tokio::spawn(async move {
-                    let _ = conn.await;
-                });
-                sender
-                    .send_request(req)
-                    .await
-                    .map_err(|e| Error::Http(e.to_string()))?
-            } else {
-                let (mut sender, conn) =
-                    hyper::client::conn::http1::handshake(TokioIo::new(stream))
-                        .await
-                        .map_err(|e| Error::Http(e.to_string()))?;
-                tokio::spawn(async move {
-                    let _ = conn.await;
-                });
-                sender
-                    .send_request(req)
-                    .await
-                    .map_err(|e| Error::Http(e.to_string()))?
-            };
+            let io = transport_io(stream, &host, https).await?;
+            let resp = send_http1(io, req).await?;
 
             let status = resp.status().as_u16();
             let location = resp
@@ -303,6 +243,97 @@ impl CpClient {
                     "request timeout",
                 ))
             })?
+    }
+
+    fn build_request(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        host: &str,
+        body_bytes: &[u8],
+        send_auth: bool,
+    ) -> Result<Request<Full<Bytes>>> {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", host)
+            .header("content-type", "application/json")
+            .header("content-length", body_bytes.len().to_string());
+        if send_auth {
+            if let Some(tok) = &self.bearer {
+                req = req.header("authorization", format!("Bearer {tok}"));
+            }
+            if let (Some(key), Some(node)) = (&self.node_key, &self.node_id) {
+                let ts = now_ms();
+                let sig = sign::sign(key, method.as_str(), uri.path(), ts, body_bytes);
+                req = req
+                    .header(sign::HDR_NODE, node.as_str())
+                    .header(sign::HDR_TIMESTAMP, ts.to_string())
+                    .header(sign::HDR_SIGNATURE, sig);
+            }
+        }
+        req.body(Full::new(Bytes::from(body_bytes.to_vec())))
+            .map_err(|e| Error::Http(e.to_string()))
+    }
+
+    pub async fn sse(
+        &self,
+        path: &str,
+        last_event_id: Option<&str>,
+        mut on_open: impl FnMut(),
+        mut on_event: impl FnMut(SseEvent),
+    ) -> Result<()> {
+        let method = Method::GET;
+        let url = format!("{}{}", self.base, path);
+        let uri: Uri = url.parse().map_err(|e| Error::Url(format!("{url}: {e}")))?;
+        let https = uri.scheme_str() == Some("https");
+        if !https && uri.scheme_str() != Some("http") {
+            return Err(Error::Url(url));
+        }
+        let host = uri
+            .host()
+            .ok_or_else(|| Error::Url(uri.to_string()))?
+            .to_string();
+        let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
+        let mut req = self.build_request(&method, &uri, &host, &[], true)?;
+        req.headers_mut()
+            .insert("accept", HeaderValue::from_static("text/event-stream"));
+        if let Some(id) = last_event_id {
+            let value =
+                HeaderValue::from_bytes(id.as_bytes()).map_err(|e| Error::Http(e.to_string()))?;
+            req.headers_mut().insert("last-event-id", value);
+        }
+        let stream = connect_tcp(&host, port).await?;
+        let response = tokio::time::timeout(SSE_IDLE_TIMEOUT, async move {
+            let io = transport_io(stream, &host, https).await?;
+            send_http1(io, req).await
+        })
+        .await
+        .map_err(|_| sse_timeout_error())??;
+
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body = collect_sse_error_body(response.into_body()).await?;
+            return Err(api_error(status, &body));
+        }
+
+        on_open();
+        let mut parser = SseParser::new();
+        let mut body = response.into_body();
+        loop {
+            let frame = tokio::time::timeout(SSE_IDLE_TIMEOUT, body.frame())
+                .await
+                .map_err(|_| sse_timeout_error())?;
+            let Some(frame) = frame else {
+                return Ok(());
+            };
+            let frame = frame.map_err(|e| Error::Http(e.to_string()))?;
+            if let Ok(bytes) = frame.into_data() {
+                for event in parser.push(&bytes) {
+                    on_event(event);
+                }
+            }
+        }
     }
 
     /// JSON call that maps error statuses into `Error::Api`.
@@ -347,6 +378,79 @@ impl CpClient {
         };
         self.call(method, path, bytes.as_deref()).await
     }
+}
+
+trait HttpIo: AsyncRead + AsyncWrite {}
+impl<T: AsyncRead + AsyncWrite> HttpIo for T {}
+
+type BoxedIo = Box<dyn HttpIo + Send + Unpin>;
+
+const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+
+async fn connect_tcp(host: &str, port: u16) -> Result<tokio::net::TcpStream> {
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map_err(|_| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "connect timeout",
+        ))
+    })?
+    .map_err(Error::Io)
+}
+
+async fn transport_io(stream: tokio::net::TcpStream, host: &str, https: bool) -> Result<BoxedIo> {
+    if https {
+        let cfg = rustls_client_config()?;
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| Error::Url(format!("{host}: {e}")))?;
+        let tls = tokio_rustls::TlsConnector::from(cfg)
+            .connect(server_name, stream)
+            .await
+            .map_err(Error::Io)?;
+        Ok(Box::new(tls))
+    } else {
+        Ok(Box::new(stream))
+    }
+}
+
+async fn send_http1(io: BoxedIo, req: Request<Full<Bytes>>) -> Result<Response<Incoming>> {
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(io))
+        .await
+        .map_err(|e| Error::Http(e.to_string()))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    sender
+        .send_request(req)
+        .await
+        .map_err(|e| Error::Http(e.to_string()))
+}
+
+async fn collect_sse_error_body(mut body: Incoming) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    loop {
+        let frame = tokio::time::timeout(SSE_IDLE_TIMEOUT, body.frame())
+            .await
+            .map_err(|_| sse_timeout_error())?;
+        let Some(frame) = frame else {
+            return Ok(bytes);
+        };
+        let frame = frame.map_err(|e| Error::Http(e.to_string()))?;
+        if let Ok(data) = frame.into_data() {
+            bytes.extend_from_slice(&data);
+        }
+    }
+}
+
+fn sse_timeout_error() -> Error {
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "event stream idle timeout",
+    ))
 }
 
 const MAX_REDIRECTS: usize = 5;
@@ -768,5 +872,115 @@ mod tests {
             &host_of("https://WWW.VARDE.GAMES/").unwrap(),
             scope
         ));
+    }
+}
+
+#[cfg(test)]
+mod sse_integration_tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+
+    async fn read_headers(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut byte = [0];
+        while !bytes.ends_with(b"\r\n\r\n") {
+            if stream.read(&mut byte).await.unwrap() == 0 {
+                break;
+            }
+            bytes.push(byte[0]);
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
+    async fn write_chunk(stream: &mut TcpStream, body: &[u8]) {
+        stream
+            .write_all(format!("{:X}\r\n", body.len()).as_bytes())
+            .await
+            .unwrap();
+        stream.write_all(body).await.unwrap();
+        stream.write_all(b"\r\n").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sse_streams_chunked_events_and_returns_when_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_headers(&mut stream).await.to_ascii_lowercase();
+            assert!(request.contains("accept: text/event-stream\r\n"));
+            assert!(request.contains("last-event-id: previous\r\n"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Content-Type: text/event-stream\r\n\
+                      Transfer-Encoding: chunked\r\n\
+                      Connection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            write_chunk(&mut stream, b": connected\n").await;
+            write_chunk(&mut stream, b"id: event-1\ndata: hello").await;
+            write_chunk(&mut stream, b"\ndata: world\n\n").await;
+            stream.write_all(b"0\r\n\r\n").await.unwrap();
+        });
+
+        let opened = Arc::new(AtomicBool::new(false));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let client = CpClient::new(&format!("http://{address}")).unwrap();
+        let on_open = opened.clone();
+        let on_event = events.clone();
+        client
+            .sse(
+                "/v1/groups/group_1/events/stream",
+                Some("previous"),
+                move || on_open.store(true, Ordering::SeqCst),
+                move |event| on_event.lock().unwrap().push(event),
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+
+        assert!(opened.load(Ordering::SeqCst));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![SseEvent {
+                id: Some("event-1".into()),
+                data: "hello\nworld".into(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_rejects_unauthorized_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = read_headers(&mut stream).await;
+            let body = br#"{"code":"unauthorized","message":"sign in"}"#;
+            let headers = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(body).await.unwrap();
+        });
+
+        let client = CpClient::new(&format!("http://{address}")).unwrap();
+        let result = client
+            .sse("/v1/groups/group_1/events/stream", None, || {}, |_| {})
+            .await;
+        server.await.unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.status(), Some(401));
+        assert_eq!(error.api_code(), Some("unauthorized"));
     }
 }

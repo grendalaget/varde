@@ -39,13 +39,22 @@ export type FedState =
 type Handler<T> = (e: { payload: T }) => void;
 type Unlisten = () => void;
 
+interface TauriChannel<T> {
+  onmessage: ((message: T) => void) | null;
+}
+
 interface TauriGlobal {
   core: {
+    Channel: new <T>() => TauriChannel<T>;
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   };
   event: {
     listen: <T>(event: string, handler: Handler<T>) => Promise<Unlisten>;
   };
+}
+
+class MockChannel<T> implements TauriChannel<T> {
+  onmessage: ((message: T) => void) | null = null;
 }
 
 declare global {
@@ -132,6 +141,7 @@ function mock(): TauriGlobal {
   };
   return {
     core: {
+      Channel: MockChannel,
       invoke: <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
         // TEMP-TEST: trace invokes for verification
         (window as unknown as { __mocklog?: string[] }).__mocklog = [

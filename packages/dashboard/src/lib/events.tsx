@@ -16,6 +16,30 @@ type Ctx = {
   recent: VardeEvent[];
 };
 
+export type EventStreamHandlers = {
+  onOpen(): void;
+  onError(): void;
+  onMessage(data: string): void;
+};
+export type EventStream = (
+  groupId: string,
+  handlers: EventStreamHandlers,
+) => () => void;
+
+let eventStream: EventStream = (groupId, handlers) => {
+  const es = new EventSource(
+    `/v1/groups/${encodeURIComponent(groupId)}/events/stream`,
+  );
+  es.onopen = handlers.onOpen;
+  es.onerror = handlers.onError;
+  es.onmessage = (message) => handlers.onMessage(message.data);
+  return () => es.close();
+};
+
+export function setEventStream(next: EventStream): void {
+  eventStream = next;
+}
+
 const EventsCtx = createContext<Ctx>({
   subscribe: () => () => {},
   connected: false,
@@ -36,22 +60,20 @@ export function GroupEventsProvider({
 
   useEffect(() => {
     setRecent([]);
-    const es = new EventSource(
-      `/v1/groups/${encodeURIComponent(groupId)}/events/stream`,
-    );
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (m) => {
-      let ev: VardeEvent;
-      try {
-        ev = JSON.parse(m.data) as VardeEvent;
-      } catch {
-        return;
-      }
-      setRecent((r) => [ev, ...r].slice(0, 200));
-      listeners.current.forEach((fn) => fn(ev));
-    };
-    return () => es.close();
+    return eventStream(groupId, {
+      onOpen: () => setConnected(true),
+      onError: () => setConnected(false),
+      onMessage: (data) => {
+        let ev: VardeEvent;
+        try {
+          ev = JSON.parse(data) as VardeEvent;
+        } catch {
+          return;
+        }
+        setRecent((r) => [ev, ...r].slice(0, 200));
+        listeners.current.forEach((fn) => fn(ev));
+      },
+    });
   }, [groupId]);
 
   const subscribe = useCallback((fn: Listener) => {

@@ -1,7 +1,9 @@
 //! Tauri app: the Varde tray and the app's one window — the dashboard while
 //! linked, the local link/status UI otherwise — plus the agent-IPC watch.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::crash;
@@ -72,6 +74,9 @@ pub(crate) struct State {
     /// The dashboard asked to move this PC into a group (varde://relink):
     /// its re-link code is approved there, not on the setup face.
     move_to: Mutex<Option<MoveTo>>,
+    cp_sessions: Mutex<HashMap<String, Option<String>>>,
+    next_cp_event_id: AtomicU32,
+    cp_event_subscriptions: Mutex<HashMap<u32, tauri::async_runtime::JoinHandle<()>>>,
 }
 
 /// A move the dashboard asked for: the target group, the link code opened
@@ -217,7 +222,11 @@ pub fn run() {
             confirm_varde_login,
             cancel_varde_login,
             federated_state,
-            finish_varde_login
+            finish_varde_login,
+            // The remote dashboard webview has no IPC capability and cannot call these.
+            cp_fetch,
+            cp_events_subscribe,
+            cp_events_unsubscribe
         ])
         .setup(move |app| {
             let h = app.handle().clone();
@@ -584,6 +593,221 @@ fn cp_url(app: &AppHandle) -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
+const SESSION_SERVICE: &str = "games.varde.desktop.session";
+
+fn session_account(cp_url: &str) -> String {
+    cp_url.trim_end_matches('/').to_string()
+}
+
+fn load_session(app: &AppHandle, cp_url: &str) -> Option<String> {
+    let account = session_account(cp_url);
+    if let Some(session) = app
+        .state::<State>()
+        .cp_sessions
+        .lock()
+        .unwrap()
+        .get(&account)
+        .cloned()
+    {
+        return session;
+    }
+
+    match keyring::Entry::new(SESSION_SERVICE, &account).and_then(|entry| entry.get_password()) {
+        Ok(session) => {
+            app.state::<State>()
+                .cp_sessions
+                .lock()
+                .unwrap()
+                .insert(account, Some(session.clone()));
+            Some(session)
+        }
+        Err(keyring::Error::NoEntry) => {
+            app.state::<State>()
+                .cp_sessions
+                .lock()
+                .unwrap()
+                .insert(account, None);
+            None
+        }
+        Err(error) => {
+            tracing::warn!(account = %account, %error, "failed to load control-plane session");
+            None
+        }
+    }
+}
+
+fn save_session(app: &AppHandle, cp_url: &str, session: &str) {
+    let account = session_account(cp_url);
+    app.state::<State>()
+        .cp_sessions
+        .lock()
+        .unwrap()
+        .insert(account.clone(), Some(session.to_string()));
+    if let Err(error) =
+        keyring::Entry::new(SESSION_SERVICE, &account).and_then(|entry| entry.set_password(session))
+    {
+        tracing::warn!(account = %account, %error, "failed to save control-plane session");
+    }
+}
+
+fn clear_session(app: &AppHandle, cp_url: &str) {
+    let account = session_account(cp_url);
+    app.state::<State>()
+        .cp_sessions
+        .lock()
+        .unwrap()
+        .insert(account.clone(), None);
+    match keyring::Entry::new(SESSION_SERVICE, &account).and_then(|entry| entry.delete_credential())
+    {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(error) => {
+            tracing::warn!(account = %account, %error, "failed to clear control-plane session");
+        }
+    }
+}
+
+#[tauri::command]
+async fn cp_fetch(
+    app: AppHandle,
+    request: cp_api::ProxyRequest,
+) -> Result<cp_api::ProxyResponse, String> {
+    let base =
+        cp_url(&app).ok_or_else(|| "This PC isn't linked to a Varde server yet.".to_string())?;
+    cp_api::validate_path(&request.path).map_err(|error| error.to_string())?;
+    if !matches!(
+        request.method.as_str(),
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+    ) {
+        return Err("method is not allowed".into());
+    }
+
+    let client = cp_api::CpClient::new(&base).map_err(|error| error.to_string())?;
+    let client = match load_session(&app, &base) {
+        Some(session) => client.with_bearer(session),
+        None => client,
+    };
+    let (status, body) = client
+        .call(
+            &request.method,
+            &request.path,
+            request.body.as_deref().map(str::as_bytes),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let (change, body) = cp_api::session_change(&request.method, &request.path, status, &body);
+    match change {
+        cp_api::SessionChange::Keep => {}
+        cp_api::SessionChange::Set(session) => save_session(&app, &base, &session),
+        cp_api::SessionChange::Clear => clear_session(&app, &base),
+    }
+    Ok(cp_api::ProxyResponse {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    })
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum CpEvent {
+    Open,
+    Message { data: String },
+    Error,
+}
+
+#[tauri::command]
+async fn cp_events_subscribe(
+    app: AppHandle,
+    group_id: String,
+    on_event: tauri::ipc::Channel<CpEvent>,
+) -> Result<u32, String> {
+    if group_id.is_empty()
+        || group_id.len() > 64
+        || !group_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err("group ID is not valid".into());
+    }
+    let base =
+        cp_url(&app).ok_or_else(|| "This PC isn't linked to a Varde server yet.".to_string())?;
+    let mut client = cp_api::CpClient::new(&base).map_err(|error| error.to_string())?;
+    if let Some(session) = load_session(&app, &base) {
+        client = client.with_bearer(session);
+    }
+    let path = format!("/v1/groups/{group_id}/events/stream");
+    let state = app.state::<State>();
+    let id = state
+        .next_cp_event_id
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1);
+    let mut subscriptions = state.cp_event_subscriptions.lock().unwrap();
+    let task_app = app.clone();
+    let task = tauri::async_runtime::spawn(async move {
+        let mut last_event_id: Option<String> = None;
+        let mut backoff_secs = 1;
+        loop {
+            let last_event_id_for_request = last_event_id.clone();
+            let opened = Arc::new(AtomicBool::new(false));
+            let channel_failed = Arc::new(AtomicBool::new(false));
+            let on_open_opened = Arc::clone(&opened);
+            let on_open_channel_failed = Arc::clone(&channel_failed);
+            let on_message_channel_failed = Arc::clone(&channel_failed);
+            let result = client
+                .sse(
+                    &path,
+                    last_event_id_for_request.as_deref(),
+                    || {
+                        on_open_opened.store(true, Ordering::Relaxed);
+                        if on_event.send(CpEvent::Open).is_err() {
+                            on_open_channel_failed.store(true, Ordering::Relaxed);
+                        }
+                    },
+                    |event| {
+                        if let Some(id) = event.id {
+                            last_event_id = Some(id);
+                        }
+                        if on_event
+                            .send(CpEvent::Message { data: event.data })
+                            .is_err()
+                        {
+                            on_message_channel_failed.store(true, Ordering::Relaxed);
+                        }
+                    },
+                )
+                .await;
+            if channel_failed.load(Ordering::Relaxed) {
+                break;
+            }
+            if let Err(error) = result {
+                tracing::warn!(group_id = %group_id, %error, "control-plane event stream disconnected");
+            }
+            if on_event.send(CpEvent::Error).is_err() {
+                break;
+            }
+            if opened.load(Ordering::Relaxed) {
+                backoff_secs = 1;
+            }
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(30);
+        }
+        task_app
+            .state::<State>()
+            .cp_event_subscriptions
+            .lock()
+            .unwrap()
+            .remove(&id);
+    });
+    subscriptions.insert(id, task);
+    Ok(id)
+}
+
+#[tauri::command]
+fn cp_events_unsubscribe(state: tauri::State<'_, State>, id: u32) {
+    if let Some(task) = state.cp_event_subscriptions.lock().unwrap().remove(&id) {
+        task.abort();
+    }
+}
+
 /// Which face the one window shows right now.
 fn desired_facet(app: &AppHandle) -> Facet {
     let st = app.state::<State>();
@@ -862,6 +1086,24 @@ fn open_main_window(app: &AppHandle) {
             // webview's alpha to composite)
             .transparent(glass)
             .initialization_script(format!("window.__VARDE_GLASS__ = {};", glass))
+            .on_page_load({
+                let app = app.clone();
+                move |_window, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        let tasks = app
+                            .state::<State>()
+                            .cp_event_subscriptions
+                            .lock()
+                            .unwrap()
+                            .drain()
+                            .map(|(_, task)| task)
+                            .collect::<Vec<_>>();
+                        for task in tasks {
+                            task.abort();
+                        }
+                    }
+                }
+            })
             .build()
             .map(|w| {
                 // closing minimizes to the tray; only Exit ends the app.
@@ -1616,7 +1858,11 @@ async fn federated_login(app: &AppHandle, pending: FedPending) -> Result<(), UiE
             return Ok(());
         }
     };
-    approve_link(app, authed, cp, group_id).await
+    let result = approve_link(app, authed, cp.clone(), group_id).await;
+    if result.is_ok() {
+        save_session(app, &cp, &session);
+    }
+    result
 }
 
 #[tauri::command]
@@ -1710,10 +1956,16 @@ async fn finish_varde_login(app: AppHandle, group_id: String) -> Result<(), UiEr
     if !pending.groups.contains(&group_id) {
         return Err(UiErr::msg("That group isn't one of yours."));
     }
-    let client = cp_api::CpClient::new(&pending.cp_url)
+    let cp = pending.cp_url;
+    let session = pending.session;
+    let client = cp_api::CpClient::new(&cp)
         .map_err(ui_err)?
-        .with_bearer(pending.session);
-    approve_link(&app, client, pending.cp_url, group_id).await
+        .with_bearer(session.clone());
+    let result = approve_link(&app, client, cp.clone(), group_id).await;
+    if result.is_ok() {
+        save_session(&app, &cp, &session);
+    }
+    result
 }
 
 /// Ask the agent to start linking (no browser tab this time), then approve
