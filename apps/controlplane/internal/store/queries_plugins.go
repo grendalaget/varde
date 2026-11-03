@@ -4,12 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func isMissingTable(err error, table string) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "no such table: "+table) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
 
 func (s *Store) InstalledPlugin(ctx context.Context, id string) (*InstalledPlugin, error) {
 	var plugin InstalledPlugin
 	err := s.q().GetContext(ctx, &plugin, s.Rebind(`SELECT * FROM installed_plugins WHERE id=?`), id)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err, "installed_plugins") {
 		return nil, ErrNotFound
 	}
 	return &plugin, err
@@ -18,7 +32,7 @@ func (s *Store) InstalledPlugin(ctx context.Context, id string) (*InstalledPlugi
 func (s *Store) InstalledPluginByServiceTokenID(ctx context.Context, tokenID string) (*InstalledPlugin, error) {
 	var plugin InstalledPlugin
 	err := s.q().GetContext(ctx, &plugin, s.Rebind(`SELECT * FROM installed_plugins WHERE service_token_id=?`), tokenID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err, "installed_plugins") {
 		return nil, ErrNotFound
 	}
 	return &plugin, err
@@ -27,6 +41,9 @@ func (s *Store) InstalledPluginByServiceTokenID(ctx context.Context, tokenID str
 func (s *Store) ListInstalledPlugins(ctx context.Context) ([]InstalledPlugin, error) {
 	var plugins []InstalledPlugin
 	err := s.q().SelectContext(ctx, &plugins, `SELECT * FROM installed_plugins ORDER BY id`)
+	if isMissingTable(err, "installed_plugins") {
+		return nil, nil
+	}
 	return plugins, err
 }
 
