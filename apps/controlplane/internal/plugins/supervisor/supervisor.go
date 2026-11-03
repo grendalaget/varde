@@ -142,6 +142,13 @@ func (s *Supervisor) Installed(ctx context.Context) ([]store.InstalledPlugin, er
 	return s.opts.Store.ListInstalledPlugins(ctx)
 }
 
+func (s *Supervisor) hasUnhealthyProcess(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	process := s.running[id]
+	return process != nil && !process.healthy.Load()
+}
+
 func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlugin, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -157,6 +164,9 @@ func (s *Supervisor) Install(ctx context.Context, id string) (store.InstalledPlu
 	if existing, err := s.opts.Store.InstalledPlugin(ctx, id); err == nil {
 		if err := s.ensureInstalled(ctx, *existing); err != nil {
 			return *existing, err
+		}
+		if s.hasUnhealthyProcess(id) {
+			s.stopInstalled(id)
 		}
 		if err := s.startInstalled(*existing, true); err != nil {
 			return *existing, err

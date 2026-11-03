@@ -3,13 +3,11 @@ import { api, errorMessage, type Schemas } from "../api/client";
 import { Badge, Button, Card, CardHeader, ErrorNote, PageHeader } from "../components/ui";
 import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
-import { useSession } from "../lib/session";
 
 type AdminPlugin = Schemas["AdminPlugin"];
 type Action = "install" | "update" | "uninstall";
 
-export default function AdminPlugins() {
-  const { me } = useSession();
+export default function AdminPlugins({ operator }: { operator: boolean }) {
   const plugins = useLoad(() => api.GET("/v1/admin/plugins"), []);
   const [pending, setPending] = useState<{ id: string; action: Action } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,10 +35,11 @@ export default function AdminPlugins() {
       }));
     } else {
       await plugins.refresh();
+      window.dispatchEvent(new Event("varde:plugins-changed"));
     }
   }
 
-  if (!me.operator) {
+  if (!operator) {
     return (
       <>
         <PageHeader title="Plugins" />
@@ -101,6 +100,16 @@ export default function AdminPlugins() {
                           onClick={() => void run(plugin, "update")}
                         >
                           Update
+                        </Button>
+                      )}
+                      {plugin.status === "error" && (
+                        <Button
+                          variant="primary"
+                          disabled={pending !== null}
+                          busy={pending?.id === plugin.id && pending.action === "install"}
+                          onClick={() => void run(plugin, "install")}
+                        >
+                          Retry
                         </Button>
                       )}
                       <Button

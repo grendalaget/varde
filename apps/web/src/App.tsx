@@ -226,6 +226,19 @@ export default function App() {
   }
 
   if (me.groups.length === 0) {
+    if (me.operator && loc.pathname === "/admin/plugins") {
+      return (
+        <Centered>
+          <AdminPlugins operator={me.operator} />
+          <Link
+            to="/"
+            className="mt-4 block text-center text-sm text-muted hover:text-foreground"
+          >
+            Back
+          </Link>
+        </Centered>
+      );
+    }
     return (
       <Centered>
         <CreateGroup
@@ -234,6 +247,14 @@ export default function App() {
             selectGroup(gid);
           }}
         />
+        {me.operator && (
+          <Link
+            to="/admin/plugins"
+            className="mt-4 block text-center text-sm text-muted hover:text-foreground"
+          >
+            Manage plugins
+          </Link>
+        )}
       </Centered>
     );
   }
@@ -357,12 +378,16 @@ function Layout() {
       : Promise.resolve({ data: { plugins: [] } }),
     [group.group_id, pluginCatalog.data?.plugins.length],
   );
+  const refreshPluginCatalog = pluginCatalog.refresh;
   const refreshGroupPlugins = groupPlugins.refresh;
   useEffect(() => {
-    const refreshPlugins = () => void refreshGroupPlugins();
+    const refreshPlugins = async () => {
+      await refreshPluginCatalog();
+      await refreshGroupPlugins();
+    };
     window.addEventListener("varde:plugins-changed", refreshPlugins);
     return () => window.removeEventListener("varde:plugins-changed", refreshPlugins);
-  }, [refreshGroupPlugins]);
+  }, [refreshPluginCatalog, refreshGroupPlugins]);
   const pluginNav =
     pluginCatalog.data?.plugins
       .filter((plugin) =>
@@ -403,7 +428,7 @@ function Layout() {
   else if (p === "/settings") page = <Settings />;
   else if (p === "/admin/plugins")
     page = me.operator
-      ? <AdminPlugins />
+      ? <AdminPlugins operator={me.operator} />
       : <ErrorNote>Operator access is required.</ErrorNote>;
   else if ((m = match("/plugins/:pluginId/:pageId", p)))
     page = <PluginPage pluginId={m.pluginId} pageId={m.pageId} />;

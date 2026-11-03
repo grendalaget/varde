@@ -94,12 +94,16 @@ function PluginSetup() {
       }),
     [group.group_id],
   );
+  const refreshCatalog = catalog.refresh;
   const refreshEnabled = enabledPlugins.refresh;
   useEffect(() => {
-    const refresh = () => void refreshEnabled();
+    const refresh = async () => {
+      await refreshCatalog();
+      await refreshEnabled();
+    };
     window.addEventListener("varde:plugins-changed", refresh);
     return () => window.removeEventListener("varde:plugins-changed", refresh);
-  }, [refreshEnabled]);
+  }, [refreshCatalog, refreshEnabled]);
   const [setupPluginId, setSetupPluginId] = useState<string | null>(null);
 
   if (!canAdmin(group.role)) return null;

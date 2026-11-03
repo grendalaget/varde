@@ -218,6 +218,107 @@ func TestInstallRestartAndUninstall(t *testing.T) {
 	}
 }
 
+func TestInstallRestartsExistingErroredPlugin(t *testing.T) {
+	binary := buildTestPlugin(t)
+	manifest := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
+	archive := releaseArchive(t, binary, manifest)
+	hash := sha256.Sum256(archive)
+	digest := hex.EncodeToString(hash[:])
+	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer assetServer.Close()
+	catalog, err := plugins.ParseCatalog(mustJSON(t, []plugins.CatalogEntry{{
+		ID: "test-plugin", Name: "Test plugin", Description: "Supervisor retry test",
+		Version: "1.0.0", Scopes: []string{"members"},
+		Assets: map[string]plugins.Asset{runtime.GOOS + "/" + runtime.GOARCH: {
+			URL: assetServer.URL, SHA256: digest,
+		}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	db, err := store.Open("sqlite://"+filepath.Join(root, "cp.db"), store.RealClock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	key := bytes.Repeat([]byte("r"), 32)
+	manager, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VARDE_SECRETS_KEY", base64.StdEncoding.EncodeToString(key))
+	registry := mustEmptyRegistry(t)
+	supervisor, err := New(Options{
+		DataDir: root, ControlPlaneURL: "http://127.0.0.1:8080", Store: db,
+		Registry: registry, Catalog: catalog, Secrets: manager, HTTPClient: assetServer.Client(),
+		HealthTimeout: 5 * time.Second, RestartMin: 30 * time.Second, RestartMax: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.stopAll()
+
+	ctx := context.Background()
+	installed, err := supervisor.Install(ctx, "test-plugin")
+	if err != nil {
+		t.Fatalf("Install initial plugin: %v", err)
+	}
+	listURL := fmt.Sprintf("http://127.0.0.1:%d/list", installed.Port)
+	if _, err := supervisor.Install(ctx, installed.ID); err != nil {
+		t.Fatalf("Install healthy plugin: %v", err)
+	}
+	if body := getTestURL(t, listURL); !strings.Contains(body, `"title":"start 1"`) {
+		t.Fatalf("plugin list after healthy Install = %s, want start 1", body)
+	}
+	crashURL := fmt.Sprintf("http://127.0.0.1:%d/crash", installed.Port)
+	if body := getTestURL(t, crashURL); !strings.Contains(body, "restarting") {
+		t.Fatalf("plugin crash response = %s, want restarting", body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var latest *store.InstalledPlugin
+	var unhealthy bool
+	for time.Now().Before(deadline) {
+		latest, err = db.InstalledPlugin(ctx, installed.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		supervisor.mu.Lock()
+		process := supervisor.running[installed.ID]
+		unhealthy = process != nil && !process.healthy.Load()
+		supervisor.mu.Unlock()
+		if latest.Status == errorStatus && unhealthy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if latest == nil {
+		t.Fatal("installed plugin row is missing after crash")
+	}
+	if latest.Status != errorStatus || !unhealthy {
+		t.Fatalf("plugin after crash = status %q, unhealthy %t, want error and unhealthy during backoff",
+			latest.Status, unhealthy)
+	}
+
+	retryStarted := time.Now()
+	retried, err := supervisor.Install(ctx, installed.ID)
+	retryDuration := time.Since(retryStarted)
+	if err != nil {
+		t.Fatalf("Install existing errored plugin after %s: %v", retryDuration, err)
+	}
+	if retryDuration >= 3*time.Second {
+		t.Fatalf("Install existing errored plugin took %s, want under 3s", retryDuration)
+	}
+	if retried.Status != runningStatus {
+		t.Fatalf("Install existing errored plugin status = %q, want %q", retried.Status, runningStatus)
+	}
+	if body := getTestURL(t, listURL); !strings.Contains(body, `"title":"start 2"`) {
+		t.Fatalf("plugin list after Install retry = %s, want start 2", body)
+	}
+}
+
 func TestExplicitPluginUpdateKeepsOldProcessUntilCandidateIsHealthy(t *testing.T) {
 	binary := buildTestPlugin(t)
 	manifestV1 := []byte(`{"id":"test-plugin","name":"Test plugin","version":"1.0","base_url":"http://127.0.0.1:1","secret_env":"UNUSED","service_token":"plugin-test-plugin"}`)
