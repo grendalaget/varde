@@ -390,6 +390,17 @@ pub fn load_prefs(data_dir: &Path) -> Prefs {
     }
 }
 
+/// Read-modify-write of `prefs.json`, serialized within this process so
+/// two setters changing different fields don't drop each other's change.
+pub fn update_prefs(data_dir: &Path, f: impl FnOnce(&mut Prefs)) -> io::Result<Prefs> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut p = load_prefs(data_dir);
+    f(&mut p);
+    save_prefs(data_dir, &p)?;
+    Ok(p)
+}
+
 pub fn save_prefs(data_dir: &Path, prefs: &Prefs) -> io::Result<()> {
     std::fs::create_dir_all(data_dir)?;
     let p = data_dir.join("prefs.json");
@@ -543,6 +554,20 @@ mod tests {
         .unwrap();
         assert!(!load_prefs(dir.path()).crash_reporting);
         assert!(load_prefs(dir.path()).auto_update);
+    }
+
+    #[test]
+    fn concurrent_pref_updates_keep_both_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        for _ in 0..20 {
+            save_prefs(dir.path(), &Prefs::default()).unwrap();
+            std::thread::scope(|s| {
+                s.spawn(|| update_prefs(dir.path(), |p| p.crash_reporting = false).unwrap());
+                s.spawn(|| update_prefs(dir.path(), |p| p.auto_update = false).unwrap());
+            });
+            let p = load_prefs(dir.path());
+            assert!(!p.crash_reporting && !p.auto_update);
+        }
     }
 
     #[test]

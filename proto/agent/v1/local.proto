@@ -27,9 +27,11 @@ service LocalService {
   rpc SubmitCrashReport(SubmitCrashReportRequest) returns (SubmitCrashReportResponse);
   // Turns crash-report upload on or off (persisted on the machine).
   rpc SetCrashReporting(SetCrashReportingRequest) returns (SetCrashReportingResponse);
-  // Installs the update the checker found. now = install even while this
-  // machine hosts (drains the server; administrators only); otherwise it
-  // installs as soon as the machine isn't hosting (queued, persisted).
+  // Installs the update the checker found as soon as the machine isn't
+  // hosting (queued, persisted; skips the automatic retry backoff).
+  // now = install even while this machine hosts (drains the server;
+  // administrators only). Once an administrator turned automatic installs
+  // off, any request needs an administrator.
   rpc ApplyUpdate(ApplyUpdateRequest) returns (ApplyUpdateResponse);
   // Turns automatic update installs on or off (persisted on the machine).
   // Turning them off needs an administrator.

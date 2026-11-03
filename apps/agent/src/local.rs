@@ -492,6 +492,34 @@ fn check_link_allowed(
     Ok(())
 }
 
+/// Who may ask for an install. Any local user may install the found update
+/// while automatic installs are on and the machine is idle (it would install
+/// by itself anyway). Draining a hosted server, or installing after an
+/// administrator turned automatic installs off, needs an administrator.
+fn check_apply_allowed(
+    now: bool,
+    hosting: bool,
+    auto: bool,
+    is_admin: bool,
+) -> Result<crate::update::Ask, Status> {
+    if !auto && !is_admin {
+        return Err(Status::permission_denied(
+            "automatic updates were turned off by an administrator; installing needs one",
+        ));
+    }
+    if now && hosting {
+        if !is_admin {
+            return Err(Status::permission_denied(
+                "updating while hosting needs an administrator",
+            ));
+        }
+        return Ok(crate::update::Ask::Drain);
+    }
+    // "now" on an idle machine is not consent to drain a server placed here
+    // during the download
+    Ok(crate::update::Ask::Manual)
+}
+
 struct Svc(Arc<Hub>);
 
 type StatusStream =
@@ -618,11 +646,8 @@ impl pb::local_service_server::LocalService for Svc {
                 "enabling crash reporting needs an administrator",
             ));
         }
-        let prefs = crash_report::Prefs {
-            crash_reporting: req.into_inner().enabled,
-            ..crash_report::load_prefs(&self.0.data_dir)
-        };
-        crash_report::save_prefs(&self.0.data_dir, &prefs)
+        let enabled = req.into_inner().enabled;
+        crash_report::update_prefs(&self.0.data_dir, |p| p.crash_reporting = enabled)
             .map_err(|e| Status::internal(e.to_string()))?;
         self.0.bump();
         Ok(Response::new(pb::SetCrashReportingResponse {
@@ -643,32 +668,25 @@ impl pb::local_service_server::LocalService for Svc {
         let Some(a) = agent else {
             return Err(Status::failed_precondition("this machine isn't linked yet"));
         };
-        let Some(version) = a
-            .update
-            .lock()
-            .unwrap()
-            .available
-            .as_ref()
-            .map(|v| v.version.clone())
-        else {
+        let Some(av) = a.update.lock().unwrap().available.clone() else {
             return Err(Status::failed_precondition("no update available"));
         };
-        let hosting = is_hosting(&a);
-        // installing drains the server this machine hosts: same bar as
-        // stopping the service
-        if req.get_ref().now && hosting && !peer.is_admin {
-            return Err(Status::permission_denied(
-                "updating while hosting needs an administrator",
-            ));
+        if !crate::update::installable(&av) {
+            return Err(Status::failed_precondition(format!(
+                "Varde {} is out, but this install can't update itself; \
+                 update it the way it was installed",
+                av.version
+            )));
         }
-        if !req.get_ref().now || !hosting {
-            crate::update::queue_when_idle(&self.0.data_dir, &version)
-                .map_err(|e| Status::internal(e.to_string()))?;
-        }
-        let now = req.get_ref().now;
+        let auto = crash_report::load_prefs(&self.0.data_dir).auto_update;
+        let ask = check_apply_allowed(req.get_ref().now, is_hosting(&a), auto, peer.is_admin)?;
+        // remembered so a request that has to wait for hosting to end (or
+        // fails) is retried by the update loop
+        crate::update::queue_when_idle(&self.0.data_dir, &av.version)
+            .map_err(|e| Status::internal(e.to_string()))?;
         let hub = self.0.clone();
         tokio::spawn(async move {
-            crate::update::maybe_apply(&a, now).await;
+            crate::update::maybe_apply(&a, ask).await;
             hub.bump();
         });
         // let the installing phase land before answering
@@ -695,12 +713,14 @@ impl pb::local_service_server::LocalService for Svc {
                 "turning off automatic updates needs an administrator",
             ));
         }
-        let prefs = crash_report::Prefs {
-            auto_update: req.into_inner().enabled,
-            ..crash_report::load_prefs(&self.0.data_dir)
-        };
-        crash_report::save_prefs(&self.0.data_dir, &prefs)
+        let enabled = req.into_inner().enabled;
+        crash_report::update_prefs(&self.0.data_dir, |p| p.auto_update = enabled)
             .map_err(|e| Status::internal(e.to_string()))?;
+        if !enabled {
+            // an opt-out also drops a pending "when idle" install, which a
+            // non-administrator may have queued
+            crate::update::clear_queue(&self.0.data_dir);
+        }
         self.0.bump();
         Ok(Response::new(pb::SetAutoUpdateResponse {
             status: Some(self.0.status()),
@@ -751,6 +771,49 @@ mod tests {
             tonic::Code::FailedPrecondition
         );
         assert!(check_link_allowed(true, true, true, false).is_ok());
+    }
+
+    #[test]
+    fn apply_policy() {
+        use crate::update::Ask;
+        let code = |r: Result<Ask, Status>| r.unwrap_err().code();
+        // anyone, idle, automatic installs on
+        assert_eq!(
+            check_apply_allowed(false, false, true, false).unwrap(),
+            Ask::Manual
+        );
+        // "now" while idle never becomes a drain, even for an administrator
+        assert_eq!(
+            check_apply_allowed(true, false, true, false).unwrap(),
+            Ask::Manual
+        );
+        assert_eq!(
+            check_apply_allowed(true, false, true, true).unwrap(),
+            Ask::Manual
+        );
+        // draining a hosted server needs an administrator
+        assert_eq!(
+            code(check_apply_allowed(true, true, true, false)),
+            tonic::Code::PermissionDenied
+        );
+        assert_eq!(
+            check_apply_allowed(true, true, true, true).unwrap(),
+            Ask::Drain
+        );
+        // "when idle" while hosting queues for anyone
+        assert_eq!(
+            check_apply_allowed(false, true, true, false).unwrap(),
+            Ask::Manual
+        );
+        // an administrator's opt-out holds against other users
+        assert_eq!(
+            code(check_apply_allowed(false, false, false, false)),
+            tonic::Code::PermissionDenied
+        );
+        assert_eq!(
+            check_apply_allowed(false, false, false, true).unwrap(),
+            Ask::Manual
+        );
     }
 
     /// Minimal control plane: device enroll + poll (202 once, then 200).

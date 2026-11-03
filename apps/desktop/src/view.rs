@@ -397,6 +397,9 @@ pub struct Launch {
     pub service_stop: bool,
     /// Elevated headless "Update now" while hosting.
     pub update_now: bool,
+    /// Elevated headless "Update to X" / "When idle" (automatic installs
+    /// are off, so it needs an administrator).
+    pub update_when_idle: bool,
     /// Elevated headless "turn automatic updates off".
     pub auto_update_off: bool,
     /// varde:// deep link (federated sign-in callback).
@@ -419,6 +422,7 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
             "--service-start" => l.service_start = true,
             "--service-stop" => l.service_stop = true,
             "--update-now" => l.update_now = true,
+            "--update-when-idle" => l.update_when_idle = true,
             "--auto-update-off" => l.auto_update_off = true,
             _ if a.starts_with("varde://") => l.deep_link = Some(a),
             _ => {}
@@ -690,6 +694,7 @@ mod tests {
         assert!(p(&["--service-start"]).service_start);
         assert!(p(&["--service-stop"]).service_stop);
         assert!(p(&["--update-now"]).update_now);
+        assert!(p(&["--update-when-idle"]).update_when_idle);
         assert!(p(&["--auto-update-off"]).auto_update_off);
         let l = p(&["varde://auth/callback?token=t.jwt"]);
         assert_eq!(

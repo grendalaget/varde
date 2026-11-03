@@ -111,9 +111,11 @@ waits (`Status.update.phase = "waiting"`) and installs once hosting ends — a
 hosted server is never interrupted. "Update to X" in the tray asks the agent
 (`ApplyUpdate`): idle → installs now; hosting → "now" (drains the server,
 administrators only) or "when idle" (persisted in `<data>/update/when-idle`,
-installs once hosting ends even with automatic installs off). Turning
-automatic installs off needs an administrator. A failed install of one
-version is retried automatically after 6 h (`<data>/update/attempt`). On the
+installs once hosting ends). Turning automatic installs off needs an
+administrator, drops a queued "when idle", and from then on any install
+request needs an administrator too. Notify-only installs (snap, tarball)
+refuse `ApplyUpdate`. A failed automatic install of one version is retried
+after 6 h (`<data>/update/attempt`); asking again retries right away. On the
 first start of a new version the tray shows "Varde updated to X".
 
 Apply paths per platform:

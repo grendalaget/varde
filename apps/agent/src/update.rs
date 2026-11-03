@@ -304,7 +304,7 @@ pub async fn update_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiv
             check_once(&agent).await;
             next_check = tokio::time::Instant::now() + interval;
         }
-        maybe_apply(&agent, false).await;
+        maybe_apply(&agent, Ask::Auto).await;
         tokio::select! {
             _ = tokio::time::sleep(APPLY_TICK) => {},
             _ = stop.changed() => return,
@@ -327,11 +327,24 @@ pub enum Gate {
     Busy,
 }
 
+/// Who wants this install.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// the update loop: only with automatic installs on (or queued)
+    Auto,
+    /// someone asked ("Update to X"): still never while hosting, but skips
+    /// the retry backoff
+    Manual,
+    /// an administrator asked to install even while hosting (drains it)
+    Drain,
+}
+
 pub struct GateIn {
     pub installable: bool,
     pub installing: bool,
     pub shutting_down: bool,
-    pub now: bool,
+    pub drain: bool,
+    pub manual: bool,
     pub auto: bool,
     pub queued: bool,
     pub hosting: bool,
@@ -345,16 +358,16 @@ pub fn gate(g: &GateIn) -> Gate {
     if g.installing {
         return Gate::Busy;
     }
-    if g.now {
+    if g.drain {
         return Gate::Go;
     }
-    if !(g.auto || g.queued) {
+    if !(g.auto || g.queued || g.manual) {
         return Gate::NotWanted;
     }
     if g.hosting {
         return Gate::Hosting;
     }
-    if g.recently_failed {
+    if g.recently_failed && !g.manual {
         return Gate::Backoff;
     }
     Gate::Go
@@ -362,7 +375,7 @@ pub fn gate(g: &GateIn) -> Gate {
 
 /// Whether the feed entry is a package this install knows how to apply
 /// (snap and manual installs stay notify-only).
-fn installable(av: &Available) -> bool {
+pub fn installable(av: &Available) -> bool {
     let (Some(url), Some(_)) = (av.url.as_deref(), av.signature.as_deref()) else {
         return false;
     };
@@ -390,6 +403,10 @@ pub fn queue_when_idle(data_dir: &std::path::Path, version: &str) -> std::io::Re
     std::fs::write(d.join("when-idle"), version)
 }
 
+pub fn clear_queue(data_dir: &std::path::Path) {
+    let _ = std::fs::remove_file(update_dir(data_dir).join("when-idle"));
+}
+
 pub fn queued(data_dir: &std::path::Path, version: &str) -> bool {
     std::fs::read_to_string(update_dir(data_dir).join("when-idle"))
         .is_ok_and(|v| v.trim() == version)
@@ -413,9 +430,8 @@ fn record_attempt(data_dir: &std::path::Path, version: &str, now_ms: i64) {
     let _ = std::fs::write(d.join("attempt"), format!("{version} {now_ms}"));
 }
 
-/// Install the found update if policy allows. `now` = an administrator
-/// asked for it, hosting or not.
-pub async fn maybe_apply(agent: &Arc<Agent>, now: bool) -> Gate {
+/// Install the found update if policy allows.
+pub async fn maybe_apply(agent: &Arc<Agent>, ask: Ask) -> Gate {
     let av = agent.update.lock().unwrap().available.clone();
     let Some(av) = av else { return Gate::Nothing };
     let prefs = crash_report::load_prefs(&agent.data_dir);
@@ -425,7 +441,8 @@ pub async fn maybe_apply(agent: &Arc<Agent>, now: bool) -> Gate {
         shutting_down: agent
             .shutting_down
             .load(std::sync::atomic::Ordering::SeqCst),
-        now,
+        drain: ask == Ask::Drain,
+        manual: ask == Ask::Manual,
         auto: prefs.auto_update,
         queued: queued(&agent.data_dir, &av.version),
         hosting,
@@ -441,13 +458,13 @@ pub async fn maybe_apply(agent: &Arc<Agent>, now: bool) -> Gate {
         st.apply_error = None;
     }
     record_attempt(&agent.data_dir, &av.version, crate::now_ms());
-    tracing::info!(version = %av.version, now, "installing update");
-    let res = apply(agent, &av, now).await;
+    tracing::info!(version = %av.version, ?ask, "installing update");
+    let res = apply(agent, &av, ask == Ask::Drain).await;
     let mut st = agent.update.lock().unwrap();
     st.installing = false;
     match res {
         Ok(()) => {
-            let _ = std::fs::remove_file(update_dir(&agent.data_dir).join("when-idle"));
+            clear_queue(&agent.data_dir);
             Gate::Go
         }
         Err(e) => {
@@ -462,18 +479,18 @@ pub async fn maybe_apply(agent: &Arc<Agent>, now: bool) -> Gate {
 /// path. Returns once the install is under way: the agent is restarted by
 /// it (Windows installer, Linux postinst) or restarts itself (macOS).
 #[cfg(not(any(windows, all(unix, not(target_os = "android")))))]
-async fn apply(_agent: &Arc<Agent>, _av: &Available, _now: bool) -> Result<()> {
+async fn apply(_agent: &Arc<Agent>, _av: &Available, _drain: bool) -> Result<()> {
     anyhow::bail!("updates are delivered by the app store on this platform")
 }
 
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
-async fn apply(agent: &Arc<Agent>, av: &Available, now: bool) -> Result<()> {
+async fn apply(agent: &Arc<Agent>, av: &Available, drain: bool) -> Result<()> {
     let (Some(url), Some(sig)) = (av.url.as_deref(), av.signature.as_deref()) else {
         anyhow::bail!("the update feed has no package for this install");
     };
     let body = download_verified(&agent.cfg.update, url, sig).await?;
     // the download takes a while; a server may have been placed here since
-    if !now && crate::local::is_hosting(agent) {
+    if !drain && crate::local::is_hosting(agent) {
         anyhow::bail!("this machine started hosting; the update waits until it stops");
     }
     #[cfg(windows)]
@@ -1035,7 +1052,8 @@ mod tests {
             installable: true,
             installing: false,
             shutting_down: false,
-            now: false,
+            drain: false,
+            manual: false,
             auto: true,
             queued: false,
             hosting: false,
@@ -1089,9 +1107,27 @@ mod tests {
     }
 
     #[test]
-    fn now_overrides_hosting_but_not_safety() {
+    fn manual_skips_backoff_but_not_hosting() {
+        let manual = GateIn {
+            manual: true,
+            auto: false,
+            recently_failed: true,
+            ..gate_in()
+        };
+        assert_eq!(gate(&manual), Gate::Go);
+        assert_eq!(
+            gate(&GateIn {
+                hosting: true,
+                ..manual
+            }),
+            Gate::Hosting
+        );
+    }
+
+    #[test]
+    fn drain_overrides_hosting_but_not_safety() {
         let now = GateIn {
-            now: true,
+            drain: true,
             hosting: true,
             auto: false,
             recently_failed: true,
@@ -1108,7 +1144,7 @@ mod tests {
         assert_eq!(
             gate(&GateIn {
                 installable: false,
-                now: true,
+                drain: true,
                 ..gate_in()
             }),
             Gate::Nothing
@@ -1116,7 +1152,7 @@ mod tests {
         assert_eq!(
             gate(&GateIn {
                 shutting_down: true,
-                now: true,
+                drain: true,
                 ..gate_in()
             }),
             Gate::Nothing

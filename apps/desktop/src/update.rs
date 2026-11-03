@@ -3,7 +3,8 @@
 //! asked here ("Update to X"). Installs run in the service, so Windows
 //! needs no UAC prompt; only "update now while hosting" and turning
 //! automatic installs off need an administrator, and those relaunch this
-//! exe elevated with `--update-now` / `--auto-update-off`.
+//! exe elevated with `--update-now` / `--auto-update-off` (and
+//! `--update-when-idle` once an administrator turned automatic installs off).
 
 use agent_ipc::pb;
 use tauri::{AppHandle, Manager};
@@ -51,9 +52,11 @@ fn request(now: bool) {
         };
         match r {
             Ok(()) => {}
-            Err(Some(e)) if e.code() == agent_ipc::GrpcCode::PermissionDenied => {
-                elevated("--update-now")
-            }
+            Err(Some(e)) if e.code() == agent_ipc::GrpcCode::PermissionDenied => elevated(if now {
+                "--update-now"
+            } else {
+                "--update-when-idle"
+            }),
             Err(Some(e)) => info_box(
                 "Update failed",
                 &format!("Varde couldn't start the update.\n\n{}", e.message()),
@@ -100,21 +103,31 @@ fn elevated(arg: &str) {
     );
 }
 
-/// Elevated headless `--update-now` / `--auto-update-off`: do the one
-/// call and exit.
-pub fn run_elevated_action(update_now: bool) -> Result<(), String> {
+/// What an elevated headless copy of the tray was started to do.
+pub enum Elevated {
+    UpdateNow,
+    UpdateWhenIdle,
+    AutoUpdateOff,
+}
+
+/// Elevated headless update action: do the one call and exit.
+pub fn run_elevated_action(action: Elevated) -> Result<(), String> {
     tauri::async_runtime::block_on(async move {
         let mut c = agent_ipc::connect(&agent_ipc::default_endpoint())
             .await
             .map_err(|e| format!("Varde's service isn't running: {e}"))?;
-        if update_now {
-            c.apply_update(pb::ApplyUpdateRequest { now: true })
-                .await
-                .map_err(|e| e.message().to_string())?;
-        } else {
-            c.set_auto_update(pb::SetAutoUpdateRequest { enabled: false })
-                .await
-                .map_err(|e| e.message().to_string())?;
+        match action {
+            Elevated::UpdateNow | Elevated::UpdateWhenIdle => {
+                let now = matches!(action, Elevated::UpdateNow);
+                c.apply_update(pb::ApplyUpdateRequest { now })
+                    .await
+                    .map_err(|e| e.message().to_string())?;
+            }
+            Elevated::AutoUpdateOff => {
+                c.set_auto_update(pb::SetAutoUpdateRequest { enabled: false })
+                    .await
+                    .map_err(|e| e.message().to_string())?;
+            }
         }
         Ok(())
     })

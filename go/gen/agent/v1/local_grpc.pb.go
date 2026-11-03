@@ -57,9 +57,11 @@ type LocalServiceClient interface {
 	SubmitCrashReport(ctx context.Context, in *SubmitCrashReportRequest, opts ...grpc.CallOption) (*SubmitCrashReportResponse, error)
 	// Turns crash-report upload on or off (persisted on the machine).
 	SetCrashReporting(ctx context.Context, in *SetCrashReportingRequest, opts ...grpc.CallOption) (*SetCrashReportingResponse, error)
-	// Installs the update the checker found. now = install even while this
-	// machine hosts (drains the server; administrators only); otherwise it
-	// installs as soon as the machine isn't hosting (queued, persisted).
+	// Installs the update the checker found as soon as the machine isn't
+	// hosting (queued, persisted; skips the automatic retry backoff).
+	// now = install even while this machine hosts (drains the server;
+	// administrators only). Once an administrator turned automatic installs
+	// off, any request needs an administrator.
 	ApplyUpdate(ctx context.Context, in *ApplyUpdateRequest, opts ...grpc.CallOption) (*ApplyUpdateResponse, error)
 	// Turns automatic update installs on or off (persisted on the machine).
 	// Turning them off needs an administrator.
@@ -192,9 +194,11 @@ type LocalServiceServer interface {
 	SubmitCrashReport(context.Context, *SubmitCrashReportRequest) (*SubmitCrashReportResponse, error)
 	// Turns crash-report upload on or off (persisted on the machine).
 	SetCrashReporting(context.Context, *SetCrashReportingRequest) (*SetCrashReportingResponse, error)
-	// Installs the update the checker found. now = install even while this
-	// machine hosts (drains the server; administrators only); otherwise it
-	// installs as soon as the machine isn't hosting (queued, persisted).
+	// Installs the update the checker found as soon as the machine isn't
+	// hosting (queued, persisted; skips the automatic retry backoff).
+	// now = install even while this machine hosts (drains the server;
+	// administrators only). Once an administrator turned automatic installs
+	// off, any request needs an administrator.
 	ApplyUpdate(context.Context, *ApplyUpdateRequest) (*ApplyUpdateResponse, error)
 	// Turns automatic update installs on or off (persisted on the machine).
 	// Turning them off needs an administrator.

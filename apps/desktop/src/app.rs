@@ -141,8 +141,15 @@ pub fn run() {
         return;
     }
     // Elevated headless update actions the service refused the tray.
-    if launch.update_now || launch.auto_update_off {
-        if let Err(e) = crate::update::run_elevated_action(launch.update_now) {
+    if launch.update_now || launch.update_when_idle || launch.auto_update_off {
+        let action = if launch.update_now {
+            crate::update::Elevated::UpdateNow
+        } else if launch.update_when_idle {
+            crate::update::Elevated::UpdateWhenIdle
+        } else {
+            crate::update::Elevated::AutoUpdateOff
+        };
+        if let Err(e) = crate::update::run_elevated_action(action) {
             message_box(&format!("Varde update: {e}"));
             std::process::exit(1);
         }
