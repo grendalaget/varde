@@ -2,7 +2,8 @@
 // page scripts run). In a plain browser — vite dev/preview — a small mock
 // stands in so the views can be exercised without the service: pick a canned
 // status with ?state=not_linked|linking|online|hosting|offline|locked|noagent
-// (locked = an administrator's pending re-link), or ?face=dashboard.
+// (locked = an administrator's pending re-link), or ?face=dashboard. Add
+// &update=1 to show a pending update on the linked views.
 
 export interface UiStatus {
   state: string;
@@ -17,6 +18,12 @@ export interface UiStatus {
   hosting: boolean;
   relink: boolean;
   save_line: string | null;
+  // pending update in words ("Update to 1.2.0", "Installing 1.2.0…");
+  // null = up to date
+  update_line: string | null;
+  update_installing: boolean;
+  update_error: string;
+  auto_update: boolean;
 }
 
 export interface LinkDefaults {
@@ -79,7 +86,26 @@ function linked(hosting: boolean): UiStatus {
     save_line: hosting
       ? "Latest safe save: 2 min ago on nas, gaming-pc (offline)"
       : null,
+    ...noUpdate,
+    ...(mockUpdate()
+      ? {
+          update_line: hosting
+            ? "Update to 0.2.0 (installs when hosting ends)"
+            : "Update to 0.2.0",
+        }
+      : {}),
   };
+}
+
+const noUpdate = {
+  update_line: null,
+  update_installing: false,
+  update_error: "",
+  auto_update: true,
+};
+
+function mockUpdate(): boolean {
+  return new URLSearchParams(window.location.search).has("update");
 }
 
 const canned: Record<string, UiStatus | null> = {
@@ -96,6 +122,7 @@ const canned: Record<string, UiStatus | null> = {
     hosting: false,
     relink: false,
     save_line: null,
+    ...noUpdate,
   },
   linking: {
     state: "linking",
@@ -110,6 +137,7 @@ const canned: Record<string, UiStatus | null> = {
     hosting: false,
     relink: false,
     save_line: null,
+    ...noUpdate,
   },
   online: linked(false),
   hosting: linked(true),
@@ -159,17 +187,17 @@ function mock(): TauriGlobal {
             } as T);
           case "cp_fetch": {
             const request = args?.request as
-              | { method: string; path: string; body?: string }
-              | undefined;
+              { method: string; path: string; body?: string } | undefined;
             if (!request) return Promise.reject(new Error("missing request"));
             return fetch(request.path, {
               method: request.method,
               body: request.method === "GET" ? undefined : request.body,
-            }).then(async (response) =>
-              ({
-                status: response.status,
-                body: await response.text(),
-              }) as T,
+            }).then(
+              async (response) =>
+                ({
+                  status: response.status,
+                  body: await response.text(),
+                }) as T,
             );
           }
           case "cp_events_subscribe":
@@ -258,6 +286,7 @@ function mock(): TauriGlobal {
           case "start_service":
           case "stop_service":
           case "exit_varde":
+          case "apply_update":
           case "close_window":
             return Promise.resolve(undefined as T);
           default:

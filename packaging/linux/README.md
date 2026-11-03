@@ -54,9 +54,11 @@ systemd units, and `try-restart` on upgrades. With no running systemd
 
 ### Formats and self-updates
 
-- **deb / rpm**: fully supported. `varde-agent update` finds these installs
-  by package-manager record and applies new versions via the release's
-  `latest.json` feed.
+- **deb / rpm**: fully supported. The agent finds these installs by
+  package-manager record and installs new versions from the release's
+  `latest.json` feed by itself whenever the machine isn't hosting (off via
+  the tray's "Install updates automatically"); `varde-agent update` does
+  the same by hand.
 - **snap**: strict-confinement sideloads, also released per component;
   notify-only for `varde-agent update` until store-published (snaps
   self-refresh via snapd then).

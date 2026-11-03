@@ -255,7 +255,11 @@ async fn main() -> Result<()> {
                 fence_margin_ms,
                 None,
             )
-            .await
+            .await?;
+            if update::restart_pending() {
+                std::process::exit(update::RESTART_EXIT_CODE);
+            }
+            Ok(())
         }
         Cmd::Status { data_dir } => status(data_dir.unwrap_or_else(default_data_dir)),
         Cmd::Service { action } => service_dispatch(action).await,
@@ -638,6 +642,9 @@ async fn run_linked(
     let exit = loop {
         tokio::select! {
             _ = ext_stop.wait_for(|s| *s) => break RunExit::Stopped,
+            // an update swapped our binaries in place (macOS): drain like a
+            // stop, then exit for the service manager to start the new ones
+            _ = update::restart_requested() => break RunExit::Stopped,
             // a re-link from the tray signals; `varde-agent enroll` only
             // rewrites config.toml, so also look every few seconds
             _ = hub.linked.notified() => {}

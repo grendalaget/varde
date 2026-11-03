@@ -745,6 +745,25 @@ export default function App() {
             {status.save_line && (
               <p className="mt-2 text-sm text-muted">{status.save_line}</p>
             )}
+            {status.update_line && (
+              <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+                <span>{status.update_line}</span>
+                {!status.update_installing && (
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-foreground"
+                    onClick={() => void invoke("apply_update")}
+                  >
+                    Update now
+                  </button>
+                )}
+              </p>
+            )}
+            {status.update_error && (
+              <p className="mt-1 text-xs text-muted">
+                Last update attempt failed: {status.update_error}
+              </p>
+            )}
             <ErrorNote detail={linkedError?.detail}>
               {linkedError?.text}
             </ErrorNote>

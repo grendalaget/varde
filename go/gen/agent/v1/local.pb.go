@@ -347,7 +347,14 @@ type Update struct {
 	Url       string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	Signature string `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
 	// Why the last check or verification failed; empty when fine.
-	Error         string `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	Error string `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	// Updates install by themselves whenever the machine isn't hosting.
+	Auto bool `protobuf:"varint,6,opt,name=auto,proto3" json:"auto,omitempty"`
+	// "" (nothing pending) | waiting (installs once hosting ends) |
+	// installing
+	Phase string `protobuf:"bytes,7,opt,name=phase,proto3" json:"phase,omitempty"`
+	// Why the last install attempt failed; empty when fine.
+	ApplyError    string `protobuf:"bytes,8,opt,name=apply_error,json=applyError,proto3" json:"apply_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -413,6 +420,27 @@ func (x *Update) GetSignature() string {
 func (x *Update) GetError() string {
 	if x != nil {
 		return x.Error
+	}
+	return ""
+}
+
+func (x *Update) GetAuto() bool {
+	if x != nil {
+		return x.Auto
+	}
+	return false
+}
+
+func (x *Update) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *Update) GetApplyError() string {
+	if x != nil {
+		return x.ApplyError
 	}
 	return ""
 }
@@ -1106,6 +1134,182 @@ func (x *CheckUpdateResponse) GetStatus() *Status {
 	return nil
 }
 
+type ApplyUpdateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Now           bool                   `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyUpdateRequest) Reset() {
+	*x = ApplyUpdateRequest{}
+	mi := &file_agent_v1_local_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyUpdateRequest) ProtoMessage() {}
+
+func (x *ApplyUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyUpdateRequest.ProtoReflect.Descriptor instead.
+func (*ApplyUpdateRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ApplyUpdateRequest) GetNow() bool {
+	if x != nil {
+		return x.Now
+	}
+	return false
+}
+
+type ApplyUpdateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        *Status                `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyUpdateResponse) Reset() {
+	*x = ApplyUpdateResponse{}
+	mi := &file_agent_v1_local_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyUpdateResponse) ProtoMessage() {}
+
+func (x *ApplyUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyUpdateResponse.ProtoReflect.Descriptor instead.
+func (*ApplyUpdateResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ApplyUpdateResponse) GetStatus() *Status {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+type SetAutoUpdateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetAutoUpdateRequest) Reset() {
+	*x = SetAutoUpdateRequest{}
+	mi := &file_agent_v1_local_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAutoUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAutoUpdateRequest) ProtoMessage() {}
+
+func (x *SetAutoUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAutoUpdateRequest.ProtoReflect.Descriptor instead.
+func (*SetAutoUpdateRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SetAutoUpdateRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type SetAutoUpdateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        *Status                `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetAutoUpdateResponse) Reset() {
+	*x = SetAutoUpdateResponse{}
+	mi := &file_agent_v1_local_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAutoUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAutoUpdateResponse) ProtoMessage() {}
+
+func (x *SetAutoUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_local_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAutoUpdateResponse.ProtoReflect.Descriptor instead.
+func (*SetAutoUpdateResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *SetAutoUpdateResponse) GetStatus() *Status {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
 // One crash on this machine. `dump` carries a minidump when present —
 // senders must cap it (crash_report::MAX_DUMP_BYTES); larger files stay
 // local and detail says why.
@@ -1131,7 +1335,7 @@ type CrashReportMsg struct {
 
 func (x *CrashReportMsg) Reset() {
 	*x = CrashReportMsg{}
-	mi := &file_agent_v1_local_proto_msgTypes[16]
+	mi := &file_agent_v1_local_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1143,7 +1347,7 @@ func (x *CrashReportMsg) String() string {
 func (*CrashReportMsg) ProtoMessage() {}
 
 func (x *CrashReportMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[16]
+	mi := &file_agent_v1_local_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1156,7 +1360,7 @@ func (x *CrashReportMsg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CrashReportMsg.ProtoReflect.Descriptor instead.
 func (*CrashReportMsg) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{16}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CrashReportMsg) GetKind() string {
@@ -1245,7 +1449,7 @@ type SubmitCrashReportRequest struct {
 
 func (x *SubmitCrashReportRequest) Reset() {
 	*x = SubmitCrashReportRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[17]
+	mi := &file_agent_v1_local_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1257,7 +1461,7 @@ func (x *SubmitCrashReportRequest) String() string {
 func (*SubmitCrashReportRequest) ProtoMessage() {}
 
 func (x *SubmitCrashReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[17]
+	mi := &file_agent_v1_local_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1270,7 +1474,7 @@ func (x *SubmitCrashReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitCrashReportRequest.ProtoReflect.Descriptor instead.
 func (*SubmitCrashReportRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{17}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SubmitCrashReportRequest) GetReport() *CrashReportMsg {
@@ -1288,7 +1492,7 @@ type SubmitCrashReportResponse struct {
 
 func (x *SubmitCrashReportResponse) Reset() {
 	*x = SubmitCrashReportResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[18]
+	mi := &file_agent_v1_local_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1300,7 +1504,7 @@ func (x *SubmitCrashReportResponse) String() string {
 func (*SubmitCrashReportResponse) ProtoMessage() {}
 
 func (x *SubmitCrashReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[18]
+	mi := &file_agent_v1_local_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1313,7 +1517,7 @@ func (x *SubmitCrashReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitCrashReportResponse.ProtoReflect.Descriptor instead.
 func (*SubmitCrashReportResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{18}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{22}
 }
 
 type SetCrashReportingRequest struct {
@@ -1325,7 +1529,7 @@ type SetCrashReportingRequest struct {
 
 func (x *SetCrashReportingRequest) Reset() {
 	*x = SetCrashReportingRequest{}
-	mi := &file_agent_v1_local_proto_msgTypes[19]
+	mi := &file_agent_v1_local_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1337,7 +1541,7 @@ func (x *SetCrashReportingRequest) String() string {
 func (*SetCrashReportingRequest) ProtoMessage() {}
 
 func (x *SetCrashReportingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[19]
+	mi := &file_agent_v1_local_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1350,7 +1554,7 @@ func (x *SetCrashReportingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCrashReportingRequest.ProtoReflect.Descriptor instead.
 func (*SetCrashReportingRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{19}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SetCrashReportingRequest) GetEnabled() bool {
@@ -1369,7 +1573,7 @@ type SetCrashReportingResponse struct {
 
 func (x *SetCrashReportingResponse) Reset() {
 	*x = SetCrashReportingResponse{}
-	mi := &file_agent_v1_local_proto_msgTypes[20]
+	mi := &file_agent_v1_local_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1381,7 +1585,7 @@ func (x *SetCrashReportingResponse) String() string {
 func (*SetCrashReportingResponse) ProtoMessage() {}
 
 func (x *SetCrashReportingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_local_proto_msgTypes[20]
+	mi := &file_agent_v1_local_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1394,7 +1598,7 @@ func (x *SetCrashReportingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCrashReportingResponse.ProtoReflect.Descriptor instead.
 func (*SetCrashReportingResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_local_proto_rawDescGZIP(), []int{20}
+	return file_agent_v1_local_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SetCrashReportingResponse) GetStatus() *Status {
@@ -1428,13 +1632,17 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x1blatest_safe_save_at_unix_ms\x18\x04 \x01(\x03R\x16latestSafeSaveAtUnixMs\x122\n" +
 	"\x16latest_save_at_unix_ms\x18\x05 \x01(\x03R\x12latestSaveAtUnixMs\x12I\n" +
 	"\x13latest_safe_save_on\x18\x06 \x03(\v2\x1a.varde.agent.v1.SaveHolderR\x10latestSafeSaveOn\x12@\n" +
-	"\x0elatest_save_on\x18\a \x03(\v2\x1a.varde.agent.v1.SaveHolderR\flatestSaveOn\"\xa8\x01\n" +
+	"\x0elatest_save_on\x18\a \x03(\v2\x1a.varde.agent.v1.SaveHolderR\flatestSaveOn\"\xf3\x01\n" +
 	"\x06Update\x12+\n" +
 	"\x12checked_at_unix_ms\x18\x01 \x01(\x03R\x0fcheckedAtUnixMs\x12+\n" +
 	"\x11available_version\x18\x02 \x01(\tR\x10availableVersion\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\tR\tsignature\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xd8\x04\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x12\n" +
+	"\x04auto\x18\x06 \x01(\bR\x04auto\x12\x14\n" +
+	"\x05phase\x18\a \x01(\tR\x05phase\x12\x1f\n" +
+	"\vapply_error\x18\b \x01(\tR\n" +
+	"applyError\"\xd8\x04\n" +
 	"\x06Status\x12+\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x15.varde.agent.v1.StateR\x05state\x12*\n" +
 	"\x11control_plane_url\x18\x02 \x01(\tR\x0fcontrolPlaneUrl\x12\x19\n" +
@@ -1480,6 +1688,14 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\x14\n" +
 	"\x12CheckUpdateRequest\"E\n" +
 	"\x13CheckUpdateResponse\x12.\n" +
+	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"&\n" +
+	"\x12ApplyUpdateRequest\x12\x10\n" +
+	"\x03now\x18\x01 \x01(\bR\x03now\"E\n" +
+	"\x13ApplyUpdateResponse\x12.\n" +
+	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"0\n" +
+	"\x14SetAutoUpdateRequest\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\"G\n" +
+	"\x15SetAutoUpdateResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\v2\x16.varde.agent.v1.StatusR\x06status\"\xac\x02\n" +
 	"\x0eCrashReportMsg\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
@@ -1508,7 +1724,7 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"\x10STATE_CONNECTING\x10\x03\x12\x10\n" +
 	"\fSTATE_ONLINE\x10\x04\x12\x11\n" +
 	"\rSTATE_OFFLINE\x10\x05\x12\x17\n" +
-	"\x13STATE_SHUTTING_DOWN\x10\x062\x8d\x05\n" +
+	"\x13STATE_SHUTTING_DOWN\x10\x062\xc3\x06\n" +
 	"\fLocalService\x12P\n" +
 	"\tGetStatus\x12 .varde.agent.v1.GetStatusRequest\x1a!.varde.agent.v1.GetStatusResponse\x12X\n" +
 	"\vWatchStatus\x12\".varde.agent.v1.WatchStatusRequest\x1a#.varde.agent.v1.WatchStatusResponse0\x01\x12P\n" +
@@ -1517,7 +1733,9 @@ const file_agent_v1_local_proto_rawDesc = "" +
 	"CancelLink\x12!.varde.agent.v1.CancelLinkRequest\x1a\".varde.agent.v1.CancelLinkResponse\x12V\n" +
 	"\vCheckUpdate\x12\".varde.agent.v1.CheckUpdateRequest\x1a#.varde.agent.v1.CheckUpdateResponse\x12h\n" +
 	"\x11SubmitCrashReport\x12(.varde.agent.v1.SubmitCrashReportRequest\x1a).varde.agent.v1.SubmitCrashReportResponse\x12h\n" +
-	"\x11SetCrashReporting\x12(.varde.agent.v1.SetCrashReportingRequest\x1a).varde.agent.v1.SetCrashReportingResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
+	"\x11SetCrashReporting\x12(.varde.agent.v1.SetCrashReportingRequest\x1a).varde.agent.v1.SetCrashReportingResponse\x12V\n" +
+	"\vApplyUpdate\x12\".varde.agent.v1.ApplyUpdateRequest\x1a#.varde.agent.v1.ApplyUpdateResponse\x12\\\n" +
+	"\rSetAutoUpdate\x12$.varde.agent.v1.SetAutoUpdateRequest\x1a%.varde.agent.v1.SetAutoUpdateResponseB6Z4github.com/grendalaget/varde/go/gen/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_agent_v1_local_proto_rawDescOnce sync.Once
@@ -1532,7 +1750,7 @@ func file_agent_v1_local_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_local_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_agent_v1_local_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_agent_v1_local_proto_goTypes = []any{
 	(State)(0),                        // 0: varde.agent.v1.State
 	(*Link)(nil),                      // 1: varde.agent.v1.Link
@@ -1551,11 +1769,15 @@ var file_agent_v1_local_proto_goTypes = []any{
 	(*CancelLinkResponse)(nil),        // 14: varde.agent.v1.CancelLinkResponse
 	(*CheckUpdateRequest)(nil),        // 15: varde.agent.v1.CheckUpdateRequest
 	(*CheckUpdateResponse)(nil),       // 16: varde.agent.v1.CheckUpdateResponse
-	(*CrashReportMsg)(nil),            // 17: varde.agent.v1.CrashReportMsg
-	(*SubmitCrashReportRequest)(nil),  // 18: varde.agent.v1.SubmitCrashReportRequest
-	(*SubmitCrashReportResponse)(nil), // 19: varde.agent.v1.SubmitCrashReportResponse
-	(*SetCrashReportingRequest)(nil),  // 20: varde.agent.v1.SetCrashReportingRequest
-	(*SetCrashReportingResponse)(nil), // 21: varde.agent.v1.SetCrashReportingResponse
+	(*ApplyUpdateRequest)(nil),        // 17: varde.agent.v1.ApplyUpdateRequest
+	(*ApplyUpdateResponse)(nil),       // 18: varde.agent.v1.ApplyUpdateResponse
+	(*SetAutoUpdateRequest)(nil),      // 19: varde.agent.v1.SetAutoUpdateRequest
+	(*SetAutoUpdateResponse)(nil),     // 20: varde.agent.v1.SetAutoUpdateResponse
+	(*CrashReportMsg)(nil),            // 21: varde.agent.v1.CrashReportMsg
+	(*SubmitCrashReportRequest)(nil),  // 22: varde.agent.v1.SubmitCrashReportRequest
+	(*SubmitCrashReportResponse)(nil), // 23: varde.agent.v1.SubmitCrashReportResponse
+	(*SetCrashReportingRequest)(nil),  // 24: varde.agent.v1.SetCrashReportingRequest
+	(*SetCrashReportingResponse)(nil), // 25: varde.agent.v1.SetCrashReportingResponse
 }
 var file_agent_v1_local_proto_depIdxs = []int32{
 	2,  // 0: varde.agent.v1.Hosting.latest_safe_save_on:type_name -> varde.agent.v1.SaveHolder
@@ -1570,27 +1792,33 @@ var file_agent_v1_local_proto_depIdxs = []int32{
 	5,  // 9: varde.agent.v1.StartLinkResponse.status:type_name -> varde.agent.v1.Status
 	5,  // 10: varde.agent.v1.CancelLinkResponse.status:type_name -> varde.agent.v1.Status
 	5,  // 11: varde.agent.v1.CheckUpdateResponse.status:type_name -> varde.agent.v1.Status
-	17, // 12: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
-	5,  // 13: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
-	7,  // 14: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
-	9,  // 15: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
-	11, // 16: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
-	13, // 17: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
-	15, // 18: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
-	18, // 19: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
-	20, // 20: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
-	8,  // 21: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
-	10, // 22: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
-	12, // 23: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
-	14, // 24: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
-	16, // 25: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
-	19, // 26: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
-	21, // 27: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
-	21, // [21:28] is the sub-list for method output_type
-	14, // [14:21] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	5,  // 12: varde.agent.v1.ApplyUpdateResponse.status:type_name -> varde.agent.v1.Status
+	5,  // 13: varde.agent.v1.SetAutoUpdateResponse.status:type_name -> varde.agent.v1.Status
+	21, // 14: varde.agent.v1.SubmitCrashReportRequest.report:type_name -> varde.agent.v1.CrashReportMsg
+	5,  // 15: varde.agent.v1.SetCrashReportingResponse.status:type_name -> varde.agent.v1.Status
+	7,  // 16: varde.agent.v1.LocalService.GetStatus:input_type -> varde.agent.v1.GetStatusRequest
+	9,  // 17: varde.agent.v1.LocalService.WatchStatus:input_type -> varde.agent.v1.WatchStatusRequest
+	11, // 18: varde.agent.v1.LocalService.StartLink:input_type -> varde.agent.v1.StartLinkRequest
+	13, // 19: varde.agent.v1.LocalService.CancelLink:input_type -> varde.agent.v1.CancelLinkRequest
+	15, // 20: varde.agent.v1.LocalService.CheckUpdate:input_type -> varde.agent.v1.CheckUpdateRequest
+	22, // 21: varde.agent.v1.LocalService.SubmitCrashReport:input_type -> varde.agent.v1.SubmitCrashReportRequest
+	24, // 22: varde.agent.v1.LocalService.SetCrashReporting:input_type -> varde.agent.v1.SetCrashReportingRequest
+	17, // 23: varde.agent.v1.LocalService.ApplyUpdate:input_type -> varde.agent.v1.ApplyUpdateRequest
+	19, // 24: varde.agent.v1.LocalService.SetAutoUpdate:input_type -> varde.agent.v1.SetAutoUpdateRequest
+	8,  // 25: varde.agent.v1.LocalService.GetStatus:output_type -> varde.agent.v1.GetStatusResponse
+	10, // 26: varde.agent.v1.LocalService.WatchStatus:output_type -> varde.agent.v1.WatchStatusResponse
+	12, // 27: varde.agent.v1.LocalService.StartLink:output_type -> varde.agent.v1.StartLinkResponse
+	14, // 28: varde.agent.v1.LocalService.CancelLink:output_type -> varde.agent.v1.CancelLinkResponse
+	16, // 29: varde.agent.v1.LocalService.CheckUpdate:output_type -> varde.agent.v1.CheckUpdateResponse
+	23, // 30: varde.agent.v1.LocalService.SubmitCrashReport:output_type -> varde.agent.v1.SubmitCrashReportResponse
+	25, // 31: varde.agent.v1.LocalService.SetCrashReporting:output_type -> varde.agent.v1.SetCrashReportingResponse
+	18, // 32: varde.agent.v1.LocalService.ApplyUpdate:output_type -> varde.agent.v1.ApplyUpdateResponse
+	20, // 33: varde.agent.v1.LocalService.SetAutoUpdate:output_type -> varde.agent.v1.SetAutoUpdateResponse
+	25, // [25:34] is the sub-list for method output_type
+	16, // [16:25] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_local_proto_init() }
@@ -1604,7 +1832,7 @@ func file_agent_v1_local_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_local_proto_rawDesc), len(file_agent_v1_local_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

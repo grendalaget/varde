@@ -33,8 +33,6 @@ pub(crate) struct State {
     pub(crate) status: Mutex<Option<pb::Status>>,
     /// server_id → since of the ready prompt already notified.
     rejoin_notified: Mutex<std::collections::HashMap<String, i64>>,
-    /// User picked "update when idle": apply on the next hosting-drained status.
-    pub(crate) update_when_idle: std::sync::atomic::AtomicBool,
     view: Mutex<Option<TrayView>>,
     /// Launched with `--link` (installer): start linking once the window opens.
     auto_link: std::sync::atomic::AtomicBool,
@@ -142,6 +140,21 @@ pub fn run() {
         }
         return;
     }
+    // Elevated headless update actions the service refused the tray.
+    if launch.update_now || launch.update_when_idle || launch.auto_update_off {
+        let action = if launch.update_now {
+            crate::update::Elevated::UpdateNow
+        } else if launch.update_when_idle {
+            crate::update::Elevated::UpdateWhenIdle
+        } else {
+            crate::update::Elevated::AutoUpdateOff
+        };
+        if let Err(e) = crate::update::run_elevated_action(action) {
+            message_box(&format!("Varde update: {e}"));
+            std::process::exit(1);
+        }
+        return;
+    }
     // Elevated headless re-link for the dashboard's "Move this PC here":
     // start it and exit — the tray instance opens the code for approval.
     if launch.relink_start {
@@ -221,6 +234,7 @@ pub fn run() {
             open_url,
             close_window,
             exit_varde,
+            apply_update,
             begin_varde_login,
             confirm_varde_login,
             cancel_varde_login,
@@ -258,6 +272,7 @@ pub fn run() {
                     })
                     .build(app)?;
                 tauri::async_runtime::spawn(tick(h.clone()));
+                crate::update::notify_if_updated(&h);
             }
             tauri::async_runtime::spawn(watch(h.clone()));
             tauri::async_runtime::spawn(crash::forward_loop());
@@ -397,7 +412,7 @@ fn render(app: &AppHandle, force: bool) {
         }
     }
     *last = Some(v);
-    crate::update::maybe_apply_when_idle(app);
+    crate::update::after_status(app);
 }
 
 fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> {
@@ -424,7 +439,13 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
     }
     m.append(&MenuItem::with_id(app, "open", "Open Varde", true, none)?)?;
     if let Some(l) = &v.update_label {
-        m.append(&MenuItem::with_id(app, "update", l, true, none)?)?;
+        m.append(&MenuItem::with_id(
+            app,
+            "update",
+            l,
+            v.update_enabled,
+            none,
+        )?)?;
     }
     if let Some(h) = &v.hosting {
         m.append(&MenuItem::with_id(app, "hosting", h, false, none)?)?;
@@ -451,6 +472,14 @@ fn build_menu(app: &AppHandle, v: &TrayView) -> tauri::Result<Menu<tauri::Wry>> 
         "checkupdate",
         "Check for updates…",
         true,
+        none,
+    )?)?;
+    m.append(&CheckMenuItem::with_id(
+        app,
+        "autoupdate",
+        "Install updates automatically",
+        v.service_running,
+        v.auto_update,
         none,
     )?)?;
     m.append(&CheckMenuItem::with_id(
@@ -514,6 +543,12 @@ fn on_menu(app: &AppHandle, e: MenuEvent) {
             });
         }
         "update" => crate::update::offer(app),
+        "autoupdate" => {
+            let cur = v.as_ref().is_none_or(|v| v.auto_update);
+            crate::update::set_auto(!cur);
+            // the checkmark follows the agent's answer, not the click
+            render(app, true);
+        }
         "checkupdate" => crate::update::recheck(app.clone()),
         "exit" => request_exit(app),
         _ => {}
@@ -1338,7 +1373,7 @@ fn relink_window(_app: &AppHandle) {
 /// `--relink`, `--service-start`, `--service-stop`. Declining the prompt
 /// surfaces as an error the caller can show or ignore.
 #[cfg(windows)]
-fn elevate_self(arg: &str) -> Result<(), String> {
+pub(crate) fn elevate_self(arg: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     run_elevated(&exe, arg).map_err(|e| format!("{e:#}"))
 }
@@ -1966,6 +2001,12 @@ fn open_varde(app: AppHandle) {
 #[tauri::command]
 fn exit_varde(app: AppHandle) {
     request_exit(&app);
+}
+
+/// The window's "Update now" — identical to the tray's "Update to X".
+#[tauri::command]
+fn apply_update(app: AppHandle) {
+    crate::update::offer(&app);
 }
 
 #[tauri::command]
