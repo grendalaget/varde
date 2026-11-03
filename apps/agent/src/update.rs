@@ -333,8 +333,9 @@ pub enum Ask {
     /// the update loop: only with automatic installs on (or queued)
     Auto,
     /// someone asked ("Update to X"): still never while hosting, but skips
-    /// the retry backoff
-    Manual,
+    /// the retry backoff. A non-administrator's ask only counts while
+    /// automatic installs are on (re-checked at install time).
+    Manual { admin: bool },
     /// an administrator asked to install even while hosting (drains it)
     Drain,
 }
@@ -396,20 +397,31 @@ fn update_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// "Install when this machine stops hosting" for `version`, persisted so
-/// it survives restarts of the agent and the tray.
-pub fn queue_when_idle(data_dir: &std::path::Path, version: &str) -> std::io::Result<()> {
+/// it survives restarts of the agent and the tray. `admin` records who
+/// asked: only an administrator's request outlives an opt-out.
+pub fn queue_when_idle(
+    data_dir: &std::path::Path,
+    version: &str,
+    admin: bool,
+) -> std::io::Result<()> {
     let d = update_dir(data_dir);
     std::fs::create_dir_all(&d)?;
-    std::fs::write(d.join("when-idle"), version)
+    let by = if admin { " admin" } else { "" };
+    std::fs::write(d.join("when-idle"), format!("{version}{by}"))
 }
 
 pub fn clear_queue(data_dir: &std::path::Path) {
     let _ = std::fs::remove_file(update_dir(data_dir).join("when-idle"));
 }
 
-pub fn queued(data_dir: &std::path::Path, version: &str) -> bool {
-    std::fs::read_to_string(update_dir(data_dir).join("when-idle"))
-        .is_ok_and(|v| v.trim() == version)
+/// Whether a queued "when idle" request for `version` stands, given the
+/// current automatic-install pref.
+pub fn queued(data_dir: &std::path::Path, version: &str, auto: bool) -> bool {
+    let Ok(s) = std::fs::read_to_string(update_dir(data_dir).join("when-idle")) else {
+        return false;
+    };
+    let mut it = s.split_whitespace();
+    it.next() == Some(version) && (auto || it.next() == Some("admin"))
 }
 
 /// The last automatic attempt: `<version> <unix ms>`.
@@ -442,9 +454,9 @@ pub async fn maybe_apply(agent: &Arc<Agent>, ask: Ask) -> Gate {
             .shutting_down
             .load(std::sync::atomic::Ordering::SeqCst),
         drain: ask == Ask::Drain,
-        manual: ask == Ask::Manual,
+        manual: matches!(ask, Ask::Manual { admin } if admin || prefs.auto_update),
         auto: prefs.auto_update,
-        queued: queued(&agent.data_dir, &av.version),
+        queued: queued(&agent.data_dir, &av.version, prefs.auto_update),
         hosting,
         recently_failed: recently_failed(&agent.data_dir, &av.version, crate::now_ms()),
     };
@@ -1162,10 +1174,15 @@ mod tests {
     #[test]
     fn when_idle_and_backoff_persist_per_version() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!queued(dir.path(), "1.2.0"));
-        queue_when_idle(dir.path(), "1.2.0").unwrap();
-        assert!(queued(dir.path(), "1.2.0"));
-        assert!(!queued(dir.path(), "1.3.0"));
+        assert!(!queued(dir.path(), "1.2.0", true));
+        queue_when_idle(dir.path(), "1.2.0", false).unwrap();
+        assert!(queued(dir.path(), "1.2.0", true));
+        assert!(!queued(dir.path(), "1.3.0", true));
+        // a non-administrator's request doesn't outlive an opt-out (even one
+        // that lands while the request is being written)
+        assert!(!queued(dir.path(), "1.2.0", false));
+        queue_when_idle(dir.path(), "1.2.0", true).unwrap();
+        assert!(queued(dir.path(), "1.2.0", false));
         let t = 1_800_000_000_000;
         assert!(!recently_failed(dir.path(), "1.2.0", t));
         record_attempt(dir.path(), "1.2.0", t);

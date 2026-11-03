@@ -115,7 +115,8 @@ impl Hub {
                 .available
                 .as_ref()
                 .map(|v| v.version.clone());
-            let queued = version.is_some_and(|v| crate::update::queued(&self.data_dir, &v));
+            let queued = version
+                .is_some_and(|v| crate::update::queued(&self.data_dir, &v, prefs.auto_update));
             let hosting = is_hosting(&a);
             s.update = Some(crate::update::status_pb(
                 &a.update.lock().unwrap(),
@@ -517,7 +518,7 @@ fn check_apply_allowed(
     }
     // "now" on an idle machine is not consent to drain a server placed here
     // during the download
-    Ok(crate::update::Ask::Manual)
+    Ok(crate::update::Ask::Manual { admin: is_admin })
 }
 
 struct Svc(Arc<Hub>);
@@ -682,7 +683,7 @@ impl pb::local_service_server::LocalService for Svc {
         let ask = check_apply_allowed(req.get_ref().now, is_hosting(&a), auto, peer.is_admin)?;
         // remembered so a request that has to wait for hosting to end (or
         // fails) is retried by the update loop
-        crate::update::queue_when_idle(&self.0.data_dir, &av.version)
+        crate::update::queue_when_idle(&self.0.data_dir, &av.version, peer.is_admin)
             .map_err(|e| Status::internal(e.to_string()))?;
         let hub = self.0.clone();
         tokio::spawn(async move {
@@ -780,16 +781,16 @@ mod tests {
         // anyone, idle, automatic installs on
         assert_eq!(
             check_apply_allowed(false, false, true, false).unwrap(),
-            Ask::Manual
+            Ask::Manual { admin: false }
         );
         // "now" while idle never becomes a drain, even for an administrator
         assert_eq!(
             check_apply_allowed(true, false, true, false).unwrap(),
-            Ask::Manual
+            Ask::Manual { admin: false }
         );
         assert_eq!(
             check_apply_allowed(true, false, true, true).unwrap(),
-            Ask::Manual
+            Ask::Manual { admin: true }
         );
         // draining a hosted server needs an administrator
         assert_eq!(
@@ -803,7 +804,7 @@ mod tests {
         // "when idle" while hosting queues for anyone
         assert_eq!(
             check_apply_allowed(false, true, true, false).unwrap(),
-            Ask::Manual
+            Ask::Manual { admin: false }
         );
         // an administrator's opt-out holds against other users
         assert_eq!(
@@ -812,7 +813,7 @@ mod tests {
         );
         assert_eq!(
             check_apply_allowed(false, false, false, true).unwrap(),
-            Ask::Manual
+            Ask::Manual { admin: true }
         );
     }
 
