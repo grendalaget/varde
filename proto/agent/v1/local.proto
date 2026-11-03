@@ -27,6 +27,13 @@ service LocalService {
   rpc SubmitCrashReport(SubmitCrashReportRequest) returns (SubmitCrashReportResponse);
   // Turns crash-report upload on or off (persisted on the machine).
   rpc SetCrashReporting(SetCrashReportingRequest) returns (SetCrashReportingResponse);
+  // Installs the update the checker found. now = install even while this
+  // machine hosts (drains the server; administrators only); otherwise it
+  // installs as soon as the machine isn't hosting (queued, persisted).
+  rpc ApplyUpdate(ApplyUpdateRequest) returns (ApplyUpdateResponse);
+  // Turns automatic update installs on or off (persisted on the machine).
+  // Turning them off needs an administrator.
+  rpc SetAutoUpdate(SetAutoUpdateRequest) returns (SetAutoUpdateResponse);
 }
 
 enum State {
@@ -92,6 +99,13 @@ message Update {
   string signature = 4;
   // Why the last check or verification failed; empty when fine.
   string error = 5;
+  // Updates install by themselves whenever the machine isn't hosting.
+  bool auto = 6;
+  // "" (nothing pending) | waiting (installs once hosting ends) |
+  // installing
+  string phase = 7;
+  // Why the last install attempt failed; empty when fine.
+  string apply_error = 8;
 }
 
 message Status {
@@ -170,6 +184,22 @@ message CancelLinkResponse {
 message CheckUpdateRequest {}
 
 message CheckUpdateResponse {
+  Status status = 1;
+}
+
+message ApplyUpdateRequest {
+  bool now = 1;
+}
+
+message ApplyUpdateResponse {
+  Status status = 1;
+}
+
+message SetAutoUpdateRequest {
+  bool enabled = 1;
+}
+
+message SetAutoUpdateResponse {
   Status status = 1;
 }
 

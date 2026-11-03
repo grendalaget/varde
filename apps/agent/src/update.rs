@@ -1,7 +1,9 @@
-//! Update check: poll the channel's latest.json (Tauri static manifest) on a
-//! timer, verify its minisign signature, and report the result over local IPC
-//! (Status.update) and in the heartbeat (update_available). Applying an
-//! update is platform-specific and lives elsewhere — this only discovers it.
+//! Updates: poll the channel's latest.json (Tauri static manifest) on a
+//! timer, verify its minisign signature, report the result over local IPC
+//! (Status.update) and in the heartbeat (update_available), and install it
+//! by itself whenever the machine isn't hosting (the `auto_update` pref, on
+//! by default) or once a queued "when idle" request can run. Installs never
+//! start while hosting unless an administrator asks for "now".
 
 #[cfg(target_os = "linux")]
 use std::io::Write;
@@ -48,6 +50,10 @@ pub struct UpdateState {
     pub available: Option<Available>,
     /// last check/verification failure.
     pub error: Option<String>,
+    /// an install is downloading/staging right now.
+    pub installing: bool,
+    /// last install failure.
+    pub apply_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,10 +85,25 @@ pub enum Channel {
 }
 
 pub fn channel(cfg: &crate::config::UpdateCfg) -> Channel {
-    match cfg.channel.as_deref().unwrap_or("stable") {
-        "nightly" => Channel::Nightly,
-        "off" | "none" | "disabled" => Channel::Off,
-        _ => Channel::Stable,
+    match cfg.channel.as_deref() {
+        Some("nightly") => Channel::Nightly,
+        Some("off" | "none" | "disabled") => Channel::Off,
+        Some(_) => Channel::Stable,
+        None => default_channel(env!("CARGO_PKG_VERSION")),
+    }
+}
+
+/// A nightly build follows the nightly feed unless told otherwise; the
+/// stable feed only knows tagged releases, so a nightly on it never sees
+/// anything newer.
+fn default_channel(version: &str) -> Channel {
+    if version
+        .trim_start_matches('v')
+        .starts_with("0.0.0-nightly.")
+    {
+        Channel::Nightly
+    } else {
+        Channel::Stable
     }
 }
 
@@ -255,7 +276,16 @@ fn nightly_date(v: &str) -> Option<u32> {
     d.get(..8)?.parse::<u32>().ok()
 }
 
-/// Background loop: check on start, then on the configured interval.
+/// How often a found update re-evaluates whether it may install (the
+/// machine stopped hosting, the pref changed).
+const APPLY_TICK: Duration = Duration::from_secs(60);
+
+/// A failed install of one version waits this long before the automatic
+/// path retries it (the download is the whole installer).
+const RETRY_AFTER_MS: i64 = 6 * 3600 * 1000;
+
+/// Background loop: check on start, then on the configured interval; in
+/// between, install a found update whenever policy allows.
 pub async fn update_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiver<bool>) {
     if channel(&agent.cfg.update) == Channel::Off {
         return;
@@ -268,21 +298,329 @@ pub async fn update_loop(agent: Arc<Agent>, mut stop: tokio::sync::watch::Receiv
             .unwrap_or(DEFAULT_INTERVAL_S)
             .clamp(300, 7 * 24 * 3600) as u64,
     );
+    let mut next_check = tokio::time::Instant::now();
     loop {
-        check_once(&agent).await;
+        if tokio::time::Instant::now() >= next_check {
+            check_once(&agent).await;
+            next_check = tokio::time::Instant::now() + interval;
+        }
+        maybe_apply(&agent, false).await;
         tokio::select! {
-            _ = tokio::time::sleep(interval) => {},
+            _ = tokio::time::sleep(APPLY_TICK) => {},
             _ = stop.changed() => return,
         }
     }
 }
 
+/// Why an install may (not) start now. Pure so the policy is testable.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Gate {
+    Go,
+    /// nothing installable for this machine
+    Nothing,
+    /// the user didn't ask, and automatic installs are off
+    NotWanted,
+    /// wanted, but this machine is hosting
+    Hosting,
+    /// this version failed recently; the automatic path waits
+    Backoff,
+    Busy,
+}
+
+pub struct GateIn {
+    pub installable: bool,
+    pub installing: bool,
+    pub shutting_down: bool,
+    pub now: bool,
+    pub auto: bool,
+    pub queued: bool,
+    pub hosting: bool,
+    pub recently_failed: bool,
+}
+
+pub fn gate(g: &GateIn) -> Gate {
+    if !g.installable || g.shutting_down {
+        return Gate::Nothing;
+    }
+    if g.installing {
+        return Gate::Busy;
+    }
+    if g.now {
+        return Gate::Go;
+    }
+    if !(g.auto || g.queued) {
+        return Gate::NotWanted;
+    }
+    if g.hosting {
+        return Gate::Hosting;
+    }
+    if g.recently_failed {
+        return Gate::Backoff;
+    }
+    Gate::Go
+}
+
+/// Whether the feed entry is a package this install knows how to apply
+/// (snap and manual installs stay notify-only).
+fn installable(av: &Available) -> bool {
+    let (Some(url), Some(_)) = (av.url.as_deref(), av.signature.as_deref()) else {
+        return false;
+    };
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    if cfg!(windows) {
+        path.ends_with(".exe")
+    } else if cfg!(target_os = "macos") {
+        path.ends_with(".dmg")
+    } else if cfg!(target_os = "linux") {
+        path.ends_with(".deb") || path.ends_with(".rpm")
+    } else {
+        false
+    }
+}
+
+fn update_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("update")
+}
+
+/// "Install when this machine stops hosting" for `version`, persisted so
+/// it survives restarts of the agent and the tray.
+pub fn queue_when_idle(data_dir: &std::path::Path, version: &str) -> std::io::Result<()> {
+    let d = update_dir(data_dir);
+    std::fs::create_dir_all(&d)?;
+    std::fs::write(d.join("when-idle"), version)
+}
+
+pub fn queued(data_dir: &std::path::Path, version: &str) -> bool {
+    std::fs::read_to_string(update_dir(data_dir).join("when-idle"))
+        .is_ok_and(|v| v.trim() == version)
+}
+
+/// The last automatic attempt: `<version> <unix ms>`.
+fn recently_failed(data_dir: &std::path::Path, version: &str, now_ms: i64) -> bool {
+    let Ok(s) = std::fs::read_to_string(update_dir(data_dir).join("attempt")) else {
+        return false;
+    };
+    let mut it = s.split_whitespace();
+    match (it.next(), it.next().and_then(|t| t.parse::<i64>().ok())) {
+        (Some(v), Some(at)) => v == version && now_ms - at < RETRY_AFTER_MS && now_ms >= at,
+        _ => false,
+    }
+}
+
+fn record_attempt(data_dir: &std::path::Path, version: &str, now_ms: i64) {
+    let d = update_dir(data_dir);
+    let _ = std::fs::create_dir_all(&d);
+    let _ = std::fs::write(d.join("attempt"), format!("{version} {now_ms}"));
+}
+
+/// Install the found update if policy allows. `now` = an administrator
+/// asked for it, hosting or not.
+pub async fn maybe_apply(agent: &Arc<Agent>, now: bool) -> Gate {
+    let av = agent.update.lock().unwrap().available.clone();
+    let Some(av) = av else { return Gate::Nothing };
+    let prefs = crash_report::load_prefs(&agent.data_dir);
+    let input = |hosting: bool, installing: bool| GateIn {
+        installable: installable(&av),
+        installing,
+        shutting_down: agent
+            .shutting_down
+            .load(std::sync::atomic::Ordering::SeqCst),
+        now,
+        auto: prefs.auto_update,
+        queued: queued(&agent.data_dir, &av.version),
+        hosting,
+        recently_failed: recently_failed(&agent.data_dir, &av.version, crate::now_ms()),
+    };
+    {
+        let mut st = agent.update.lock().unwrap();
+        let g = gate(&input(crate::local::is_hosting(agent), st.installing));
+        if g != Gate::Go {
+            return g;
+        }
+        st.installing = true;
+        st.apply_error = None;
+    }
+    record_attempt(&agent.data_dir, &av.version, crate::now_ms());
+    tracing::info!(version = %av.version, now, "installing update");
+    let res = apply(agent, &av, now).await;
+    let mut st = agent.update.lock().unwrap();
+    st.installing = false;
+    match res {
+        Ok(()) => {
+            let _ = std::fs::remove_file(update_dir(&agent.data_dir).join("when-idle"));
+            Gate::Go
+        }
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "update install failed");
+            st.apply_error = Some(format!("{e:#}"));
+            Gate::Go
+        }
+    }
+}
+
+/// Download + verify the package, then hand it to this platform's install
+/// path. Returns once the install is under way: the agent is restarted by
+/// it (Windows installer, Linux postinst) or restarts itself (macOS).
+#[cfg(not(any(windows, all(unix, not(target_os = "android")))))]
+async fn apply(_agent: &Arc<Agent>, _av: &Available, _now: bool) -> Result<()> {
+    anyhow::bail!("updates are delivered by the app store on this platform")
+}
+
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+async fn apply(agent: &Arc<Agent>, av: &Available, now: bool) -> Result<()> {
+    let (Some(url), Some(sig)) = (av.url.as_deref(), av.signature.as_deref()) else {
+        anyhow::bail!("the update feed has no package for this install");
+    };
+    let body = download_verified(&agent.cfg.update, url, sig).await?;
+    // the download takes a while; a server may have been placed here since
+    if !now && crate::local::is_hosting(agent) {
+        anyhow::bail!("this machine started hosting; the update waits until it stops");
+    }
+    #[cfg(windows)]
+    {
+        launch_windows_installer(&agent.data_dir, &av.version, &body)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        stage_linux(&agent.data_dir, url, sig, &body)?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(move || apply_dmg(&body))
+            .await
+            .context("swap task")?
+            .context("swap binaries")?;
+        request_restart();
+    }
+    Ok(())
+}
+
+/// Fetch an artifact and check its minisign signature against the release
+/// key (or `[update] pubkey`).
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+async fn download_verified(
+    cfg: &crate::config::UpdateCfg,
+    url: &str,
+    sig: &str,
+) -> Result<Vec<u8>> {
+    // artifacts must come over TLS; loopback http stays allowed for dev feeds
+    if !artifact_url_ok(url) {
+        anyhow::bail!("refusing non-https artifact url: {url}");
+    }
+    let body = cp_api::client::fetch_url(url, MAX_PKG_BYTES)
+        .await
+        .with_context(|| format!("download {url}"))?;
+    let pk = minisign_verify::PublicKey::from_base64(
+        &pubkey(cfg).context("no update pubkey configured")?,
+    )
+    .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
+    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
+    pk.verify(&body, &s, false)
+        .map_err(|e| anyhow::anyhow!("package signature invalid: {e}"))?;
+    Ok(body)
+}
+
+/// Write the verified installer into the service's own data dir (SYSTEM +
+/// Administrators only, so nothing unprivileged can swap it) and start it
+/// silent and detached: varde-setup drains this service, swaps binaries,
+/// restarts the service and relaunches the tray for the console user.
+#[cfg(windows)]
+fn launch_windows_installer(data_dir: &std::path::Path, version: &str, body: &[u8]) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let dir = update_dir(data_dir);
+    std::fs::create_dir_all(&dir)?;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().starts_with("VardeSetup") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    // versions carry "+sha"; keep the file name plain
+    let safe: String = version
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("VardeSetup-{safe}.exe"));
+    std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
+    let spawn = |flags: u32| {
+        std::process::Command::new(&path)
+            .args(["/S", "/R", "/ARGS", "--autostart"])
+            .creation_flags(flags)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+    };
+    // the installer stops this service; it must not die with our job
+    spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
+        .or_else(|_| spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP))
+        .with_context(|| format!("start {}", path.display()))?;
+    Ok(())
+}
+
+static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RESTART_NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Ask the agent to exit for a restart onto the binaries just swapped in.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn request_restart() {
+    RESTART.store(true, std::sync::atomic::Ordering::SeqCst);
+    RESTART_NOTIFY.notify_waiters();
+}
+
+/// Resolves once an update asked for a restart.
+pub async fn restart_requested() {
+    loop {
+        let n = RESTART_NOTIFY.notified();
+        if restart_pending() {
+            return;
+        }
+        n.await;
+    }
+}
+
+pub fn restart_pending() -> bool {
+    RESTART.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Exit code that tells the service manager to start us again (launchd's
+/// KeepAlive SuccessfulExit=false restarts any non-zero exit).
+pub const RESTART_EXIT_CODE: i32 = 75;
+
 /// Shared state slot, cloned into `Agent`.
 pub type Shared = Mutex<UpdateState>;
 
 /// pb view of the shared state (called on every status build — keep cheap).
-pub fn status_pb(state: &UpdateState) -> agent_ipc::pb::Update {
+/// `auto`/`queued`/`hosting` come from the caller (prefs, the when-idle
+/// marker, the hub's hosting view) to derive the pending phase.
+pub fn status_pb(
+    state: &UpdateState,
+    auto: bool,
+    queued: bool,
+    hosting: bool,
+) -> agent_ipc::pb::Update {
+    let pending = state.available.as_ref().is_some_and(installable) && (auto || queued);
+    let phase = if state.installing {
+        "installing"
+    } else if pending && hosting {
+        "waiting"
+    } else {
+        ""
+    };
     agent_ipc::pb::Update {
+        auto,
+        phase: phase.into(),
+        apply_error: state.apply_error.clone().unwrap_or_default(),
         checked_at_unix_ms: state.checked_at_ms,
         available_version: state
             .available
@@ -334,41 +672,10 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
         );
         return Ok(());
     };
-    // artifacts must come over TLS; loopback http stays allowed for dev feeds
-    if !artifact_url_ok(url) {
-        anyhow::bail!("refusing non-https artifact url: {url}");
-    }
-    let body = cp_api::client::fetch_url(url, MAX_PKG_BYTES)
-        .await
-        .with_context(|| format!("download {url}"))?;
-    let pk = minisign_verify::PublicKey::from_base64(
-        &pubkey(&cfg).context("no update pubkey configured")?,
-    )
-    .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
-    pk.verify(&body, &s, false)
-        .map_err(|e| anyhow::anyhow!("package signature invalid: {e}"))?;
-
+    let body = download_verified(&cfg, url, sig).await?;
     #[cfg(target_os = "linux")]
     {
-        let name = if url.ends_with(".deb") {
-            "pkg.deb"
-        } else if url.ends_with(".rpm") {
-            "pkg.rpm"
-        } else {
-            anyhow::bail!("feed URL is not a .deb/.rpm package: {url}");
-        };
-        let dir = data_dir.join("update");
-        std::fs::create_dir_all(&dir)?;
-        let tmp = dir.join("pkg.tmp");
-        std::fs::write(&tmp, &body).context("write staged package")?;
-        std::fs::rename(&tmp, dir.join(name))?;
-        // the signature rides along: the root-side apply re-verifies these
-        // bytes (this dir is varde-writable — trust nothing staged)
-        std::fs::write(dir.join("pkg.sig"), sig).context("write staged signature")?;
-        // the marker goes last: the path unit fires on it, never on a
-        // half-written package
-        std::fs::File::create(dir.join(".pending"))?.write_all(b"")?;
+        let name = stage_linux(data_dir, url, sig, &body)?;
         println!(
             "staged {name} — varde-update.service applies it shortly (see `systemctl status varde-update.service`)"
         );
@@ -381,8 +688,39 @@ pub async fn cli_update(data_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Stage a verified deb/rpm under <data>/update and drop the `.pending`
+/// marker the packaged varde-update.path unit fires on.
+#[cfg(target_os = "linux")]
+fn stage_linux(
+    data_dir: &std::path::Path,
+    url: &str,
+    sig: &str,
+    body: &[u8],
+) -> Result<&'static str> {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    let name = if path.ends_with(".deb") {
+        "pkg.deb"
+    } else if path.ends_with(".rpm") {
+        "pkg.rpm"
+    } else {
+        anyhow::bail!("feed URL is not a .deb/.rpm package: {url}");
+    };
+    let dir = update_dir(data_dir);
+    std::fs::create_dir_all(&dir)?;
+    let tmp = dir.join("pkg.tmp");
+    std::fs::write(&tmp, body).context("write staged package")?;
+    std::fs::rename(&tmp, dir.join(name))?;
+    // the signature rides along: the root-side apply re-verifies these
+    // bytes (this dir is varde-writable — trust nothing staged)
+    std::fs::write(dir.join("pkg.sig"), sig).context("write staged signature")?;
+    // the marker goes last: the path unit fires on it, never on a
+    // half-written package
+    std::fs::File::create(dir.join(".pending"))?.write_all(b"")?;
+    Ok(name)
+}
+
 /// Largest update package the agent downloads or root installs.
-#[cfg(all(unix, not(target_os = "android")))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 const MAX_PKG_BYTES: usize = 512 * 1024 * 1024;
 
 #[cfg(all(unix, not(target_os = "android")))]
@@ -392,7 +730,7 @@ fn url_host(_data_dir: &std::path::Path) -> &'static str {
 
 /// Artifact download policy: https everywhere; http only to loopback hosts
 /// (dev feeds). Anything else is a signed-but-wrong URL — never fetch it.
-#[cfg(all(unix, not(target_os = "android")))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 fn artifact_url_ok(url: &str) -> bool {
     let u = url.to_ascii_lowercase();
     if u.starts_with("https://") {
@@ -671,6 +1009,169 @@ fn install_private_copy(private: &std::path::Path, name: &str, body: &[u8]) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nightly_builds_follow_the_nightly_feed_by_default() {
+        assert_eq!(
+            default_channel("0.0.0-nightly.20261030+4f24b71"),
+            Channel::Nightly
+        );
+        assert_eq!(default_channel("1.2.0"), Channel::Stable);
+        assert_eq!(default_channel("1.2.0-rc.1"), Channel::Stable);
+        let cfg = crate::config::UpdateCfg {
+            channel: Some("stable".into()),
+            ..Default::default()
+        };
+        assert_eq!(channel(&cfg), Channel::Stable);
+        let cfg = crate::config::UpdateCfg {
+            channel: Some("off".into()),
+            ..Default::default()
+        };
+        assert_eq!(channel(&cfg), Channel::Off);
+    }
+
+    fn gate_in() -> GateIn {
+        GateIn {
+            installable: true,
+            installing: false,
+            shutting_down: false,
+            now: false,
+            auto: true,
+            queued: false,
+            hosting: false,
+            recently_failed: false,
+        }
+    }
+
+    #[test]
+    fn auto_installs_only_when_idle() {
+        assert_eq!(gate(&gate_in()), Gate::Go);
+        assert_eq!(
+            gate(&GateIn {
+                hosting: true,
+                ..gate_in()
+            }),
+            Gate::Hosting
+        );
+        assert_eq!(
+            gate(&GateIn {
+                auto: false,
+                ..gate_in()
+            }),
+            Gate::NotWanted
+        );
+        // a queued "when idle" request installs even with auto off, but
+        // still waits for hosting to end
+        assert_eq!(
+            gate(&GateIn {
+                auto: false,
+                queued: true,
+                ..gate_in()
+            }),
+            Gate::Go
+        );
+        assert_eq!(
+            gate(&GateIn {
+                auto: false,
+                queued: true,
+                hosting: true,
+                ..gate_in()
+            }),
+            Gate::Hosting
+        );
+        assert_eq!(
+            gate(&GateIn {
+                recently_failed: true,
+                ..gate_in()
+            }),
+            Gate::Backoff
+        );
+    }
+
+    #[test]
+    fn now_overrides_hosting_but_not_safety() {
+        let now = GateIn {
+            now: true,
+            hosting: true,
+            auto: false,
+            recently_failed: true,
+            ..gate_in()
+        };
+        assert_eq!(gate(&now), Gate::Go);
+        assert_eq!(
+            gate(&GateIn {
+                installing: true,
+                ..now
+            }),
+            Gate::Busy
+        );
+        assert_eq!(
+            gate(&GateIn {
+                installable: false,
+                now: true,
+                ..gate_in()
+            }),
+            Gate::Nothing
+        );
+        assert_eq!(
+            gate(&GateIn {
+                shutting_down: true,
+                now: true,
+                ..gate_in()
+            }),
+            Gate::Nothing
+        );
+    }
+
+    #[test]
+    fn when_idle_and_backoff_persist_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!queued(dir.path(), "1.2.0"));
+        queue_when_idle(dir.path(), "1.2.0").unwrap();
+        assert!(queued(dir.path(), "1.2.0"));
+        assert!(!queued(dir.path(), "1.3.0"));
+        let t = 1_800_000_000_000;
+        assert!(!recently_failed(dir.path(), "1.2.0", t));
+        record_attempt(dir.path(), "1.2.0", t);
+        assert!(recently_failed(dir.path(), "1.2.0", t + 1000));
+        assert!(!recently_failed(dir.path(), "1.3.0", t + 1000));
+        assert!(!recently_failed(dir.path(), "1.2.0", t + RETRY_AFTER_MS));
+    }
+
+    fn avail(url: &str) -> Available {
+        Available {
+            version: "1.2.0".into(),
+            url: Some(url.into()),
+            signature: Some("sig".into()),
+        }
+    }
+
+    #[test]
+    fn status_reports_waiting_while_hosting() {
+        let pkg = if cfg!(windows) {
+            "https://x/VardeSetup.exe"
+        } else if cfg!(target_os = "macos") {
+            "https://x/Varde.dmg"
+        } else {
+            "https://x/varde.deb"
+        };
+        let mut st = UpdateState {
+            available: Some(avail(pkg)),
+            ..Default::default()
+        };
+        assert_eq!(status_pb(&st, true, false, true).phase, "waiting");
+        assert_eq!(status_pb(&st, true, false, false).phase, "");
+        assert_eq!(status_pb(&st, false, false, true).phase, "");
+        assert_eq!(status_pb(&st, false, true, true).phase, "waiting");
+        st.installing = true;
+        assert_eq!(status_pb(&st, true, false, true).phase, "installing");
+        // notify-only entries (snap) never wait
+        let st = UpdateState {
+            available: Some(avail("https://x/varde.snap")),
+            ..Default::default()
+        };
+        assert_eq!(status_pb(&st, true, false, true).phase, "");
+    }
 
     const MANIFEST: &str = r#"{
         "version": "1.4.0",

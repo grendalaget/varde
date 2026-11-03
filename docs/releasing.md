@@ -100,21 +100,43 @@ Clients poll the release asset, never the GitHub API:
 `releases/latest/download/latest.json` for the stable channel and
 `releases/download/nightly/latest.json` for nightly.
 
+The agent checks the feed on start and every 6 h (`[update] interval_s`).
+Without `[update] channel`, a nightly build (`0.0.0-nightly.*`) follows the
+nightly feed and any other build the stable one.
+
+Installs run in the agent. With **Install updates automatically** on (the
+default; `auto_update` in `<data>/prefs.json`), a verified update installs
+by itself whenever the machine isn't hosting; while it hosts, the update
+waits (`Status.update.phase = "waiting"`) and installs once hosting ends — a
+hosted server is never interrupted. "Update to X" in the tray asks the agent
+(`ApplyUpdate`): idle → installs now; hosting → "now" (drains the server,
+administrators only) or "when idle" (persisted in `<data>/update/when-idle`,
+installs once hosting ends even with automatic installs off). Turning
+automatic installs off needs an administrator. A failed install of one
+version is retried automatically after 6 h (`<data>/update/attempt`). On the
+first start of a new version the tray shows "Varde updated to X".
+
 Apply paths per platform:
 
-- **Windows**: the tray downloads `VardeSetup-<ver>.exe`, verifies its
-  minisign signature and runs it `/S` — a silent varde-setup install that
-  drains services, swaps binaries and relaunches the tray.
-- **Linux deb/rpm**: `varde-agent update` stages the verified package in
+- **Windows**: the service downloads `VardeSetup-<ver>.exe`, verifies its
+  minisign signature, writes it under `%ProgramData%\Varde\update`
+  (SYSTEM + Administrators only) and starts it `/S /R /ARGS --autostart` —
+  a silent varde-setup install that drains the service, swaps binaries and
+  relaunches the tray as the console user. Running as SYSTEM, no UAC prompt.
+- **Linux deb/rpm**: the agent stages the verified package in
   `/var/lib/varde/update/` and drops a `.pending` marker; the packaged
   `varde-update.path` unit fires `varde-update.service`, which runs
   `varde-agent apply-update` as root (`dpkg -i` / `rpm -U`). The package
   postinst `try-restart`s the agent so the new binary takes over under the
-  normal drain timeout. The snap package is notify-only — strict snaps
-  self-refresh via snapd once store-published.
-- **macOS**: `varde-agent update` mounts the dmg and swaps `varde-agent` +
-  `varde-mesh` next to the running exe; restarting the agent (launchd or
-  manual) runs the new binary.
+  normal drain timeout. `varde-agent update` does the same by hand. The snap
+  package and tarball installs are notify-only — strict snaps self-refresh
+  via snapd once store-published.
+- **macOS**: the agent mounts the verified dmg, swaps `varde-agent`,
+  `varde-mesh` and `varde-tray` (inside `Varde.app/Contents/MacOS` for app
+  installs) and exits with code 75; the LaunchAgent's KeepAlive restarts it
+  on the new binary and the tray relaunches itself when its exe changes.
+  `varde-agent update` swaps by hand.
+- **Android**: updates are APK upgrades of the host app.
 
 Update signing uses a Tauri signer (minisign) keypair, stored as the
 **repository** secrets `TAURI_SIGNING_PRIVATE_KEY` and

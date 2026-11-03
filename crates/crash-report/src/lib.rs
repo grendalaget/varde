@@ -358,6 +358,9 @@ pub struct Prefs {
     /// Capture to disk happens either way.
     #[serde(default = "default_true")]
     pub crash_reporting: bool,
+    /// Install updates by themselves whenever the machine isn't hosting.
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 fn default_true() -> bool {
@@ -368,6 +371,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             crash_reporting: true,
+            auto_update: true,
         }
     }
 }
@@ -379,6 +383,7 @@ pub fn load_prefs(data_dir: &Path) -> Prefs {
             // fail closed until the file is rewritten
             Prefs {
                 crash_reporting: false,
+                auto_update: false,
             },
         ),
         Err(_) => Prefs::default(),
@@ -532,9 +537,33 @@ mod tests {
             dir.path(),
             &Prefs {
                 crash_reporting: false,
+                auto_update: true,
             },
         )
         .unwrap();
         assert!(!load_prefs(dir.path()).crash_reporting);
+        assert!(load_prefs(dir.path()).auto_update);
+    }
+
+    #[test]
+    fn prefs_from_before_auto_update_default_it_on() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("prefs.json"),
+            br#"{"crash_reporting":false}"#,
+        )
+        .unwrap();
+        let p = load_prefs(dir.path());
+        assert!(!p.crash_reporting);
+        assert!(p.auto_update);
+    }
+
+    #[test]
+    fn unreadable_prefs_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("prefs.json"), b"{not json").unwrap();
+        let p = load_prefs(dir.path());
+        assert!(!p.crash_reporting);
+        assert!(!p.auto_update);
     }
 }

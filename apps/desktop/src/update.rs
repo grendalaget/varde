@@ -1,47 +1,17 @@
-//! Update apply. Windows: download the signed installer the agent's checker
-//! surfaced (Status.update.url + .signature), verify it against the release
-//! key and run it elevated and silent — varde-setup drains services, swaps
-//! binaries and relaunches the tray. macOS: the sibling `varde-agent
-//! update` verifies the feed itself and swaps every binary in this .app;
-//! the tray then restarts the LaunchAgent and relaunches itself.
-//! Never auto-applies while hosting.
+//! Updates from the tray's side. The agent finds, verifies and installs
+//! updates itself — automatically whenever this PC isn't hosting, or when
+//! asked here ("Update to X"). Installs run in the service, so Windows
+//! needs no UAC prompt; only "update now while hosting" and turning
+//! automatic installs off need an administrator, and those relaunch this
+//! exe elevated with `--update-now` / `--auto-update-off`.
 
 use agent_ipc::pb;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
 
-/// Release signing public key (same value as the agent's update::RELEASE_PUBKEY;
-/// matches the TAURI_SIGNING_PRIVATE_KEY repo secret).
-#[cfg(windows)]
-pub const RELEASE_PUBKEY: &str = "RWTGjRo20qP1eV0SYg+R+cQklu9rnXL+hHg1fS729LTc0IOdbuVXinns";
-
-/// Decode a minisign signature. The release pipeline emits Tauri's
-/// single-line base64 envelope of the minisign text; accept that or the raw
-/// minisign text.
-#[cfg(windows)]
-fn decode_sig(text: &str) -> anyhow::Result<minisign_verify::Signature> {
-    use anyhow::Context as _;
-    if let Ok(sig) = minisign_verify::Signature::decode(text) {
-        return Ok(sig);
-    }
-    use base64::Engine as _;
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(text.trim())
-        .context("signature is neither minisign text nor its base64 envelope")?;
-    let text = String::from_utf8(raw).context("signature envelope is not utf-8")?;
-    minisign_verify::Signature::decode(&text).map_err(|e| anyhow::anyhow!("bad sig: {e}"))
-}
-
-#[cfg(windows)]
-fn pubkey() -> Option<String> {
-    std::env::var("VARDE_UPDATE_PUBKEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .or_else(|| (!RELEASE_PUBKEY.is_empty()).then(|| RELEASE_PUBKEY.to_string()))
-}
-
-/// "Update to X" clicked. Applies immediately when idle; while hosting, asks:
-/// now (drains the hosted server), when idle (applies when hosting ends) or
-/// later.
+/// "Update to X" clicked. Installs right away when idle; while hosting,
+/// asks: now (drains the hosted server), when idle (installs once hosting
+/// ends; remembered by the agent) or later.
 pub fn offer(app: &AppHandle) {
     let (hosting, version) = {
         let st = app.state::<crate::app::State>();
@@ -55,23 +25,155 @@ pub fn offer(app: &AppHandle) {
             .unwrap_or_default();
         (hosting, version)
     };
+    if version.is_empty() {
+        return;
+    }
     if let Some(h) = hosting {
         match ask_hosting(&version, &h) {
-            Choice::Now => spawn_apply(app.clone()),
-            Choice::WhenIdle => {
-                app.state::<crate::app::State>()
-                    .update_when_idle
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                info_box(
-                    "Update queued",
-                    "Varde will update when this PC stops hosting.",
-                );
-            }
+            Choice::Now => request(true),
+            Choice::WhenIdle => request(false),
             Choice::Later => {}
         }
     } else {
-        spawn_apply(app.clone());
+        request(false);
     }
+}
+
+fn request(now: bool) {
+    tauri::async_runtime::spawn(async move {
+        let r = match agent_ipc::connect(&agent_ipc::default_endpoint()).await {
+            Ok(mut c) => c
+                .apply_update(pb::ApplyUpdateRequest { now })
+                .await
+                .map(|_| ())
+                .map_err(Some),
+            Err(_) => Err(None),
+        };
+        match r {
+            Ok(()) => {}
+            Err(Some(e)) if e.code() == agent_ipc::GrpcCode::PermissionDenied => {
+                elevated("--update-now")
+            }
+            Err(Some(e)) => info_box(
+                "Update failed",
+                &format!("Varde couldn't start the update.\n\n{}", e.message()),
+            ),
+            Err(None) => info_box(
+                "Update failed",
+                "Varde's service isn't running. Restart Varde and try again.",
+            ),
+        }
+    });
+}
+
+/// "Install updates automatically" toggled.
+pub fn set_auto(enabled: bool) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(mut c) = agent_ipc::connect(&agent_ipc::default_endpoint()).await else {
+            return;
+        };
+        match c
+            .set_auto_update(pb::SetAutoUpdateRequest { enabled })
+            .await
+        {
+            Err(e) if e.code() == agent_ipc::GrpcCode::PermissionDenied => {
+                elevated("--auto-update-off")
+            }
+            Err(e) => info_box("Varde update", e.message()),
+            Ok(_) => {}
+        }
+    });
+}
+
+/// Redo a refused request from an elevated copy of this exe (Windows UAC).
+/// Elsewhere the tray already runs as the service's user, so a refusal is
+/// final.
+fn elevated(arg: &str) {
+    #[cfg(windows)]
+    if let Err(e) = crate::app::elevate_self(arg) {
+        info_box("Varde update", &e);
+    }
+    #[cfg(not(windows))]
+    info_box(
+        "Varde update",
+        &format!("This needs an administrator ({arg})."),
+    );
+}
+
+/// Elevated headless `--update-now` / `--auto-update-off`: do the one
+/// call and exit.
+pub fn run_elevated_action(update_now: bool) -> Result<(), String> {
+    tauri::async_runtime::block_on(async move {
+        let mut c = agent_ipc::connect(&agent_ipc::default_endpoint())
+            .await
+            .map_err(|e| format!("Varde's service isn't running: {e}"))?;
+        if update_now {
+            c.apply_update(pb::ApplyUpdateRequest { now: true })
+                .await
+                .map_err(|e| e.message().to_string())?;
+        } else {
+            c.set_auto_update(pb::SetAutoUpdateRequest { enabled: false })
+                .await
+                .map_err(|e| e.message().to_string())?;
+        }
+        Ok(())
+    })
+}
+
+/// "Varde updated to X" once, on the first start of a new version. The
+/// last version seen is kept per user next to the webview data.
+pub fn notify_if_updated(app: &AppHandle) {
+    let Ok(dir) = app.path().app_local_data_dir() else {
+        return;
+    };
+    let file = dir.join("last-version");
+    let cur = env!("CARGO_PKG_VERSION");
+    let prev = std::fs::read_to_string(&file).ok();
+    if prev.as_deref().map(str::trim) == Some(cur) {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&file, cur);
+    if let Some(title) = updated_notice(prev.as_deref(), cur) {
+        let _ = app
+            .notification()
+            .builder()
+            .title(title)
+            .body("The new version is running.")
+            .show();
+    }
+}
+
+/// None on a first install (no previous version recorded).
+pub fn updated_notice(prev: Option<&str>, cur: &str) -> Option<String> {
+    let prev = prev.map(str::trim).filter(|p| !p.is_empty())?;
+    (prev != cur).then(|| format!("Varde updated to {cur}"))
+}
+
+/// macOS: the agent swaps every binary in this .app (tray included), then
+/// restarts itself; the tray notices its own exe changed and relaunches.
+/// Windows: the installer kills and relaunches the tray itself.
+pub fn after_status(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::OnceLock;
+        static STARTED: OnceLock<Option<std::time::SystemTime>> = OnceLock::new();
+        let mtime = || {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .and_then(|m| m.modified().ok())
+        };
+        static FIRED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let started = *STARTED.get_or_init(mtime);
+        if started.is_some()
+            && mtime().is_some_and(|m| Some(m) != started)
+            && !FIRED.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            relaunch_app(app);
+        }
+    }
+    let _ = app;
 }
 
 enum Choice {
@@ -156,205 +258,6 @@ fn ask_hosting(version: &str, hosting: &str) -> Choice {
         rfd::MessageDialogResult::Custom(ref s) if s == "Update when idle" => Choice::WhenIdle,
         _ => Choice::Later,
     }
-}
-
-/// After each status publish: fire the queued "when idle" update once hosting
-/// drains.
-pub fn maybe_apply_when_idle(app: &AppHandle) {
-    let st = app.state::<crate::app::State>();
-    if !st
-        .update_when_idle
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
-        return;
-    }
-    let s = st.status.lock().unwrap().clone();
-    // only fire once we KNOW the node is connected and not hosting — a
-    // missing status means the service is unreachable, not "idle".
-    if s.is_some_and(|s| s.hosting.is_empty()) {
-        st.update_when_idle
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        spawn_apply(app.clone());
-    }
-}
-
-/// Download → stage + verify minisign → launch elevated `/S /R` (silent
-/// install + post-install tray relaunch as the original user, which the
-/// updater flow wants).
-#[cfg(windows)]
-fn spawn_apply(app: AppHandle) {
-    let found = {
-        let st = app.state::<crate::app::State>();
-        let s = st.status.lock().unwrap().clone();
-        s.and_then(|s| s.update.map(|u| (u.available_version, u.url, u.signature)))
-    };
-    let Some((version, url, sig)) = found else {
-        return;
-    };
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = download_verify_run(&version, &url, &sig).await {
-            info_box(
-                "Update failed",
-                &format!("Varde couldn't install the update. It will try again later.\n\n{e:#}"),
-            );
-        }
-    });
-}
-
-#[cfg(windows)]
-async fn download_verify_run(version: &str, url: &str, sig: &str) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    let Some(key) = pubkey() else {
-        anyhow::bail!("this build has no update signing key; can't verify the installer");
-    };
-    if url.is_empty() || sig.is_empty() {
-        anyhow::bail!("the update feed has no installer for this platform");
-    }
-    let exe = cp_api::client::fetch_url(url, 512 * 1024 * 1024)
-        .await
-        .context("download installer")?;
-    let pk = minisign_verify::PublicKey::from_base64(&key)
-        .map_err(|e| anyhow::anyhow!("bad update pubkey: {e}"))?;
-    let s = decode_sig(sig).map_err(|e| anyhow::anyhow!("bad sig: {e}"))?;
-    // the UAC prompt blocks ShellExecuteExW until answered; keep it off the
-    // async runtime
-    let version = version.to_string();
-    tauri::async_runtime::spawn_blocking(move || stage_verify_launch(&version, &exe, &pk, &s))
-        .await
-        .context("installer task")?
-}
-
-/// Stage the installer under a fresh %LOCALAPPDATA%\Varde\update\<nonce>,
-/// verify the bytes as read back from disk and launch it elevated.
-///
-/// Not %ProgramData%\Varde: the installer ACLs that tree to
-/// SYSTEM+Administrators, so this non-elevated tray can't write there. The
-/// per-user dir is writable by anything running as this user, so the file is
-/// pinned instead: it's reopened sharing only FILE_SHARE_READ (no writers,
-/// no delete/rename while the handle lives) and the signature is checked over
-/// the bytes read through that handle — what's verified is what's on disk.
-/// The handle stays open until ShellExecuteExW returns; by then the installer
-/// process exists and its image is mapped, which Windows won't let anyone
-/// overwrite. (varde-setup install mode never rereads its own exe — the
-/// payload is embedded.)
-#[cfg(windows)]
-fn stage_verify_launch(
-    version: &str,
-    exe: &[u8],
-    pk: &minisign_verify::PublicKey,
-    sig: &minisign_verify::Signature,
-) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    use std::io::{Read as _, Write as _};
-    use std::os::windows::fs::OpenOptionsExt as _;
-    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
-
-    let base = std::path::PathBuf::from(
-        std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?,
-    )
-    .join(r"Varde\update");
-    std::fs::create_dir_all(&base).with_context(|| format!("create {}", base.display()))?;
-    // sweep earlier staging dirs; one whose installer still runs fails to
-    // delete and is left for next time
-    if let Ok(rd) = std::fs::read_dir(&base) {
-        for e in rd.flatten() {
-            let _ = std::fs::remove_dir_all(e.path());
-        }
-    }
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let dir = base.join(format!("{}-{nonce}", std::process::id()));
-    // create_dir, not _all: the leaf must be new, never a pre-planted one
-    std::fs::create_dir(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let path = dir.join(format!("VardeSetup-{version}.exe"));
-    {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .with_context(|| format!("create {}", path.display()))?;
-        f.write_all(exe)
-            .with_context(|| format!("write {}", path.display()))?;
-    }
-    // A sharing violation here means someone else still holds the file open
-    // for writing — treat it like any other failed write.
-    let mut pinned = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ)
-        .open(&path)
-        .with_context(|| format!("reopen {}", path.display()))?;
-    let mut on_disk = Vec::with_capacity(exe.len());
-    pinned
-        .read_to_end(&mut on_disk)
-        .with_context(|| format!("read back {}", path.display()))?;
-    pk.verify(&on_disk, sig, false)
-        .map_err(|e| anyhow::anyhow!("installer signature invalid: {e}"))?;
-    // /S silent, /R relaunches the tray as the original user post-install,
-    // /ARGS feeds it --autostart so it comes back in background mode
-    // (apps/setup/src/args.rs).
-    let launched =
-        crate::app::run_elevated(&path, "/S /R /ARGS --autostart").context("launch installer");
-    drop(pinned);
-    launched
-}
-
-/// The sibling `varde-agent update` verifies the feed signature and swaps
-/// every binary in this .app (agent, mesh AND the tray), then the service
-/// is restarted and the app relaunched — same end state as the Windows flow.
-#[cfg(target_os = "macos")]
-fn spawn_apply(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let r = tokio::task::spawn_blocking(apply_via_agent).await;
-        match r {
-            Ok(Ok(Some(done))) => {
-                // binaries on disk are new; service + app relaunch run them
-                if let Err(e) = crate::svcctl::restart_service() {
-                    info_box(
-                        "Update failed",
-                        &format!(
-                            "Varde updated but its service couldn't restart. Restart Varde and try again.\n\n{e:#}"
-                        ),
-                    );
-                    return;
-                }
-                let _ = done;
-                relaunch_app(&app);
-            }
-            Ok(Ok(None)) => {} // already up to date / feed has no package
-            Ok(Err(e)) => info_box(
-                "Update failed",
-                &format!("Varde couldn't install the update. It will try again later.\n\n{e:#}"),
-            ),
-            Err(e) => info_box(
-                "Update failed",
-                &format!("Varde couldn't install the update. It will try again later.\n\n{e}"),
-            ),
-        }
-    });
-}
-
-/// Run `varde-agent update` next to this exe. Ok(Some) = a newer release was
-/// applied (binaries swapped); Ok(None) = nothing applied, and the CLI's
-/// own message ("already up to date" / "feed has no package") is shown.
-#[cfg(target_os = "macos")]
-fn apply_via_agent() -> anyhow::Result<Option<String>> {
-    use anyhow::Context as _;
-    let exe = std::env::current_exe().context("resolve exe")?;
-    let agent = exe.with_file_name("varde-agent");
-    anyhow::ensure!(agent.exists(), "no varde-agent next to {}", exe.display());
-    let out = std::process::Command::new(&agent)
-        .arg("update")
-        .output()
-        .context("run varde-agent update")?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    anyhow::ensure!(out.status.success(), "varde-agent update: {}", text.trim());
-    Ok(text.contains("updated to").then_some(text))
 }
 
 /// Relaunch the app after the binaries under it changed. Outside a bundle

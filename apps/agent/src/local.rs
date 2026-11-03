@@ -107,7 +107,22 @@ impl Hub {
             s.last_contact_unix_ms = view.last_contact_unix_ms;
             s.hosting = hosting(&a);
             s.rejoin = view.rejoin;
-            s.update = Some(crate::update::status_pb(&a.update.lock().unwrap()));
+            let prefs = crash_report::load_prefs(&self.data_dir);
+            let version = a
+                .update
+                .lock()
+                .unwrap()
+                .available
+                .as_ref()
+                .map(|v| v.version.clone());
+            let queued = version.is_some_and(|v| crate::update::queued(&self.data_dir, &v));
+            let hosting = is_hosting(&a);
+            s.update = Some(crate::update::status_pb(
+                &a.update.lock().unwrap(),
+                prefs.auto_update,
+                queued,
+                hosting,
+            ));
             let fresh = Duration::from_millis((view.heartbeat_interval_ms * 3).max(15_000) as u64);
             match *a.last_heartbeat_ok.lock().unwrap() {
                 _ if down => pb::State::ShuttingDown,
@@ -363,6 +378,11 @@ impl Hub {
     }
 }
 
+/// Whether this machine runs any game server right now.
+pub(crate) fn is_hosting(a: &Agent) -> bool {
+    !hosting(a).is_empty()
+}
+
 /// Executions on this machine that haven't ended, with their latest safe save.
 fn hosting(a: &Agent) -> Vec<pb::Hosting> {
     let cp = a.cp_view.lock().unwrap().clone();
@@ -600,11 +620,89 @@ impl pb::local_service_server::LocalService for Svc {
         }
         let prefs = crash_report::Prefs {
             crash_reporting: req.into_inner().enabled,
+            ..crash_report::load_prefs(&self.0.data_dir)
         };
         crash_report::save_prefs(&self.0.data_dir, &prefs)
             .map_err(|e| Status::internal(e.to_string()))?;
         self.0.bump();
         Ok(Response::new(pb::SetCrashReportingResponse {
+            status: Some(self.0.status()),
+        }))
+    }
+
+    async fn apply_update(
+        &self,
+        req: Request<pb::ApplyUpdateRequest>,
+    ) -> Result<Response<pb::ApplyUpdateResponse>, Status> {
+        let peer = req
+            .extensions()
+            .get::<PeerInfo>()
+            .cloned()
+            .unwrap_or_default();
+        let agent = self.0.agent.lock().unwrap().clone();
+        let Some(a) = agent else {
+            return Err(Status::failed_precondition("this machine isn't linked yet"));
+        };
+        let Some(version) = a
+            .update
+            .lock()
+            .unwrap()
+            .available
+            .as_ref()
+            .map(|v| v.version.clone())
+        else {
+            return Err(Status::failed_precondition("no update available"));
+        };
+        let hosting = is_hosting(&a);
+        // installing drains the server this machine hosts: same bar as
+        // stopping the service
+        if req.get_ref().now && hosting && !peer.is_admin {
+            return Err(Status::permission_denied(
+                "updating while hosting needs an administrator",
+            ));
+        }
+        if !req.get_ref().now || !hosting {
+            crate::update::queue_when_idle(&self.0.data_dir, &version)
+                .map_err(|e| Status::internal(e.to_string()))?;
+        }
+        let now = req.get_ref().now;
+        let hub = self.0.clone();
+        tokio::spawn(async move {
+            crate::update::maybe_apply(&a, now).await;
+            hub.bump();
+        });
+        // let the installing phase land before answering
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        self.0.bump();
+        Ok(Response::new(pb::ApplyUpdateResponse {
+            status: Some(self.0.status()),
+        }))
+    }
+
+    async fn set_auto_update(
+        &self,
+        req: Request<pb::SetAutoUpdateRequest>,
+    ) -> Result<Response<pb::SetAutoUpdateResponse>, Status> {
+        // staying current is the safe default; opting out is a machine
+        // policy decision
+        let peer = req
+            .extensions()
+            .get::<PeerInfo>()
+            .cloned()
+            .unwrap_or_default();
+        if !req.get_ref().enabled && !peer.is_admin {
+            return Err(Status::permission_denied(
+                "turning off automatic updates needs an administrator",
+            ));
+        }
+        let prefs = crash_report::Prefs {
+            auto_update: req.into_inner().enabled,
+            ..crash_report::load_prefs(&self.0.data_dir)
+        };
+        crash_report::save_prefs(&self.0.data_dir, &prefs)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        self.0.bump();
+        Ok(Response::new(pb::SetAutoUpdateResponse {
             status: Some(self.0.status()),
         }))
     }

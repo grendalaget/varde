@@ -34,6 +34,8 @@ const (
 	LocalService_CheckUpdate_FullMethodName       = "/varde.agent.v1.LocalService/CheckUpdate"
 	LocalService_SubmitCrashReport_FullMethodName = "/varde.agent.v1.LocalService/SubmitCrashReport"
 	LocalService_SetCrashReporting_FullMethodName = "/varde.agent.v1.LocalService/SetCrashReporting"
+	LocalService_ApplyUpdate_FullMethodName       = "/varde.agent.v1.LocalService/ApplyUpdate"
+	LocalService_SetAutoUpdate_FullMethodName     = "/varde.agent.v1.LocalService/SetAutoUpdate"
 )
 
 // LocalServiceClient is the client API for LocalService service.
@@ -55,6 +57,13 @@ type LocalServiceClient interface {
 	SubmitCrashReport(ctx context.Context, in *SubmitCrashReportRequest, opts ...grpc.CallOption) (*SubmitCrashReportResponse, error)
 	// Turns crash-report upload on or off (persisted on the machine).
 	SetCrashReporting(ctx context.Context, in *SetCrashReportingRequest, opts ...grpc.CallOption) (*SetCrashReportingResponse, error)
+	// Installs the update the checker found. now = install even while this
+	// machine hosts (drains the server; administrators only); otherwise it
+	// installs as soon as the machine isn't hosting (queued, persisted).
+	ApplyUpdate(ctx context.Context, in *ApplyUpdateRequest, opts ...grpc.CallOption) (*ApplyUpdateResponse, error)
+	// Turns automatic update installs on or off (persisted on the machine).
+	// Turning them off needs an administrator.
+	SetAutoUpdate(ctx context.Context, in *SetAutoUpdateRequest, opts ...grpc.CallOption) (*SetAutoUpdateResponse, error)
 }
 
 type localServiceClient struct {
@@ -144,6 +153,26 @@ func (c *localServiceClient) SetCrashReporting(ctx context.Context, in *SetCrash
 	return out, nil
 }
 
+func (c *localServiceClient) ApplyUpdate(ctx context.Context, in *ApplyUpdateRequest, opts ...grpc.CallOption) (*ApplyUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApplyUpdateResponse)
+	err := c.cc.Invoke(ctx, LocalService_ApplyUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *localServiceClient) SetAutoUpdate(ctx context.Context, in *SetAutoUpdateRequest, opts ...grpc.CallOption) (*SetAutoUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetAutoUpdateResponse)
+	err := c.cc.Invoke(ctx, LocalService_SetAutoUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LocalServiceServer is the server API for LocalService service.
 // All implementations must embed UnimplementedLocalServiceServer
 // for forward compatibility.
@@ -163,6 +192,13 @@ type LocalServiceServer interface {
 	SubmitCrashReport(context.Context, *SubmitCrashReportRequest) (*SubmitCrashReportResponse, error)
 	// Turns crash-report upload on or off (persisted on the machine).
 	SetCrashReporting(context.Context, *SetCrashReportingRequest) (*SetCrashReportingResponse, error)
+	// Installs the update the checker found. now = install even while this
+	// machine hosts (drains the server; administrators only); otherwise it
+	// installs as soon as the machine isn't hosting (queued, persisted).
+	ApplyUpdate(context.Context, *ApplyUpdateRequest) (*ApplyUpdateResponse, error)
+	// Turns automatic update installs on or off (persisted on the machine).
+	// Turning them off needs an administrator.
+	SetAutoUpdate(context.Context, *SetAutoUpdateRequest) (*SetAutoUpdateResponse, error)
 	mustEmbedUnimplementedLocalServiceServer()
 }
 
@@ -193,6 +229,12 @@ func (UnimplementedLocalServiceServer) SubmitCrashReport(context.Context, *Submi
 }
 func (UnimplementedLocalServiceServer) SetCrashReporting(context.Context, *SetCrashReportingRequest) (*SetCrashReportingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetCrashReporting not implemented")
+}
+func (UnimplementedLocalServiceServer) ApplyUpdate(context.Context, *ApplyUpdateRequest) (*ApplyUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApplyUpdate not implemented")
+}
+func (UnimplementedLocalServiceServer) SetAutoUpdate(context.Context, *SetAutoUpdateRequest) (*SetAutoUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetAutoUpdate not implemented")
 }
 func (UnimplementedLocalServiceServer) mustEmbedUnimplementedLocalServiceServer() {}
 func (UnimplementedLocalServiceServer) testEmbeddedByValue()                      {}
@@ -334,6 +376,42 @@ func _LocalService_SetCrashReporting_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LocalService_ApplyUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalServiceServer).ApplyUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalService_ApplyUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalServiceServer).ApplyUpdate(ctx, req.(*ApplyUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LocalService_SetAutoUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetAutoUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalServiceServer).SetAutoUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalService_SetAutoUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalServiceServer).SetAutoUpdate(ctx, req.(*SetAutoUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LocalService_ServiceDesc is the grpc.ServiceDesc for LocalService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -364,6 +442,14 @@ var LocalService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetCrashReporting",
 			Handler:    _LocalService_SetCrashReporting_Handler,
+		},
+		{
+			MethodName: "ApplyUpdate",
+			Handler:    _LocalService_ApplyUpdate_Handler,
+		},
+		{
+			MethodName: "SetAutoUpdate",
+			Handler:    _LocalService_SetAutoUpdate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

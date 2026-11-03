@@ -33,6 +33,10 @@ pub struct TrayView {
     pub service_running: bool,
     /// "Update to x.y.z" when the agent's checker found a newer release.
     pub update_label: Option<String>,
+    /// The update item is clickable (not mid-install).
+    pub update_enabled: bool,
+    /// Agent-side pref: install updates whenever this PC isn't hosting.
+    pub auto_update: bool,
     /// User pref (agent-side): upload captured crash reports to this
     /// machine's control plane.
     pub crash_reporting: bool,
@@ -53,6 +57,8 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
             relink: false,
             service_running: false,
             update_label: None,
+            update_enabled: false,
+            auto_update: true,
             crash_reporting: true,
         };
     };
@@ -113,12 +119,25 @@ pub fn tray_view(status: Option<&pb::Status>, now_ms: i64) -> TrayView {
         relink: linked,
         service_running: true,
         crash_reporting: s.crash_reporting,
-        update_label: s
-            .update
-            .as_ref()
-            .filter(|u| !u.available_version.is_empty())
-            .map(|u| format!("Update to {}", u.available_version)),
+        update_label: update_line(s),
+        update_enabled: s.update.as_ref().is_none_or(|u| u.phase != "installing"),
+        auto_update: s.update.as_ref().is_none_or(|u| u.auto),
     }
+}
+
+/// The pending update in words: "Update to 1.2.0", "Installing 1.2.0…",
+/// "Update to 1.2.0 (installs when hosting ends)"; None = up to date.
+pub fn update_line(s: &pb::Status) -> Option<String> {
+    let u = s
+        .update
+        .as_ref()
+        .filter(|u| !u.available_version.is_empty())?;
+    let v = &u.available_version;
+    Some(match u.phase.as_str() {
+        "installing" => format!("Installing {v}…"),
+        "waiting" => format!("Update to {v} (installs when hosting ends)"),
+        _ => format!("Update to {v}"),
+    })
 }
 
 /// "Latest safe save: 3 min ago on nas, gaming-pc (offline)" — the newest
@@ -308,6 +327,13 @@ pub struct UiStatus {
     pub relink: bool,
     /// Where the newest save lives, while hosting (same line as the tray).
     pub save_line: Option<String>,
+    /// The pending update (same line as the tray); None = up to date.
+    pub update_line: Option<String>,
+    pub update_installing: bool,
+    /// Why the last install failed; empty when fine.
+    pub update_error: String,
+    /// Installs happen by themselves whenever this PC isn't hosting.
+    pub auto_update: bool,
 }
 
 impl UiStatus {
@@ -341,6 +367,14 @@ impl From<&pb::Status> for UiStatus {
             hosting: !s.hosting.is_empty(),
             relink: link.relink,
             save_line: None,
+            update_line: update_line(s),
+            update_installing: s.update.as_ref().is_some_and(|u| u.phase == "installing"),
+            update_error: s
+                .update
+                .as_ref()
+                .map(|u| u.apply_error.clone())
+                .unwrap_or_default(),
+            auto_update: s.update.as_ref().is_none_or(|u| u.auto),
         }
     }
 }
@@ -361,6 +395,10 @@ pub struct Launch {
     pub autostart: bool,
     pub service_start: bool,
     pub service_stop: bool,
+    /// Elevated headless "Update now" while hosting.
+    pub update_now: bool,
+    /// Elevated headless "turn automatic updates off".
+    pub auto_update_off: bool,
     /// varde:// deep link (federated sign-in callback).
     pub deep_link: Option<String>,
 }
@@ -380,6 +418,8 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
             "--autostart" => l.autostart = true,
             "--service-start" => l.service_start = true,
             "--service-stop" => l.service_stop = true,
+            "--update-now" => l.update_now = true,
+            "--auto-update-off" => l.auto_update_off = true,
             _ if a.starts_with("varde://") => l.deep_link = Some(a),
             _ => {}
         }
@@ -649,6 +689,8 @@ mod tests {
         assert!(l.relink_start && !l.relink);
         assert!(p(&["--service-start"]).service_start);
         assert!(p(&["--service-stop"]).service_stop);
+        assert!(p(&["--update-now"]).update_now);
+        assert!(p(&["--auto-update-off"]).auto_update_off);
         let l = p(&["varde://auth/callback?token=t.jwt"]);
         assert_eq!(
             l.deep_link.as_deref(),
@@ -700,6 +742,31 @@ mod tests {
         let mut s2 = status(pb::State::Connecting);
         s2.control_plane_url = String::new();
         assert_eq!(facet(Some(&s2), false, false), Facet::Setup);
+    }
+
+    #[test]
+    fn update_line_follows_phase() {
+        let mut s = status(pb::State::Online);
+        assert_eq!(update_line(&s), None);
+        s.update = Some(pb::Update {
+            available_version: "1.2.0".into(),
+            auto: true,
+            ..Default::default()
+        });
+        assert_eq!(update_line(&s).as_deref(), Some("Update to 1.2.0"));
+        s.update.as_mut().unwrap().phase = "waiting".into();
+        assert_eq!(
+            update_line(&s).as_deref(),
+            Some("Update to 1.2.0 (installs when hosting ends)")
+        );
+        s.update.as_mut().unwrap().phase = "installing".into();
+        assert_eq!(update_line(&s).as_deref(), Some("Installing 1.2.0…"));
+        let v = tray_view(Some(&s), 0);
+        assert!(!v.update_enabled);
+        assert!(v.auto_update);
+        let u = UiStatus::from_status(&s, 0);
+        assert!(u.update_installing);
+        assert_eq!(u.update_line.as_deref(), Some("Installing 1.2.0…"));
     }
 
     #[test]
