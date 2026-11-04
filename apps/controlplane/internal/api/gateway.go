@@ -1,11 +1,24 @@
 package api
 
 import (
+	"encoding/json"
 	"github.com/grendalaget/varde/apps/controlplane/internal/api/gen"
 	"github.com/grendalaget/varde/apps/controlplane/internal/catalog"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 	"github.com/grendalaget/varde/go/gatewaytoken"
 )
+
+func (s *Server) serverDirectiveConfig(srv *store.Server) map[string]any {
+	var cfg map[string]any
+	_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+	if publicURL := s.gatewayPublicURL(srv); publicURL != "" {
+		if cfg == nil {
+			cfg = map[string]any{}
+		}
+		cfg["public_url"] = publicURL
+	}
+	return cfg
+}
 
 func (s *Server) requireGateway(game *catalog.Game) error {
 	if game != nil && game.GatewayPort != 0 && s.Cfg.Gateway == nil {

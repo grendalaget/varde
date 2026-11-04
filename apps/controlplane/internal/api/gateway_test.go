@@ -111,3 +111,22 @@ func TestTournamentGatewayFollowsLease(t *testing.T) {
 		t.Error("server rename or failover changed the public identity")
 	}
 }
+
+func TestTournamentStandbyReceivesPublicConfig(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Cfg.Gateway = &api.GatewayConf{URL: "wss://gateway.example.org/v1/tunnel", Domain: "example.site"}
+	a, b := e.newAgent("host"), e.newAgent("standby")
+	a.heartbeatCaps(nil, tournamentCaps())
+	b.heartbeatCaps(nil, tournamentCaps())
+	id := e.createServer("autotournament", "Tournament", map[string]any{"preferred_node_id": a.nodeID, "config": map[string]any{"licence": "noncommercial", "public_url": "https://wrong.example.org"}})
+	e.startToRunning(id, a, b)
+	e.reconcile()
+	if e.standbyOf(id) != b.nodeID {
+		t.Fatal("standby not assigned")
+	}
+	d, _ := b.heartbeatCaps(nil, tournamentCaps())
+	view := e.mustOK(e.do("GET", "/v1/servers/"+id, nil, e.token))
+	if len(d.Standby) != 1 || d.Standby[0].Config["public_url"] != view["public_url"] || d.Standby[0].Config["licence"] != "noncommercial" {
+		t.Fatalf("standby config = %+v", d.Standby)
+	}
+}
