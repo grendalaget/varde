@@ -419,15 +419,58 @@ async fn fetch_into(
 }
 
 fn validate_symlinks(root: &Path) -> Result<()> {
+    fn components(path: &Path) -> Result<std::collections::VecDeque<std::ffi::OsString>> {
+        path.components()
+            .filter_map(|part| match part {
+                Component::Normal(name) => Some(Ok(name.to_os_string())),
+                Component::ParentDir => Some(Ok("..".into())),
+                Component::CurDir => None,
+                _ => Some(Err("unsafe OCI symlink escape".into())),
+            })
+            .collect()
+    }
+    fn resolve(root: &Path, link: &Path) -> Result<()> {
+        let mut pending = components(link)?;
+        let mut resolved = PathBuf::new();
+        let mut links = 0;
+        while let Some(part) = pending.pop_front() {
+            if part == ".." {
+                if !resolved.pop() {
+                    return Err("unsafe OCI symlink escape".into());
+                }
+                continue;
+            }
+            resolved.push(part);
+            let path = root.join(&resolved);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    links += 1;
+                    if links > 40 {
+                        return Err("OCI symlink chain too deep or cyclic".into());
+                    }
+                    let target = std::fs::read_link(path)?;
+                    resolved.pop();
+                    for part in components(&target)?.into_iter().rev() {
+                        pending.push_front(part);
+                    }
+                }
+                Ok(_) => (),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
     fn walk(dir: &Path, root: &Path) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let kind = entry.file_type()?;
             if kind.is_symlink() {
-                let target = std::fs::canonicalize(entry.path())?;
-                if !target.starts_with(root) {
-                    return Err("unsafe OCI symlink escape".into());
-                }
+                resolve(root, entry.path().strip_prefix(root)?)?;
             } else if kind.is_dir() {
                 walk(&entry.path(), root)?;
             }
@@ -1035,18 +1078,51 @@ mod tests {
                 b"executable"
             );
         }
-        for entries in [
-            vec![("app/link", b'2', "missing")],
-            vec![("app/a", b'2', "b"), ("app/b", b'2', "a")],
-        ] {
-            let fake = registry(vec![layer(&entries)], false, None).await;
-            let temp = tempfile::tempdir().unwrap();
-            assert!(HttpRuntimes::new(temp.path().to_path_buf())
-                .fetch_oci(&fake.spec)
-                .await
-                .is_err());
-            assert!(!walk_complete(temp.path()));
-        }
+        let fake = registry(
+            vec![layer(&[("app/a", b'2', "b"), ("app/b", b'2', "a")])],
+            false,
+            None,
+        )
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        assert!(HttpRuntimes::new(temp.path().to_path_buf())
+            .fetch_oci(&fake.spec)
+            .await
+            .is_err());
+        assert!(!walk_complete(temp.path()));
+    }
+
+    #[tokio::test]
+    async fn partial_paths_allow_dangling_symlink_targets_within_root() {
+        let mut fake = registry(
+            vec![layer(&[
+                ("app/start", b'2', "alias"),
+                ("app/alias", b'2', "../shared/tool"),
+                ("app/dangling", b'2', "missing"),
+                ("shared/tool", b'0', "outside selected paths"),
+            ])],
+            false,
+            None,
+        )
+        .await;
+        fake.spec.paths = vec!["/app".into()];
+        let temp = tempfile::tempdir().unwrap();
+        let provider = HttpRuntimes::new(temp.path().to_path_buf());
+        let root = provider.fetch_oci(&fake.spec).await.unwrap();
+        assert_eq!(
+            std::fs::read_link(root.join("app/alias")).unwrap(),
+            Path::new("../shared/tool")
+        );
+        assert!(std::fs::symlink_metadata(root.join("app/start"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::symlink_metadata(root.join("app/dangling"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!root.join("shared").exists());
+        assert_eq!(provider.fetch_oci(&fake.spec).await.unwrap(), root);
     }
 
     #[tokio::test]
@@ -1118,6 +1194,11 @@ mod tests {
             .to_string()
             .contains("symlink escape"));
         assert!(safe_link(Path::new("second"), Path::new("../outside")).is_err());
+        std::fs::remove_file(temp.path().join("outside")).unwrap();
+        assert!(validate_symlinks(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("symlink escape"));
     }
 
     #[tokio::test]
