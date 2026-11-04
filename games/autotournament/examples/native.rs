@@ -96,6 +96,7 @@ async fn main() -> Result<()> {
                 std::fs::write(root.join("snapshot-id"), snapshot.id.to_string())?;
                 let manifest = store.manifest(&snapshot.id)?;
                 assert!(manifest.files.iter().all(|f| f.path == "database.dump"
+                    || f.path == "database.dump.id"
                     || f.path == "data"
                     || f.path.starts_with("data/")));
                 println!(

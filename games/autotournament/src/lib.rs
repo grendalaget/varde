@@ -120,48 +120,89 @@ async fn dump(ctx: &DriverContext<'_>) -> Result<()> {
     let mut cmd = pg_command(ctx, "pg_dump")?;
     cmd.arg("--format=custom").arg("--file").arg(&tmp);
     command(cmd).await?;
-    tokio::fs::rename(tmp, ctx.server_dir.join("database.dump")).await?;
-    let identity = dump_identity(ctx.server_dir.join("database.dump")).await?;
+    let identity = publish_dump(ctx.server_dir).await?;
     remember_dump(&ctx.server_dir.join("postgres"), &identity).await?;
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct DumpIdentity {
+    id: String,
+    sha256: String,
+}
+
+fn dump_hash(path: &Path) -> Result<Option<String>> {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 65536];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    Ok(Some(hex::encode(hash.finalize())))
+}
+
+async fn publish_dump(server: &Path) -> Result<Vec<u8>> {
+    let partial = server.join("database.dump.partial");
+    let path = partial.clone();
+    let sha256 = tokio::task::spawn_blocking(move || dump_hash(&path))
+        .await??
+        .ok_or("autotournament: pending database dump missing")?;
+    let identity = serde_json::to_vec(&DumpIdentity {
+        id: secret(),
+        sha256,
+    })?;
+    let id_partial = server.join("database.dump.id.partial");
+    tokio::fs::write(&id_partial, &identity).await?;
+    tokio::fs::rename(partial, server.join("database.dump")).await?;
+    tokio::fs::rename(id_partial, server.join("database.dump.id")).await?;
+    Ok(identity)
+}
+
 async fn dump_identity(path: PathBuf) -> Result<Vec<u8>> {
     tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        use std::io::Read;
-        let mut file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        let Some(sha256) = dump_hash(&path)? else {
+            return Ok(Vec::new());
+        };
+        let bytes = match std::fs::read(path.with_file_name("database.dump.id")) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(serde_json::to_vec(
+                    &serde_json::json!({"legacy": true, "sha256": sha256}),
+                )?);
+            }
             Err(e) => return Err(e.into()),
         };
-        let metadata = file.metadata()?;
-        let mut hash = Sha256::new();
-        let mut buffer = [0; 65536];
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 { break; }
-            hash.update(&buffer[..n]);
+        let identity: DumpIdentity = serde_json::from_slice(&bytes)?;
+        if identity.sha256 != sha256
+            || identity.id.len() != 64
+            || hex::decode(&identity.id).is_err()
+        {
+            return Err("autotournament: database dump identity mismatch".into());
         }
-        let identity = serde_json::json!({
-            "sha256": hex::encode(hash.finalize()),
-            "modified_ns": metadata.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos().to_string(),
-        });
-        #[cfg(unix)]
-        let identity = {
-            let mut identity = identity;
-            use std::os::unix::fs::MetadataExt;
-            identity["file"] = serde_json::json!([metadata.dev(), metadata.ino()]);
-            identity["changed"] = serde_json::json!([metadata.ctime(), metadata.ctime_nsec()]);
-            identity
-        };
         Ok(serde_json::to_vec(&identity)?)
-    }).await?
+    })
+    .await?
 }
 
 fn needs_restore(cluster: &Path, identity: &[u8]) -> bool {
     !cluster.join(".varde-ready").exists()
         || (!identity.is_empty()
-            && std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity))
+            && (cluster.join(".varde-dirty").exists()
+                || std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity)))
+}
+
+async fn mark_cluster_dirty(cluster: &Path) -> Result<()> {
+    tokio::fs::write(cluster.join(".varde-dirty"), b"dirty").await?;
+    Ok(())
 }
 
 async fn remember_dump(cluster: &Path, identity: &[u8]) -> Result<()> {
@@ -209,7 +250,11 @@ impl GameDriver for AutoTournamentDriver {
         }]
     }
     fn persistent_paths(&self, _: &serde_json::Value) -> Vec<PathPattern> {
-        vec![PathPattern::new("database.dump"), PathPattern::new("data/")]
+        vec![
+            PathPattern::new("database.dump"),
+            PathPattern::new("database.dump.id"),
+            PathPattern::new("data/"),
+        ]
     }
     fn validate(&self, config: &serde_json::Value) -> Result<()> {
         if !matches!(
@@ -443,6 +488,7 @@ impl GameDriver for AutoTournamentDriver {
             install.postgres.join("lib").into_os_string(),
         )];
         drop(pg_reservation);
+        mark_cluster_dirty(&cluster).await?;
         let pg: Arc<dyn ProcessHandle> = executor.spawn(&pg).await?.into();
         let result = async {
             let mut ready = false;
@@ -531,9 +577,10 @@ impl GameDriver for AutoTournamentDriver {
     }
     async fn resume_after_snapshot(
         &self,
-        _: &DriverContext<'_>,
+        ctx: &DriverContext<'_>,
         p: &dyn ProcessHandle,
     ) -> Result<()> {
+        mark_cluster_dirty(&ctx.server_dir.join("postgres")).await?;
         p.write_stdin("resume").await
     }
     fn snapshot_after_stop(&self) -> bool {
@@ -551,7 +598,9 @@ impl GameDriver for AutoTournamentDriver {
         } else {
             p.kill().await
         };
-        dumped.and(stopped)
+        dumped.and(stopped)?;
+        tokio::fs::remove_file(ctx.server_dir.join("postgres/.varde-dirty")).await?;
+        Ok(())
     }
     fn join_code_from_log(&self, line: &str) -> Option<String> {
         let candidate = line.split_once("enter this code: ")?.1;

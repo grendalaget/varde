@@ -90,25 +90,46 @@ async fn restored_dump_is_authoritative_over_a_ready_cluster() {
     std::fs::create_dir(&cluster).unwrap();
     std::fs::write(cluster.join(".varde-ready"), "ok").unwrap();
     assert!(!needs_restore(&cluster, &[]));
-    std::fs::write(&dump, "first dump").unwrap();
-    let first = dump_identity(dump.clone()).await.unwrap();
+    let partial = tmp.path().join("database.dump.partial");
+    std::fs::write(&partial, "identical dump").unwrap();
+    let first = publish_dump(tmp.path()).await.unwrap();
+    assert_eq!(dump_identity(dump.clone()).await.unwrap(), first);
     assert!(needs_restore(&cluster, &first));
     remember_dump(&cluster, &first).await.unwrap();
     assert!(!needs_restore(&cluster, &first));
-    std::fs::write(&dump, "newer dump").unwrap();
-    let second = dump_identity(dump.clone()).await.unwrap();
+    mark_cluster_dirty(&cluster).await.unwrap();
+    assert!(needs_restore(&cluster, &first));
+    // A final dump after frontend shutdown has its own identity, even for identical bytes.
+    std::fs::write(&partial, "identical dump").unwrap();
+    let second = publish_dump(tmp.path()).await.unwrap();
+    assert_ne!(first, second);
     assert!(needs_restore(&cluster, &second));
     remember_dump(&cluster, &second).await.unwrap();
+    std::fs::remove_file(cluster.join(".varde-dirty")).unwrap();
     assert!(!needs_restore(&cluster, &second));
     // Even an identical restored dump must roll back any post-snapshot DB writes.
-    std::fs::write(tmp.path().join("restored"), "newer dump").unwrap();
-    std::fs::rename(tmp.path().join("restored"), &dump).unwrap();
+    std::fs::write(tmp.path().join("database.dump.id"), &first).unwrap();
     let restored = dump_identity(dump.clone()).await.unwrap();
     assert!(needs_restore(&cluster, &restored));
     std::fs::write(cluster.join(".varde-dump"), "invalid").unwrap();
     assert!(needs_restore(&cluster, &restored));
     assert!(!needs_restore(&cluster, &[]));
     assert!(dump_identity(cluster.clone()).await.is_err());
+}
+
+#[tokio::test]
+async fn dump_identity_handles_legacy_missing_and_corrupt_sidecars() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = tmp.path().join("database.dump");
+    std::fs::write(&dump, "legacy dump").unwrap();
+    assert!(!dump_identity(dump.clone()).await.unwrap().is_empty());
+    let id = tmp.path().join("database.dump.id");
+    std::fs::write(&id, "invalid").unwrap();
+    assert!(dump_identity(dump.clone()).await.is_err());
+    std::fs::write(tmp.path().join("database.dump.partial"), "new dump").unwrap();
+    publish_dump(tmp.path()).await.unwrap();
+    std::fs::write(&dump, "interrupted publication").unwrap();
+    assert!(dump_identity(dump).await.is_err());
 }
 
 #[tokio::test]
@@ -155,6 +176,7 @@ fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
     let patterns = AutoTournamentDriver.persistent_paths(&json!({}));
     for path in [
         "database.dump",
+        "database.dump.id",
         "data/varde-api-token",
         "data/modules/cs2/module.json",
         "data/demos/deep/demo.dem",
@@ -167,6 +189,7 @@ fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
         "settings.json",
         "postgres-password",
         "database.dump.partial",
+        "database.dump.id.partial",
     ] {
         assert!(!patterns.iter().any(|p| p.matches(path, true)), "{path}");
     }
