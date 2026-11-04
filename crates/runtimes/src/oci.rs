@@ -364,7 +364,29 @@ async fn fetch_into(
         })
         .await?;
     }
+    let root = staging.join("root");
+    spawn_fs(move || validate_symlinks(&root)).await?;
     Ok(())
+}
+
+fn validate_symlinks(root: &Path) -> Result<()> {
+    fn walk(dir: &Path, root: &Path) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                let target = std::fs::canonicalize(entry.path())?;
+                if !target.starts_with(root) {
+                    return Err("unsafe OCI symlink escape".into());
+                }
+            } else if kind.is_dir() {
+                walk(&entry.path(), root)?;
+            }
+        }
+        Ok(())
+    }
+    let root = std::fs::canonicalize(root)?;
+    walk(&root, &root)
 }
 
 #[derive(Default)]
@@ -891,6 +913,57 @@ mod tests {
         let mut no_paths = fake.spec.clone();
         no_paths.paths.clear();
         assert!(provider.fetch_oci(&no_paths).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn symlink_chains_are_checked_after_all_layers() {
+        for links_first in [true, false] {
+            let links = layer(&[
+                ("app/start", b'2', "bin/alias"),
+                ("app/bin/alias", b'2', "tool"),
+            ]);
+            let files = layer(&[("app/bin/tool", b'0', "executable")]);
+            let layers = if links_first {
+                vec![links, files]
+            } else {
+                vec![files, links]
+            };
+            let fake = registry(layers, false, None).await;
+            let temp = tempfile::tempdir().unwrap();
+            let provider = HttpRuntimes::new(temp.path().to_path_buf());
+            let root = provider.fetch_oci(&fake.spec).await.unwrap();
+            assert_eq!(
+                std::fs::read(root.join("app/start")).unwrap(),
+                b"executable"
+            );
+        }
+        for entries in [
+            vec![("app/link", b'2', "missing")],
+            vec![("app/a", b'2', "b"), ("app/b", b'2', "a")],
+        ] {
+            let fake = registry(vec![layer(&entries)], false, None).await;
+            let temp = tempfile::tempdir().unwrap();
+            assert!(HttpRuntimes::new(temp.path().to_path_buf())
+                .fetch_oci(&fake.spec)
+                .await
+                .is_err());
+            assert!(!walk_complete(temp.path()));
+        }
+    }
+
+    #[test]
+    fn final_symlink_validation_rejects_effective_escape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(temp.path().join("outside"), "outside").unwrap();
+        std::os::unix::fs::symlink("../outside", root.join("second")).unwrap();
+        std::os::unix::fs::symlink("second", root.join("first")).unwrap();
+        assert!(validate_symlinks(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("symlink escape"));
+        assert!(safe_link(Path::new("second"), Path::new("../outside")).is_err());
     }
 
     #[tokio::test]
