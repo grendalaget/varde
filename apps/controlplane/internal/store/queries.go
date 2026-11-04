@@ -866,12 +866,25 @@ func (s *Store) SetServerStandby(ctx context.Context, id string, nodeID *string)
 }
 
 func (s *Store) UpdateServerMeta(ctx context.Context, srv *Server) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`UPDATE servers SET name=?, config_json=?, replication_factor=?, min_commit_replicas=?,
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		var previous string
+		if err := tx.GetContext(ctx, &previous, s.Rebind(`SELECT config_json FROM servers WHERE id=? AND deleted_at IS NULL`), srv.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(
+			`UPDATE servers SET name=?, config_json=?, replication_factor=?, min_commit_replicas=?,
 		 snapshot_interval_s=?, preferred_node_id=?, observed_state=?, updated_at=? WHERE id=?`),
-		srv.Name, srv.ConfigJSON, srv.ReplicationFactor, srv.MinCommitReplicas,
-		srv.SnapshotIntervalS, srv.PreferredNodeID, srv.ObservedState, srv.UpdatedAt, srv.ID)
-	return err
+			srv.Name, srv.ConfigJSON, srv.ReplicationFactor, srv.MinCommitReplicas,
+			srv.SnapshotIntervalS, srv.PreferredNodeID, srv.ObservedState, srv.UpdatedAt, srv.ID)
+		if err != nil || previous == srv.ConfigJSON {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE server_executions SET action='stop',stop_reason='user' WHERE server_id=? AND ended_at IS NULL AND action='run'`), srv.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest='',binding_error='',attempts=0,retry_at=0 WHERE server_id=?`), srv.ID)
+		return err
+	})
 }
 
 func (s *Store) SetObservedState(ctx context.Context, q Querier, id, state string, now int64) error {

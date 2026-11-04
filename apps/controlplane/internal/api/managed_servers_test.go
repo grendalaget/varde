@@ -206,6 +206,72 @@ func TestManagedOrphansStop(t *testing.T) {
 	}
 }
 
+func TestManagedConfigChangeRestartsAndReacknowledges(t *testing.T) {
+	e, hook, path := newManagedEnv(t)
+	e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+	a := e.newAgent("host")
+	a.heartbeatCaps(nil, tournamentCaps())
+	status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+	id := status["server_id"].(string)
+	_, oldID, oldEpoch := e.startToRunning(id, a)
+	if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "commercial"}}, e.token))
+	e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+	_, response := a.heartbeatCaps(nil, tournamentCaps())
+	var directives gen.AgentDirectives
+	if err := json.Unmarshal(response.Raw, &directives); err != nil {
+		t.Fatal(err)
+	}
+	if directives.Executions == nil || len(*directives.Executions) != 1 || (*directives.Executions)[0].Action != "stop" {
+		t.Fatal("config change did not stop the old execution")
+	}
+	row, err := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+	if err != nil || row.BindingDigest != "" {
+		t.Fatal("old binding acknowledgement survived config change")
+	}
+	e.mustOK(a.execStatus(oldID, id, oldEpoch, "stopped"))
+	e.reconcile()
+	next := managedDirective(t, a, id)
+	if next.ExecutionId == oldID || next.Epoch <= oldEpoch || (*next.Config)["licence"] != "commercial" {
+		t.Fatal("new execution does not have new config and epoch")
+	}
+	e.mustOK(a.execStatus(next.ExecutionId, id, next.Epoch, "running"))
+	if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if hook.calls.Load() != 2 {
+		t.Fatalf("hook calls = %d, want a fresh acknowledgement", hook.calls.Load())
+	}
+	e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+	if managedDirective(t, a, id).Action != "run" {
+		t.Fatal("unchanged config triggered another restart")
+	}
+}
+
+func TestServerConfigEditRestartsExecution(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("host")
+	id := e.createServer("testgame", "Config", nil)
+	_, execution, epoch := e.startToRunning(id, a)
+	e.mustOK(e.do("PATCH", "/v1/servers/"+id, map[string]any{"config": map[string]any{"message": "updated"}}, e.token))
+	d, _ := a.heartbeat(nil)
+	if len(d.Executions) != 1 || d.Executions[0].Action != "stop" {
+		t.Fatal("ordinary config edit did not request a graceful stop")
+	}
+	e.mustOK(a.execStatus(execution, id, epoch, "stopped"))
+	e.reconcile()
+	_, response := a.heartbeat(nil)
+	var actual gen.AgentDirectives
+	if err := json.Unmarshal(response.Raw, &actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Executions == nil || len(*actual.Executions) != 1 || (*(*actual.Executions)[0].Config)["message"] != "updated" || (*actual.Executions)[0].ExecutionId == execution {
+		t.Fatal("ordinary restart did not apply new config")
+	}
+}
+
 func managedDirective(t *testing.T, a *agent, serverID string) gen.ExecutionDirective {
 	t.Helper()
 	_, reply := a.heartbeatCaps(nil, tournamentCaps())

@@ -181,8 +181,12 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 		for key, value := range cfg {
 			existing[key] = value
 		}
-		_, err = s.Store.DB.ExecContext(ctx, s.Store.Rebind(`UPDATE servers SET config_json=?,updated_at=? WHERE id=?`), mustJSON(existing), s.Store.NowMs(), srv.ID)
-		if err != nil {
+		updated := mustJSON(existing)
+		if updated != srv.ConfigJSON {
+			row.BindingDigest = ""
+		}
+		srv.ConfigJSON, srv.UpdatedAt = updated, s.Store.NowMs()
+		if err := s.Store.UpdateServerMeta(ctx, srv); err != nil {
 			return nil, err
 		}
 	}
