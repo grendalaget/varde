@@ -20,12 +20,13 @@ import (
 )
 
 type managedHook struct {
-	calls atomic.Int64
-	fail  atomic.Bool
-	mu    sync.Mutex
-	url   string
-	token string
-	key   string
+	calls       atomic.Int64
+	fail        atomic.Bool
+	mu          sync.Mutex
+	url         string
+	token       string
+	key         string
+	beforeReply func()
 }
 
 func newManagedEnv(t *testing.T) (*env, *managedHook, string) {
@@ -55,7 +56,11 @@ func newManagedEnvManifest(t *testing.T, edit func(*plugins.Manifest)) (*env, *m
 		hook.url, _ = body.Settings["at_url"].(string)
 		hook.token, _ = body.Settings["at_token"].(string)
 		hook.key = r.Header.Get("Idempotency-Key")
+		beforeReply := hook.beforeReply
 		hook.mu.Unlock()
+		if beforeReply != nil {
+			beforeReply()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if hook.fail.Load() {
 			w.WriteHeader(http.StatusBadRequest)
@@ -214,6 +219,7 @@ func TestManagedConfigChangeRestartsAndReacknowledges(t *testing.T) {
 	status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
 	id := status["server_id"].(string)
 	_, oldID, oldEpoch := e.startToRunning(id, a)
+	reportManagedHealthy(t, e, a, id, oldID, oldEpoch)
 	if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +244,7 @@ func TestManagedConfigChangeRestartsAndReacknowledges(t *testing.T) {
 		t.Fatal("new execution does not have new config and epoch")
 	}
 	e.mustOK(a.execStatus(next.ExecutionId, id, next.Epoch, "running"))
+	reportManagedHealthy(t, e, a, id, next.ExecutionId, next.Epoch)
 	if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -313,6 +320,94 @@ func TestManagedStartReplacesDeletedServer(t *testing.T) {
 				t.Fatal("replacement is not unique")
 			}
 		})
+	}
+}
+
+func reportManagedHealthy(t *testing.T, e *env, a *agent, serverID, executionID string, epoch int64) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"server_id": serverID, "epoch": epoch, "state": "running", "health": "ok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mustOK(a.signedDo("POST", "/v1/agent/executions/"+executionID+"/status", body, 0, nil))
+}
+
+func TestManagedBindingDoesNotRestoreConcurrentGroupChanges(t *testing.T) {
+	for _, change := range []string{"delete", "manual"} {
+		t.Run(change, func(t *testing.T) {
+			e, hook, path := newManagedEnv(t)
+			e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+			a := e.newAgent("host")
+			a.heartbeatCaps(nil, tournamentCaps())
+			status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			id := status["server_id"].(string)
+			_, execution, epoch := e.startToRunning(id, a)
+			reportManagedHealthy(t, e, a, id, execution, epoch)
+			hook.mu.Lock()
+			hook.beforeReply = func() {
+				if change == "delete" {
+					if err := e.st.DeleteGroupPlugin(t.Context(), e.group, "managed-test"); err != nil {
+						t.Error(err)
+					}
+					return
+				}
+				group, err := e.st.GroupPlugin(t.Context(), e.group, "managed-test")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				var settings map[string]any
+				if err := json.Unmarshal([]byte(group.SettingsJSON), &settings); err != nil {
+					t.Error(err)
+					return
+				}
+				settings["hosting"] = "manual"
+				raw, _ := json.Marshal(settings)
+				group.SettingsJSON = string(raw)
+				if err := e.st.UpsertGroupPlugin(t.Context(), *group); err != nil {
+					t.Error(err)
+				}
+			}
+			hook.mu.Unlock()
+			if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			group, err := e.st.GroupPlugin(t.Context(), e.group, "managed-test")
+			if change == "delete" {
+				if err == nil {
+					t.Fatal("deleted plugin resurrected")
+				}
+			} else if err != nil || !strings.Contains(group.SettingsJSON, `"hosting":"manual"`) {
+				t.Fatal("concurrent mode change overwritten")
+			}
+			row, err := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+			if err != nil || row.BindingDigest != "" {
+				t.Fatal("stale hook response acknowledged")
+			}
+			if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			srv, err := e.st.GetServer(t.Context(), id)
+			if err != nil || srv.DesiredState != "stopped" {
+				t.Fatal("concurrent disable did not converge to stopped")
+			}
+		})
+	}
+}
+
+func TestManagedBindingCASDoesNotInsertDeletedGroup(t *testing.T) {
+	e, _, path := newManagedEnv(t)
+	e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+	group, err := e.st.GroupPlugin(t.Context(), e.group, "managed-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.DeleteGroupPlugin(t.Context(), e.group, "managed-test"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := e.st.CompareAndSwapGroupPluginSettings(t.Context(), group, group)
+	if err != nil || updated {
+		t.Fatal("binding CAS recreated a deleted group plugin")
 	}
 }
 

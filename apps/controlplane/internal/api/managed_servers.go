@@ -470,14 +470,18 @@ func (s *Server) reconcileManagedServer(ctx context.Context, groupID, pluginID s
 	if !s.managedPrimary() {
 		return nil
 	}
+	previous := *group
 	group.SettingsJSON, err = s.sealPluginSettings(groupID, plugin, maps.Clone(settings))
 	if err != nil {
 		return err
 	}
 	group.UpdatedAt = s.Store.NowMs()
-	if err := s.Store.UpsertGroupPlugin(ctx, *group); err != nil {
+	if updated, err := s.Store.CompareAndSwapGroupPluginSettings(ctx, &previous, group); err != nil {
 		return err
+	} else if !updated {
+		return nil
 	}
+	previous = *group
 	user := map[string]any{"id": group.EnabledBy, "role": "admin", "display_name": "Varde managed server"}
 	for _, field := range plugin.Settings {
 		if field.Secret || field.Type == "secret" || field.Hidden {
@@ -497,7 +501,11 @@ func (s *Server) reconcileManagedServer(ctx context.Context, groupID, pluginID s
 		return err
 	}
 	row.BindingDigest, row.BindingError, row.Attempts, row.RetryAt = key, "", 0, 0
-	return s.Store.CommitManagedPluginBinding(ctx, row, group)
+	err = s.Store.CommitManagedPluginBinding(ctx, row, &previous, group)
+	if errors.Is(err, store.ErrConflict) {
+		return nil
+	}
+	return err
 }
 
 func (s *Server) applyManagedBindings(ctx context.Context, plugin *plugins.Plugin, srv *store.Server, execution *store.Execution, settings map[string]any, secrets map[string]string) (bool, error) {

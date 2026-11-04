@@ -41,11 +41,25 @@ func (s *Store) UpdateManagedPluginBinding(ctx context.Context, row *ManagedPlug
 	return err
 }
 
-func (s *Store) CommitManagedPluginBinding(ctx context.Context, row *ManagedPluginServer, group *GroupPlugin) error {
+func (s *Store) CompareAndSwapGroupPluginSettings(ctx context.Context, previous, group *GroupPlugin) (bool, error) {
+	return s.compareAndSwapGroupPluginSettings(ctx, s.q(), previous, group)
+}
+
+func (s *Store) compareAndSwapGroupPluginSettings(ctx context.Context, q Querier, previous, group *GroupPlugin) (bool, error) {
+	res, err := q.ExecContext(ctx, s.Rebind(`UPDATE group_plugins SET settings_json=?,updated_at=? WHERE group_id=? AND plugin_id=? AND settings_json=? AND updated_at=? AND enabled_by=? AND created_at=?`), group.SettingsJSON, group.UpdatedAt, previous.GroupID, previous.PluginID, previous.SettingsJSON, previous.UpdatedAt, previous.EnabledBy, previous.CreatedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (s *Store) CommitManagedPluginBinding(ctx context.Context, row *ManagedPluginServer, previous, group *GroupPlugin) error {
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE group_plugins SET settings_json=?,updated_at=? WHERE group_id=? AND plugin_id=?`),
-			group.SettingsJSON, group.UpdatedAt, group.GroupID, group.PluginID); err != nil {
+		if updated, err := s.compareAndSwapGroupPluginSettings(ctx, tx, previous, group); err != nil {
 			return err
+		} else if !updated {
+			return ErrConflict
 		}
 		_, err := tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest=?,attempts=?,retry_at=?,binding_error=? WHERE group_id=? AND plugin_id=? AND server_id=?`),
 			row.BindingDigest, row.Attempts, row.RetryAt, row.BindingError, row.GroupID, row.PluginID, row.ServerID)
