@@ -79,6 +79,7 @@ pub(super) async fn fetch(provider: &HttpRuntimes, spec: &OciSpec) -> Result<Pat
     let paths = prefixes(spec)?;
     let registry = Registry::new(&spec.registry, &spec.repository)?;
     let key = hex::encode(Sha256::digest(serde_json::to_vec(&(
+        "oci-v2",
         &spec.registry,
         &spec.repository,
         &spec.os,
@@ -637,18 +638,24 @@ fn apply_layer(
             } else if kind.is_symlink() {
                 let target = entry.link_name()?.ok_or("OCI symlink missing target")?;
                 safe_link(&path, &target)?;
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&target, &output)?;
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_file(&target, &output)?;
-                #[cfg(not(any(unix, windows)))]
-                return Err("OCI symlinks unsupported on this platform".into());
+                create_symlink(&target, &output)?;
             } else {
                 return Err("unsupported OCI entry type".into());
             }
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, output: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, output)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_symlink(_target: &Path, _output: &Path) -> Result<()> {
+    Err("OCI symlinks unsupported on this platform".into())
 }
 
 fn safe_link(path: &Path, target: &Path) -> Result<()> {
@@ -669,6 +676,26 @@ fn safe_link(path: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_symlinks_without_guessing_target_type_or_requiring_privileges() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("directory")).unwrap();
+        std::fs::write(temp.path().join("file"), b"file").unwrap();
+        for target in ["directory", "file", "future"] {
+            let output = temp.path().join("link");
+            assert!(create_symlink(Path::new(target), &output)
+                .unwrap_err()
+                .to_string()
+                .contains("symlinks unsupported"));
+            assert!(std::fs::symlink_metadata(output).is_err());
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
