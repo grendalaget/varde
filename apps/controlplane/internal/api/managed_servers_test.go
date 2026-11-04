@@ -411,6 +411,47 @@ func TestManagedBindingCASDoesNotInsertDeletedGroup(t *testing.T) {
 	}
 }
 
+func TestManagedIntegerManifestDefault(t *testing.T) {
+	e, _, path := newManagedEnvManifest(t, func(m *plugins.Manifest) {
+		m.Settings = []plugins.Field{
+			{Name: "hosting", Type: "select", Default: "managed", Options: []string{"managed", "manual"}},
+			{Name: "tick", Type: "int", Default: 20},
+			{Name: "at_url", Type: "string", Required: true},
+		}
+		m.ManagedServer = &plugins.ManagedServer{Game: "testgame", ModeSetting: "hosting", Config: map[string]string{"tick_rate": "tick"}, Bindings: map[string]string{"at_url": "setup_code"}}
+	})
+	plugin, _ := e.srv.Plugins.Get("managed-test")
+	if _, ok := plugin.Settings[1].Default.(float64); !ok {
+		t.Fatalf("decoded default has type %T", plugin.Settings[1].Default)
+	}
+	raw, err := json.Marshal(plugin.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic, err := plugins.NewWithSecret(raw, "http://localhost:1234", "service-token", bytes.Repeat([]byte{1}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dynamic.Settings[1].Default.(float64); !ok {
+		t.Fatalf("dynamic default has type %T", dynamic.Settings[1].Default)
+	}
+	e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{}}, e.token))
+	a := e.newAgent("host")
+	a.heartbeat(nil)
+	status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+	srv, err := e.st.GetServer(t.Context(), status["server_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(srv.ConfigJSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["tick_rate"] != float64(20) {
+		t.Fatalf("tick_rate = %v", config["tick_rate"])
+	}
+}
+
 func managedDirective(t *testing.T, a *agent, serverID string) gen.ExecutionDirective {
 	t.Helper()
 	_, reply := a.heartbeatCaps(nil, tournamentCaps())
