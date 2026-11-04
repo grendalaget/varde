@@ -91,6 +91,45 @@ async fn restored_dump_is_authoritative_over_a_ready_cluster() {
     assert!(dump_identity(cluster.clone()).await.is_err());
 }
 
+#[tokio::test]
+async fn health_requires_the_api_response_and_uses_loopback_host() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for (status, body, healthy) in [
+        ("200 OK", r#"{"status":"ok"}"#, true),
+        ("200 OK", "", false),
+        ("200 OK", r#"{"status":"error"}"#, false),
+        ("503 Unavailable", r#"{"status":"ok"}"#, false),
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(conn.read_u8().await.unwrap());
+            }
+            assert!(String::from_utf8(request)
+                .unwrap()
+                .contains(&format!("host: 127.0.0.1:{port}")));
+            conn.write_all(
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        });
+        assert_eq!(health(port.into()).await.unwrap_or(false), healthy);
+        server.await.unwrap();
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    assert!(health(port.into()).await.is_err());
+}
+
 #[test]
 fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
     let patterns = AutoTournamentDriver.persistent_paths(&json!({}));
@@ -182,7 +221,7 @@ async fn configure_persists_secrets_maps_ports_and_constructs_process() {
     }
     let caddy = std::fs::read_to_string(dir.join("Caddyfile")).unwrap();
     assert!(caddy.contains("admin off"));
-    assert!(caddy.contains("http://127.0.0.1:23456 {\n\tbind 127.0.0.1"));
+    assert!(caddy.contains("http://:23456 {\n\tbind 127.0.0.1"));
     assert!(caddy.contains(&format!("127.0.0.1:{}", settings(&ctx).unwrap().api_port)));
     let spec = driver.process_spec(&ctx).unwrap();
     assert_eq!(spec.program, install.node);

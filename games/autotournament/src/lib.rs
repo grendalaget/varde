@@ -162,6 +162,32 @@ async fn remember_dump(cluster: &Path, identity: &[u8]) -> Result<()> {
     Ok(())
 }
 
+async fn health(port: u32) -> Result<bool> {
+    use http_body_util::BodyExt;
+    let socket = tokio::net::TcpStream::connect(("127.0.0.1", port as u16)).await?;
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket)).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let response = sender
+        .send_request(
+            hyper::Request::get("/health")
+                .header("host", format!("127.0.0.1:{port}"))
+                .body(http_body_util::Empty::<hyper::body::Bytes>::new())?,
+        )
+        .await?;
+    if response.status() != hyper::StatusCode::OK {
+        return Ok(false);
+    }
+    let body = http_body_util::Limited::new(response.into_body(), 4096)
+        .collect()
+        .await?
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    Ok(value.get("status").and_then(|s| s.as_str()) == Some("ok"))
+}
+
 #[async_trait]
 impl GameDriver for AutoTournamentDriver {
     fn id(&self) -> &'static str {
@@ -308,10 +334,7 @@ impl GameDriver for AutoTournamentDriver {
             .replace("{\n\tservers", "{\n\tadmin off\n\tservers")
             .replace(
                 ":3069 {",
-                &format!(
-                    "http://127.0.0.1:{} {{\n\tbind 127.0.0.1",
-                    ctx.local_port(PORT)
-                ),
+                &format!("http://:{} {{\n\tbind 127.0.0.1", ctx.local_port(PORT)),
             )
             .replace(
                 "localhost:3000",
@@ -482,23 +505,6 @@ impl GameDriver for AutoTournamentDriver {
         result
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
-        async fn health(port: u32) -> Result<bool> {
-            let socket = tokio::net::TcpStream::connect(("127.0.0.1", port as u16)).await?;
-            let (mut sender, conn) =
-                hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket)).await?;
-            tokio::spawn(async move {
-                let _ = conn.await;
-            });
-            Ok(sender
-                .send_request(
-                    hyper::Request::get("/health")
-                        .header("host", "localhost")
-                        .body(http_body_util::Empty::<hyper::body::Bytes>::new())?,
-                )
-                .await?
-                .status()
-                .is_success())
-        }
         Ok(
             match tokio::time::timeout(Duration::from_secs(3), health(ctx.local_port(PORT))).await {
                 Ok(Ok(true)) => GameHealth::Healthy,
