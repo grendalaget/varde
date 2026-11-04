@@ -554,6 +554,12 @@ func (s *Server) MoveServer(ctx context.Context, req gen.MoveServerRequestObject
 	if target.ID == active.NodeID {
 		return nil, errResp(gen.Validation, "server is already on that node", nil)
 	}
+	if err := s.Recon.ValidateMoveTarget(ctx, srv, target.ID); err != nil {
+		if ae := activationErr(err); ae != nil {
+			return nil, errResp(gen.ErrorCode(ae.Code), ae.Message, ae.Details)
+		}
+		return nil, err
+	}
 	if reconciler.SupportsHandoff(srv.GameID) {
 		// warm handoff: the source keeps serving — freeze + live snapshot,
 		// pre-stage the target, then flip routes and transfer clients.

@@ -1074,6 +1074,10 @@ func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev
 	if err != nil {
 		return
 	}
+	if err := r.ValidateMoveTarget(ctx, srv, m.ToNodeID); err != nil {
+		r.failMigration(ctx, m)
+		return
+	}
 	reason := "handoff"
 	if err := s.Tx(ctx, func(tx *sqlx.Tx) error {
 		prev.Role = "draining"
@@ -1105,6 +1109,9 @@ func (r *Reconciler) flipMigration(ctx context.Context, m *store.Migration, prev
 // migration snapshot (bypasses scheduler; target was user-chosen). Warm moves
 // create it with role='incoming' so the source keeps serving until the flip.
 func (r *Reconciler) activateMigration(ctx context.Context, srv *store.Server, m *store.Migration) error {
+	if err := r.ValidateMoveTarget(ctx, srv, m.ToNodeID); err != nil {
+		return err
+	}
 	s := r.Store
 	now := s.NowMs()
 	targetNode, err := s.GetNode(ctx, m.ToNodeID)

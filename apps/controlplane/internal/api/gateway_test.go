@@ -130,3 +130,54 @@ func TestTournamentStandbyReceivesPublicConfig(t *testing.T) {
 		t.Fatalf("standby config = %+v", d.Standby)
 	}
 }
+
+func TestTournamentMoveRejectsAnchor(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Cfg.Gateway = &api.GatewayConf{URL: "wss://gateway.example.org/v1/tunnel", Domain: "example.site"}
+	a, b := e.newAgent("host"), e.newAgent("anchor")
+	a.heartbeatCaps(nil, tournamentCaps())
+	b.heartbeatCaps(nil, tournamentCaps())
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+b.nodeID, map[string]any{"anchor": true}, e.token))
+	id := e.createServer("autotournament", "Tournament", map[string]any{"config": map[string]any{"licence": "noncommercial"}})
+	e.startToRunning(id, a, b)
+	response := e.do("POST", "/v1/servers/"+id+"/move", map[string]any{"target_node_id": b.nodeID}, e.token)
+	if response.Status != 400 || response.Body["code"] != "group_pc_required" {
+		t.Fatalf("anchor move = %d %s", response.Status, response.Raw)
+	}
+	if moves, err := e.st.OpenMigrations(t.Context()); err != nil || len(moves) != 0 {
+		t.Fatalf("rejected move opened migrations: %+v %v", moves, err)
+	}
+	if active := e.activeExec(id); active == nil || active["node"] != a.nodeID {
+		t.Fatal("move changed the serving execution")
+	}
+}
+
+func TestTournamentMigrationRechecksAnchorEligibility(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Cfg.Gateway = &api.GatewayConf{URL: "wss://gateway.example.org/v1/tunnel", Domain: "example.site"}
+	a, b := e.newAgent("host"), e.newAgent("target")
+	a.heartbeatCaps(nil, tournamentCaps())
+	b.heartbeatCaps(nil, tournamentCaps())
+	id := e.createServer("autotournament", "Tournament", map[string]any{"preferred_node_id": a.nodeID, "config": map[string]any{"licence": "noncommercial"}})
+	_, execution, epoch := e.startToRunning(id, a, b)
+	e.mustOK(e.do("POST", "/v1/servers/"+id+"/move", map[string]any{"target_node_id": b.nodeID}, e.token))
+	e.mustOK(e.do("PATCH", "/v1/nodes/"+b.nodeID, map[string]any{"anchor": true}, e.token))
+	srv, err := e.st.GetServer(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := a.createSnapshot(execution, id, *srv.DeploymentID, epoch, "final", "snap_at_move", "99"); r.Status != 201 {
+		t.Fatalf("snapshot = %d %s", r.Status, r.Raw)
+	}
+	e.mustOK(a.execStatus(execution, id, epoch, "stopped"))
+	e.reconcile()
+	e.mustOK(b.replicaReady("snap_at_move"))
+	e.reconcile()
+	if active := e.activeExec(id); active != nil && active["node"] == b.nodeID {
+		t.Fatal("migration assigned serving lease to anchor")
+	}
+	var state string
+	if err := e.st.DB.Get(&state, `SELECT state FROM migrations WHERE server_id=?`, id); err != nil || state != "failed" {
+		t.Fatalf("migration state = %q, error %v", state, err)
+	}
+}

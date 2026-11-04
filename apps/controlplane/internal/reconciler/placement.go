@@ -29,3 +29,21 @@ func (r *Reconciler) placementGameView(ctx context.Context, srv *store.Server) (
 		Arch: game.Arch, Runtimes: game.Runtimes,
 	}, nil
 }
+
+func (r *Reconciler) ValidateMoveTarget(ctx context.Context, srv *store.Server, nodeID string) error {
+	game, err := r.placementGameView(ctx, srv)
+	if err != nil {
+		return err
+	}
+	node, err := r.Store.GetNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.GroupID != srv.GroupID {
+		return fmt.Errorf("target node not in group")
+	}
+	if reason := scheduler.ExclusionReason(game, scheduler.NodeView{Anchor: node.Anchor == 1}); reason != "" {
+		return &activationError{Code: "group_pc_required", Message: "This server needs a compatible PC in your group", Details: map[string]any{"reason": reason}}
+	}
+	return nil
+}
