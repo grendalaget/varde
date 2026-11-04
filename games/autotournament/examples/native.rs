@@ -97,6 +97,9 @@ async fn main() -> Result<()> {
                 let manifest = store.manifest(&snapshot.id)?;
                 assert!(manifest.files.iter().all(|f| f.path == "database.dump"
                     || f.path == "database.dump.id"
+                    || f.path == "database.manifest.json"
+                    || f.path == "database-dumps"
+                    || f.path.starts_with("database-dumps/")
                     || f.path == "data"
                     || f.path.starts_with("data/")));
                 println!(
@@ -104,9 +107,9 @@ async fn main() -> Result<()> {
                     snapshot.id, snapshot.file_count
                 );
                 println!(
-                    "snapshot barrier: {:?}; database.dump bytes: {}",
+                    "snapshot barrier: {:?}; database manifest bytes: {}",
                     barrier?,
-                    std::fs::metadata(server.join("database.dump"))?.len()
+                    std::fs::metadata(server.join("database.manifest.json"))?.len()
                 );
             }
             "stop" => break,

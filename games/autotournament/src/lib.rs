@@ -120,8 +120,7 @@ async fn dump(ctx: &DriverContext<'_>) -> Result<()> {
     let mut cmd = pg_command(ctx, "pg_dump")?;
     cmd.arg("--format=custom").arg("--file").arg(&tmp);
     command(cmd).await?;
-    let identity = publish_dump(ctx.server_dir).await?;
-    remember_dump(&ctx.server_dir.join("postgres"), &identity).await?;
+    publish_dump(ctx.server_dir).await?;
     Ok(())
 }
 
@@ -151,61 +150,166 @@ fn dump_hash(path: &Path) -> Result<Option<String>> {
 }
 
 async fn publish_dump(server: &Path) -> Result<Vec<u8>> {
-    let partial = server.join("database.dump.partial");
-    let path = partial.clone();
-    let sha256 = tokio::task::spawn_blocking(move || dump_hash(&path))
-        .await??
-        .ok_or("autotournament: pending database dump missing")?;
-    let identity = serde_json::to_vec(&DumpIdentity {
-        id: secret(),
-        sha256,
-    })?;
-    let id_partial = server.join("database.dump.id.partial");
-    tokio::fs::write(&id_partial, &identity).await?;
-    tokio::fs::rename(partial, server.join("database.dump")).await?;
-    tokio::fs::rename(id_partial, server.join("database.dump.id")).await?;
-    Ok(identity)
-}
-
-async fn dump_identity(path: PathBuf) -> Result<Vec<u8>> {
-    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        let Some(sha256) = dump_hash(&path)? else {
-            return Ok(Vec::new());
-        };
-        let bytes = match std::fs::read(path.with_file_name("database.dump.id")) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(serde_json::to_vec(
-                    &serde_json::json!({"legacy": true, "sha256": sha256}),
-                )?);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let identity: DumpIdentity = serde_json::from_slice(&bytes)?;
-        if identity.sha256 != sha256
-            || identity.id.len() != 64
-            || hex::decode(&identity.id).is_err()
-        {
-            return Err("autotournament: database dump identity mismatch".into());
+    let server = server.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let identity = stage_dump(&server)?;
+        let marker = server.join("postgres/.varde-dump");
+        if server.join("postgres/.varde-ready").exists() {
+            let current = read_dump(&server)?
+                .map(|dump| serde_json::from_slice::<serde_json::Value>(&dump.identity))
+                .transpose()?;
+            write_atomic(
+                &marker,
+                &serde_json::to_vec(&serde_json::json!({
+                    "current": current,
+                    "pending": serde_json::from_slice::<serde_json::Value>(&identity)?,
+                }))?,
+            )?;
         }
-        Ok(serde_json::to_vec(&identity)?)
+        // This rename is the commit point: the referenced immutable dump is complete.
+        write_atomic(&server.join("database.manifest.json"), &identity)?;
+        if server.join("postgres/.varde-ready").exists() {
+            write_atomic(&marker, &identity)?;
+        }
+        let selected: DumpIdentity = serde_json::from_slice(&identity)?;
+        if let Ok(entries) = std::fs::read_dir(server.join("database-dumps")) {
+            for entry in entries.flatten() {
+                if entry.path() != dump_file(&server, &selected) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = std::fs::remove_file(server.join("database.dump"));
+        let _ = std::fs::remove_file(server.join("database.dump.id"));
+        Ok(identity)
     })
     .await?
+}
+
+fn dump_file(server: &Path, identity: &DumpIdentity) -> PathBuf {
+    server
+        .join("database-dumps")
+        .join(format!("{}.dump", identity.id))
+}
+
+fn valid_dump_id(id: &str) -> bool {
+    id.len() == 64 && hex::decode(id).is_ok()
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(path)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let partial = path.with_extension("partial");
+    {
+        let mut file = std::fs::File::create(&partial)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(partial, path)?;
+    sync_directory(path.parent().unwrap())
+}
+
+fn stage_dump(server: &Path) -> Result<Vec<u8>> {
+    let partial = server.join("database.dump.partial");
+    let identity = DumpIdentity {
+        id: secret(),
+        sha256: dump_hash(&partial)?.ok_or("autotournament: pending database dump missing")?,
+    };
+    let file = dump_file(server, &identity);
+    std::fs::create_dir_all(file.parent().unwrap())?;
+    std::fs::rename(partial, &file)?;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&file)?
+        .sync_all()?;
+    sync_directory(file.parent().unwrap())?;
+    Ok(serde_json::to_vec(&identity)?)
+}
+
+struct DatabaseDump {
+    path: PathBuf,
+    identity: Vec<u8>,
+}
+
+fn read_dump(server: &Path) -> Result<Option<DatabaseDump>> {
+    match std::fs::read(server.join("database.manifest.json")) {
+        Ok(bytes) => {
+            let identity: DumpIdentity = serde_json::from_slice(&bytes)?;
+            if !valid_dump_id(&identity.id) {
+                return Err("autotournament: invalid database dump id".into());
+            }
+            let path = dump_file(server, &identity);
+            if dump_hash(&path)?.as_deref() != Some(&identity.sha256) {
+                return Err("autotournament: database dump identity mismatch".into());
+            }
+            return Ok(Some(DatabaseDump {
+                path,
+                identity: serde_json::to_vec(&identity)?,
+            }));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let path = server.join("database.dump");
+    let Some(sha256) = dump_hash(&path)? else {
+        return Ok(None);
+    };
+    // Legacy two-file publication could be interrupted. The dump itself was
+    // renamed whole; repair its digest, retaining any usable ownership ID.
+    let identity = match std::fs::read(server.join("database.dump.id")) {
+        Ok(bytes) => serde_json::from_slice::<DumpIdentity>(&bytes).ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let identity = match identity.filter(|identity| valid_dump_id(&identity.id)) {
+        Some(mut identity) => {
+            identity.sha256 = sha256;
+            serde_json::to_vec(&identity)?
+        }
+        None => serde_json::to_vec(&serde_json::json!({"legacy": true, "sha256": sha256}))?,
+    };
+    Ok(Some(DatabaseDump { path, identity }))
+}
+
+async fn load_dump(server: PathBuf) -> Result<Option<DatabaseDump>> {
+    tokio::task::spawn_blocking(move || read_dump(&server)).await?
 }
 
 fn needs_restore(cluster: &Path, identity: &[u8]) -> bool {
     // The current own dump means this cluster is equal or newer, even after a crash
     // or a restore of that same ID. Only a foreign or older dump replaces it.
-    !cluster.join(".varde-ready").exists()
-        || (!identity.is_empty()
-            && std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity))
+    fn key(value: &serde_json::Value) -> Option<&str> {
+        value
+            .get("id")
+            .or_else(|| value.get("sha256"))
+            .and_then(|v| v.as_str())
+    }
+    let owned = || -> Option<bool> {
+        let wanted: serde_json::Value = serde_json::from_slice(identity).ok()?;
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(cluster.join(".varde-dump")).ok()?).ok()?;
+        let id = key(&wanted)?;
+        Some(
+            key(&marker) == Some(id)
+                || key(&marker["current"]) == Some(id)
+                || key(&marker["pending"]) == Some(id),
+        )
+    };
+    !cluster.join(".varde-ready").exists() || (!identity.is_empty() && owned() != Some(true))
 }
 
 async fn remember_dump(cluster: &Path, identity: &[u8]) -> Result<()> {
-    let partial = cluster.join(".varde-dump.partial");
-    tokio::fs::write(&partial, identity).await?;
-    tokio::fs::rename(partial, cluster.join(".varde-dump")).await?;
-    Ok(())
+    let path = cluster.join(".varde-dump");
+    let bytes = identity.to_vec();
+    tokio::task::spawn_blocking(move || write_atomic(&path, &bytes)).await?
 }
 
 async fn health(port: u32) -> Result<bool> {
@@ -249,6 +353,8 @@ impl GameDriver for AutoTournamentDriver {
         vec![
             PathPattern::new("database.dump"),
             PathPattern::new("database.dump.id"),
+            PathPattern::new("database.manifest.json"),
+            PathPattern::new("database-dumps/"),
             PathPattern::new("data/"),
         ]
     }
@@ -447,8 +553,12 @@ impl GameDriver for AutoTournamentDriver {
         let settings = settings(ctx)?;
         let (api_reservation, pg_reservation) = reserve_ports(settings.api_port, settings.pg_port)?;
         let cluster = ctx.server_dir.join("postgres");
-        let identity = dump_identity(ctx.server_dir.join("database.dump")).await?;
-        let fresh = needs_restore(&cluster, &identity);
+        let dump = load_dump(ctx.server_dir.to_path_buf()).await?;
+        let identity = dump
+            .as_ref()
+            .map(|dump| dump.identity.as_slice())
+            .unwrap_or_default();
+        let fresh = needs_restore(&cluster, identity);
         if fresh {
             if cluster.exists() {
                 tokio::fs::remove_dir_all(&cluster).await?;
@@ -502,14 +612,16 @@ impl GameDriver for AutoTournamentDriver {
                 let mut create = pg_command(ctx, "createdb")?;
                 create.arg("autotournament");
                 command(create).await?;
-                if ctx.server_dir.join("database.dump").exists() {
+                if let Some(dump) = &dump {
                     let mut restore = pg_command(ctx, "pg_restore")?;
                     restore
                         .args(["--exit-on-error", "--no-owner", "--dbname=autotournament"])
-                        .arg(ctx.server_dir.join("database.dump"));
+                        .arg(&dump.path);
                     command(restore).await?;
                 }
-                remember_dump(&cluster, &identity).await?;
+            }
+            remember_dump(&cluster, identity).await?;
+            if fresh {
                 tokio::fs::write(cluster.join(".varde-ready"), b"ok").await?;
             }
             drop(api_reservation);

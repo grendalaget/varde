@@ -84,16 +84,16 @@ fn setup_code_from_boot_log() {
 async fn restored_dump_is_authoritative_over_a_ready_cluster() {
     let tmp = tempfile::tempdir().unwrap();
     let cluster = tmp.path().join("postgres");
-    let dump = tmp.path().join("database.dump");
-    assert!(dump_identity(dump.clone()).await.unwrap().is_empty());
+    let producer = tempfile::tempdir().unwrap();
+    assert!(load_dump(tmp.path().to_path_buf()).await.unwrap().is_none());
     assert!(needs_restore(&cluster, &[]));
     std::fs::create_dir(&cluster).unwrap();
     std::fs::write(cluster.join(".varde-ready"), "ok").unwrap();
     assert!(!needs_restore(&cluster, &[]));
-    let partial = tmp.path().join("database.dump.partial");
+    let partial = producer.path().join("database.dump.partial");
     std::fs::write(&partial, "identical dump").unwrap();
-    let first = publish_dump(tmp.path()).await.unwrap();
-    assert_eq!(dump_identity(dump.clone()).await.unwrap(), first);
+    let first = publish_dump(producer.path()).await.unwrap();
+    assert_eq!(read_dump(producer.path()).unwrap().unwrap().identity, first);
     assert!(needs_restore(&cluster, &first));
     remember_dump(&cluster, &first).await.unwrap();
     assert!(!needs_restore(&cluster, &first));
@@ -102,34 +102,93 @@ async fn restored_dump_is_authoritative_over_a_ready_cluster() {
     assert!(!needs_restore(&cluster, &first));
     // A final dump after frontend shutdown has its own identity, even for identical bytes.
     std::fs::write(&partial, "identical dump").unwrap();
-    let second = publish_dump(tmp.path()).await.unwrap();
+    let second = publish_dump(producer.path()).await.unwrap();
     assert_ne!(first, second);
     assert!(needs_restore(&cluster, &second));
     remember_dump(&cluster, &second).await.unwrap();
     assert!(!needs_restore(&cluster, &second));
     // Even an identical restored dump must roll back any post-snapshot DB writes.
-    std::fs::write(tmp.path().join("database.dump.id"), &first).unwrap();
-    let restored = dump_identity(dump.clone()).await.unwrap();
+    let restored = first;
     assert!(needs_restore(&cluster, &restored));
     std::fs::write(cluster.join(".varde-dump"), "invalid").unwrap();
     assert!(needs_restore(&cluster, &restored));
     assert!(!needs_restore(&cluster, &[]));
-    assert!(dump_identity(cluster.clone()).await.is_err());
 }
 
 #[tokio::test]
-async fn dump_identity_handles_legacy_missing_and_corrupt_sidecars() {
+async fn dump_identity_recovers_interrupted_legacy_publication() {
     let tmp = tempfile::tempdir().unwrap();
     let dump = tmp.path().join("database.dump");
     std::fs::write(&dump, "legacy dump").unwrap();
-    assert!(!dump_identity(dump.clone()).await.unwrap().is_empty());
+    assert!(read_dump(tmp.path()).unwrap().is_some());
     let id = tmp.path().join("database.dump.id");
     std::fs::write(&id, "invalid").unwrap();
-    assert!(dump_identity(dump.clone()).await.is_err());
+    assert!(read_dump(tmp.path()).unwrap().is_some());
+    let legacy = DumpIdentity {
+        id: secret(),
+        sha256: "old digest".into(),
+    };
+    std::fs::write(&id, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let repaired = read_dump(tmp.path()).unwrap().unwrap();
+    let repaired: DumpIdentity = serde_json::from_slice(&repaired.identity).unwrap();
+    assert_eq!(repaired.id, legacy.id);
+    assert_eq!(Some(repaired.sha256), dump_hash(&dump).unwrap());
     std::fs::write(tmp.path().join("database.dump.partial"), "new dump").unwrap();
     publish_dump(tmp.path()).await.unwrap();
-    std::fs::write(&dump, "interrupted publication").unwrap();
-    assert!(dump_identity(dump).await.is_err());
+    assert!(!dump.exists());
+    assert!(!id.exists());
+    assert!(read_dump(tmp.path()).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn interrupted_publication_keeps_a_consistent_owned_dump() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = tmp.path();
+    let cluster = server.join("postgres");
+    std::fs::create_dir(&cluster).unwrap();
+    std::fs::write(cluster.join(".varde-ready"), "ok").unwrap();
+    let partial = server.join("database.dump.partial");
+    assert!(publish_dump(server).await.is_err());
+    std::fs::write(&partial, "old snapshot").unwrap();
+    let first = publish_dump(server).await.unwrap();
+    assert!(!needs_restore(&cluster, &first));
+    std::fs::write(cluster.join("committed-after-dump"), "newer state").unwrap();
+    std::fs::write(&partial, "new snapshot").unwrap();
+    let second = stage_dump(server).unwrap();
+    // Crash before the manifest commit: both an orphan and a torn partial are ignored.
+    std::fs::write(server.join("database.manifest.partial"), "{").unwrap();
+    assert_eq!(read_dump(server).unwrap().unwrap().identity, first);
+    assert!(!needs_restore(&cluster, &first));
+    let pending = serde_json::to_vec(&json!({
+        "current": serde_json::from_slice::<serde_json::Value>(&first).unwrap(),
+        "pending": serde_json::from_slice::<serde_json::Value>(&second).unwrap(),
+    }))
+    .unwrap();
+    remember_dump(&cluster, &pending).await.unwrap();
+    assert!(!needs_restore(&cluster, &first));
+    // Crash after the commit but before the final ownership receipt.
+    write_atomic(&server.join("database.manifest.json"), &second).unwrap();
+    assert_eq!(read_dump(server).unwrap().unwrap().identity, second);
+    assert!(!needs_restore(&cluster, &second));
+    remember_dump(&cluster, &second).await.unwrap();
+    assert!(needs_restore(&cluster, &first));
+    std::fs::write(&partial, "final snapshot").unwrap();
+    publish_dump(server).await.unwrap();
+    assert_eq!(
+        std::fs::read_dir(server.join("database-dumps"))
+            .unwrap()
+            .count(),
+        1
+    );
+    let dump = read_dump(server).unwrap().unwrap();
+    std::fs::write(&dump.path, "corrupt").unwrap();
+    assert!(read_dump(server).is_err());
+    std::fs::write(
+        server.join("database.manifest.json"),
+        r#"{"id":"../escape","sha256":"bad"}"#,
+    )
+    .unwrap();
+    assert!(read_dump(server).is_err());
 }
 
 #[tokio::test]
@@ -177,6 +236,8 @@ fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
     for path in [
         "database.dump",
         "database.dump.id",
+        "database.manifest.json",
+        "database-dumps/dump.dump",
         "data/varde-api-token",
         "data/modules/cs2/module.json",
         "data/demos/deep/demo.dem",
@@ -190,6 +251,7 @@ fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
         "postgres-password",
         "database.dump.partial",
         "database.dump.id.partial",
+        "database.manifest.partial",
     ] {
         assert!(!patterns.iter().any(|p| p.matches(path, true)), "{path}");
     }
