@@ -107,7 +107,11 @@ function PluginSetup() {
   const [setupPluginId, setSetupPluginId] = useState<string | null>(null);
 
   if (!canAdmin(group.role)) return null;
-  if (catalog.loading || enabledPlugins.loading) return null;
+  if (
+    (catalog.loading && !catalog.data) ||
+    (enabledPlugins.loading && !enabledPlugins.data)
+  )
+    return null;
   const enabled = new Set(
     (enabledPlugins.data?.plugins ?? [])
       .filter((plugin) => plugin.enabled)
