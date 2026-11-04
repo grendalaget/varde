@@ -9,6 +9,7 @@ use executor_api::{Executor, ProcessHandle, ProcessSpec};
 use game_driver_api::*;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 mod process;
 #[cfg(test)]
@@ -111,6 +112,53 @@ async fn dump(ctx: &DriverContext<'_>) -> Result<()> {
     cmd.arg("--format=custom").arg("--file").arg(&tmp);
     command(cmd).await?;
     tokio::fs::rename(tmp, ctx.server_dir.join("database.dump")).await?;
+    let identity = dump_identity(ctx.server_dir.join("database.dump")).await?;
+    remember_dump(&ctx.server_dir.join("postgres"), &identity).await?;
+    Ok(())
+}
+
+async fn dump_identity(path: PathBuf) -> Result<Vec<u8>> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+        use std::io::Read;
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let metadata = file.metadata()?;
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 65536];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 { break; }
+            hash.update(&buffer[..n]);
+        }
+        let identity = serde_json::json!({
+            "sha256": hex::encode(hash.finalize()),
+            "modified_ns": metadata.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos().to_string(),
+        });
+        #[cfg(unix)]
+        let identity = {
+            let mut identity = identity;
+            use std::os::unix::fs::MetadataExt;
+            identity["file"] = serde_json::json!([metadata.dev(), metadata.ino()]);
+            identity["changed"] = serde_json::json!([metadata.ctime(), metadata.ctime_nsec()]);
+            identity
+        };
+        Ok(serde_json::to_vec(&identity)?)
+    }).await?
+}
+
+fn needs_restore(cluster: &Path, identity: &[u8]) -> bool {
+    !cluster.join(".varde-ready").exists()
+        || (!identity.is_empty()
+            && std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity))
+}
+
+async fn remember_dump(cluster: &Path, identity: &[u8]) -> Result<()> {
+    let partial = cluster.join(".varde-dump.partial");
+    tokio::fs::write(&partial, identity).await?;
+    tokio::fs::rename(partial, cluster.join(".varde-dump")).await?;
     Ok(())
 }
 
@@ -329,7 +377,8 @@ impl GameDriver for AutoTournamentDriver {
         let install = installation(ctx)?;
         let settings = settings(ctx)?;
         let cluster = ctx.server_dir.join("postgres");
-        let fresh = !cluster.join(".varde-ready").exists();
+        let identity = dump_identity(ctx.server_dir.join("database.dump")).await?;
+        let fresh = needs_restore(&cluster, &identity);
         if fresh {
             if cluster.exists() {
                 tokio::fs::remove_dir_all(&cluster).await?;
@@ -389,6 +438,7 @@ impl GameDriver for AutoTournamentDriver {
                         .arg(ctx.server_dir.join("database.dump"));
                     command(restore).await?;
                 }
+                remember_dump(&cluster, &identity).await?;
                 tokio::fs::write(cluster.join(".varde-ready"), b"ok").await?;
             }
             let node: Arc<dyn ProcessHandle> =

@@ -60,6 +60,37 @@ fn setup_code_from_boot_log() {
     }
 }
 
+#[tokio::test]
+async fn restored_dump_is_authoritative_over_a_ready_cluster() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cluster = tmp.path().join("postgres");
+    let dump = tmp.path().join("database.dump");
+    assert!(dump_identity(dump.clone()).await.unwrap().is_empty());
+    assert!(needs_restore(&cluster, &[]));
+    std::fs::create_dir(&cluster).unwrap();
+    std::fs::write(cluster.join(".varde-ready"), "ok").unwrap();
+    assert!(!needs_restore(&cluster, &[]));
+    std::fs::write(&dump, "first dump").unwrap();
+    let first = dump_identity(dump.clone()).await.unwrap();
+    assert!(needs_restore(&cluster, &first));
+    remember_dump(&cluster, &first).await.unwrap();
+    assert!(!needs_restore(&cluster, &first));
+    std::fs::write(&dump, "newer dump").unwrap();
+    let second = dump_identity(dump.clone()).await.unwrap();
+    assert!(needs_restore(&cluster, &second));
+    remember_dump(&cluster, &second).await.unwrap();
+    assert!(!needs_restore(&cluster, &second));
+    // Even an identical restored dump must roll back any post-snapshot DB writes.
+    std::fs::write(tmp.path().join("restored"), "newer dump").unwrap();
+    std::fs::rename(tmp.path().join("restored"), &dump).unwrap();
+    let restored = dump_identity(dump.clone()).await.unwrap();
+    assert!(needs_restore(&cluster, &restored));
+    std::fs::write(cluster.join(".varde-dump"), "invalid").unwrap();
+    assert!(needs_restore(&cluster, &restored));
+    assert!(!needs_restore(&cluster, &[]));
+    assert!(dump_identity(cluster.clone()).await.is_err());
+}
+
 #[test]
 fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
     let patterns = AutoTournamentDriver.persistent_paths(&json!({}));

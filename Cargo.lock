@@ -1716,6 +1716,7 @@ dependencies = [
  "runtimes",
  "serde",
  "serde_json",
+ "sha2",
  "snapshot-store",
  "tempfile",
  "tokio",
