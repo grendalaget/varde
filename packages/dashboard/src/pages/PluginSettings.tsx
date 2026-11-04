@@ -303,6 +303,11 @@ function PluginSettings({
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-1">
                 <h3 className="text-sm font-medium">Managed server</h3>
+                {(!phase || phase === "stopped") && (
+                  <p className="text-sm text-muted">
+                    Not running. Start picks one of your group&rsquo;s PCs to run it.
+                  </p>
+                )}
                 {!status.data && status.loading && (
                   <p className="text-sm text-muted">Checking status</p>
                 )}
