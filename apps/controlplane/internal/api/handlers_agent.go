@@ -402,6 +402,16 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		}
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+		if publicURL := s.gatewayPublicURL(srv); publicURL != "" {
+			if cfg == nil {
+				cfg = map[string]any{}
+			}
+			cfg["public_url"] = publicURL
+		}
+		ed.Gateway, err = s.executionGateway(srv, e, now)
+		if err != nil {
+			return d, err
+		}
 		ed.Config = &cfg
 		if e.Action == "run" && s.Secrets != nil {
 			ed.Addons = s.directiveServerAddons(ctx, srv)

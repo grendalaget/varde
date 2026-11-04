@@ -258,7 +258,17 @@ pub struct RestoreDirective {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionGateway {
+    pub gateway_url: String,
+    pub token: String,
+    pub service_port: i64,
+    pub expires_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionDirective {
+    #[serde(default)]
+    pub gateway: Option<ExecutionGateway>,
     pub execution_id: String,
     pub server_id: String,
     pub server_name: String,

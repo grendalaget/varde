@@ -148,6 +148,8 @@ func (e DeviceLinkState) Valid() bool {
 const (
 	Conflict              ErrorCode = "conflict"
 	Forbidden             ErrorCode = "forbidden"
+	GatewayUnconfigured   ErrorCode = "gateway_unconfigured"
+	GroupPcRequired       ErrorCode = "group_pc_required"
 	Internal              ErrorCode = "internal"
 	LatestSaveUnavailable ErrorCode = "latest_save_unavailable"
 	LimitExceeded         ErrorCode = "limit_exceeded"
@@ -167,6 +169,10 @@ func (e ErrorCode) Valid() bool {
 	case Conflict:
 		return true
 	case Forbidden:
+		return true
+	case GatewayUnconfigured:
+		return true
+	case GroupPcRequired:
 		return true
 	case Internal:
 		return true
@@ -1178,7 +1184,8 @@ type ExecutionDirective struct {
 	ExecutionId string `json:"execution_id"`
 
 	// Freeze true while an open warm migration pins this execution's world state (e.g. `tick freeze`) ahead of the handoff snapshot.
-	Freeze *bool `json:"freeze,omitempty"`
+	Freeze  *bool             `json:"freeze,omitempty"`
+	Gateway *ExecutionGateway `json:"gateway,omitempty"`
 
 	// LatestSafeSaveAtUnixMs created_at of the server's latest committed snapshot ("Latest safe save"); absent when it has none. Display only.
 	LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms,omitempty"`
@@ -1211,6 +1218,14 @@ type ExecutionDirectiveAction string
 // ExecutionDirectiveStopReason defines model for ExecutionDirective.StopReason.
 type ExecutionDirectiveStopReason string
 
+// ExecutionGateway defines model for ExecutionGateway.
+type ExecutionGateway struct {
+	ExpiresAtUnixMs int64  `json:"expires_at_unix_ms"`
+	GatewayUrl      string `json:"gateway_url"`
+	ServicePort     int    `json:"service_port"`
+	Token           string `json:"token"`
+}
+
 // ExecutionReport defines model for ExecutionReport.
 type ExecutionReport struct {
 	Epoch       int64          `json:"epoch"`
@@ -1238,13 +1253,19 @@ type Game struct {
 	AddonTargets  *[]string            `json:"addon_targets,omitempty"`
 	Arch          []string             `json:"arch"`
 	ConfigFields  []GameConfigField    `json:"config_fields"`
-	Id            string               `json:"id"`
-	MinDiskMb     *int64               `json:"min_disk_mb,omitempty"`
-	MinMemoryMb   int                  `json:"min_memory_mb"`
-	Name          string               `json:"name"`
-	Os            []GameOs             `json:"os"`
-	Ports         []GamePort           `json:"ports"`
-	Runtimes      *[]string            `json:"runtimes,omitempty"`
+
+	// ExcludeAnchors Require a group PC rather than a cloud anchor.
+	ExcludeAnchors *bool `json:"exclude_anchors,omitempty"`
+
+	// GatewayPort TCP service port published through the public gateway.
+	GatewayPort *int       `json:"gateway_port,omitempty"`
+	Id          string     `json:"id"`
+	MinDiskMb   *int64     `json:"min_disk_mb,omitempty"`
+	MinMemoryMb int        `json:"min_memory_mb"`
+	Name        string     `json:"name"`
+	Os          []GameOs   `json:"os"`
+	Ports       []GamePort `json:"ports"`
+	Runtimes    *[]string  `json:"runtimes,omitempty"`
 
 	// SteamApp Prefer a complete installed Steam app; otherwise provision using the catalog runtimes and min_disk_mb.
 	SteamApp *int64 `json:"steam_app,omitempty"`
@@ -1542,23 +1563,29 @@ type SaveHolder struct {
 
 // Server defines model for Server.
 type Server struct {
-	Config            map[string]interface{} `json:"config"`
-	CreatedAt         int64                  `json:"created_at"`
-	DeploymentId      *string                `json:"deployment_id,omitempty"`
-	DesiredState      DesiredState           `json:"desired_state"`
-	Epoch             int64                  `json:"epoch"`
-	GameId            string                 `json:"game_id"`
-	GroupId           string                 `json:"group_id"`
-	Id                string                 `json:"id"`
-	MinCommitReplicas int                    `json:"min_commit_replicas"`
-	Name              string                 `json:"name"`
-	ObservedState     ObservedState          `json:"observed_state"`
-	PreferredNodeId   *string                `json:"preferred_node_id,omitempty"`
-	ReplicationFactor int                    `json:"replication_factor"`
-	Service           *Service               `json:"service,omitempty"`
-	SnapshotIntervalS int                    `json:"snapshot_interval_s"`
-	Summary           ServerSummary          `json:"summary"`
-	UpdatedAt         int64                  `json:"updated_at"`
+	Config       map[string]interface{} `json:"config"`
+	CreatedAt    int64                  `json:"created_at"`
+	DeploymentId *string                `json:"deployment_id,omitempty"`
+	DesiredState DesiredState           `json:"desired_state"`
+	Epoch        int64                  `json:"epoch"`
+	GameId       string                 `json:"game_id"`
+
+	// GatewayLabel Immutable DNS-safe server identifier.
+	GatewayLabel      *string       `json:"gateway_label,omitempty"`
+	GroupId           string        `json:"group_id"`
+	Id                string        `json:"id"`
+	MinCommitReplicas int           `json:"min_commit_replicas"`
+	Name              string        `json:"name"`
+	ObservedState     ObservedState `json:"observed_state"`
+	PreferredNodeId   *string       `json:"preferred_node_id,omitempty"`
+
+	// PublicUrl Stable HTTPS origin when a gateway is configured.
+	PublicUrl         *string       `json:"public_url,omitempty"`
+	ReplicationFactor int           `json:"replication_factor"`
+	Service           *Service      `json:"service,omitempty"`
+	SnapshotIntervalS int           `json:"snapshot_interval_s"`
+	Summary           ServerSummary `json:"summary"`
+	UpdatedAt         int64         `json:"updated_at"`
 }
 
 // ServerAddon defines model for ServerAddon.

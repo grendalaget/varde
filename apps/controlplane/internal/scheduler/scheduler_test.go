@@ -18,6 +18,37 @@ func okNode(id string) NodeView {
 var testGame = GameView{ID: "testgame", MinMemoryMB: 1024, OS: []string{"linux"}, Arch: []string{"amd64"}}
 var testSrv = ServerView{ID: "srv_1", GameID: "testgame"}
 
+func TestExcludeAnchors(t *testing.T) {
+	game := testGame
+	game.ExcludeAnchors = true
+	anchor, pc := okNode("anchor"), okNode("pc")
+	anchor.Anchor = true
+	anchor.HasRestoreLocal = true
+	anchor.Priority = 100
+	srv := testSrv
+	srv.PreferredNodeID = anchor.ID
+	d, err := Place(srv, game, []NodeView{anchor, pc}, SnapView{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.NodeID != pc.ID {
+		t.Errorf("Place(exclude anchors, preferred anchor) = %s, want %s", d.NodeID, pc.ID)
+	}
+	for _, nodes := range [][]NodeView{{anchor}, nil} {
+		if _, err := Place(srv, game, nodes, SnapView{}); err == nil {
+			t.Errorf("Place(exclude anchors, nodes=%v) error = nil, want no eligible PC", nodes)
+		}
+	}
+	game.ExcludeAnchors = false
+	d, err = Place(srv, game, []NodeView{anchor, pc}, SnapView{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.NodeID != anchor.ID {
+		t.Errorf("Place(anchors allowed) = %s, want %s", d.NodeID, anchor.ID)
+	}
+}
+
 func TestPlacePicksOnlyEligible(t *testing.T) {
 	d, err := Place(testSrv, testGame, []NodeView{okNode("node_b"), okNode("node_a")}, SnapView{})
 	if err != nil {

@@ -23,7 +23,8 @@ func (r *Reconciler) placementGameView(ctx context.Context, srv *store.Server) (
 		targets = append(targets, addon.Target)
 	}
 	return scheduler.GameView{
-		ID: game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB,
+		ExcludeAnchors: game.ExcludeAnchors,
+		ID:             game.ID, MinMemoryMB: game.MinMemoryMB, MinDiskMB: game.MinDiskMB,
 		SteamApp: game.SteamApp, OS: catalog.PlacementOS(game, targets),
 		Arch: game.Arch, Runtimes: game.Runtimes,
 	}, nil

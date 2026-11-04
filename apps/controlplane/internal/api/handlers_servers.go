@@ -57,6 +57,12 @@ func genGame(g *catalog.Game) gen.Game {
 		MinMemoryMb: int(g.MinMemoryMB), Runtimes: &g.Runtimes, AddonTargets: addonTargets,
 		AddonTargetOs: addonTargetOS, ConfigFields: fields,
 	}
+	if g.GatewayPort != 0 {
+		out.GatewayPort = &g.GatewayPort
+	}
+	if g.ExcludeAnchors {
+		out.ExcludeAnchors = &g.ExcludeAnchors
+	}
 	if g.MinDiskMB > 0 {
 		out.MinDiskMb = &g.MinDiskMB
 	}
@@ -85,6 +91,7 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 	_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
 	crossplay := crossplayEnabled(srv.GameID, cfg)
 	v := gen.Server{
+		GatewayLabel:      srv.GatewayLabel,
 		Id:                srv.ID,
 		GroupId:           srv.GroupID,
 		Name:              srv.Name,
@@ -100,6 +107,14 @@ func (s *Server) serverView(ctx context.Context, srv *store.Server) (gen.Server,
 		Config:            cfg,
 		CreatedAt:         srv.CreatedAt,
 		UpdatedAt:         srv.UpdatedAt,
+	}
+	if u := s.gatewayPublicURL(srv); u != "" {
+		v.GatewayLabel = srv.GatewayLabel
+		v.PublicUrl = &u
+		if v.Config == nil {
+			v.Config = map[string]any{}
+		}
+		v.Config["public_url"] = u
 	}
 
 	// service
@@ -224,6 +239,9 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	game := catalog.Get(b.GameId)
 	if game == nil {
 		return nil, errResp(gen.Validation, "unknown game_id", map[string]any{"game_id": b.GameId})
+	}
+	if err := s.requireGateway(game); err != nil {
+		return nil, err
 	}
 	cfg := map[string]any{}
 	if b.Config != nil {
@@ -427,6 +445,9 @@ func (s *Server) StartServer(ctx context.Context, req gen.StartServerRequestObje
 	}
 	u, _, err := s.requireRole(ctx, srv.GroupID, "member")
 	if err != nil {
+		return nil, err
+	}
+	if err := s.requireGateway(catalog.Get(srv.GameID)); err != nil {
 		return nil, err
 	}
 	if srv.DesiredState == "running" {

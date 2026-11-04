@@ -20,13 +20,14 @@ type ServerView struct {
 // GameView describes the catalog entry for the server's game. A nil OS slice
 // is unrestricted; a non-nil empty slice means no OS is eligible.
 type GameView struct {
-	ID          string
-	MinMemoryMB int64
-	MinDiskMB   int64
-	SteamApp    int64 // installed app is preferred; otherwise runtimes provision it
-	OS          []string
-	Arch        []string
-	Runtimes    []string
+	ExcludeAnchors bool
+	ID             string
+	MinMemoryMB    int64
+	MinDiskMB      int64
+	SteamApp       int64 // installed app is preferred; otherwise runtimes provision it
+	OS             []string
+	Arch           []string
+	Runtimes       []string
 }
 
 // NodeView is what Place needs to know about a candidate node.
@@ -92,6 +93,10 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 
 	for _, n := range sorted {
 		who := cmp.Or(n.Name, n.ID)
+		if game.ExcludeAnchors && n.Anchor {
+			reasons = append(reasons, who+": requires a group PC (cloud anchors excluded)")
+			continue
+		}
 		if !n.Online {
 			reasons = append(reasons, who+": offline")
 			continue

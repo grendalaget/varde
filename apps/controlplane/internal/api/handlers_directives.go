@@ -29,6 +29,12 @@ func directivesDigest(d gen.AgentDirectives) string {
 		for i := range executions {
 			execution := &executions[i]
 			execution.LeaseExpiresAtUnixMs = 0
+			if execution.Gateway != nil {
+				gateway := *execution.Gateway
+				gateway.Token = ""
+				gateway.ExpiresAtUnixMs = 0
+				execution.Gateway = &gateway
+			}
 			if execution.LatestSafeSaveOn != nil {
 				holders := append([]gen.SaveHolder(nil), (*execution.LatestSafeSaveOn)...)
 				for j := range holders {

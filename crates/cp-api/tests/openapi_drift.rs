@@ -89,6 +89,7 @@ fn agent_schemas_in_sync() {
     check::<cp_api::AgentDirectives>("AgentDirectives");
     check::<cp_api::AgentDirectivesWait>("AgentDirectivesWait");
     check::<cp_api::ExecutionDirective>("ExecutionDirective");
+    check::<cp_api::ExecutionGateway>("ExecutionGateway");
     check::<cp_api::DirectivePeer>("DirectivePeer");
     check::<cp_api::DirectiveRoute>("DirectiveRoute");
     check::<cp_api::DirectiveRelay>("DirectiveRelay");

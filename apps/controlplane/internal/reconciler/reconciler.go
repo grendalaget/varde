@@ -656,6 +656,9 @@ func (r *Reconciler) activateWith(ctx context.Context, srv *store.Server, recove
 			if srv.DesiredState == "running" {
 				_ = s.SetObservedState(ctx, s.DB, srv.ID, "failed", now)
 			}
+			if gv.ExcludeAnchors {
+				return &activationError{Code: "group_pc_required", Message: "This server needs a compatible PC in your group", Details: map[string]any{"reasons": serr.Reasons}}
+			}
 			return &activationError{Code: "unschedulable", Message: err.Error(), Details: map[string]any{"reasons": serr.Reasons}}
 		}
 		return err

@@ -3,13 +3,14 @@
     "id": "autotournament",
     "name": "Auto Tournament",
     "ports": [{ "port": 3069, "protocol": "tcp" }],
+    "gateway_port": 3069,
+    "exclude_anchors": true,
     "os": ["linux"],
     "arch": ["x86_64"],
     "min_memory_mb": 2048,
     "min_disk_mb": 2048,
     "runtimes": ["native"],
     "config_fields": [
-      { "name": "public_url", "label": "Public URL", "type": "string", "required": true, "help": "HTTP(S) origin, without a path prefix" },
       { "name": "licence", "label": "Accept the Auto Tournament licence", "type": "select", "options": ["noncommercial", "commercial"], "required": true },
       { "name": "api_token", "label": "API token", "type": "secret", "secret": true, "required": false, "help": "At least 16 URL-safe characters; generated and persisted when absent" },
       { "name": "steam_web_api_key", "label": "Steam Web API key", "type": "secret", "secret": true, "required": false }

@@ -34,6 +34,7 @@ type Config struct {
 	Dev         bool
 	Timings     reconciler.Timings
 	Relays      []RelayConf
+	Gateway     *GatewayConf
 	Version     string
 	Operators   map[string]struct{}
 }
@@ -50,6 +51,12 @@ type PluginManager interface {
 type RelayConf struct {
 	ID   string
 	Addr string
+}
+
+// GatewayConf declares the public hostname domain and outbound tunnel endpoint.
+type GatewayConf struct {
+	URL    string
+	Domain string
 }
 
 // Server implements gen.StrictServerInterface.
@@ -146,7 +153,7 @@ func statusFor(code gen.ErrorCode) int {
 		return http.StatusConflict
 	case gen.LimitExceeded:
 		return http.StatusForbidden
-	case gen.Validation, gen.Unschedulable:
+	case gen.Validation, gen.Unschedulable, gen.GroupPcRequired, gen.GatewayUnconfigured:
 		return http.StatusBadRequest
 	case gen.PluginUnavailable:
 		return http.StatusBadGateway

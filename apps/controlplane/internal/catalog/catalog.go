@@ -32,18 +32,20 @@ type ConfigField struct {
 }
 
 type Game struct {
-	ID            string              `json:"id"`
-	Name          string              `json:"name"`
-	Ports         []Port              `json:"ports"`
-	OS            []string            `json:"os"`
-	Arch          []string            `json:"arch"`
-	MinMemoryMB   int64               `json:"min_memory_mb"`
-	MinDiskMB     int64               `json:"min_disk_mb,omitempty"`
-	SteamApp      int64               `json:"steam_app,omitempty"`
-	Runtimes      []string            `json:"runtimes"`
-	AddonTargets  []string            `json:"addon_targets"`
-	AddonTargetOS map[string][]string `json:"addon_target_os,omitempty"`
-	ConfigFields  []ConfigField       `json:"config_fields"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Ports          []Port              `json:"ports"`
+	GatewayPort    int                 `json:"gateway_port,omitempty"`
+	ExcludeAnchors bool                `json:"exclude_anchors,omitempty"`
+	OS             []string            `json:"os"`
+	Arch           []string            `json:"arch"`
+	MinMemoryMB    int64               `json:"min_memory_mb"`
+	MinDiskMB      int64               `json:"min_disk_mb,omitempty"`
+	SteamApp       int64               `json:"steam_app,omitempty"`
+	Runtimes       []string            `json:"runtimes"`
+	AddonTargets   []string            `json:"addon_targets"`
+	AddonTargetOS  map[string][]string `json:"addon_target_os,omitempty"`
+	ConfigFields   []ConfigField       `json:"config_fields"`
 }
 
 var games []Game
@@ -54,6 +56,20 @@ func init() {
 	}
 	if err := validateAddonTargetOS(games); err != nil {
 		panic("catalog: " + err.Error())
+	}
+	for _, game := range games {
+		if game.GatewayPort == 0 {
+			continue
+		}
+		found := false
+		for _, port := range game.Ports {
+			if port.Port == game.GatewayPort && port.Protocol == "tcp" && port.Port > 0 && port.Port <= 65535 {
+				found = true
+			}
+		}
+		if !found {
+			panic(fmt.Sprintf("catalog: game %q gateway_port must name a TCP port", game.ID))
+		}
 	}
 }
 
