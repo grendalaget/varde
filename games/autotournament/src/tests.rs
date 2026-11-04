@@ -284,7 +284,7 @@ async fn configure_persists_secrets_maps_ports_and_constructs_process() {
     std::fs::create_dir(dir.join("app")).unwrap();
     std::fs::write(
         dir.join("app/Caddyfile"),
-        "{\n\tservers {}\n}\n:3069 {\nreverse_proxy /health localhost:3000\nroot * /app/public\n}",
+        "{\n\tservers {\ntrusted_proxies static {$TRUSTED_PROXIES:private_ranges}\n}\n}\n:3069 {\nreverse_proxy /health localhost:3000\nroot * /app/public\n}",
     )
     .unwrap();
     let install = Installation {
@@ -326,6 +326,7 @@ async fn configure_persists_secrets_maps_ports_and_constructs_process() {
     }
     let caddy = std::fs::read_to_string(dir.join("Caddyfile")).unwrap();
     assert!(caddy.contains("admin off"));
+    assert!(caddy.contains("trusted_proxies static 127.0.0.1/32 ::1/128"));
     assert!(caddy.contains("http://:23456 {\n\tbind 127.0.0.1"));
     assert!(caddy.contains(&format!("127.0.0.1:{}", settings(&ctx).unwrap().api_port)));
     let spec = driver.process_spec(&ctx).unwrap();

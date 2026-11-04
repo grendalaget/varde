@@ -485,6 +485,10 @@ impl GameDriver for AutoTournamentDriver {
         let caddy = std::fs::read_to_string(install.app.join("Caddyfile"))?
             .replace("{\n\tservers", "{\n\tadmin off\n\tservers")
             .replace(
+                "trusted_proxies static {$TRUSTED_PROXIES:private_ranges}",
+                "trusted_proxies static 127.0.0.1/32 ::1/128",
+            )
+            .replace(
                 ":3069 {",
                 &format!("http://:{} {{\n\tbind 127.0.0.1", ctx.local_port(PORT)),
             )

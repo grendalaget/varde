@@ -125,6 +125,9 @@ type Node struct {
 	metrics     *metrics
 	connInbound sync.Map      // *quic.Conn → bool (was inbound)
 	flowSeq     atomic.Uint64 // node-wide UDP flow ids (peer-side maps key on them)
+	gatewayMu   sync.Mutex
+	gateways    map[string]*hostedGateway
+	gateClosed  bool
 }
 
 func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node {
@@ -136,6 +139,7 @@ func NewNode(log *slog.Logger, timings Timings, reg *prometheus.Registry) *Node 
 		relays:     map[string]*relayClient{},
 		routes:     map[string]*routeState{},
 		hosted:     map[string]*hostedService{},
+		gateways:   map[string]*hostedGateway{},
 		internal:   map[string]uint32{},
 		events:     newEventBus(),
 		startedAt:  time.Now(),
@@ -239,6 +243,7 @@ func quicConfig() *quic.Config {
 }
 
 func (n *Node) Close() {
+	n.closeGateways()
 	if n.cancel != nil {
 		n.cancel()
 	}

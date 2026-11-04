@@ -1,4 +1,4 @@
-GO_MODULES := go apps/controlplane apps/relay apps/mesh tests/e2e
+GO_MODULES := go apps/controlplane apps/relay apps/gateway apps/mesh tests/e2e
 BIN := bin
 
 export PATH := $(HOME)/go/bin:$(PATH)
@@ -29,6 +29,7 @@ build:
 	@mkdir -p $(BIN)
 	(cd apps/controlplane && go build -o ../../$(BIN)/varde-control-plane .)
 	(cd apps/relay && go build -o ../../$(BIN)/varde-relay .)
+	(cd apps/gateway && go build -o ../../$(BIN)/varde-gateway .)
 	(cd apps/mesh && go build -o ../../$(BIN)/varde-mesh .)
 	cp target/debug/varde-agent $(BIN)/varde-agent
 	@if [ "$$(uname -s)" = Linux ]; then cp target/debug/libcs2_bind.so $(BIN)/; fi
@@ -58,6 +59,7 @@ test-bins:
 	@mkdir -p $(BIN)
 	(cd apps/controlplane && go build -o ../../$(BIN)/varde-control-plane .)
 	(cd apps/relay && go build -o ../../$(BIN)/varde-relay .)
+	(cd apps/gateway && go build -o ../../$(BIN)/varde-gateway .)
 	(cd apps/mesh && go build -o ../../$(BIN)/varde-mesh .)
 	cargo build --bins
 

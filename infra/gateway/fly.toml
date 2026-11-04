@@ -1,0 +1,38 @@
+app = "varde-gateway"
+primary_region = "arn"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  VARDE_GATEWAY_LISTEN = ":8443"
+  VARDE_GATEWAY_DOMAIN = "servers.example.com"
+  VARDE_GATEWAY_CP_KEY = "https://cp.varde.games/v1/relay/public-key"
+  VARDE_GATEWAY_TLS_CERT = "/etc/gateway/tls.crt"
+  VARDE_GATEWAY_TLS_KEY = "/etc/gateway/tls.key"
+  VARDE_GATEWAY_METRICS = "[::]:9090"
+
+[[files]]
+  guest_path = "/etc/gateway/tls.crt"
+  secret_name = "GATEWAY_TLS_CERT"
+[[files]]
+  guest_path = "/etc/gateway/tls.key"
+  secret_name = "GATEWAY_TLS_KEY"
+
+# Raw TCP: Fly must not terminate TLS or rewrite the Host/forwarded headers.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8443
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 443
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -19,6 +19,8 @@ service MeshService {
   rpc SetRoutes(SetRoutesRequest) returns (SetRoutesResponse);
   // Host side: services this node accepts inbound traffic for.
   rpc SetHostedServices(SetHostedServicesRequest) returns (SetHostedServicesResponse);
+  // Public gateway tunnels hosted by this node; declarative full replacement.
+  rpc SetGatewayTunnels(SetGatewayTunnelsRequest) returns (SetGatewayTunnelsResponse);
   // Agent-internal services (e.g. "agent.chunks") reachable by group peers.
   rpc SetInternalServices(SetInternalServicesRequest) returns (SetInternalServicesResponse);
   // Retired: unauthenticated loopback internal forwards are no longer supported.
@@ -162,6 +164,17 @@ message HostedService {
 }
 message SetHostedServicesRequest { repeated HostedService services = 1; }
 message SetHostedServicesResponse {}
+
+message GatewayTunnel {
+  string service_id = 1;
+  // wss://<gateway>/v1/tunnel. The signed token binds hostname and lease epoch.
+  string gateway_url = 2;
+  string token = 3;
+  // Local TCP destination on 127.0.0.1; not the mesh service port.
+  uint32 target_port = 4;
+}
+message SetGatewayTunnelsRequest { repeated GatewayTunnel tunnels = 1; }
+message SetGatewayTunnelsResponse {}
 
 message InternalService {
   string name = 1;
