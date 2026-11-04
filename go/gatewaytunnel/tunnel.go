@@ -23,7 +23,6 @@ type Config struct {
 	TargetAddr        string
 	HTTPClient        *http.Client
 	AllowInsecureHTTP bool // Loopback-only test mode.
-	MaxStreams        int
 }
 
 // YamuxConfig is shared by both ends of the tunnel, including its heartbeat.
@@ -63,9 +62,6 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.Token == "" {
 		return nil, errors.New("gatewaytunnel: token required")
-	}
-	if cfg.MaxStreams <= 0 {
-		cfg.MaxStreams = 128
 	}
 	return &Client{cfg: cfg, token: cfg.Token, updates: make(chan struct{}, 1)}, nil
 }
@@ -145,7 +141,6 @@ func (c *Client) connect(ctx context.Context, token string) error {
 	defer func() { _ = session.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = session.Close() })
 	defer stop()
-	streams := make(chan struct{}, c.cfg.MaxStreams)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for {
@@ -153,14 +148,8 @@ func (c *Client) connect(ctx context.Context, token string) error {
 		if err != nil {
 			return err
 		}
-		select {
-		case streams <- struct{}{}:
-		default:
-			_ = stream.Close()
-			continue
-		}
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-streams }(); c.pipe(ctx, stream) }()
+		go func() { defer wg.Done(); c.pipe(ctx, stream) }()
 	}
 }
 

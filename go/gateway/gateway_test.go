@@ -250,3 +250,45 @@ func TestAuthExpiryAndStreamLimit(t *testing.T) {
 		t.Fatal("disconnected epoch fence lost")
 	}
 }
+
+func TestGatewayAloneEnforcesStreamLimitAbove128(t *testing.T) {
+	const limit = 132
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := gateway.New(gateway.Config{Domain: domain, PublicKey: pub, MaxStreams: limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.Close()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	cli := srv.Client()
+	cli.Timeout = 10 * time.Second
+	target := upstream(t, "alive")
+	startClient(t, srv.URL, capability(t, priv, 1, "s", time.Now().Add(time.Minute)), target.URL, cli)
+	awaitBody(t, cli, srv.URL, "alive")
+	cli.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for i := range limit {
+		ws, response, err := websocket.Dial(ctx, strings.Replace(srv.URL, "http", "ws", 1)+"/ws", &websocket.DialOptions{Host: publicHost, HTTPClient: cli})
+		if err != nil {
+			t.Fatalf("stream %d/%d failed: %v (response present: %t)", i+1, limit, err, response != nil)
+		}
+		t.Cleanup(func() { _ = ws.CloseNow() })
+		if err := ws.Write(ctx, websocket.MessageText, []byte("echo")); err != nil {
+			t.Fatalf("stream %d write: %v", i+1, err)
+		}
+		_, body, err := ws.Read(ctx)
+		if err != nil || string(body) != "echo" {
+			t.Fatalf("stream %d echo = %q, error = %v, want echo, nil", i+1, body, err)
+		}
+	}
+	resp := request(t, cli, srv.URL, publicHost, http.MethodGet, nil)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("stream %d status = %d, want 503", limit+1, resp.StatusCode)
+	}
+}
