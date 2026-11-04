@@ -149,6 +149,18 @@ impl GameDriver for AutoTournamentDriver {
                 "autotournament: public_url must be an http(s) origin without a path prefix".into(),
             );
         }
+        let host = uri
+            .host()
+            .unwrap()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        if uri.scheme_str() == Some("http") && !loopback {
+            return Err("autotournament: public_url requires HTTPS outside loopback".into());
+        }
         if let Some(token) = text(config, "api_token")? {
             if token.len() < 16
                 || !token

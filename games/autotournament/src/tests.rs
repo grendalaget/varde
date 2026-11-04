@@ -16,6 +16,9 @@ fn validates_explicit_licence_origin_and_token() {
         ("licence", json!("other")),
         ("public_url", json!("")),
         ("public_url", json!("ftp://at.example.org")),
+        ("public_url", json!("http://at.example.org")),
+        ("public_url", json!("http://localhost.example.org")),
+        ("public_url", json!("http://192.168.1.2")),
         ("public_url", json!("https://at.example.org/prefix")),
         ("public_url", json!("https://at.example.org/?x=1")),
         ("public_url", json!("https://user@at.example.org")),
@@ -31,6 +34,15 @@ fn validates_explicit_licence_origin_and_token() {
     cfg["licence"] = json!("commercial");
     cfg["api_token"] = json!("abcdefghijklmnop");
     assert!(driver.validate(&cfg).is_ok());
+    for url in [
+        "http://localhost:3069",
+        "http://127.0.0.1:3069",
+        "http://127.1.2.3",
+        "http://[::1]:3069",
+    ] {
+        cfg["public_url"] = json!(url);
+        assert!(driver.validate(&cfg).is_ok(), "{url}");
+    }
 }
 
 #[test]
