@@ -1260,14 +1260,20 @@ fn spawn_join_code_watcher(
     game_id: String,
 ) {
     let mut rx = proc.output();
+    let mut buffered = proc
+        .output_tail(executor_api::OUTPUT_RING_LINES)
+        .into_iter();
     let agent = agent.clone();
     let ctl = ctl.clone();
     tokio::spawn(async move {
         loop {
-            let line = match rx.recv().await {
-                Ok(line) => line,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            let line = match buffered.next() {
+                Some(line) => line,
+                None => match rx.recv().await {
+                    Ok(line) => line,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
             };
             let code = agent
                 .drivers
@@ -2199,6 +2205,47 @@ mod requires_stop_tests {
         assert_eq!(ctl.join_code(), None);
         assert!(ctl.set_join_code("589208".into()));
         assert_eq!(ctl.join_code().as_deref(), Some("589208"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn join_code_watcher_replays_startup_before_following_live_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut agent = test_agent(stub_cp().await, tmp.path());
+        agent.drivers.register(Box::new(StopDriver::new(true)));
+        let agent = Arc::new(agent);
+        let ctl = test_ctl();
+        let proc: Arc<dyn ProcessHandle> = executor_native::NativeExecutor.spawn(&ProcessSpec {
+            program: "/bin/sh".into(),
+            cwd: tmp.path().into(),
+            args: vec!["-c".into(), "printf 'join code 124841\\n'; read -r next; printf 'join code 589208\\n'; sleep 60".into()],
+            env: vec![], stdin: true,
+        }).await.unwrap().into();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while proc.output_tail(1).is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        spawn_join_code_watcher(&agent, &ctl, proc.clone(), "stopgame".into());
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while ctl.join_code().as_deref() != Some("124841") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("startup code was not replayed");
+        proc.write_stdin("continue").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while ctl.join_code().as_deref() != Some("589208") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("live code was not received");
+        proc.terminate().await.unwrap();
+        proc.wait().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
