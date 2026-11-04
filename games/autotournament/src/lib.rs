@@ -34,6 +34,15 @@ struct Settings {
     password: String,
 }
 
+fn reserve_ports(
+    api_port: u16,
+    pg_port: u16,
+) -> Result<(std::net::TcpListener, std::net::TcpListener)> {
+    let api = std::net::TcpListener::bind(("127.0.0.1", api_port))?;
+    let pg = std::net::TcpListener::bind(("127.0.0.1", pg_port))?;
+    Ok((api, pg))
+}
+
 fn secret() -> String {
     let mut bytes = [0; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -315,14 +324,10 @@ impl GameDriver for AutoTournamentDriver {
         if !password.exists() {
             private_write(&password, secret().as_bytes())?;
         }
-        let port = || -> Result<u16> {
-            Ok(std::net::TcpListener::bind("127.0.0.1:0")?
-                .local_addr()?
-                .port())
-        };
+        let (api, pg) = reserve_ports(0, 0)?;
         let settings = Settings {
-            api_port: port()?,
-            pg_port: port()?,
+            api_port: api.local_addr()?.port(),
+            pg_port: pg.local_addr()?.port(),
             password: std::fs::read_to_string(password)?,
         };
         private_write(
@@ -399,6 +404,7 @@ impl GameDriver for AutoTournamentDriver {
     ) -> Result<Box<dyn ProcessHandle>> {
         let install = installation(ctx)?;
         let settings = settings(ctx)?;
+        let (api_reservation, pg_reservation) = reserve_ports(settings.api_port, settings.pg_port)?;
         let cluster = ctx.server_dir.join("postgres");
         let identity = dump_identity(ctx.server_dir.join("database.dump")).await?;
         let fresh = needs_restore(&cluster, &identity);
@@ -436,6 +442,7 @@ impl GameDriver for AutoTournamentDriver {
             "LD_LIBRARY_PATH".into(),
             install.postgres.join("lib").into_os_string(),
         )];
+        drop(pg_reservation);
         let pg: Arc<dyn ProcessHandle> = executor.spawn(&pg).await?.into();
         let result = async {
             let mut ready = false;
@@ -464,6 +471,7 @@ impl GameDriver for AutoTournamentDriver {
                 remember_dump(&cluster, &identity).await?;
                 tokio::fs::write(cluster.join(".varde-ready"), b"ok").await?;
             }
+            drop(api_reservation);
             let node: Arc<dyn ProcessHandle> =
                 executor.spawn(&self.process_spec(ctx)?).await?.into();
             let mut caddy = spec(

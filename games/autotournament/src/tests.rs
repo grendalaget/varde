@@ -6,6 +6,26 @@ fn config() -> serde_json::Value {
 }
 
 #[test]
+fn private_ports_are_distinct_and_reserved_until_released() {
+    let (api, pg) = reserve_ports(0, 0).unwrap();
+    let api_port = api.local_addr().unwrap().port();
+    let pg_port = pg.local_addr().unwrap().port();
+    assert_ne!(api_port, pg_port);
+    assert!(reserve_ports(api_port, 0).is_err());
+    assert!(reserve_ports(0, pg_port).is_err());
+    drop(api);
+    let api = std::net::TcpListener::bind(("127.0.0.1", api_port)).unwrap();
+    assert!(reserve_ports(0, pg_port).is_err());
+    drop(pg);
+    let pg = std::net::TcpListener::bind(("127.0.0.1", pg_port)).unwrap();
+    assert!(reserve_ports(
+        api.local_addr().unwrap().port(),
+        pg.local_addr().unwrap().port()
+    )
+    .is_err());
+}
+
+#[test]
 fn validates_explicit_licence_origin_and_token() {
     let driver = AutoTournamentDriver;
     assert!(driver.validate(&config()).is_ok());
