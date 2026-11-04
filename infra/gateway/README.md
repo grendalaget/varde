@@ -14,7 +14,9 @@ high-water marks, so the CP must use short-lived capabilities and persist epoch
 allocation. No CP issuance or agent directive wiring is included in this PR.
 
 Public port 443 is raw TCP; Go terminates TLS, not Fly's HTTP proxy. Metrics on
-9090 are private (no public Fly service). The default body cap is 2 GiB per
+9090 are private (no public Fly service). Metrics bind the VM's IPv4 interface
+for Fly's configured Prometheus scraper, not the organization's IPv6 6PN.
+Do not add a public service for the metrics port. The default body cap is 2 GiB per
 request, uniformly across labels; `--max-body-bytes` and `--max-streams` tune the
 limits. No hostname/group/token labels are emitted in metrics.
 

@@ -10,7 +10,11 @@ primary_region = "arn"
   VARDE_GATEWAY_CP_KEY = "https://cp.varde.games/v1/relay/public-key"
   VARDE_GATEWAY_TLS_CERT = "/etc/gateway/tls.crt"
   VARDE_GATEWAY_TLS_KEY = "/etc/gateway/tls.key"
-  VARDE_GATEWAY_METRICS = "[::]:9090"
+  VARDE_GATEWAY_METRICS = "0.0.0.0:9090"
+
+[metrics]
+  port = 9090
+  path = "/metrics"
 
 [[files]]
   guest_path = "/etc/gateway/tls.crt"
