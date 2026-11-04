@@ -129,6 +129,14 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 	}
 	row, err := s.Store.ManagedPluginServer(ctx, req.GroupId, plugin.ID)
 	create := errors.Is(err, sql.ErrNoRows)
+	if err == nil {
+		_, lookupErr := s.Store.GetServer(ctx, row.ServerID)
+		if errors.Is(lookupErr, store.ErrNotFound) {
+			create = true
+		} else if lookupErr != nil {
+			return nil, lookupErr
+		}
+	}
 	if create {
 		row = &store.ManagedPluginServer{GroupID: req.GroupId, PluginID: plugin.ID}
 		values := make(map[string]string)

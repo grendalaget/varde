@@ -823,10 +823,21 @@ func (s *Store) CreateManagedServer(ctx context.Context, srv *Server, svc *Servi
 			return err
 		}
 		managed.ServerID = srv.ID
-		_, err = tx.ExecContext(ctx, s.Rebind(
-			`INSERT INTO managed_plugin_servers(group_id,plugin_id,server_id,secrets_json) VALUES(?,?,?,?)`),
+		res, err := tx.ExecContext(ctx, s.Rebind(
+			`INSERT INTO managed_plugin_servers(group_id,plugin_id,server_id,secrets_json) VALUES(?,?,?,?)
+			 ON CONFLICT(group_id,plugin_id) DO UPDATE SET server_id=excluded.server_id,secrets_json=excluded.secrets_json,
+			 binding_digest='',binding_error='',attempts=0,retry_at=0
+			 WHERE EXISTS (SELECT 1 FROM servers WHERE id=managed_plugin_servers.server_id AND deleted_at IS NOT NULL)`),
 			managed.GroupID, managed.PluginID, managed.ServerID, managed.SecretsJSON)
-		return err
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrConflict
+		}
+		return nil
 	})
 }
 

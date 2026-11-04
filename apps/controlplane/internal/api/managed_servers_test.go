@@ -272,6 +272,50 @@ func TestServerConfigEditRestartsExecution(t *testing.T) {
 	}
 }
 
+func TestManagedStartReplacesDeletedServer(t *testing.T) {
+	for _, retained := range []bool{false, true} {
+		t.Run(map[bool]string{false: "purged", true: "retained saves"}[retained], func(t *testing.T) {
+			e, _, path := newManagedEnv(t)
+			e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+			a := e.newAgent("host")
+			a.heartbeatCaps(nil, tournamentCaps())
+			status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			id := status["server_id"].(string)
+			_, execution, epoch := e.startToRunning(id, a)
+			if retained {
+				srv, err := e.st.GetServer(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.mustOK(a.createSnapshot(execution, id, *srv.DeploymentID, epoch, "scheduled", "snap_owned", "88"))
+			}
+			e.mustOK(e.do("POST", path+"/managed-server/stop", nil, e.token))
+			e.mustOK(a.execStatus(execution, id, epoch, "stopped"))
+			e.mustOK(e.do("DELETE", "/v1/servers/"+id, nil, e.token))
+			if retained {
+				old, err := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+				if err != nil || old.ServerID != id {
+					t.Fatal("fixture did not retain deleted owned server")
+				}
+			}
+			a.heartbeatCaps(nil, tournamentCaps())
+			replacement := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			if replacement["server_id"] == id {
+				t.Fatal("deleted server was reused")
+			}
+			row, err := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+			if err != nil || row.ServerID != replacement["server_id"] {
+				t.Fatal("ownership row was not repointed")
+			}
+			e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			servers, err := e.st.ListServers(t.Context(), e.group)
+			if err != nil || len(servers) != 1 {
+				t.Fatal("replacement is not unique")
+			}
+		})
+	}
+}
+
 func managedDirective(t *testing.T, a *agent, serverID string) gen.ExecutionDirective {
 	t.Helper()
 	_, reply := a.heartbeatCaps(nil, tournamentCaps())
