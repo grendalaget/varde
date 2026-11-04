@@ -74,7 +74,13 @@ func run(listen, domain, cert, key, cpKey, metrics string, dev bool, maxStreams 
 		return err
 	}
 	defer handler.Close()
-	server := &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 64 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
+	server := &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 64 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
+	listener, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+	listener = gateway.WithReadIdleTimeout(listener, 90*time.Second)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var metricsServer *http.Server
@@ -88,9 +94,9 @@ func run(listen, domain, cert, key, cpKey, metrics string, dev bool, maxStreams 
 	}
 	go func() {
 		if dev {
-			failures <- server.ListenAndServe()
+			failures <- server.Serve(listener)
 		} else {
-			failures <- server.ListenAndServeTLS(cert, key)
+			failures <- server.ServeTLS(listener, cert, key)
 		}
 	}()
 	slog.Info("gateway listening", "addr", listen, "domain", domain)
