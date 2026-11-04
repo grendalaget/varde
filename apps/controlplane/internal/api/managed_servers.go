@@ -238,6 +238,21 @@ func (s *Server) stopManagedPluginServer(ctx context.Context, groupID, pluginID 
 	return nil
 }
 
+func (s *Server) stopPluginManagedServers(ctx context.Context, pluginID string) error {
+	rows, err := s.Store.ManagedPluginServers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.PluginID == pluginID {
+			if err := s.stopManagedPluginServer(ctx, row.GroupID, pluginID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Server) managedServerStatus(ctx context.Context, plugin *plugins.Plugin, groupID string) (gen.ManagedServerStatus, error) {
 	status := gen.ManagedServerStatus{Phase: "stopped"}
 	row, err := s.Store.ManagedPluginServer(ctx, groupID, plugin.ID)
@@ -385,11 +400,11 @@ func (s *Server) reconcileManagedServer(ctx context.Context, groupID, pluginID s
 	}
 	plugin, ok := s.Plugins.Get(pluginID)
 	if !ok || plugin.ManagedServer == nil {
-		return nil
+		return s.stopManagedPluginServer(ctx, groupID, pluginID)
 	}
 	group, err := s.Store.GroupPlugin(ctx, groupID, pluginID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return s.stopManagedPluginServer(ctx, groupID, pluginID)
 	}
 	if err != nil {
 		return err
@@ -399,7 +414,7 @@ func (s *Server) reconcileManagedServer(ctx context.Context, groupID, pluginID s
 		return err
 	}
 	if !plugin.Managed(settings) {
-		return nil
+		return s.stopManagedPluginServer(ctx, groupID, pluginID)
 	}
 	srv, err := s.Store.GetServer(ctx, row.ServerID)
 	if errors.Is(err, store.ErrNotFound) {

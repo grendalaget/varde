@@ -140,6 +140,72 @@ func TestManagedServerRequiredGeneratedSecret(t *testing.T) {
 	}
 }
 
+func TestManagedStandbyGetsRuntimeSecrets(t *testing.T) {
+	e, _, path := newManagedEnv(t)
+	e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+	a, b := e.newAgent("host"), e.newAgent("standby")
+	a.heartbeatCaps(nil, tournamentCaps())
+	b.heartbeatCaps(nil, tournamentCaps())
+	status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+	id := status["server_id"].(string)
+	host, _, _ := e.startToRunning(id, a, b)
+	standby := a
+	if host == a {
+		standby = b
+	}
+	d, _ := standby.heartbeatCaps(nil, tournamentCaps())
+	serving := managedDirective(t, host, id)
+	if len(d.Standby) != 1 {
+		t.Fatal("managed standby missing")
+	}
+	for _, field := range []string{"api_token", "public_url", "licence"} {
+		if d.Standby[0].Config[field] != (*serving.Config)[field] {
+			t.Fatalf("standby %s differs from serving config", field)
+		}
+	}
+}
+
+func TestManagedOrphansStop(t *testing.T) {
+	for _, mode := range []string{"missing plugin", "disabled group", "manual mode", "uninstall"} {
+		t.Run(mode, func(t *testing.T) {
+			e, _, path := newManagedEnv(t)
+			e.mustOK(e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial"}}, e.token))
+			a := e.newAgent("host")
+			a.heartbeatCaps(nil, tournamentCaps())
+			status := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			id := status["server_id"].(string)
+			switch mode {
+			case "missing plugin":
+				registry, err := plugins.Load(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.srv.Plugins = registry
+			case "disabled group":
+				if err := e.st.DeleteGroupPlugin(t.Context(), e.group, "managed-test"); err != nil {
+					t.Fatal(err)
+				}
+			case "manual mode":
+				if _, err := e.st.DB.Exec(`UPDATE group_plugins SET settings_json='{"hosting":"manual"}' WHERE group_id=?`, e.group); err != nil {
+					t.Fatal(err)
+				}
+			case "uninstall":
+				e.srv.PluginManager = emptyPluginManager{}
+				e.mustOK(e.do("DELETE", "/v1/admin/plugins/managed-test", nil, e.token))
+			}
+			if mode != "uninstall" {
+				if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			srv, err := e.st.GetServer(t.Context(), id)
+			if err != nil || srv.DesiredState != "stopped" {
+				t.Fatalf("orphan desired state = %+v, error %v", srv, err)
+			}
+		})
+	}
+}
+
 func managedDirective(t *testing.T, a *agent, serverID string) gen.ExecutionDirective {
 	t.Helper()
 	_, reply := a.heartbeatCaps(nil, tournamentCaps())

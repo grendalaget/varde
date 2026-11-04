@@ -89,6 +89,8 @@ func (s *Server) AdminUpdatePlugin(ctx context.Context, req gen.AdminUpdatePlugi
 }
 
 func (s *Server) AdminUninstallPlugin(ctx context.Context, req gen.AdminUninstallPluginRequestObject) (gen.AdminUninstallPluginResponseObject, error) {
+	s.managedMu.Lock()
+	defer s.managedMu.Unlock()
 	if _, err := s.requireOperator(ctx); err != nil {
 		return nil, err
 	}
@@ -100,6 +102,9 @@ func (s *Server) AdminUninstallPlugin(ctx context.Context, req gen.AdminUninstal
 			return nil, errResp(gen.NotFound, "plugin is not installed", nil)
 		}
 		return nil, fmt.Errorf("uninstall plugin: %w", err)
+	}
+	if err := s.stopPluginManagedServers(ctx, req.Id); err != nil {
+		return nil, err
 	}
 	return gen.AdminUninstallPlugin204Response{}, nil
 }
