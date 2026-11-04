@@ -386,6 +386,9 @@ func (r *Reconciler) setLiveness(nodeID, state string) {
 func (r *Reconciler) reconcileServer(ctx context.Context, srv *store.Server) error {
 	s := r.Store
 	now := s.NowMs()
+	if err := s.ApplyPendingConfigRedeploy(ctx, srv.ID); err != nil {
+		return err
+	}
 	active, err := s.ActiveExecution(ctx, srv.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err

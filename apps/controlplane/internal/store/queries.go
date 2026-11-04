@@ -890,12 +890,54 @@ func (s *Store) UpdateServerMeta(ctx context.Context, srv *Server) error {
 		if err != nil || previous == srv.ConfigJSON {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE server_executions SET action='stop',stop_reason='user' WHERE server_id=? AND ended_at IS NULL AND action='run'`), srv.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO server_config_redeployments(server_id) VALUES(?) ON CONFLICT(server_id) DO NOTHING`), srv.ID); err != nil {
+			return err
+		}
+		if err := s.applyConfigRedeploy(ctx, tx, srv.ID); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest='',binding_error='',attempts=0,retry_at=0 WHERE server_id=?`), srv.ID)
 		return err
 	})
+}
+
+func (s *Store) ApplyPendingConfigRedeploy(ctx context.Context, serverID string) error {
+	var id string
+	err := s.q().GetContext(ctx, &id, s.Rebind(`SELECT server_id FROM server_config_redeployments WHERE server_id=?`), serverID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE servers SET updated_at=updated_at WHERE id=?`), serverID); err != nil {
+			return err
+		}
+		return s.applyConfigRedeploy(ctx, tx, serverID)
+	})
+}
+
+func (s *Store) applyConfigRedeploy(ctx context.Context, tx *sqlx.Tx, serverID string) error {
+	var migrating int
+	if err := tx.GetContext(ctx, &migrating, s.Rebind(`SELECT COUNT(*) FROM migrations WHERE server_id=? AND finished_at IS NULL`), serverID); err != nil {
+		return err
+	}
+	// Keep both warm-migration executions alive until the handoff settles.
+	if migrating != 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE server_executions SET action='stop',stop_reason='user'
+		WHERE server_id=? AND ended_at IS NULL AND action='run' AND role='serving'
+		AND EXISTS(SELECT 1 FROM server_config_redeployments WHERE server_id=?)`), serverID, serverID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest='',binding_error='',attempts=0,retry_at=0
+		WHERE server_id=? AND EXISTS(SELECT 1 FROM server_config_redeployments WHERE server_id=?)`), serverID, serverID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, s.Rebind(`DELETE FROM server_config_redeployments WHERE server_id=?`), serverID)
+	return err
 }
 
 func (s *Store) SetObservedState(ctx context.Context, q Querier, id, state string, now int64) error {
@@ -1177,11 +1219,25 @@ func (s *Store) ExtendLease(ctx context.Context, id, nodeID string, epoch, now, 
 // ---- migrations ----
 
 func (s *Store) CreateMigration(ctx context.Context, m *Migration) error {
-	_, err := s.q().ExecContext(ctx, s.Rebind(
-		`INSERT INTO migrations (id,server_id,from_execution_id,to_node_id,state,mode,created_at)
-		 VALUES (?,?,?,?,?,?,?)`),
-		m.ID, m.ServerID, m.FromExecutionID, m.ToNodeID, m.State, m.Mode, m.CreatedAt)
-	return err
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE servers SET updated_at=updated_at WHERE id=?`), m.ServerID); err != nil {
+			return err
+		}
+		if m.Mode == "warm" {
+			var action string
+			if err := tx.GetContext(ctx, &action, s.Rebind(`SELECT action FROM server_executions WHERE id=? AND ended_at IS NULL`), m.FromExecutionID); err != nil {
+				return err
+			}
+			if action != "run" {
+				return ErrConflict
+			}
+		}
+		_, err := tx.ExecContext(ctx, s.Rebind(
+			`INSERT INTO migrations (id,server_id,from_execution_id,to_node_id,state,mode,created_at)
+			 VALUES (?,?,?,?,?,?,?)`),
+			m.ID, m.ServerID, m.FromExecutionID, m.ToNodeID, m.State, m.Mode, m.CreatedAt)
+		return err
+	})
 }
 
 func (s *Store) OpenMigrations(ctx context.Context) ([]Migration, error) {
