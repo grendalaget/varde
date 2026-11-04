@@ -800,6 +800,10 @@ func (s *Store) GetNodeStatus(ctx context.Context, nodeID string) (*NodeStatus, 
 // ---- servers / services ----
 
 func (s *Store) CreateServer(ctx context.Context, srv *Server, svc *Service) error {
+	return s.CreateManagedServer(ctx, srv, svc, nil)
+}
+
+func (s *Store) CreateManagedServer(ctx context.Context, srv *Server, svc *Service, managed *ManagedPluginServer) error {
 	label := strings.ReplaceAll(srv.ID, "_", "-")
 	srv.GatewayLabel = &label
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
@@ -815,6 +819,13 @@ func (s *Store) CreateServer(ctx context.Context, srv *Server, svc *Service) err
 		_, err := tx.ExecContext(ctx, s.Rebind(
 			`INSERT INTO services (id,server_id,group_id,loopback_ip,ports_json) VALUES (?,?,?,?,?)`),
 			svc.ID, svc.ServerID, svc.GroupID, svc.LoopbackIP, svc.PortsJSON)
+		if err != nil || managed == nil {
+			return err
+		}
+		managed.ServerID = srv.ID
+		_, err = tx.ExecContext(ctx, s.Rebind(
+			`INSERT INTO managed_plugin_servers(group_id,plugin_id,server_id,secrets_json) VALUES(?,?,?,?)`),
+			managed.GroupID, managed.PluginID, managed.ServerID, managed.SecretsJSON)
 		return err
 	})
 }

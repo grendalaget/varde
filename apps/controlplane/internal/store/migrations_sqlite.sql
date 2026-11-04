@@ -363,3 +363,15 @@ CREATE TABLE IF NOT EXISTS crash_reports (
 CREATE INDEX IF NOT EXISTS idx_crash_group ON crash_reports(group_id, created_at DESC);
 -- idx_crash_node_ref (uploader idempotency) is created by ensureColumns
 -- after it adds client_ref to databases that predate the column.
+
+CREATE TABLE IF NOT EXISTS managed_plugin_servers (
+    group_id       TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    plugin_id      TEXT NOT NULL,
+    server_id      TEXT NOT NULL UNIQUE REFERENCES servers(id) ON DELETE CASCADE,
+    secrets_json   TEXT NOT NULL,
+    binding_digest TEXT NOT NULL DEFAULT '',
+    attempts       BIGINT NOT NULL DEFAULT 0,
+    retry_at       BIGINT NOT NULL DEFAULT 0,
+    binding_error  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(group_id, plugin_id)
+);

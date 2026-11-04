@@ -299,6 +299,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/groups/{groupId}/plugins/{pluginId}/managed-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getGroupPluginManagedServer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins/{pluginId}/managed-server/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startGroupPluginManagedServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/groups/{groupId}/plugins/{pluginId}/managed-server/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stopGroupPluginManagedServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list": {
         parameters: {
             query?: never;
@@ -1139,8 +1187,28 @@ export interface components {
             name: string;
             description?: string;
             version: string;
+            managed_server?: components["schemas"]["PluginManagedServer"];
             settings: components["schemas"]["PluginField"][];
             pages: components["schemas"]["PluginPage"][];
+        };
+        PluginManagedServer: {
+            game: string;
+            mode_setting: string;
+            config: {
+                [key: string]: string;
+            };
+            bindings: {
+                [key: string]: string;
+            };
+        };
+        ManagedServerStatus: {
+            /** @enum {string} */
+            phase: "stopped" | "preparing" | "starting" | "ready" | "failed";
+            reason?: string;
+            server_id?: string;
+            public_url?: string;
+            setup_code?: string;
+            node_name?: string;
         };
         PluginField: {
             name: string;
@@ -2517,6 +2585,89 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getGroupPluginManagedServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed server status (owner/admin only). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedServerStatus"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    startGroupPluginManagedServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed server created or reused and start requested (owner/admin only). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedServerStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    stopGroupPluginManagedServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["GroupId"];
+                pluginId: components["parameters"]["PluginId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed server stop requested (owner/admin only). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedServerStatus"];
+                };
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];

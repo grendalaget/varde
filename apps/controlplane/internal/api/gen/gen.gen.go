@@ -405,6 +405,33 @@ func (e LogLineStream) Valid() bool {
 	}
 }
 
+// Defines values for ManagedServerStatusPhase.
+const (
+	ManagedServerStatusPhaseFailed    ManagedServerStatusPhase = "failed"
+	ManagedServerStatusPhasePreparing ManagedServerStatusPhase = "preparing"
+	ManagedServerStatusPhaseReady     ManagedServerStatusPhase = "ready"
+	ManagedServerStatusPhaseStarting  ManagedServerStatusPhase = "starting"
+	ManagedServerStatusPhaseStopped   ManagedServerStatusPhase = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the ManagedServerStatusPhase enum.
+func (e ManagedServerStatusPhase) Valid() bool {
+	switch e {
+	case ManagedServerStatusPhaseFailed:
+		return true
+	case ManagedServerStatusPhasePreparing:
+		return true
+	case ManagedServerStatusPhaseReady:
+		return true
+	case ManagedServerStatusPhaseStarting:
+		return true
+	case ManagedServerStatusPhaseStopped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MeshReportPeersPath.
 const (
 	MeshReportPeersPathDirect  MeshReportPeersPath = "direct"
@@ -1371,6 +1398,19 @@ type LoginRequest struct {
 	Password string              `json:"password"`
 }
 
+// ManagedServerStatus defines model for ManagedServerStatus.
+type ManagedServerStatus struct {
+	NodeName  *string                  `json:"node_name,omitempty"`
+	Phase     ManagedServerStatusPhase `json:"phase"`
+	PublicUrl *string                  `json:"public_url,omitempty"`
+	Reason    *string                  `json:"reason,omitempty"`
+	ServerId  *string                  `json:"server_id,omitempty"`
+	SetupCode *string                  `json:"setup_code,omitempty"`
+}
+
+// ManagedServerStatusPhase defines model for ManagedServerStatus.Phase.
+type ManagedServerStatusPhase string
+
 // Me defines model for Me.
 type Me struct {
 	Groups []struct {
@@ -1463,12 +1503,13 @@ type ObservedState string
 
 // Plugin defines model for Plugin.
 type Plugin struct {
-	Description *string       `json:"description,omitempty"`
-	Id          string        `json:"id"`
-	Name        string        `json:"name"`
-	Pages       []PluginPage  `json:"pages"`
-	Settings    []PluginField `json:"settings"`
-	Version     string        `json:"version"`
+	Description   *string              `json:"description,omitempty"`
+	Id            string               `json:"id"`
+	ManagedServer *PluginManagedServer `json:"managed_server,omitempty"`
+	Name          string               `json:"name"`
+	Pages         []PluginPage         `json:"pages"`
+	Settings      []PluginField        `json:"settings"`
+	Version       string               `json:"version"`
 }
 
 // PluginAction defines model for PluginAction.
@@ -1520,6 +1561,14 @@ type PluginListResponse struct {
 		Subtitle *string `json:"subtitle,omitempty"`
 		Title    string  `json:"title"`
 	} `json:"items"`
+}
+
+// PluginManagedServer defines model for PluginManagedServer.
+type PluginManagedServer struct {
+	Bindings    map[string]string `json:"bindings"`
+	Config      map[string]string `json:"config"`
+	Game        string            `json:"game"`
+	ModeSetting string            `json:"mode_setting"`
 }
 
 // PluginPage defines model for PluginPage.
@@ -2175,6 +2224,15 @@ type ServerInterface interface {
 
 	// (PUT /v1/groups/{groupId}/plugins/{pluginId})
 	PutGroupPlugin(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
+
+	// (GET /v1/groups/{groupId}/plugins/{pluginId}/managed-server)
+	GetGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/managed-server/start)
+	StartGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/managed-server/stop)
+	StopGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId)
 
 	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId})
 	InvokePluginAction(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId, pageId PageId, actionId ActionId)
@@ -3363,6 +3421,111 @@ func (siw *ServerInterfaceWrapper) PutGroupPlugin(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetGroupPluginManagedServer operation middleware
+func (siw *ServerInterfaceWrapper) GetGroupPluginManagedServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGroupPluginManagedServer(w, r, groupId, pluginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartGroupPluginManagedServer operation middleware
+func (siw *ServerInterfaceWrapper) StartGroupPluginManagedServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartGroupPluginManagedServer(w, r, groupId, pluginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopGroupPluginManagedServer operation middleware
+func (siw *ServerInterfaceWrapper) StopGroupPluginManagedServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "groupId" -------------
+	var groupId GroupId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "groupId", r.PathValue("groupId"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pluginId" -------------
+	var pluginId PluginId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pluginId", r.PathValue("pluginId"), &pluginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pluginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopGroupPluginManagedServer(w, r, groupId, pluginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // InvokePluginAction operation middleware
 func (siw *ServerInterfaceWrapper) InvokePluginAction(w http.ResponseWriter, r *http.Request) {
 
@@ -4300,6 +4463,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/plugins", wrapper.ListGroupPlugins)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}", wrapper.DeleteGroupPlugin)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}", wrapper.PutGroupPlugin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/managed-server", wrapper.GetGroupPluginManagedServer)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/managed-server/start", wrapper.StartGroupPluginManagedServer)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/managed-server/stop", wrapper.StopGroupPluginManagedServer)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list", wrapper.ListPluginPage)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId}", wrapper.InvokePluginAction)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/groups/{groupId}/invites", wrapper.CreateInvite)
@@ -6965,6 +7131,271 @@ func (response PutGroupPlugin503JSONResponse) VisitPutGroupPluginResponse(w http
 	return err
 }
 
+type GetGroupPluginManagedServerRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+}
+
+type GetGroupPluginManagedServerResponseObject interface {
+	VisitGetGroupPluginManagedServerResponse(w http.ResponseWriter) error
+}
+
+type GetGroupPluginManagedServer200JSONResponse ManagedServerStatus
+
+func (response GetGroupPluginManagedServer200JSONResponse) VisitGetGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupPluginManagedServer401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetGroupPluginManagedServer401JSONResponse) VisitGetGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupPluginManagedServer403JSONResponse Error
+
+func (response GetGroupPluginManagedServer403JSONResponse) VisitGetGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGroupPluginManagedServer404JSONResponse Error
+
+func (response GetGroupPluginManagedServer404JSONResponse) VisitGetGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServerRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+}
+
+type StartGroupPluginManagedServerResponseObject interface {
+	VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error
+}
+
+type StartGroupPluginManagedServer200JSONResponse ManagedServerStatus
+
+func (response StartGroupPluginManagedServer200JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer400JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartGroupPluginManagedServer400JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer401JSONResponse Error
+
+func (response StartGroupPluginManagedServer401JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer403JSONResponse Error
+
+func (response StartGroupPluginManagedServer403JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer404JSONResponse Error
+
+func (response StartGroupPluginManagedServer404JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer409JSONResponse Error
+
+func (response StartGroupPluginManagedServer409JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer502JSONResponse Error
+
+func (response StartGroupPluginManagedServer502JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartGroupPluginManagedServer503JSONResponse Error
+
+func (response StartGroupPluginManagedServer503JSONResponse) VisitStartGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopGroupPluginManagedServerRequestObject struct {
+	GroupId  GroupId  `json:"groupId"`
+	PluginId PluginId `json:"pluginId"`
+}
+
+type StopGroupPluginManagedServerResponseObject interface {
+	VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error
+}
+
+type StopGroupPluginManagedServer200JSONResponse ManagedServerStatus
+
+func (response StopGroupPluginManagedServer200JSONResponse) VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopGroupPluginManagedServer401JSONResponse struct{ ErrorJSONResponse }
+
+func (response StopGroupPluginManagedServer401JSONResponse) VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopGroupPluginManagedServer403JSONResponse Error
+
+func (response StopGroupPluginManagedServer403JSONResponse) VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopGroupPluginManagedServer404JSONResponse Error
+
+func (response StopGroupPluginManagedServer404JSONResponse) VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopGroupPluginManagedServer503JSONResponse Error
+
+func (response StopGroupPluginManagedServer503JSONResponse) VisitStopGroupPluginManagedServerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type InvokePluginActionRequestObject struct {
 	GroupId  GroupId  `json:"groupId"`
 	PluginId PluginId `json:"pluginId"`
@@ -8744,6 +9175,15 @@ type StrictServerInterface interface {
 	// (PUT /v1/groups/{groupId}/plugins/{pluginId})
 	PutGroupPlugin(ctx context.Context, request PutGroupPluginRequestObject) (PutGroupPluginResponseObject, error)
 
+	// (GET /v1/groups/{groupId}/plugins/{pluginId}/managed-server)
+	GetGroupPluginManagedServer(ctx context.Context, request GetGroupPluginManagedServerRequestObject) (GetGroupPluginManagedServerResponseObject, error)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/managed-server/start)
+	StartGroupPluginManagedServer(ctx context.Context, request StartGroupPluginManagedServerRequestObject) (StartGroupPluginManagedServerResponseObject, error)
+
+	// (POST /v1/groups/{groupId}/plugins/{pluginId}/managed-server/stop)
+	StopGroupPluginManagedServer(ctx context.Context, request StopGroupPluginManagedServerRequestObject) (StopGroupPluginManagedServerResponseObject, error)
+
 	// (POST /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/actions/{actionId})
 	InvokePluginAction(ctx context.Context, request InvokePluginActionRequestObject) (InvokePluginActionResponseObject, error)
 
@@ -10180,6 +10620,87 @@ func (sh *strictHandler) PutGroupPlugin(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutGroupPluginResponseObject); ok {
 		if err := validResponse.VisitPutGroupPluginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetGroupPluginManagedServer operation middleware
+func (sh *strictHandler) GetGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId) {
+	var request GetGroupPluginManagedServerRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetGroupPluginManagedServer(ctx, request.(GetGroupPluginManagedServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetGroupPluginManagedServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetGroupPluginManagedServerResponseObject); ok {
+		if err := validResponse.VisitGetGroupPluginManagedServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartGroupPluginManagedServer operation middleware
+func (sh *strictHandler) StartGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId) {
+	var request StartGroupPluginManagedServerRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartGroupPluginManagedServer(ctx, request.(StartGroupPluginManagedServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartGroupPluginManagedServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartGroupPluginManagedServerResponseObject); ok {
+		if err := validResponse.VisitStartGroupPluginManagedServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StopGroupPluginManagedServer operation middleware
+func (sh *strictHandler) StopGroupPluginManagedServer(w http.ResponseWriter, r *http.Request, groupId GroupId, pluginId PluginId) {
+	var request StopGroupPluginManagedServerRequestObject
+
+	request.GroupId = groupId
+	request.PluginId = pluginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StopGroupPluginManagedServer(ctx, request.(StopGroupPluginManagedServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StopGroupPluginManagedServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StopGroupPluginManagedServerResponseObject); ok {
+		if err := validResponse.VisitStopGroupPluginManagedServerResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
