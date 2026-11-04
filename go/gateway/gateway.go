@@ -227,7 +227,7 @@ func (s *Server) newTunnel(session *yamux.Session) *tunnel {
 		pr.Out.URL.Scheme = "http"
 		pr.Out.URL.Host = "tunnel"
 		pr.Out.Host = pr.In.Host
-		pr.Out.Header.Del("X-Real-IP")
+		stripForwardingHeaders(pr.Out.Header)
 		pr.SetXForwarded()
 	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		var limit *http.MaxBytesError
@@ -240,6 +240,22 @@ func (s *Server) newTunnel(session *yamux.Session) *tunnel {
 		}
 	}, ErrorLog: discardLog()}
 	return &tunnel{session: session, transport: transport, proxy: proxy}
+}
+
+func stripForwardingHeaders(headers http.Header) {
+	for key := range headers {
+		name := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+		forwarded := strings.Contains(name, "forwarded")
+		clientIP := name == "client-ip" || strings.HasSuffix(name, "-client-ip") || strings.HasSuffix(name, "-real-ip")
+		switch name {
+		case "via", "cf-connecting-ip", "cf-connecting-ipv6", "cf-pseudo-ipv4", "true-client-ip", "x-proxyuser-ip", "x-envoy-external-address", "remote-addr", "x-remote-addr", "x-original-remote-addr", "x-azure-clientip", "x-appengine-user-ip", "front-end-https", "x-url-scheme", "x-original-host", "x-original-proto":
+			delete(headers, key)
+		default:
+			if forwarded || clientIP {
+				delete(headers, key)
+			}
+		}
+	}
 }
 
 // ReverseProxy errors must never log request credentials or upstream details.

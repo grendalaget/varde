@@ -23,6 +23,8 @@ import (
 const domain = "servers.example.com"
 const publicHost = "at." + domain
 
+var spoofHeaders = []string{"X-Real-IP", "Forwarded", "X-Forwarded-Client-Cert", "X-Forwarded-Port", "X-Forwarded-Ssl", "X_Forwarded_For", "X-Client-IP", "X-Cluster-Client-IP", "CF-Connecting-IP", "CF-Connecting-IPv6", "CF-Pseudo-IPv4", "True-Client-IP", "Fly-Client-IP", "Fastly-Client-IP", "X-ProxyUser-IP", "X-Envoy-External-Address", "Via", "Client-IP", "Remote-Addr", "X-Remote-Addr", "X-Original-Remote-Addr", "X-Original-Forwarded-For", "X-Azure-ClientIP", "X-Appengine-User-IP", "Front-End-Https", "X-Url-Scheme", "X-Original-Host", "X-Original-Proto"}
+
 func upstream(t *testing.T, name string) *httptest.Server {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +50,12 @@ func upstream(t *testing.T, name string) *httptest.Server {
 		w.Header().Set("X-Saw-Proto", r.Header.Get("X-Forwarded-Proto"))
 		w.Header().Set("X-Saw-Host", r.Header.Get("X-Forwarded-Host"))
 		w.Header().Set("X-Saw-For", r.Header.Get("X-Forwarded-For"))
+		for _, header := range spoofHeaders {
+			if r.Header.Get(header) != "" {
+				w.Header().Set("X-Saw-Spoofed", header)
+			}
+		}
+		w.Header().Set("X-Saw-Custom", r.Header.Get("X-Application-Header"))
 		_, _ = fmt.Fprint(w, name)
 	}))
 	t.Cleanup(s.Close)
@@ -92,9 +100,19 @@ func request(t *testing.T, cli *http.Client, url, host, method string, body io.R
 	req.Header.Set("X-Forwarded-For", "203.0.113.99")
 	req.Header.Set("X-Forwarded-Proto", "spoofed")
 	req.Header.Set("X-Forwarded-Host", "spoofed")
+	for _, header := range spoofHeaders {
+		req.Header.Set(header, "spoofed-forwarding")
+	}
+	req.Header.Set("X-Application-Header", "preserved")
 	resp, err := cli.Do(req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resp.Header.Get("X-Saw-Spoofed") != "" {
+		t.Errorf("gateway forwarded client-supplied identity header %q", resp.Header.Get("X-Saw-Spoofed"))
+	}
+	if resp.StatusCode == http.StatusOK && resp.Header.Get("X-Saw-Custom") != "preserved" {
+		t.Error("gateway removed application header")
 	}
 	return resp
 }
