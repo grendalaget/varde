@@ -138,6 +138,8 @@ impl Drop for Staging {
         let path = self.path.clone();
         let guard = self.guard.take();
         let cleanup = move || {
+            #[cfg(unix)]
+            let _ = writable_directories(&path);
             let _ = std::fs::remove_dir_all(path);
             drop(guard);
         };
@@ -149,6 +151,25 @@ impl Drop for Staging {
             cleanup();
         }
     }
+}
+
+#[cfg(unix)]
+fn writable_directories(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+        )?;
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                writable_directories(&entry.path())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 struct Registry {
@@ -389,6 +410,8 @@ async fn fetch_into(
     }
     spawn_fs(move || {
         validate_symlinks(&staging.path.join("root"))?;
+        #[cfg(unix)]
+        restore_directory_modes(&staging.path.join("root"), &budget)?;
         Ok(staging)
     })
     .await
@@ -418,6 +441,25 @@ fn validate_symlinks(root: &Path) -> Result<()> {
 struct Budget {
     entries: usize,
     unpacked: u64,
+    directory_modes: std::collections::BTreeMap<PathBuf, u32>,
+}
+
+#[cfg(unix)]
+fn restore_directory_modes(root: &Path, budget: &Budget) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    for (path, mode) in budget.directory_modes.iter().rev() {
+        no_symlink_parents(root, path)?;
+        let output = root.join(path);
+        match std::fs::symlink_metadata(&output) {
+            Ok(metadata) if metadata.is_dir() => {
+                std::fs::set_permissions(output, std::fs::Permissions::from_mode(*mode))?
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn clean_path(path: &Path) -> Result<PathBuf> {
@@ -498,7 +540,6 @@ fn apply_layer(
 ) -> Result<()> {
     // Whiteouts affect lower layers, never files added by this layer, regardless of tar order.
     let mut archive = tar::Archive::new(reader(body, media_type)?.take(UNPACKED_LIMIT + 1));
-    let mut directory_modes = Vec::new();
     for entry in archive.entries()? {
         let entry = entry?;
         budget.entries += 1;
@@ -526,6 +567,9 @@ fn apply_layer(
                 return Err("invalid OCI whiteout".into());
             }
             no_symlink_parents(root, &target)?;
+            budget
+                .directory_modes
+                .retain(|path, _| !path.starts_with(&target) || (opaque && path == &target));
             let output = root.join(&target);
             if opaque {
                 if std::fs::symlink_metadata(&output).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -559,8 +603,17 @@ fn apply_layer(
                 remove(&output)?;
                 std::fs::create_dir_all(&output)?;
             }
-            directory_modes.push((output, entry.header().mode()? & 0o777));
+            let mode = entry.header().mode()? & 0o777;
+            budget.directory_modes.insert(path.clone(), mode);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&output, std::fs::Permissions::from_mode(mode | 0o700))?;
+            }
         } else {
+            budget
+                .directory_modes
+                .retain(|dir, _| !dir.starts_with(&path));
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -592,17 +645,6 @@ fn apply_layer(
                 return Err("OCI symlinks unsupported on this platform".into());
             } else {
                 return Err("unsupported OCI entry type".into());
-            }
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for (path, mode) in directory_modes.into_iter().rev() {
-            let relative = path.strip_prefix(root)?;
-            no_symlink_parents(root, relative)?;
-            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
             }
         }
     }
@@ -648,10 +690,14 @@ mod tests {
     }
 
     fn layer(entries: &[(&str, u8, &str)]) -> Vec<u8> {
+        layer_with_mode(entries, 0o755)
+    }
+
+    fn layer_with_mode(entries: &[(&str, u8, &str)], mode: u32) -> Vec<u8> {
         let mut tar = tar::Builder::new(Vec::new());
         for (path, kind, contents) in entries {
             let mut header = tar::Header::new_gnu();
-            header.set_mode(0o755);
+            header.set_mode(mode);
             header.set_entry_type(tar::EntryType::new(*kind));
             header.set_size(if *kind == b'0' {
                 contents.len() as u64
@@ -1048,6 +1094,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn directory_modes_are_restored_only_after_all_layers() {
+        use std::os::unix::fs::PermissionsExt;
+        let fake = registry(
+            vec![
+                layer_with_mode(
+                    &[
+                        ("app", b'5', ""),
+                        ("app/sub", b'5', ""),
+                        ("app/deleted", b'5', ""),
+                    ],
+                    0o555,
+                ),
+                layer(&[
+                    ("app/sub/file", b'0', "old"),
+                    ("app/deleted/old", b'0', "old"),
+                ]),
+                layer(&[
+                    ("app/sub/file", b'0', "new"),
+                    ("app/.wh.deleted", b'0', ""),
+                    ("app/deleted/new", b'0', "fresh"),
+                ]),
+            ],
+            false,
+            None,
+        )
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let root = HttpRuntimes::new(temp.path().to_path_buf())
+            .fetch_oci(&fake.spec)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(root.join("app/sub/file")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(root.join("app/deleted/new")).unwrap(),
+            b"fresh"
+        );
+        assert!(!root.join("app/deleted/old").exists());
+        for dir in ["app", "app/sub"] {
+            assert_eq!(
+                std::fs::metadata(root.join(dir))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o555
+            );
+        }
+        assert_ne!(
+            std::fs::metadata(root.join("app/deleted"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o200,
+            0
+        );
+        writable_directories(temp.path()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn staging_cleanup_removes_read_only_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let path = temp.path().join("staging");
+        let staging = Staging::new(path.clone(), lock.clone().lock_owned().await).unwrap();
+        std::fs::write(path.join("root/file"), b"file").unwrap();
+        std::fs::set_permissions(path.join("root"), std::fs::Permissions::from_mode(0)).unwrap();
+        drop(staging);
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(5), lock.lock())
+            .await
+            .unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
     async fn redirects_and_config_platform_check() {
         let fake = registry(
             vec![layer(&[("app/file", b'0', "data")])],
@@ -1092,10 +1213,12 @@ mod tests {
             Budget {
                 entries: ENTRY_LIMIT,
                 unpacked: 0,
+                ..Budget::default()
             },
             Budget {
                 entries: 0,
                 unpacked: UNPACKED_LIMIT,
+                ..Budget::default()
             },
         ] {
             assert!(apply_layer(
