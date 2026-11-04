@@ -194,15 +194,11 @@ async fn dump_identity(path: PathBuf) -> Result<Vec<u8>> {
 }
 
 fn needs_restore(cluster: &Path, identity: &[u8]) -> bool {
+    // The current own dump means this cluster is equal or newer, even after a crash
+    // or a restore of that same ID. Only a foreign or older dump replaces it.
     !cluster.join(".varde-ready").exists()
         || (!identity.is_empty()
-            && (cluster.join(".varde-dirty").exists()
-                || std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity)))
-}
-
-async fn mark_cluster_dirty(cluster: &Path) -> Result<()> {
-    tokio::fs::write(cluster.join(".varde-dirty"), b"dirty").await?;
-    Ok(())
+            && std::fs::read(cluster.join(".varde-dump")).ok().as_deref() != Some(identity))
 }
 
 async fn remember_dump(cluster: &Path, identity: &[u8]) -> Result<()> {
@@ -488,7 +484,6 @@ impl GameDriver for AutoTournamentDriver {
             install.postgres.join("lib").into_os_string(),
         )];
         drop(pg_reservation);
-        mark_cluster_dirty(&cluster).await?;
         let pg: Arc<dyn ProcessHandle> = executor.spawn(&pg).await?.into();
         let result = async {
             let mut ready = false;
@@ -577,10 +572,9 @@ impl GameDriver for AutoTournamentDriver {
     }
     async fn resume_after_snapshot(
         &self,
-        ctx: &DriverContext<'_>,
+        _: &DriverContext<'_>,
         p: &dyn ProcessHandle,
     ) -> Result<()> {
-        mark_cluster_dirty(&ctx.server_dir.join("postgres")).await?;
         p.write_stdin("resume").await
     }
     fn snapshot_after_stop(&self) -> bool {
@@ -598,9 +592,7 @@ impl GameDriver for AutoTournamentDriver {
         } else {
             p.kill().await
         };
-        dumped.and(stopped)?;
-        tokio::fs::remove_file(ctx.server_dir.join("postgres/.varde-dirty")).await?;
-        Ok(())
+        dumped.and(stopped)
     }
     fn join_code_from_log(&self, line: &str) -> Option<String> {
         let candidate = line.split_once("enter this code: ")?.1;

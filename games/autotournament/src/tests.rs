@@ -97,15 +97,15 @@ async fn restored_dump_is_authoritative_over_a_ready_cluster() {
     assert!(needs_restore(&cluster, &first));
     remember_dump(&cluster, &first).await.unwrap();
     assert!(!needs_restore(&cluster, &first));
-    mark_cluster_dirty(&cluster).await.unwrap();
-    assert!(needs_restore(&cluster, &first));
+    std::fs::write(cluster.join("committed-after-dump"), "newer state").unwrap();
+    std::fs::write(cluster.join(".varde-dirty"), "legacy dirty marker").unwrap();
+    assert!(!needs_restore(&cluster, &first));
     // A final dump after frontend shutdown has its own identity, even for identical bytes.
     std::fs::write(&partial, "identical dump").unwrap();
     let second = publish_dump(tmp.path()).await.unwrap();
     assert_ne!(first, second);
     assert!(needs_restore(&cluster, &second));
     remember_dump(&cluster, &second).await.unwrap();
-    std::fs::remove_file(cluster.join(".varde-dirty")).unwrap();
     assert!(!needs_restore(&cluster, &second));
     // Even an identical restored dump must roll back any post-snapshot DB writes.
     std::fs::write(tmp.path().join("database.dump.id"), &first).unwrap();
