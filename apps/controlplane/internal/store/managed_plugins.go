@@ -41,6 +41,22 @@ func (s *Store) UpdateManagedPluginBinding(ctx context.Context, row *ManagedPlug
 	return err
 }
 
+func (s *Store) UpdateManagedServerMeta(ctx context.Context, srv *Server, row *ManagedPluginServer) error {
+	return s.Tx(ctx, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE servers SET updated_at=updated_at WHERE id=?`), srv.ID); err != nil {
+			return err
+		}
+		var previous string
+		if err := tx.GetContext(ctx, &previous, s.Rebind(`SELECT secrets_json FROM managed_plugin_servers WHERE group_id=? AND plugin_id=? AND server_id=?`), row.GroupID, row.PluginID, srv.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET secrets_json=? WHERE group_id=? AND plugin_id=? AND server_id=?`), row.SecretsJSON, row.GroupID, row.PluginID, srv.ID); err != nil {
+			return err
+		}
+		return s.updateServerMeta(ctx, tx, srv, previous != row.SecretsJSON)
+	})
+}
+
 func (s *Store) CompareAndSwapGroupPluginSettings(ctx context.Context, previous, group *GroupPlugin) (bool, error) {
 	return s.compareAndSwapGroupPluginSettings(ctx, s.q(), previous, group)
 }

@@ -878,27 +878,31 @@ func (s *Store) SetServerStandby(ctx context.Context, id string, nodeID *string)
 
 func (s *Store) UpdateServerMeta(ctx context.Context, srv *Server) error {
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
-		var previous string
-		if err := tx.GetContext(ctx, &previous, s.Rebind(`SELECT config_json FROM servers WHERE id=? AND deleted_at IS NULL`), srv.ID); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, s.Rebind(
-			`UPDATE servers SET name=?, config_json=?, replication_factor=?, min_commit_replicas=?,
-		 snapshot_interval_s=?, preferred_node_id=?, observed_state=?, updated_at=? WHERE id=?`),
-			srv.Name, srv.ConfigJSON, srv.ReplicationFactor, srv.MinCommitReplicas,
-			srv.SnapshotIntervalS, srv.PreferredNodeID, srv.ObservedState, srv.UpdatedAt, srv.ID)
-		if err != nil || previous == srv.ConfigJSON {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO server_config_redeployments(server_id) VALUES(?) ON CONFLICT(server_id) DO NOTHING`), srv.ID); err != nil {
-			return err
-		}
-		if err := s.applyConfigRedeploy(ctx, tx, srv.ID); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest='',binding_error='',attempts=0,retry_at=0 WHERE server_id=?`), srv.ID)
-		return err
+		return s.updateServerMeta(ctx, tx, srv, false)
 	})
+}
+
+func (s *Store) updateServerMeta(ctx context.Context, tx *sqlx.Tx, srv *Server, secretsChanged bool) error {
+	var previous string
+	if err := tx.GetContext(ctx, &previous, s.Rebind(`SELECT config_json FROM servers WHERE id=? AND deleted_at IS NULL`), srv.ID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, s.Rebind(
+		`UPDATE servers SET name=?, config_json=?, replication_factor=?, min_commit_replicas=?,
+		 snapshot_interval_s=?, preferred_node_id=?, observed_state=?, updated_at=? WHERE id=?`),
+		srv.Name, srv.ConfigJSON, srv.ReplicationFactor, srv.MinCommitReplicas,
+		srv.SnapshotIntervalS, srv.PreferredNodeID, srv.ObservedState, srv.UpdatedAt, srv.ID)
+	if err != nil || (previous == srv.ConfigJSON && !secretsChanged) {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.Rebind(`INSERT INTO server_config_redeployments(server_id) VALUES(?) ON CONFLICT(server_id) DO NOTHING`), srv.ID); err != nil {
+		return err
+	}
+	if err := s.applyConfigRedeploy(ctx, tx, srv.ID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, s.Rebind(`UPDATE managed_plugin_servers SET binding_digest='',binding_error='',attempts=0,retry_at=0 WHERE server_id=?`), srv.ID)
+	return err
 }
 
 func (s *Store) ApplyPendingConfigRedeploy(ctx context.Context, serverID string) error {

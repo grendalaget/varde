@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -254,6 +255,98 @@ func TestManagedConfigChangeRestartsAndReacknowledges(t *testing.T) {
 	e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
 	if managedDirective(t, a, id).Action != "run" {
 		t.Fatal("unchanged config triggered another restart")
+	}
+}
+
+func TestManagedSecretConfigLifecycle(t *testing.T) {
+	for _, initial := range []string{"", "initial-private-steam-key"} {
+		t.Run("initiallySet="+strconv.FormatBool(initial != ""), func(t *testing.T) {
+			e, hook, path := newManagedEnvManifest(t, func(m *plugins.Manifest) {
+				m.Settings = append(m.Settings, plugins.Field{Name: "steam", Type: "secret"})
+				m.ManagedServer.Config["steam_web_api_key"] = "steam"
+			})
+			a := e.newAgent("host")
+			a.heartbeatCaps(nil, tournamentCaps())
+			put := func(value string) {
+				t.Helper()
+				response := e.do("PUT", path, map[string]any{"settings": map[string]any{"licence": "noncommercial", "steam": value}}, e.token)
+				e.mustOK(response)
+				if value != "" && bytes.Contains(response.Raw, []byte(value)) {
+					t.Fatal("settings response leaked secret")
+				}
+			}
+			put(initial)
+			started := e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+			id := started["server_id"].(string)
+			_, execution, epoch := e.startToRunning(id, a)
+			current := initial
+			for _, next := range []string{initial, "rotated-private-steam-key", "", ""} {
+				put(next)
+				e.mustOK(e.do("POST", path+"/managed-server/start", nil, e.token))
+				_, reply := a.heartbeatCaps(nil, tournamentCaps())
+				var directives gen.AgentDirectives
+				if err := json.Unmarshal(reply.Raw, &directives); err != nil || directives.Executions == nil || len(*directives.Executions) != 1 {
+					t.Fatal("missing managed directive")
+				}
+				directive := (*directives.Executions)[0]
+				if next != current {
+					if directive.Action != "stop" {
+						t.Fatal("secret change did not request redeploy")
+					}
+					row, err := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+					if err != nil || row.BindingDigest != "" {
+						t.Fatal("secret change retained old binding acknowledgement")
+					}
+					e.mustOK(a.execStatus(execution, id, epoch, "stopped"))
+					e.reconcile()
+					directive = managedDirective(t, a, id)
+					if directive.ExecutionId == execution || directive.Epoch <= epoch {
+						t.Fatal("secret change did not create a new execution")
+					}
+					execution, epoch = directive.ExecutionId, directive.Epoch
+					e.mustOK(a.execStatus(execution, id, epoch, "running"))
+				} else if directive.Action != "run" {
+					t.Fatal("unchanged secret requested a redeploy")
+				}
+				value, present := (*directive.Config)["steam_web_api_key"]
+				if (next == "" && present) || (next != "" && value != next) {
+					t.Fatal("agent did not receive the intended optional secret")
+				}
+				before := hook.calls.Load()
+				reportManagedHealthy(t, e, a, id, execution, epoch)
+				if err := e.srv.ReconcileManagedServers(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if next != current && hook.calls.Load() != before+1 {
+					t.Fatal("secret change did not reacknowledge bindings")
+				}
+				for _, route := range []string{path + "/managed-server", "/v1/servers/" + id, "/v1/groups/" + e.group + "/plugins"} {
+					response := e.do("GET", route, nil, e.token)
+					e.mustOK(response)
+					for _, secret := range []string{initial, "rotated-private-steam-key"} {
+						if secret != "" && bytes.Contains(response.Raw, []byte(secret)) {
+							t.Fatal("public API response leaked a mapped secret")
+						}
+					}
+				}
+				srv, _ := e.st.GetServer(t.Context(), id)
+				if strings.Contains(srv.ConfigJSON, "steam_web_api_key") {
+					t.Fatal("secret field stored in plain server config")
+				}
+				row, _ := e.st.ManagedPluginServer(t.Context(), e.group, "managed-test")
+				group, _ := e.st.GroupPlugin(t.Context(), e.group, "managed-test")
+				for _, secret := range []string{initial, "rotated-private-steam-key"} {
+					if secret != "" && (strings.Contains(row.SecretsJSON, secret) || strings.Contains(group.SettingsJSON, secret)) {
+						t.Fatal("secret stored unencrypted")
+					}
+				}
+				current = next
+			}
+			invalid := e.do("PUT", path, map[string]any{"settings": map[string]any{"steam": 123}}, e.token)
+			if invalid.Status != 400 {
+				t.Fatal("non-string secret accepted")
+			}
+		})
 	}
 }
 

@@ -63,14 +63,17 @@ func validateManagedServer(m *Manifest) error {
 	for target, source := range managed.Config {
 		field, exists := config[target]
 		setting, found := fields[source]
-		if !exists || !found || field.Secret || field.Type == "secret" || setting.Secret || setting.Type == "secret" || setting.Hidden || source == managed.ModeSetting {
-			return fmt.Errorf("managed_server.config %q must map a non-secret game field to a visible setting", target)
+		if !exists || !found || setting.Hidden || source == managed.ModeSetting {
+			return fmt.Errorf("managed_server.config %q must map a game field to a visible setting", target)
+		}
+		if (field.Secret || field.Type == "secret") != (setting.Secret || setting.Type == "secret") {
+			return fmt.Errorf("managed_server.config %q must preserve secret protection", target)
 		}
 		gameType, settingType := field.Type, setting.Type
-		if gameType == "select" {
+		if gameType == "select" || gameType == "secret" {
 			gameType = "string"
 		}
-		if settingType == "select" {
+		if settingType == "select" || settingType == "secret" {
 			settingType = "string"
 		}
 		if gameType != settingType {
@@ -99,6 +102,9 @@ func validateManagedServer(m *Manifest) error {
 			}
 		case source == "setup_code":
 		case strings.HasPrefix(source, "secret:"):
+			if _, mapped := managed.Config[strings.TrimPrefix(source, "secret:")]; mapped {
+				return errors.New("managed_server secret fields cannot be both mapped and generated")
+			}
 			secret, exists := config[strings.TrimPrefix(source, "secret:")]
 			if !exists || (!secret.Secret && secret.Type != "secret") || (field.Type != "secret" && !field.Secret) {
 				return errors.New("managed_server secret binding requires a secret game field and secret setting")
@@ -120,7 +126,8 @@ func validateManagedServer(m *Manifest) error {
 		for _, source := range managed.Bindings {
 			bound = bound || source == "secret:"+field.Name
 		}
-		if !bound {
+		_, mapped := managed.Config[field.Name]
+		if !bound && !mapped {
 			return fmt.Errorf("managed_server.bindings must generate required secret %q", field.Name)
 		}
 	}

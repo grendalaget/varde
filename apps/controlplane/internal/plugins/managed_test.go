@@ -27,6 +27,11 @@ func TestManagedManifestValidation(t *testing.T) {
 		{name: "unknown input", edit: func(m *Manifest) { m.ManagedServer.Config["licence"] = "missing" }},
 		{name: "missing required config", edit: func(m *Manifest) { m.ManagedServer.Config = nil }},
 		{name: "secret input", edit: func(m *Manifest) { m.ManagedServer.Config["licence"] = "token" }},
+		{name: "public secret input", edit: func(m *Manifest) { m.ManagedServer.Config["steam_web_api_key"] = "address" }},
+		{name: "generated and mapped secret", edit: func(m *Manifest) {
+			m.Settings = append(m.Settings, Field{Name: "input", Type: "secret"})
+			m.ManagedServer.Config["api_token"] = "input"
+		}},
 		{name: "incompatible config type", edit: func(m *Manifest) { m.Settings[1].Type = "bool"; m.Settings[1].Options = nil }},
 		{name: "unknown target", edit: func(m *Manifest) { m.ManagedServer.Bindings["missing"] = "public_url" }},
 		{name: "unknown source", edit: func(m *Manifest) { m.ManagedServer.Bindings["address"] = "ip_address" }},
@@ -52,6 +57,25 @@ func TestManagedManifestValidation(t *testing.T) {
 	m.ManagedServer.Bindings["address"] = "setup_code"
 	if err := validateManifest(&m, true); err != nil {
 		t.Errorf("validateManifest(setup_code binding) = %v, want nil", err)
+	}
+}
+
+func TestManagedSecretConfig(t *testing.T) {
+	for _, field := range []Field{{Name: "steam", Type: "secret"}, {Name: "steam", Type: "string", Secret: true}} {
+		m := managedManifest()
+		m.Settings = append(m.Settings, field)
+		m.ManagedServer.Config["steam_web_api_key"] = "steam"
+		if err := validateManifest(&m, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := managedManifest()
+	m.ManagedServer.Game = "valheim"
+	m.Settings = append(m.Settings, Field{Name: "password_input", Type: "secret", Required: true})
+	m.ManagedServer.Config = map[string]string{"server_name": "address", "world_name": "address", "password": "password_input"}
+	m.ManagedServer.Bindings = map[string]string{"token": "setup_code"}
+	if err := validateManifest(&m, true); err != nil {
+		t.Fatal(err)
 	}
 }
 

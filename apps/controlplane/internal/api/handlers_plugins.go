@@ -573,6 +573,16 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 				return nil, fmt.Errorf("%s must be a string", field.Name)
 			}
 			if text == "" {
+				mapped := false
+				if plugin.ManagedServer != nil {
+					for _, source := range plugin.ManagedServer.Config {
+						mapped = mapped || source == field.Name
+					}
+				}
+				if !mapped {
+					continue
+				}
+				delete(merged, field.Name)
 				continue
 			}
 		}

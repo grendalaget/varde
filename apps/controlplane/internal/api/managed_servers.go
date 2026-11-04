@@ -120,10 +120,21 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 		return nil, errResp(gen.Validation, "select managed mode before starting this server", nil)
 	}
 	cfg := make(map[string]any)
-	for target, source := range plugin.ManagedServer.Config {
-		cfg[target] = settings[source]
-	}
 	game := catalog.Get(plugin.ManagedServer.Game)
+	secretInputs := make(map[string]string)
+	for target, source := range plugin.ManagedServer.Config {
+		secret := false
+		for _, field := range game.ConfigFields {
+			if field.Name == target {
+				secret = field.Secret || field.Type == "secret"
+			}
+		}
+		if secret {
+			secretInputs[target], _ = settings[source].(string)
+		} else {
+			cfg[target] = settings[source]
+		}
+	}
 	if err := s.requireGateway(game); err != nil {
 		return nil, err
 	}
@@ -160,6 +171,29 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 	} else if err != nil {
 		return nil, err
 	}
+	values, err := s.managedSecrets(row)
+	if err != nil {
+		return nil, err
+	}
+	previousSecrets := maps.Clone(values)
+	for field, value := range secretInputs {
+		if value == "" {
+			delete(values, field)
+		} else {
+			values[field] = value
+		}
+	}
+	secretsChanged := !maps.Equal(values, previousSecrets)
+	if secretsChanged {
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			return nil, err
+		}
+		row.SecretsJSON, err = s.Secrets.Seal(string(encoded), managedSecretAAD(row))
+		if err != nil {
+			return nil, err
+		}
+	}
 	validationConfig, err := s.managedServerConfig(cfg, row)
 	if err != nil {
 		return nil, err
@@ -190,11 +224,11 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 			existing[key] = value
 		}
 		updated := mustJSON(existing)
-		if updated != srv.ConfigJSON {
+		if updated != srv.ConfigJSON || secretsChanged {
 			row.BindingDigest = ""
 		}
 		srv.ConfigJSON, srv.UpdatedAt = updated, s.Store.NowMs()
-		if err := s.Store.UpdateServerMeta(ctx, srv); err != nil {
+		if err := s.Store.UpdateManagedServerMeta(ctx, srv, row); err != nil {
 			return nil, err
 		}
 	}
