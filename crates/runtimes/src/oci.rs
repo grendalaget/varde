@@ -85,9 +85,9 @@ pub(super) async fn fetch(provider: &HttpRuntimes, spec: &OciSpec) -> Result<Pat
         &spec.arch,
         &paths,
     ))?));
-    let dest = provider.root.join("oci").join(hex).join(key);
-    let lock = provider.dest_lock(&dest);
-    let _guard = lock.lock().await;
+    let digest_dir = provider.root.join("oci").join(hex);
+    let dest = digest_dir.join(key);
+    let guard = provider.dest_lock(&digest_dir).lock_owned().await;
     if HttpRuntimes::done(&dest) {
         return Ok(dest.join("root"));
     }
@@ -98,39 +98,57 @@ pub(super) async fn fetch(provider: &HttpRuntimes, spec: &OciSpec) -> Result<Pat
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos()
     ));
-    let dir = staging.clone();
-    spawn_fs(move || {
-        std::fs::create_dir_all(dir.join("root"))?;
-        Ok(())
-    })
-    .await?;
-    let result = tokio::time::timeout(REQUEST_TIMEOUT, fetch_into(registry, spec, &staging, paths))
+    let staging = spawn_fs(move || Staging::new(staging, guard)).await?;
+    let staging = tokio::time::timeout(REQUEST_TIMEOUT, fetch_into(registry, spec, staging, paths))
         .await
-        .map_err(|_| "OCI fetch timed out".into())
-        .and_then(|r| r);
-    if let Err(error) = result {
-        let dir = staging.clone();
-        let _ = spawn_fs(move || {
-            std::fs::remove_dir_all(dir)?;
-            Ok(())
-        })
-        .await;
-        return Err(error);
-    }
+        .map_err(|_| "OCI fetch timed out")??;
     let dir = dest.clone();
     spawn_fs(move || {
-        std::fs::write(staging.join(".complete"), b"ok")?;
-        match std::fs::rename(&staging, &dir) {
+        std::fs::write(staging.path.join(".complete"), b"ok")?;
+        match std::fs::rename(&staging.path, &dir) {
             Ok(()) => Ok(()),
-            Err(_) if HttpRuntimes::done(&dir) => {
-                std::fs::remove_dir_all(staging)?;
-                Ok(())
-            }
+            Err(_) if HttpRuntimes::done(&dir) => Ok(()),
             Err(error) => Err(error.into()),
         }
     })
     .await?;
     Ok(dest.join("root"))
+}
+
+struct Staging {
+    path: PathBuf,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Staging {
+    fn new(path: PathBuf, guard: tokio::sync::OwnedMutexGuard<()>) -> Result<Self> {
+        std::fs::create_dir_all(path.parent().ok_or("OCI staging missing parent")?)?;
+        std::fs::create_dir(&path)?;
+        let staging = Self {
+            path,
+            guard: Some(guard),
+        };
+        std::fs::create_dir(staging.path.join("root"))?;
+        Ok(staging)
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        let path = self.path.clone();
+        let guard = self.guard.take();
+        let cleanup = move || {
+            let _ = std::fs::remove_dir_all(path);
+            drop(guard);
+        };
+        // Extraction owns this value until its blocking task finishes, even
+        // when the caller times out or is cancelled. Cleanup retains the lock.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            drop(runtime.spawn_blocking(cleanup));
+        } else {
+            cleanup();
+        }
+    }
 }
 
 struct Registry {
@@ -303,9 +321,9 @@ fn token_url(challenge: &str, origin: &str) -> Result<String> {
 async fn fetch_into(
     mut registry: Registry,
     spec: &OciSpec,
-    staging: &Path,
+    mut staging: Staging,
     paths: Vec<PathBuf>,
-) -> Result<()> {
+) -> Result<Staging> {
     let body = registry
         .get(&format!("manifests/{}", spec.digest), JSON_LIMIT)
         .await?;
@@ -355,18 +373,25 @@ async fn fetch_into(
             .checked_add(body.len() as u64)
             .ok_or("OCI size overflow")?;
         let digest = digest.to_string();
-        let root = staging.join("root");
         let paths = paths.clone();
-        budget = spawn_fs(move || {
+        (staging, budget) = spawn_fs(move || {
             verify(&body, &digest)?;
-            apply_layer(&body, &media_type, &root, &paths, &mut budget)?;
-            Ok(budget)
+            apply_layer(
+                &body,
+                &media_type,
+                &staging.path.join("root"),
+                &paths,
+                &mut budget,
+            )?;
+            Ok((staging, budget))
         })
         .await?;
     }
-    let root = staging.join("root");
-    spawn_fs(move || validate_symlinks(&root)).await?;
-    Ok(())
+    spawn_fs(move || {
+        validate_symlinks(&staging.path.join("root"))?;
+        Ok(staging)
+    })
+    .await
 }
 
 fn validate_symlinks(root: &Path) -> Result<()> {
@@ -948,6 +973,62 @@ mod tests {
                 .await
                 .is_err());
             assert!(!walk_complete(temp.path()));
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_keeps_staging_and_digest_lock_until_blocking_work_finishes() {
+        for timeout in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let provider = HttpRuntimes::new(temp.path().to_path_buf());
+            let lock = provider.dest_lock(&temp.path().join("digest"));
+            let staging_path = temp.path().join("unique-staging");
+            let staging =
+                Staging::new(staging_path.clone(), lock.clone().lock_owned().await).unwrap();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, proceed) = std::sync::mpsc::channel();
+            let (wrote, written) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                let extraction = spawn_fs(move || {
+                    let _ = started.send(());
+                    let _ = proceed.recv();
+                    let result = std::fs::write(staging.path.join("root/finished"), b"done");
+                    let _ = wrote.send(result.is_ok());
+                    result?;
+                    Ok(staging)
+                });
+                if timeout {
+                    tokio::time::timeout(std::time::Duration::from_millis(50), extraction)
+                        .await
+                        .map_err(|_| "timeout")?
+                } else {
+                    extraction.await
+                }
+            });
+            ready.await.unwrap();
+            if timeout {
+                assert!(task.await.unwrap().is_err());
+            } else {
+                task.abort();
+                assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+            }
+            assert!(staging_path.is_dir());
+            assert!(
+                lock.try_lock().is_err(),
+                "digest lock released while extraction was still active"
+            );
+            release.send(()).unwrap();
+            assert!(
+                written.await.unwrap(),
+                "staging was removed under the extraction worker"
+            );
+            let _guard = tokio::time::timeout(std::time::Duration::from_secs(5), lock.lock())
+                .await
+                .unwrap();
+            assert!(
+                !staging_path.exists(),
+                "cleanup released the digest lock before removing staging"
+            );
         }
     }
 
