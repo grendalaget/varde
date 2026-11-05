@@ -4,6 +4,7 @@ use (
 	./go
 	./apps/controlplane
 	./apps/relay
+	./apps/gateway
 	./apps/mesh
 	./tests/e2e
 	./tests/netns

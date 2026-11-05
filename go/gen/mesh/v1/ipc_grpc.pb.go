@@ -32,6 +32,7 @@ const (
 	MeshService_ListPeers_FullMethodName             = "/varde.mesh.v1.MeshService/ListPeers"
 	MeshService_SetRoutes_FullMethodName             = "/varde.mesh.v1.MeshService/SetRoutes"
 	MeshService_SetHostedServices_FullMethodName     = "/varde.mesh.v1.MeshService/SetHostedServices"
+	MeshService_SetGatewayTunnels_FullMethodName     = "/varde.mesh.v1.MeshService/SetGatewayTunnels"
 	MeshService_SetInternalServices_FullMethodName   = "/varde.mesh.v1.MeshService/SetInternalServices"
 	MeshService_BindInternalForward_FullMethodName   = "/varde.mesh.v1.MeshService/BindInternalForward"
 	MeshService_UnbindInternalForward_FullMethodName = "/varde.mesh.v1.MeshService/UnbindInternalForward"
@@ -51,6 +52,8 @@ type MeshServiceClient interface {
 	SetRoutes(ctx context.Context, in *SetRoutesRequest, opts ...grpc.CallOption) (*SetRoutesResponse, error)
 	// Host side: services this node accepts inbound traffic for.
 	SetHostedServices(ctx context.Context, in *SetHostedServicesRequest, opts ...grpc.CallOption) (*SetHostedServicesResponse, error)
+	// Public gateway tunnels hosted by this node; declarative full replacement.
+	SetGatewayTunnels(ctx context.Context, in *SetGatewayTunnelsRequest, opts ...grpc.CallOption) (*SetGatewayTunnelsResponse, error)
 	// Agent-internal services (e.g. "agent.chunks") reachable by group peers.
 	SetInternalServices(ctx context.Context, in *SetInternalServicesRequest, opts ...grpc.CallOption) (*SetInternalServicesResponse, error)
 	// Retired: unauthenticated loopback internal forwards are no longer supported.
@@ -123,6 +126,16 @@ func (c *meshServiceClient) SetHostedServices(ctx context.Context, in *SetHosted
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetHostedServicesResponse)
 	err := c.cc.Invoke(ctx, MeshService_SetHostedServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *meshServiceClient) SetGatewayTunnels(ctx context.Context, in *SetGatewayTunnelsRequest, opts ...grpc.CallOption) (*SetGatewayTunnelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetGatewayTunnelsResponse)
+	err := c.cc.Invoke(ctx, MeshService_SetGatewayTunnels_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +222,8 @@ type MeshServiceServer interface {
 	SetRoutes(context.Context, *SetRoutesRequest) (*SetRoutesResponse, error)
 	// Host side: services this node accepts inbound traffic for.
 	SetHostedServices(context.Context, *SetHostedServicesRequest) (*SetHostedServicesResponse, error)
+	// Public gateway tunnels hosted by this node; declarative full replacement.
+	SetGatewayTunnels(context.Context, *SetGatewayTunnelsRequest) (*SetGatewayTunnelsResponse, error)
 	// Agent-internal services (e.g. "agent.chunks") reachable by group peers.
 	SetInternalServices(context.Context, *SetInternalServicesRequest) (*SetInternalServicesResponse, error)
 	// Retired: unauthenticated loopback internal forwards are no longer supported.
@@ -244,6 +259,9 @@ func (UnimplementedMeshServiceServer) SetRoutes(context.Context, *SetRoutesReque
 }
 func (UnimplementedMeshServiceServer) SetHostedServices(context.Context, *SetHostedServicesRequest) (*SetHostedServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetHostedServices not implemented")
+}
+func (UnimplementedMeshServiceServer) SetGatewayTunnels(context.Context, *SetGatewayTunnelsRequest) (*SetGatewayTunnelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetGatewayTunnels not implemented")
 }
 func (UnimplementedMeshServiceServer) SetInternalServices(context.Context, *SetInternalServicesRequest) (*SetInternalServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetInternalServices not implemented")
@@ -389,6 +407,24 @@ func _MeshService_SetHostedServices_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MeshService_SetGatewayTunnels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetGatewayTunnelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MeshServiceServer).SetGatewayTunnels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MeshService_SetGatewayTunnels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MeshServiceServer).SetGatewayTunnels(ctx, req.(*SetGatewayTunnelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MeshService_SetInternalServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetInternalServicesRequest)
 	if err := dec(in); err != nil {
@@ -495,6 +531,10 @@ var MeshService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetHostedServices",
 			Handler:    _MeshService_SetHostedServices_Handler,
+		},
+		{
+			MethodName: "SetGatewayTunnels",
+			Handler:    _MeshService_SetGatewayTunnels_Handler,
 		},
 		{
 			MethodName: "SetInternalServices",

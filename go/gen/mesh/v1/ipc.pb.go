@@ -1408,6 +1408,156 @@ func (*SetHostedServicesResponse) Descriptor() ([]byte, []int) {
 	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{21}
 }
 
+type GatewayTunnel struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	// wss://<gateway>/v1/tunnel. The signed token binds hostname and lease epoch.
+	GatewayUrl string `protobuf:"bytes,2,opt,name=gateway_url,json=gatewayUrl,proto3" json:"gateway_url,omitempty"`
+	Token      string `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
+	// Local TCP destination on 127.0.0.1; not the mesh service port.
+	TargetPort    uint32 `protobuf:"varint,4,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GatewayTunnel) Reset() {
+	*x = GatewayTunnel{}
+	mi := &file_mesh_v1_ipc_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GatewayTunnel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GatewayTunnel) ProtoMessage() {}
+
+func (x *GatewayTunnel) ProtoReflect() protoreflect.Message {
+	mi := &file_mesh_v1_ipc_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GatewayTunnel.ProtoReflect.Descriptor instead.
+func (*GatewayTunnel) Descriptor() ([]byte, []int) {
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GatewayTunnel) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+func (x *GatewayTunnel) GetGatewayUrl() string {
+	if x != nil {
+		return x.GatewayUrl
+	}
+	return ""
+}
+
+func (x *GatewayTunnel) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *GatewayTunnel) GetTargetPort() uint32 {
+	if x != nil {
+		return x.TargetPort
+	}
+	return 0
+}
+
+type SetGatewayTunnelsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tunnels       []*GatewayTunnel       `protobuf:"bytes,1,rep,name=tunnels,proto3" json:"tunnels,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetGatewayTunnelsRequest) Reset() {
+	*x = SetGatewayTunnelsRequest{}
+	mi := &file_mesh_v1_ipc_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetGatewayTunnelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetGatewayTunnelsRequest) ProtoMessage() {}
+
+func (x *SetGatewayTunnelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mesh_v1_ipc_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetGatewayTunnelsRequest.ProtoReflect.Descriptor instead.
+func (*SetGatewayTunnelsRequest) Descriptor() ([]byte, []int) {
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SetGatewayTunnelsRequest) GetTunnels() []*GatewayTunnel {
+	if x != nil {
+		return x.Tunnels
+	}
+	return nil
+}
+
+type SetGatewayTunnelsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetGatewayTunnelsResponse) Reset() {
+	*x = SetGatewayTunnelsResponse{}
+	mi := &file_mesh_v1_ipc_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetGatewayTunnelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetGatewayTunnelsResponse) ProtoMessage() {}
+
+func (x *SetGatewayTunnelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mesh_v1_ipc_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetGatewayTunnelsResponse.ProtoReflect.Descriptor instead.
+func (*SetGatewayTunnelsResponse) Descriptor() ([]byte, []int) {
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{24}
+}
+
 type InternalService struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1418,7 +1568,7 @@ type InternalService struct {
 
 func (x *InternalService) Reset() {
 	*x = InternalService{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[22]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1430,7 +1580,7 @@ func (x *InternalService) String() string {
 func (*InternalService) ProtoMessage() {}
 
 func (x *InternalService) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[22]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1443,7 +1593,7 @@ func (x *InternalService) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InternalService.ProtoReflect.Descriptor instead.
 func (*InternalService) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{22}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *InternalService) GetName() string {
@@ -1469,7 +1619,7 @@ type SetInternalServicesRequest struct {
 
 func (x *SetInternalServicesRequest) Reset() {
 	*x = SetInternalServicesRequest{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[23]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1481,7 +1631,7 @@ func (x *SetInternalServicesRequest) String() string {
 func (*SetInternalServicesRequest) ProtoMessage() {}
 
 func (x *SetInternalServicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[23]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1494,7 +1644,7 @@ func (x *SetInternalServicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetInternalServicesRequest.ProtoReflect.Descriptor instead.
 func (*SetInternalServicesRequest) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{23}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SetInternalServicesRequest) GetServices() []*InternalService {
@@ -1512,7 +1662,7 @@ type SetInternalServicesResponse struct {
 
 func (x *SetInternalServicesResponse) Reset() {
 	*x = SetInternalServicesResponse{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[24]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1524,7 +1674,7 @@ func (x *SetInternalServicesResponse) String() string {
 func (*SetInternalServicesResponse) ProtoMessage() {}
 
 func (x *SetInternalServicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[24]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1537,7 +1687,7 @@ func (x *SetInternalServicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetInternalServicesResponse.ProtoReflect.Descriptor instead.
 func (*SetInternalServicesResponse) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{24}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{27}
 }
 
 type BindInternalForwardRequest struct {
@@ -1550,7 +1700,7 @@ type BindInternalForwardRequest struct {
 
 func (x *BindInternalForwardRequest) Reset() {
 	*x = BindInternalForwardRequest{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[25]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1562,7 +1712,7 @@ func (x *BindInternalForwardRequest) String() string {
 func (*BindInternalForwardRequest) ProtoMessage() {}
 
 func (x *BindInternalForwardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[25]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1575,7 +1725,7 @@ func (x *BindInternalForwardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindInternalForwardRequest.ProtoReflect.Descriptor instead.
 func (*BindInternalForwardRequest) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{25}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *BindInternalForwardRequest) GetPeerNodeId() string {
@@ -1603,7 +1753,7 @@ type BindInternalForwardResponse struct {
 
 func (x *BindInternalForwardResponse) Reset() {
 	*x = BindInternalForwardResponse{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[26]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1615,7 +1765,7 @@ func (x *BindInternalForwardResponse) String() string {
 func (*BindInternalForwardResponse) ProtoMessage() {}
 
 func (x *BindInternalForwardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[26]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1628,7 +1778,7 @@ func (x *BindInternalForwardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindInternalForwardResponse.ProtoReflect.Descriptor instead.
 func (*BindInternalForwardResponse) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{26}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *BindInternalForwardResponse) GetForwardId() string {
@@ -1654,7 +1804,7 @@ type UnbindInternalForwardRequest struct {
 
 func (x *UnbindInternalForwardRequest) Reset() {
 	*x = UnbindInternalForwardRequest{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[27]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1666,7 +1816,7 @@ func (x *UnbindInternalForwardRequest) String() string {
 func (*UnbindInternalForwardRequest) ProtoMessage() {}
 
 func (x *UnbindInternalForwardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[27]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1679,7 +1829,7 @@ func (x *UnbindInternalForwardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbindInternalForwardRequest.ProtoReflect.Descriptor instead.
 func (*UnbindInternalForwardRequest) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{27}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *UnbindInternalForwardRequest) GetForwardId() string {
@@ -1697,7 +1847,7 @@ type UnbindInternalForwardResponse struct {
 
 func (x *UnbindInternalForwardResponse) Reset() {
 	*x = UnbindInternalForwardResponse{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[28]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1709,7 +1859,7 @@ func (x *UnbindInternalForwardResponse) String() string {
 func (*UnbindInternalForwardResponse) ProtoMessage() {}
 
 func (x *UnbindInternalForwardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[28]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1722,7 +1872,7 @@ func (x *UnbindInternalForwardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbindInternalForwardResponse.ProtoReflect.Descriptor instead.
 func (*UnbindInternalForwardResponse) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{28}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{31}
 }
 
 type ExchangeInternalRequest struct {
@@ -1736,7 +1886,7 @@ type ExchangeInternalRequest struct {
 
 func (x *ExchangeInternalRequest) Reset() {
 	*x = ExchangeInternalRequest{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[29]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1748,7 +1898,7 @@ func (x *ExchangeInternalRequest) String() string {
 func (*ExchangeInternalRequest) ProtoMessage() {}
 
 func (x *ExchangeInternalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[29]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1761,7 +1911,7 @@ func (x *ExchangeInternalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExchangeInternalRequest.ProtoReflect.Descriptor instead.
 func (*ExchangeInternalRequest) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{29}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ExchangeInternalRequest) GetPeerNodeId() string {
@@ -1794,7 +1944,7 @@ type ExchangeInternalResponse struct {
 
 func (x *ExchangeInternalResponse) Reset() {
 	*x = ExchangeInternalResponse{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[30]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1806,7 +1956,7 @@ func (x *ExchangeInternalResponse) String() string {
 func (*ExchangeInternalResponse) ProtoMessage() {}
 
 func (x *ExchangeInternalResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[30]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1819,7 +1969,7 @@ func (x *ExchangeInternalResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExchangeInternalResponse.ProtoReflect.Descriptor instead.
 func (*ExchangeInternalResponse) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{30}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ExchangeInternalResponse) GetData() []byte {
@@ -1837,7 +1987,7 @@ type WatchEventsRequest struct {
 
 func (x *WatchEventsRequest) Reset() {
 	*x = WatchEventsRequest{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[31]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +1999,7 @@ func (x *WatchEventsRequest) String() string {
 func (*WatchEventsRequest) ProtoMessage() {}
 
 func (x *WatchEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[31]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +2012,7 @@ func (x *WatchEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchEventsRequest.ProtoReflect.Descriptor instead.
 func (*WatchEventsRequest) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{31}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{34}
 }
 
 type MeshEvent struct {
@@ -1881,7 +2031,7 @@ type MeshEvent struct {
 
 func (x *MeshEvent) Reset() {
 	*x = MeshEvent{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[32]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1893,7 +2043,7 @@ func (x *MeshEvent) String() string {
 func (*MeshEvent) ProtoMessage() {}
 
 func (x *MeshEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[32]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1906,7 +2056,7 @@ func (x *MeshEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MeshEvent.ProtoReflect.Descriptor instead.
 func (*MeshEvent) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{32}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *MeshEvent) GetAtUnixMs() int64 {
@@ -1998,7 +2148,7 @@ type RouteRejected struct {
 
 func (x *RouteRejected) Reset() {
 	*x = RouteRejected{}
-	mi := &file_mesh_v1_ipc_proto_msgTypes[33]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2010,7 +2160,7 @@ func (x *RouteRejected) String() string {
 func (*RouteRejected) ProtoMessage() {}
 
 func (x *RouteRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_mesh_v1_ipc_proto_msgTypes[33]
+	mi := &file_mesh_v1_ipc_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2023,7 +2173,7 @@ func (x *RouteRejected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteRejected.ProtoReflect.Descriptor instead.
 func (*RouteRejected) Descriptor() ([]byte, []int) {
-	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{33}
+	return file_mesh_v1_ipc_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RouteRejected) GetServiceId() string {
@@ -2151,7 +2301,18 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x05ports\x18\x03 \x03(\v2\x19.varde.mesh.v1.HostedPortR\x05ports\"T\n" +
 	"\x18SetHostedServicesRequest\x128\n" +
 	"\bservices\x18\x01 \x03(\v2\x1c.varde.mesh.v1.HostedServiceR\bservices\"\x1b\n" +
-	"\x19SetHostedServicesResponse\"F\n" +
+	"\x19SetHostedServicesResponse\"\x86\x01\n" +
+	"\rGatewayTunnel\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x1f\n" +
+	"\vgateway_url\x18\x02 \x01(\tR\n" +
+	"gatewayUrl\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\x12\x1f\n" +
+	"\vtarget_port\x18\x04 \x01(\rR\n" +
+	"targetPort\"R\n" +
+	"\x18SetGatewayTunnelsRequest\x126\n" +
+	"\atunnels\x18\x01 \x03(\v2\x1c.varde.mesh.v1.GatewayTunnelR\atunnels\"\x1b\n" +
+	"\x19SetGatewayTunnelsResponse\"F\n" +
 	"\x0fInternalService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vtarget_port\x18\x02 \x01(\rR\n" +
@@ -2202,14 +2363,15 @@ const file_mesh_v1_ipc_proto_rawDesc = "" +
 	"\x15PATH_KIND_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0ePATH_KIND_NONE\x10\x01\x12\x14\n" +
 	"\x10PATH_KIND_DIRECT\x10\x02\x12\x15\n" +
-	"\x11PATH_KIND_RELAYED\x10\x032\x80\b\n" +
+	"\x11PATH_KIND_RELAYED\x10\x032\xe8\b\n" +
 	"\vMeshService\x12G\n" +
 	"\tGetStatus\x12\x1f.varde.mesh.v1.GetStatusRequest\x1a\x19.varde.mesh.v1.MeshStatus\x12N\n" +
 	"\tConfigure\x12\x1f.varde.mesh.v1.ConfigureRequest\x1a .varde.mesh.v1.ConfigureResponse\x12K\n" +
 	"\bSetPeers\x12\x1e.varde.mesh.v1.SetPeersRequest\x1a\x1f.varde.mesh.v1.SetPeersResponse\x12N\n" +
 	"\tListPeers\x12\x1f.varde.mesh.v1.ListPeersRequest\x1a .varde.mesh.v1.ListPeersResponse\x12N\n" +
 	"\tSetRoutes\x12\x1f.varde.mesh.v1.SetRoutesRequest\x1a .varde.mesh.v1.SetRoutesResponse\x12f\n" +
-	"\x11SetHostedServices\x12'.varde.mesh.v1.SetHostedServicesRequest\x1a(.varde.mesh.v1.SetHostedServicesResponse\x12l\n" +
+	"\x11SetHostedServices\x12'.varde.mesh.v1.SetHostedServicesRequest\x1a(.varde.mesh.v1.SetHostedServicesResponse\x12f\n" +
+	"\x11SetGatewayTunnels\x12'.varde.mesh.v1.SetGatewayTunnelsRequest\x1a(.varde.mesh.v1.SetGatewayTunnelsResponse\x12l\n" +
 	"\x13SetInternalServices\x12).varde.mesh.v1.SetInternalServicesRequest\x1a*.varde.mesh.v1.SetInternalServicesResponse\x12l\n" +
 	"\x13BindInternalForward\x12).varde.mesh.v1.BindInternalForwardRequest\x1a*.varde.mesh.v1.BindInternalForwardResponse\x12r\n" +
 	"\x15UnbindInternalForward\x12+.varde.mesh.v1.UnbindInternalForwardRequest\x1a,.varde.mesh.v1.UnbindInternalForwardResponse\x12e\n" +
@@ -2229,7 +2391,7 @@ func file_mesh_v1_ipc_proto_rawDescGZIP() []byte {
 }
 
 var file_mesh_v1_ipc_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_mesh_v1_ipc_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_mesh_v1_ipc_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_mesh_v1_ipc_proto_goTypes = []any{
 	(Protocol)(0),                         // 0: varde.mesh.v1.Protocol
 	(PathKind)(0),                         // 1: varde.mesh.v1.PathKind
@@ -2255,18 +2417,21 @@ var file_mesh_v1_ipc_proto_goTypes = []any{
 	(*HostedService)(nil),                 // 21: varde.mesh.v1.HostedService
 	(*SetHostedServicesRequest)(nil),      // 22: varde.mesh.v1.SetHostedServicesRequest
 	(*SetHostedServicesResponse)(nil),     // 23: varde.mesh.v1.SetHostedServicesResponse
-	(*InternalService)(nil),               // 24: varde.mesh.v1.InternalService
-	(*SetInternalServicesRequest)(nil),    // 25: varde.mesh.v1.SetInternalServicesRequest
-	(*SetInternalServicesResponse)(nil),   // 26: varde.mesh.v1.SetInternalServicesResponse
-	(*BindInternalForwardRequest)(nil),    // 27: varde.mesh.v1.BindInternalForwardRequest
-	(*BindInternalForwardResponse)(nil),   // 28: varde.mesh.v1.BindInternalForwardResponse
-	(*UnbindInternalForwardRequest)(nil),  // 29: varde.mesh.v1.UnbindInternalForwardRequest
-	(*UnbindInternalForwardResponse)(nil), // 30: varde.mesh.v1.UnbindInternalForwardResponse
-	(*ExchangeInternalRequest)(nil),       // 31: varde.mesh.v1.ExchangeInternalRequest
-	(*ExchangeInternalResponse)(nil),      // 32: varde.mesh.v1.ExchangeInternalResponse
-	(*WatchEventsRequest)(nil),            // 33: varde.mesh.v1.WatchEventsRequest
-	(*MeshEvent)(nil),                     // 34: varde.mesh.v1.MeshEvent
-	(*RouteRejected)(nil),                 // 35: varde.mesh.v1.RouteRejected
+	(*GatewayTunnel)(nil),                 // 24: varde.mesh.v1.GatewayTunnel
+	(*SetGatewayTunnelsRequest)(nil),      // 25: varde.mesh.v1.SetGatewayTunnelsRequest
+	(*SetGatewayTunnelsResponse)(nil),     // 26: varde.mesh.v1.SetGatewayTunnelsResponse
+	(*InternalService)(nil),               // 27: varde.mesh.v1.InternalService
+	(*SetInternalServicesRequest)(nil),    // 28: varde.mesh.v1.SetInternalServicesRequest
+	(*SetInternalServicesResponse)(nil),   // 29: varde.mesh.v1.SetInternalServicesResponse
+	(*BindInternalForwardRequest)(nil),    // 30: varde.mesh.v1.BindInternalForwardRequest
+	(*BindInternalForwardResponse)(nil),   // 31: varde.mesh.v1.BindInternalForwardResponse
+	(*UnbindInternalForwardRequest)(nil),  // 32: varde.mesh.v1.UnbindInternalForwardRequest
+	(*UnbindInternalForwardResponse)(nil), // 33: varde.mesh.v1.UnbindInternalForwardResponse
+	(*ExchangeInternalRequest)(nil),       // 34: varde.mesh.v1.ExchangeInternalRequest
+	(*ExchangeInternalResponse)(nil),      // 35: varde.mesh.v1.ExchangeInternalResponse
+	(*WatchEventsRequest)(nil),            // 36: varde.mesh.v1.WatchEventsRequest
+	(*MeshEvent)(nil),                     // 37: varde.mesh.v1.MeshEvent
+	(*RouteRejected)(nil),                 // 38: varde.mesh.v1.RouteRejected
 }
 var file_mesh_v1_ipc_proto_depIdxs = []int32{
 	5,  // 0: varde.mesh.v1.MeshStatus.relays:type_name -> varde.mesh.v1.RelayState
@@ -2282,37 +2447,40 @@ var file_mesh_v1_ipc_proto_depIdxs = []int32{
 	0,  // 10: varde.mesh.v1.HostedPort.protocol:type_name -> varde.mesh.v1.Protocol
 	20, // 11: varde.mesh.v1.HostedService.ports:type_name -> varde.mesh.v1.HostedPort
 	21, // 12: varde.mesh.v1.SetHostedServicesRequest.services:type_name -> varde.mesh.v1.HostedService
-	24, // 13: varde.mesh.v1.SetInternalServicesRequest.services:type_name -> varde.mesh.v1.InternalService
-	12, // 14: varde.mesh.v1.MeshEvent.peer_path_changed:type_name -> varde.mesh.v1.PeerState
-	35, // 15: varde.mesh.v1.MeshEvent.route_rejected:type_name -> varde.mesh.v1.RouteRejected
-	5,  // 16: varde.mesh.v1.MeshEvent.relay_changed:type_name -> varde.mesh.v1.RelayState
-	2,  // 17: varde.mesh.v1.MeshService.GetStatus:input_type -> varde.mesh.v1.GetStatusRequest
-	7,  // 18: varde.mesh.v1.MeshService.Configure:input_type -> varde.mesh.v1.ConfigureRequest
-	10, // 19: varde.mesh.v1.MeshService.SetPeers:input_type -> varde.mesh.v1.SetPeersRequest
-	13, // 20: varde.mesh.v1.MeshService.ListPeers:input_type -> varde.mesh.v1.ListPeersRequest
-	17, // 21: varde.mesh.v1.MeshService.SetRoutes:input_type -> varde.mesh.v1.SetRoutesRequest
-	22, // 22: varde.mesh.v1.MeshService.SetHostedServices:input_type -> varde.mesh.v1.SetHostedServicesRequest
-	25, // 23: varde.mesh.v1.MeshService.SetInternalServices:input_type -> varde.mesh.v1.SetInternalServicesRequest
-	27, // 24: varde.mesh.v1.MeshService.BindInternalForward:input_type -> varde.mesh.v1.BindInternalForwardRequest
-	29, // 25: varde.mesh.v1.MeshService.UnbindInternalForward:input_type -> varde.mesh.v1.UnbindInternalForwardRequest
-	31, // 26: varde.mesh.v1.MeshService.ExchangeInternal:input_type -> varde.mesh.v1.ExchangeInternalRequest
-	33, // 27: varde.mesh.v1.MeshService.WatchEvents:input_type -> varde.mesh.v1.WatchEventsRequest
-	3,  // 28: varde.mesh.v1.MeshService.GetStatus:output_type -> varde.mesh.v1.MeshStatus
-	8,  // 29: varde.mesh.v1.MeshService.Configure:output_type -> varde.mesh.v1.ConfigureResponse
-	11, // 30: varde.mesh.v1.MeshService.SetPeers:output_type -> varde.mesh.v1.SetPeersResponse
-	14, // 31: varde.mesh.v1.MeshService.ListPeers:output_type -> varde.mesh.v1.ListPeersResponse
-	18, // 32: varde.mesh.v1.MeshService.SetRoutes:output_type -> varde.mesh.v1.SetRoutesResponse
-	23, // 33: varde.mesh.v1.MeshService.SetHostedServices:output_type -> varde.mesh.v1.SetHostedServicesResponse
-	26, // 34: varde.mesh.v1.MeshService.SetInternalServices:output_type -> varde.mesh.v1.SetInternalServicesResponse
-	28, // 35: varde.mesh.v1.MeshService.BindInternalForward:output_type -> varde.mesh.v1.BindInternalForwardResponse
-	30, // 36: varde.mesh.v1.MeshService.UnbindInternalForward:output_type -> varde.mesh.v1.UnbindInternalForwardResponse
-	32, // 37: varde.mesh.v1.MeshService.ExchangeInternal:output_type -> varde.mesh.v1.ExchangeInternalResponse
-	34, // 38: varde.mesh.v1.MeshService.WatchEvents:output_type -> varde.mesh.v1.MeshEvent
-	28, // [28:39] is the sub-list for method output_type
-	17, // [17:28] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	24, // 13: varde.mesh.v1.SetGatewayTunnelsRequest.tunnels:type_name -> varde.mesh.v1.GatewayTunnel
+	27, // 14: varde.mesh.v1.SetInternalServicesRequest.services:type_name -> varde.mesh.v1.InternalService
+	12, // 15: varde.mesh.v1.MeshEvent.peer_path_changed:type_name -> varde.mesh.v1.PeerState
+	38, // 16: varde.mesh.v1.MeshEvent.route_rejected:type_name -> varde.mesh.v1.RouteRejected
+	5,  // 17: varde.mesh.v1.MeshEvent.relay_changed:type_name -> varde.mesh.v1.RelayState
+	2,  // 18: varde.mesh.v1.MeshService.GetStatus:input_type -> varde.mesh.v1.GetStatusRequest
+	7,  // 19: varde.mesh.v1.MeshService.Configure:input_type -> varde.mesh.v1.ConfigureRequest
+	10, // 20: varde.mesh.v1.MeshService.SetPeers:input_type -> varde.mesh.v1.SetPeersRequest
+	13, // 21: varde.mesh.v1.MeshService.ListPeers:input_type -> varde.mesh.v1.ListPeersRequest
+	17, // 22: varde.mesh.v1.MeshService.SetRoutes:input_type -> varde.mesh.v1.SetRoutesRequest
+	22, // 23: varde.mesh.v1.MeshService.SetHostedServices:input_type -> varde.mesh.v1.SetHostedServicesRequest
+	25, // 24: varde.mesh.v1.MeshService.SetGatewayTunnels:input_type -> varde.mesh.v1.SetGatewayTunnelsRequest
+	28, // 25: varde.mesh.v1.MeshService.SetInternalServices:input_type -> varde.mesh.v1.SetInternalServicesRequest
+	30, // 26: varde.mesh.v1.MeshService.BindInternalForward:input_type -> varde.mesh.v1.BindInternalForwardRequest
+	32, // 27: varde.mesh.v1.MeshService.UnbindInternalForward:input_type -> varde.mesh.v1.UnbindInternalForwardRequest
+	34, // 28: varde.mesh.v1.MeshService.ExchangeInternal:input_type -> varde.mesh.v1.ExchangeInternalRequest
+	36, // 29: varde.mesh.v1.MeshService.WatchEvents:input_type -> varde.mesh.v1.WatchEventsRequest
+	3,  // 30: varde.mesh.v1.MeshService.GetStatus:output_type -> varde.mesh.v1.MeshStatus
+	8,  // 31: varde.mesh.v1.MeshService.Configure:output_type -> varde.mesh.v1.ConfigureResponse
+	11, // 32: varde.mesh.v1.MeshService.SetPeers:output_type -> varde.mesh.v1.SetPeersResponse
+	14, // 33: varde.mesh.v1.MeshService.ListPeers:output_type -> varde.mesh.v1.ListPeersResponse
+	18, // 34: varde.mesh.v1.MeshService.SetRoutes:output_type -> varde.mesh.v1.SetRoutesResponse
+	23, // 35: varde.mesh.v1.MeshService.SetHostedServices:output_type -> varde.mesh.v1.SetHostedServicesResponse
+	26, // 36: varde.mesh.v1.MeshService.SetGatewayTunnels:output_type -> varde.mesh.v1.SetGatewayTunnelsResponse
+	29, // 37: varde.mesh.v1.MeshService.SetInternalServices:output_type -> varde.mesh.v1.SetInternalServicesResponse
+	31, // 38: varde.mesh.v1.MeshService.BindInternalForward:output_type -> varde.mesh.v1.BindInternalForwardResponse
+	33, // 39: varde.mesh.v1.MeshService.UnbindInternalForward:output_type -> varde.mesh.v1.UnbindInternalForwardResponse
+	35, // 40: varde.mesh.v1.MeshService.ExchangeInternal:output_type -> varde.mesh.v1.ExchangeInternalResponse
+	37, // 41: varde.mesh.v1.MeshService.WatchEvents:output_type -> varde.mesh.v1.MeshEvent
+	30, // [30:42] is the sub-list for method output_type
+	18, // [18:30] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_mesh_v1_ipc_proto_init() }
@@ -2320,7 +2488,7 @@ func file_mesh_v1_ipc_proto_init() {
 	if File_mesh_v1_ipc_proto != nil {
 		return
 	}
-	file_mesh_v1_ipc_proto_msgTypes[32].OneofWrappers = []any{
+	file_mesh_v1_ipc_proto_msgTypes[35].OneofWrappers = []any{
 		(*MeshEvent_PeerPathChanged)(nil),
 		(*MeshEvent_RouteRejected)(nil),
 		(*MeshEvent_RelayChanged)(nil),
@@ -2332,7 +2500,7 @@ func file_mesh_v1_ipc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mesh_v1_ipc_proto_rawDesc), len(file_mesh_v1_ipc_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   34,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

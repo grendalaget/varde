@@ -59,6 +59,13 @@ func (s *meshServer) SetHostedServices(_ context.Context, req *meshv1.SetHostedS
 	return &meshv1.SetHostedServicesResponse{}, nil
 }
 
+func (s *meshServer) SetGatewayTunnels(_ context.Context, req *meshv1.SetGatewayTunnelsRequest) (*meshv1.SetGatewayTunnelsResponse, error) {
+	if err := s.n.SetGatewayTunnels(req); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &meshv1.SetGatewayTunnelsResponse{}, nil
+}
+
 func (s *meshServer) SetInternalServices(_ context.Context, req *meshv1.SetInternalServicesRequest) (*meshv1.SetInternalServicesResponse, error) {
 	s.n.SetInternalServices(req)
 	return &meshv1.SetInternalServicesResponse{}, nil
