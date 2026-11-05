@@ -278,6 +278,17 @@ impl Agent {
     /// Push services for currently-hosting executions into the mesh.
     /// One HostedService per active execution's services (id = service_id).
     pub async fn sync_hosted_services(&self) {
+        let _guard = self.mesh.service_sync.lock().await;
+        let tunnels = self
+            .execs
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|c| c.gateway_tunnel())
+            .collect();
+        if let Err(e) = self.mesh.set_gateway_tunnels(tunnels).await {
+            tracing::warn!(error = %e, "set_gateway_tunnels failed");
+        }
         let services: Vec<mesh_ipc::pb::HostedService> = self
             .execs
             .lock()

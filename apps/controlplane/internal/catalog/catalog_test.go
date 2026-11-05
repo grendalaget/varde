@@ -13,17 +13,20 @@ func TestAutoTournamentConfig(t *testing.T) {
 	if len(game.Ports) != 1 || game.Ports[0].Port != 3069 || game.Ports[0].Protocol != "tcp" {
 		t.Fatal("autotournament must have a single TCP service")
 	}
+	if game.GatewayPort != 3069 || !game.ExcludeAnchors {
+		t.Fatal("autotournament must publish its TCP port and exclude anchors")
+	}
 	if len(game.Runtimes) != 1 || game.Runtimes[0] != "native" {
 		t.Fatal("autotournament requires the native runtime")
 	}
 	for _, licence := range []string{"", "other", "noncommercial", "commercial"} {
-		errs := game.ValidateConfig(map[string]any{"public_url": "https://at.example.org", "licence": licence})
+		errs := game.ValidateConfig(map[string]any{"licence": licence})
 		if (len(errs) > 0) != (licence == "" || licence == "other") {
 			t.Fatalf("licence %q: %v", licence, errs)
 		}
 	}
 	if errs := game.ValidateConfig(map[string]any{}); len(errs) == 0 {
-		t.Fatal("public URL and licence must be required")
+		t.Fatal("licence must be required")
 	}
 	for _, field := range game.ConfigFields {
 		if field.Name == "licence" && field.Default != nil {

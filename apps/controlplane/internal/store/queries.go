@@ -800,14 +800,16 @@ func (s *Store) GetNodeStatus(ctx context.Context, nodeID string) (*NodeStatus, 
 // ---- servers / services ----
 
 func (s *Store) CreateServer(ctx context.Context, srv *Server, svc *Service) error {
+	label := strings.ReplaceAll(srv.ID, "_", "-")
+	srv.GatewayLabel = &label
 	return s.Tx(ctx, func(tx *sqlx.Tx) error {
 		if _, err := tx.ExecContext(ctx, s.Rebind(
 			`INSERT INTO servers (id,group_id,name,game_id,deployment_id,desired_state,observed_state,
 			  replication_factor,min_commit_replicas,snapshot_interval_s,preferred_node_id,epoch,
-			  config_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+			  config_json,created_at,updated_at,gateway_label) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 			srv.ID, srv.GroupID, srv.Name, srv.GameID, srv.DeploymentID, srv.DesiredState,
 			srv.ObservedState, srv.ReplicationFactor, srv.MinCommitReplicas, srv.SnapshotIntervalS,
-			srv.PreferredNodeID, srv.Epoch, srv.ConfigJSON, srv.CreatedAt, srv.UpdatedAt); err != nil {
+			srv.PreferredNodeID, srv.Epoch, srv.ConfigJSON, srv.CreatedAt, srv.UpdatedAt, srv.GatewayLabel); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, s.Rebind(

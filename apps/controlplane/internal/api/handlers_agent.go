@@ -400,8 +400,11 @@ func (s *Server) buildDirectives(ctx context.Context, node *store.Node, now int6
 		if e.StopReason != nil {
 			ed.StopReason = ptr(gen.ExecutionDirectiveStopReason(*e.StopReason))
 		}
-		var cfg map[string]any
-		_ = json.Unmarshal([]byte(srv.ConfigJSON), &cfg)
+		cfg := s.serverDirectiveConfig(srv)
+		ed.Gateway, err = s.executionGateway(srv, e, now)
+		if err != nil {
+			return d, err
+		}
 		ed.Config = &cfg
 		if e.Action == "run" && s.Secrets != nil {
 			ed.Addons = s.directiveServerAddons(ctx, srv)
@@ -1032,9 +1035,9 @@ func (s *Server) standbyDirectives(ctx context.Context, node *store.Node) *[]gen
 		if err != nil {
 			continue
 		}
-		var spec, cfg map[string]any
+		var spec map[string]any
 		_ = json.Unmarshal([]byte(dep.SpecJSON), &spec)
-		_ = json.Unmarshal([]byte(sv.ConfigJSON), &cfg)
+		cfg := s.serverDirectiveConfig(sv)
 		sd := gen.StandbyDirective{ServerId: sv.ID, Config: &cfg}
 		sd.Deployment.Id, sd.Deployment.GameId, sd.Deployment.Spec = dep.ID, dep.GameID, spec
 		out = append(out, sd)

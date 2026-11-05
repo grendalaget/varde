@@ -20,12 +20,14 @@ struct Desired {
     peers: Vec<pb::Peer>,
     routes: Vec<pb::ServiceRoute>,
     hosted: Vec<pb::HostedService>,
+    gateway_tunnels: Vec<pb::GatewayTunnel>,
     internal: Vec<pb::InternalService>,
 }
 
 /// Handle to the supervised mesh. All `set_*` calls are full-replacement and
 /// safe to re-issue; they are replayed automatically on reconnect.
 pub struct MeshCtl {
+    pub service_sync: tokio::sync::Mutex<()>,
     desired: Mutex<Desired>,
     client_tx: watch::Sender<Option<MeshServiceClient<tonic::transport::Channel>>>,
     ipc: String,
@@ -100,7 +102,8 @@ impl MeshCtl {
     async fn connect_apply(&self) -> Result<()> {
         for _ in 0..50 {
             if let Ok(mut c) = mesh_ipc::connect(&self.ipc).await {
-                let (cfg, peers, routes, hosted, internal) = {
+                let _guard = self.service_sync.lock().await;
+                let (cfg, peers, routes, hosted, internal, tunnels) = {
                     let d = self.desired.lock().unwrap();
                     (
                         d.configure.clone(),
@@ -108,6 +111,7 @@ impl MeshCtl {
                         d.routes.clone(),
                         d.hosted.clone(),
                         d.internal.clone(),
+                        d.gateway_tunnels.clone(),
                     )
                 };
                 if let Some(cfg) = cfg {
@@ -116,6 +120,8 @@ impl MeshCtl {
                 c.set_peers(pb::SetPeersRequest { peers }).await?;
                 c.set_routes(pb::SetRoutesRequest { routes }).await?;
                 c.set_hosted_services(pb::SetHostedServicesRequest { services: hosted })
+                    .await?;
+                c.set_gateway_tunnels(pb::SetGatewayTunnelsRequest { tunnels })
                     .await?;
                 c.set_internal_services(pb::SetInternalServicesRequest { services: internal })
                     .await?;
@@ -161,6 +167,15 @@ impl MeshCtl {
         self.desired.lock().unwrap().hosted = services.clone();
         if let Some(mut c) = self.current() {
             c.set_hosted_services(pb::SetHostedServicesRequest { services })
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_gateway_tunnels(&self, tunnels: Vec<pb::GatewayTunnel>) -> Result<()> {
+        self.desired.lock().unwrap().gateway_tunnels = tunnels.clone();
+        if let Some(mut c) = self.current() {
+            c.set_gateway_tunnels(pb::SetGatewayTunnelsRequest { tunnels })
                 .await?;
         }
         Ok(())
@@ -221,6 +236,7 @@ impl MeshCtl {
     pub fn new(ipc: String) -> MeshCtl {
         let (tx, _rx) = watch::channel(None);
         MeshCtl {
+            service_sync: tokio::sync::Mutex::new(()),
             desired: Mutex::new(Desired::default()),
             client_tx: tx,
             ipc,
@@ -232,6 +248,34 @@ impl MeshCtl {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn gateway_replacements_are_cached_for_mesh_reconnect() {
+        let mesh = super::MeshCtl::new(String::new());
+        let tunnel = mesh_ipc::pb::GatewayTunnel {
+            service_id: "svc_t".into(),
+            gateway_url: "wss://gateway.example.org/v1/tunnel".into(),
+            token: "first".into(),
+            target_port: 41000,
+        };
+        mesh.set_gateway_tunnels(vec![tunnel.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            mesh.desired.lock().unwrap().gateway_tunnels,
+            vec![tunnel.clone()]
+        );
+        let mut refreshed = tunnel;
+        refreshed.token = "refreshed".into();
+        mesh.set_gateway_tunnels(vec![refreshed.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            mesh.desired.lock().unwrap().gateway_tunnels,
+            vec![refreshed]
+        );
+        mesh.set_gateway_tunnels(vec![]).await.unwrap();
+        assert!(mesh.desired.lock().unwrap().gateway_tunnels.is_empty());
+    }
     struct ExchangeService;
 
     impl tonic::server::ServerStreamingService<pb::ExchangeInternalRequest> for ExchangeService {

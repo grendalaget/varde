@@ -20,13 +20,14 @@ type ServerView struct {
 // GameView describes the catalog entry for the server's game. A nil OS slice
 // is unrestricted; a non-nil empty slice means no OS is eligible.
 type GameView struct {
-	ID          string
-	MinMemoryMB int64
-	MinDiskMB   int64
-	SteamApp    int64 // installed app is preferred; otherwise runtimes provision it
-	OS          []string
-	Arch        []string
-	Runtimes    []string
+	ExcludeAnchors bool
+	ID             string
+	MinMemoryMB    int64
+	MinDiskMB      int64
+	SteamApp       int64 // installed app is preferred; otherwise runtimes provision it
+	OS             []string
+	Arch           []string
+	Runtimes       []string
 }
 
 // NodeView is what Place needs to know about a candidate node.
@@ -80,6 +81,13 @@ func (e *Error) Error() string {
 	return "No machine can run this server: " + strings.Join(e.Reasons, "; ")
 }
 
+func ExclusionReason(game GameView, node NodeView) string {
+	if game.ExcludeAnchors && node.Anchor {
+		return "requires a group PC (cloud anchors excluded)"
+	}
+	return ""
+}
+
 // Place picks the node for a server. recovery=false means normal start.
 // Deterministic: candidates sorted by node_id, equal scores keep node_id
 // order, so ties always resolve to the lexicographically smaller node_id.
@@ -92,6 +100,10 @@ func Place(srv ServerView, game GameView, nodes []NodeView, snap SnapView) (*Dec
 
 	for _, n := range sorted {
 		who := cmp.Or(n.Name, n.ID)
+		if reason := ExclusionReason(game, n); reason != "" {
+			reasons = append(reasons, who+": "+reason)
+			continue
+		}
 		if !n.Online {
 			reasons = append(reasons, who+": offline")
 			continue

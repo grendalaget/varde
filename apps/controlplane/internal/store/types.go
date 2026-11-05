@@ -251,6 +251,7 @@ type Deployment struct {
 }
 
 type Server struct {
+	GatewayLabel      *string `db:"gateway_label"`
 	ID                string  `db:"id"`
 	GroupID           string  `db:"group_id"`
 	Name              string  `db:"name"`

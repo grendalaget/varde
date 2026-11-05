@@ -1014,7 +1014,7 @@ export interface components {
     schemas: {
         Error: {
             /** @enum {string} */
-            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "plugin_unavailable" | "secrets_unconfigured";
+            code: "stale_epoch" | "latest_save_unavailable" | "no_reachable_save" | "not_found" | "forbidden" | "limit_exceeded" | "validation" | "unauthorized" | "conflict" | "unschedulable" | "internal" | "plugin_unavailable" | "secrets_unconfigured" | "group_pc_required" | "gateway_unconfigured";
             message: string;
             details?: {
                 [key: string]: unknown;
@@ -1305,6 +1305,10 @@ export interface components {
             id: string;
             name: string;
             ports: components["schemas"]["GamePort"][];
+            /** @description TCP service port published through the public gateway. */
+            gateway_port?: number;
+            /** @description Require a group PC rather than a cloud anchor. */
+            exclude_anchors?: boolean;
             os: ("linux" | "windows")[];
             arch: string[];
             min_memory_mb: number;
@@ -1415,6 +1419,10 @@ export interface components {
             group_id: string;
             name: string;
             game_id: string;
+            /** @description Immutable DNS-safe server identifier. */
+            gateway_label?: string;
+            /** @description Stable HTTPS origin when a gateway is configured. */
+            public_url?: string;
             deployment_id?: string | null;
             desired_state: components["schemas"]["DesiredState"];
             observed_state: components["schemas"]["ObservedState"];
@@ -1634,6 +1642,7 @@ export interface components {
             execution_id: string;
             server_id: string;
             server_name: string;
+            gateway?: components["schemas"]["ExecutionGateway"];
             /** Format: int64 */
             epoch: number;
             /** Format: int64 */
@@ -1678,6 +1687,13 @@ export interface components {
             latest_save_at_unix_ms?: number | null;
             /** @description Nodes holding a ready copy of the newest save of any state (which may still be replicating); absent when the server has none. Display only. */
             latest_save_on?: components["schemas"]["SaveHolder"][];
+        };
+        ExecutionGateway: {
+            gateway_url: string;
+            token: string;
+            service_port: number;
+            /** Format: int64 */
+            expires_at_unix_ms: number;
         };
         AgentDirectives: {
             /** @description Stable digest of desired state, excluding per-call timestamps and credentials. */

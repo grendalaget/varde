@@ -73,6 +73,7 @@ pub enum StopKind {
 
 pub struct ExecCtl {
     pub dir: ExecutionDirective,
+    pub gateway: Mutex<Option<cp_api::ExecutionGateway>>,
     phase: Mutex<Phase>,
     health: Mutex<String>,
     message: Mutex<String>,
@@ -108,10 +109,12 @@ pub struct ExecCtl {
 
 impl ExecCtl {
     pub fn new(dir: ExecutionDirective) -> Arc<ExecCtl> {
+        let gateway = Mutex::new(dir.gateway.clone());
         let stop_reason = dir.stop_reason.clone();
         let (tx, _rx) = watch::channel(None);
         Arc::new(ExecCtl {
             dir,
+            gateway,
             phase: Mutex::new(Phase::Preparing),
             health: Mutex::new("unknown".into()),
             message: Mutex::new(String::new()),
@@ -216,6 +219,39 @@ impl ExecCtl {
         // send_replace stores even with no receivers yet — a stop requested
         // before run() subscribes must not be lost
         self.stop.send_replace(Some(kind));
+    }
+
+    pub fn gateway_tunnel(&self) -> Option<mesh_ipc::pb::GatewayTunnel> {
+        if self.phase() != Phase::Running
+            || self.is_fenced()
+            || self.lease_expired()
+            || self.stop.borrow().is_some()
+        {
+            return None;
+        }
+        let gateway = self.gateway.lock().unwrap();
+        let gateway = gateway.as_ref()?;
+        let service = self.dir.service.as_ref()?;
+        let port = u32::try_from(gateway.service_port)
+            .ok()
+            .filter(|p| *p > 0 && *p <= u16::MAX as u32)?;
+        if !service
+            .ports
+            .iter()
+            .any(|p| p.port == gateway.service_port && p.protocol == "tcp")
+        {
+            return None;
+        }
+        let bindings = self.port_bindings.lock().unwrap();
+        let binding = bindings
+            .iter()
+            .find(|b| b.service_port == port && b.protocol == game_driver_api::GameProtocol::Tcp)?;
+        Some(mesh_ipc::pb::GatewayTunnel {
+            service_id: service.service_id.clone(),
+            gateway_url: gateway.gateway_url.clone(),
+            token: gateway.token.clone(),
+            target_port: binding.local_port,
+        })
     }
     fn stop_rx(&self) -> watch::Receiver<Option<StopKind>> {
         self.stop.subscribe()
@@ -1422,6 +1458,7 @@ mod ensure_live_tests {
 
     fn ctl() -> Arc<ExecCtl> {
         ExecCtl::new(ExecutionDirective {
+            gateway: None,
             execution_id: "e".into(),
             server_id: "s".into(),
             server_name: "s".into(),
@@ -1447,6 +1484,68 @@ mod ensure_live_tests {
     #[test]
     fn live_ctl_ok() {
         assert!(ensure_live(&ctl()).is_ok());
+    }
+
+    fn gateway_ctl() -> Arc<ExecCtl> {
+        let mut dir = ctl().dir.clone();
+        dir.gateway = Some(cp_api::ExecutionGateway {
+            gateway_url: "wss://gateway.example.org/v1/tunnel".into(),
+            token: "first".into(),
+            service_port: 3069,
+            expires_at_unix_ms: i64::MAX,
+        });
+        dir.service = Some(cp_api::Service {
+            service_id: "svc_t".into(),
+            loopback_ip: "127.77.1.1".into(),
+            ports: vec![cp_api::GamePort {
+                port: 3069,
+                protocol: "tcp".into(),
+            }],
+        });
+        let c = ExecCtl::new(dir);
+        *c.deadline.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+        c.port_bindings.lock().unwrap().push(PortBinding {
+            service_port: 3069,
+            local_port: 41000,
+            protocol: game_driver_api::GameProtocol::Tcp,
+        });
+        c
+    }
+
+    #[test]
+    fn gateway_uses_mapped_port_and_refreshes_credentials() {
+        let c = gateway_ctl();
+        assert!(c.gateway_tunnel().is_none());
+        c.set_phase(Phase::Running);
+        let first = c.gateway_tunnel().unwrap();
+        assert_eq!(first.target_port, 41000);
+        assert_eq!(first.service_id, "svc_t");
+        c.gateway.lock().unwrap().as_mut().unwrap().token = "refreshed".into();
+        let next = c.gateway_tunnel().unwrap();
+        assert_eq!(next.token, "refreshed");
+        assert_eq!(next.target_port, first.target_port);
+        *c.gateway.lock().unwrap() = None;
+        assert!(c.gateway_tunnel().is_none());
+    }
+
+    #[test]
+    fn gateway_removed_when_fenced_stopped_expired_or_unmapped() {
+        for reason in ["fenced", "stop", "expired", "unmapped", "failed"] {
+            let c = gateway_ctl();
+            c.set_phase(Phase::Running);
+            match reason {
+                "fenced" => c.mark_fenced(),
+                "stop" => c.request_stop(StopKind::Hard),
+                "expired" => *c.deadline.lock().unwrap() = Some(Instant::now()),
+                "unmapped" => c.port_bindings.lock().unwrap().clear(),
+                "failed" => c.set_phase(Phase::Failed),
+                _ => unreachable!(),
+            }
+            assert!(
+                c.gateway_tunnel().is_none(),
+                "retained tunnel after {reason}"
+            );
+        }
     }
 
     #[test]
@@ -2141,6 +2240,7 @@ mod requires_stop_tests {
 
     fn test_ctl() -> Arc<ExecCtl> {
         ExecCtl::new(ExecutionDirective {
+            gateway: None,
             execution_id: "exec_t".into(),
             server_id: "srv_t".into(),
             server_name: "s".into(),

@@ -158,6 +158,7 @@ func (r *relayFlags) Set(v string) error {
 }
 
 type serveCfg struct {
+	gateway          gatewayOptions
 	listen           string
 	dbURL            string
 	dataDir          string
@@ -190,6 +191,7 @@ type serveCfg struct {
 func serveFlags() (*flag.FlagSet, *serveCfg) {
 	cfg := &serveCfg{}
 	fs := flag.NewFlagSet("varde-control-plane", flag.ExitOnError)
+	cfg.gateway.flags(fs)
 	fs.StringVar(&cfg.listen, "listen", envOr("VARDE_LISTEN", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.dbURL, "db", envOr("VARDE_DB", defaultDBURL()), "database URL (sqlite:///path | postgres://…)")
 	fs.StringVar(&cfg.dataDir, "data-dir", envOr("VARDE_DATA_DIR", ""), "directory for control-plane plugin data")
@@ -326,6 +328,10 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("relay key: %w", err)
 	}
+	gatewayConf, err := cfg.gateway.start(ctx, relayKey, cfg.publicURL, log)
+	if err != nil {
+		return fmt.Errorf("gateway: %w", err)
+	}
 
 	timings := reconciler.DefaultTimings()
 	timings.HeartbeatIntervalMs = cfg.heartbeatMs
@@ -440,7 +446,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		Plugins:       pluginRegistry,
 		PluginManager: pluginSupervisor,
 		PluginHTTP:    outbound.NewClient(10 * time.Second),
-		Cfg:           api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Dev: cfg.dev, Timings: timings, Relays: cfg.relays, Version: version, Operators: api.ParseOperatorEmails(os.Getenv("VARDE_OPERATORS"))},
+		Cfg:           api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Dev: cfg.dev, Timings: timings, Relays: cfg.relays, Gateway: gatewayConf, Version: version, Operators: api.ParseOperatorEmails(os.Getenv("VARDE_OPERATORS"))},
 		Recon:         recon,
 		PrimaryID:     primaryID,
 		RelayKey:      relayKey,

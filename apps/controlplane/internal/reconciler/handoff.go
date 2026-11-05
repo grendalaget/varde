@@ -22,6 +22,9 @@ func SupportsHandoff(gameID string) bool {
 // 'migration' snapshot, the target pre-stages from it, then routes flip and
 // the source hands clients off.
 func (r *Reconciler) StartWarmMigration(ctx context.Context, srv *store.Server, active *store.Execution, targetNodeID string) (*store.Migration, error) {
+	if err := r.ValidateMoveTarget(ctx, srv, targetNodeID); err != nil {
+		return nil, err
+	}
 	s := r.Store
 	now := s.NowMs()
 	m := &store.Migration{

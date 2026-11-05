@@ -114,6 +114,9 @@ func (s *Store) Migrate() error {
 	if err := ensureColumns(s.DB, s.Dialect); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
+	if _, err := s.DB.Exec(`UPDATE servers SET gateway_label=REPLACE(id, '_', '-') WHERE gateway_label IS NULL`); err != nil {
+		return fmt.Errorf("store: gateway labels: %w", err)
+	}
 	return nil
 }
 
@@ -123,6 +126,7 @@ func (s *Store) Migrate() error {
 func ensureColumns(db *sqlx.DB, dialect string) error {
 	type col struct{ table, name, ddl string }
 	cols := []col{
+		{"servers", "gateway_label", "TEXT"},
 		{"nodes", "owner_user_id", "TEXT REFERENCES users(id)"},
 		{"nodes", "lease_profile", "TEXT NOT NULL DEFAULT 'standard'"},
 		{"users", "website_user_id", "TEXT"},
@@ -165,6 +169,9 @@ func ensureColumns(db *sqlx.DB, dialect string) error {
 				return err
 			}
 		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS servers_gateway_label ON servers(gateway_label)`); err != nil {
+		return err
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_drain_server
 		ON migrations(drain_until, server_id) WHERE drain_until IS NOT NULL`); err != nil {

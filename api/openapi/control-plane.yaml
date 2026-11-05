@@ -1622,7 +1622,7 @@ components:
           enum: [stale_epoch, latest_save_unavailable, no_reachable_save,
                  not_found, forbidden, limit_exceeded, validation,
                  unauthorized, conflict, unschedulable, internal,
-                 plugin_unavailable, secrets_unconfigured]
+                 plugin_unavailable, secrets_unconfigured, group_pc_required, gateway_unconfigured]
         message: { type: string }
         details: { type: object, additionalProperties: true }
     Health:
@@ -1980,6 +1980,8 @@ components:
         ports:
           type: array
           items: { $ref: "#/components/schemas/GamePort" }
+        gateway_port: { type: integer, description: TCP service port published through the public gateway. }
+        exclude_anchors: { type: boolean, description: Require a group PC rather than a cloud anchor. }
         os:
           type: array
           items: { type: string, enum: [linux, windows] }
@@ -2131,6 +2133,8 @@ components:
         group_id: { type: string }
         name: { type: string }
         game_id: { type: string }
+        gateway_label: { type: string, description: Immutable DNS-safe server identifier. }
+        public_url: { type: string, description: Stable HTTPS origin when a gateway is configured. }
         deployment_id: { type: string, nullable: true }
         desired_state: { $ref: "#/components/schemas/DesiredState" }
         observed_state: { $ref: "#/components/schemas/ObservedState" }
@@ -2402,6 +2406,7 @@ components:
         execution_id: { type: string }
         server_id: { type: string }
         server_name: { type: string }
+        gateway: { $ref: "#/components/schemas/ExecutionGateway" }
         epoch: { type: integer, format: int64 }
         lease_expires_at_unix_ms: { type: integer, format: int64 }
         action:
@@ -2472,6 +2477,14 @@ components:
             none. Display only.
           type: array
           items: { $ref: "#/components/schemas/SaveHolder" }
+    ExecutionGateway:
+      type: object
+      required: [gateway_url, token, service_port, expires_at_unix_ms]
+      properties:
+        gateway_url: { type: string }
+        token: { type: string }
+        service_port: { type: integer }
+        expires_at_unix_ms: { type: integer, format: int64 }
     AgentDirectives:
       type: object
       required: [server_time_unix_ms, heartbeat_interval_ms, lease_ttl_ms, node]

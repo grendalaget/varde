@@ -469,6 +469,7 @@ async fn apply(agent: &Arc<Agent>, d: &cp_api::AgentDirectives, sent: Instant) -
         let existing = agent.execs.lock().unwrap().get(&e.execution_id).cloned();
         match existing {
             Some(ctl) => {
+                *ctl.gateway.lock().unwrap() = e.gateway.clone();
                 apply_deadline(&ctl.deadline, &ctl.deadline_sent, sent, deadline);
                 ctl.set_fence_margin_ms(margin_ms);
                 // stop reason first: the shutdown drain reads an unfreeze
