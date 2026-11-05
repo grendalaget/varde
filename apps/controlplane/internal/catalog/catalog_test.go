@@ -2,6 +2,39 @@ package catalog
 
 import "testing"
 
+func TestAutoTournamentConfig(t *testing.T) {
+	game := Get("autotournament")
+	if game == nil {
+		t.Fatal("autotournament catalog entry missing")
+	}
+	if len(game.OS) != 1 || game.OS[0] != "linux" || len(game.Arch) != 1 || game.Arch[0] != "x86_64" {
+		t.Fatal("autotournament must be Linux x86_64 only")
+	}
+	if len(game.Ports) != 1 || game.Ports[0].Port != 3069 || game.Ports[0].Protocol != "tcp" {
+		t.Fatal("autotournament must have a single TCP service")
+	}
+	if len(game.Runtimes) != 1 || game.Runtimes[0] != "native" {
+		t.Fatal("autotournament requires the native runtime")
+	}
+	for _, licence := range []string{"", "other", "noncommercial", "commercial"} {
+		errs := game.ValidateConfig(map[string]any{"public_url": "https://at.example.org", "licence": licence})
+		if (len(errs) > 0) != (licence == "" || licence == "other") {
+			t.Fatalf("licence %q: %v", licence, errs)
+		}
+	}
+	if errs := game.ValidateConfig(map[string]any{}); len(errs) == 0 {
+		t.Fatal("public URL and licence must be required")
+	}
+	for _, field := range game.ConfigFields {
+		if field.Name == "licence" && field.Default != nil {
+			t.Fatal("licence must not have a default")
+		}
+		if (field.Name == "api_token" || field.Name == "steam_web_api_key") && (!field.Secret || field.Required) {
+			t.Fatal("optional credentials must be secret")
+		}
+	}
+}
+
 func TestCS2Config(t *testing.T) {
 	game := Get("cs2")
 	if game == nil {
