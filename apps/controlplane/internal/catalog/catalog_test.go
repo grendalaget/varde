@@ -7,8 +7,8 @@ func TestAutoTournamentConfig(t *testing.T) {
 	if game == nil {
 		t.Fatal("autotournament catalog entry missing")
 	}
-	if len(game.OS) != 1 || game.OS[0] != "linux" || len(game.Arch) != 1 || game.Arch[0] != "x86_64" {
-		t.Fatal("autotournament must be Linux x86_64 only")
+	if len(game.OS) != 2 || game.OS[0] != "linux" || game.OS[1] != "windows" || len(game.Arch) != 1 || game.Arch[0] != "x86_64" {
+		t.Fatal("autotournament must support Linux and Windows x86_64 only")
 	}
 	if len(game.Ports) != 1 || game.Ports[0].Port != 3069 || game.Ports[0].Protocol != "tcp" {
 		t.Fatal("autotournament must have a single TCP service")
