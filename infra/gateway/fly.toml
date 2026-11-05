@@ -6,7 +6,7 @@ primary_region = "arn"
 
 [env]
   VARDE_GATEWAY_LISTEN = ":8443"
-  VARDE_GATEWAY_DOMAIN = "servers.example.com"
+  VARDE_GATEWAY_DOMAIN = "play.varde.games"
   VARDE_GATEWAY_CP_KEY = "https://cp.varde.games/v1/relay/public-key"
   VARDE_GATEWAY_TLS_CERT = "/etc/gateway/tls.crt"
   VARDE_GATEWAY_TLS_KEY = "/etc/gateway/tls.key"
