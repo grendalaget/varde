@@ -2151,6 +2151,29 @@ func TestCookieSession(t *testing.T) {
 	}
 }
 
+func TestCSRFGuardSiblingOrigins(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Cfg.PublicURL = "https://cp.varde.games"
+	cookie := &http.Cookie{Name: "varde_session", Value: e.token}
+	body := []byte(`{"name":"origin-guard-probe"}`)
+	for _, origin := range []string{"https://srv-example.play.varde.games", "https://varde.games", "https://cp.varde.games.evil.test", "null"} {
+		resp := e.rawDo("POST", "/v1/groups", body, map[string]string{
+			"Origin": origin, "Referer": "https://cp.varde.games/groups",
+			"Content-Type": "text/plain", "Sec-Fetch-Site": "same-site",
+			"Authorization": "Bearer " + e.token,
+		}, cookie)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("cookie mutation Origin=%q: got %d, want 403", origin, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	resp := e.rawDo("POST", "/v1/groups", body, map[string]string{"Origin": "https://cp.varde.games"}, cookie)
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("cookie mutation with CP Origin: got %d, want 201", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+}
+
 func TestCSRFGuard(t *testing.T) {
 	e := newEnv(t)
 	r := e.do("POST", "/v1/auth/signup", map[string]any{
