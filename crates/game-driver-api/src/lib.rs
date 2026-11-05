@@ -99,6 +99,8 @@ pub enum ArchiveKind {
     File,
     /// .tar.gz / .tgz extracted under <id>/.
     Tgz,
+    /// .tar.xz extracted under <id>/.
+    TarXz,
     /// .zip extracted under <id>/.
     Zip,
 }
@@ -114,6 +116,18 @@ pub struct FetchSpec {
     pub sha1: Option<String>,
     pub archive: ArchiveKind,
     pub untrusted: bool,
+}
+
+/// A public OCI image pinned by its index or platform-manifest SHA-256 digest.
+/// Paths are absolute image path prefixes (component boundaries, not string prefixes).
+#[derive(Debug, Clone)]
+pub struct OciSpec {
+    pub registry: String,
+    pub repository: String,
+    pub digest: String,
+    pub os: String,
+    pub arch: String,
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -562,6 +576,10 @@ fn write_addon_state(path: &Path, state: AddonState) -> Result<()> {
 /// All HTTP goes through the provider; drivers only see paths.
 #[async_trait]
 pub trait RuntimeProvider: Send + Sync {
+    /// Verify and apply OCI layers into an atomic shared cache; returns the image root.
+    async fn fetch_oci(&self, _spec: &OciSpec) -> Result<PathBuf> {
+        Err("runtime provider cannot fetch OCI images".into())
+    }
     fn runtime_path(&self, kind: &str, id: &str) -> Option<PathBuf>;
     /// GET a JSON document (version manifests, runtime APIs).
     async fn get_json(&self, _url: &str) -> Result<serde_json::Value> {

@@ -19,6 +19,8 @@ use hyper_util::rt::TokioIo;
 use sha2::Digest;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
+mod oci;
+
 const UA: &str = concat!("varde-agent/", env!("CARGO_PKG_VERSION"));
 
 /// Deadlines so a stalled server can't hang a runtime fetch forever:
@@ -104,6 +106,9 @@ impl HttpRuntimes {
 
 #[async_trait]
 impl RuntimeProvider for HttpRuntimes {
+    async fn fetch_oci(&self, spec: &game_driver_api::OciSpec) -> game_driver_api::Result<PathBuf> {
+        oci::fetch(self, spec).await
+    }
     async fn steamcmd_path(&self) -> game_driver_api::Result<PathBuf> {
         steamcmd(self).await
     }
@@ -353,6 +358,37 @@ async fn http_get_limited(
     max_bytes: Option<u64>,
     protect_https_origin: bool,
 ) -> game_driver_api::Result<Vec<u8>> {
+    let (status, headers, bytes) = http_response(url, &[], max_bytes).await?;
+    let status = status.as_u16();
+    if (300..400).contains(&status) {
+        if redirs == 0 {
+            return Err("too many redirects".into());
+        }
+        let loc = headers
+            .get(LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or("redirect without location")?;
+        let next = resolve_redirect(&url.parse()?, loc)?;
+        check_redirect_scheme(protect_https_origin, &next)?;
+        return Box::pin(http_get_limited(
+            &next,
+            redirs - 1,
+            max_bytes,
+            protect_https_origin,
+        ))
+        .await;
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!("GET {url} -> {status}").into());
+    }
+    Ok(bytes)
+}
+
+async fn http_response(
+    url: &str,
+    headers: &[(&str, &str)],
+    max_bytes: Option<u64>,
+) -> game_driver_api::Result<(hyper::StatusCode, hyper::HeaderMap, Vec<u8>)> {
     let uri: Uri = url.parse()?;
     let host = uri.host().ok_or("url has no host")?.to_string();
     let https = uri.scheme_str() == Some("https");
@@ -364,10 +400,16 @@ async fn http_get_limited(
     .await
     .map_err(|_| "connect timed out")??;
     let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    let req = Request::get(path)
-        .header(HOST, HeaderValue::from_str(&host)?)
-        .header(USER_AGENT, UA)
-        .body(http_body_util::Full::new(hyper::body::Bytes::new()))?;
+    let mut req = Request::get(path)
+        .header(
+            HOST,
+            HeaderValue::from_str(uri.authority().ok_or("url has no authority")?.as_str())?,
+        )
+        .header(USER_AGENT, UA);
+    for (name, value) in headers {
+        req = req.header(*name, *value);
+    }
+    let req = req.body(http_body_util::Full::new(hyper::body::Bytes::new()))?;
     let resp = if https {
         let name = rustls::pki_types::ServerName::try_from(host.clone())?;
         let tls = tokio_rustls::TlsConnector::from(tls_config()?)
@@ -386,29 +428,8 @@ async fn http_get_limited(
         });
         sender.send_request(req).await?
     };
-    let status = resp.status().as_u16();
-    if (300..400).contains(&status) {
-        if redirs == 0 {
-            return Err("too many redirects".into());
-        }
-        let loc = resp
-            .headers()
-            .get(LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or("redirect without location")?;
-        let next = resolve_redirect(&uri, loc)?;
-        check_redirect_scheme(protect_https_origin, &next)?;
-        return Box::pin(http_get_limited(
-            &next,
-            redirs - 1,
-            max_bytes,
-            protect_https_origin,
-        ))
-        .await;
-    }
-    if !(200..300).contains(&status) {
-        return Err(format!("GET {url} -> {status}").into());
-    }
+    let status = resp.status();
+    let headers = resp.headers().clone();
     let mut body = resp.into_body();
     let mut bytes = Vec::new();
     while let Some(frame) = body.frame().await {
@@ -422,7 +443,7 @@ async fn http_get_limited(
             bytes.extend_from_slice(&data);
         }
     }
-    Ok(bytes)
+    Ok((status, headers, bytes))
 }
 
 fn resolve_redirect(current: &Uri, location: &str) -> game_driver_api::Result<String> {
@@ -538,6 +559,20 @@ async fn fetch_into_inner(
                     tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&s)?;
                 }
                 let _ = std::fs::remove_file(&b);
+                Ok(())
+            })
+            .await?;
+        }
+        ArchiveKind::TarXz => {
+            let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
+            spawn_fs(move || {
+                let reader = xz2::read::XzDecoder::new(std::fs::File::open(&b)?);
+                if untrusted {
+                    extract_tar_strict(reader, &s, limits)?;
+                } else {
+                    tar::Archive::new(reader).unpack(&s)?;
+                }
+                std::fs::remove_file(b)?;
                 Ok(())
             })
             .await?;
@@ -750,10 +785,18 @@ fn extract_tar_strict<R: Read>(
             .write(true)
             .create(true)
             .truncate(true)
-            .open(output)?;
+            .open(&output)?;
         let remaining = limits.unpacked_bytes.saturating_sub(unpacked);
         unpacked =
             unpacked.saturating_add(copy_limited(&mut entry, &mut file, remaining, &entry_name)?);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                &output,
+                std::fs::Permissions::from_mode(entry.header().mode()? & 0o777),
+            )?;
+        }
     }
     Ok(())
 }
@@ -1138,6 +1181,63 @@ mod untrusted_archive_tests {
             std::fs::read_to_string(tgz_destination.path().join("cfg/addon.cfg")).unwrap(),
             "tgz addon"
         );
+    }
+
+    #[tokio::test]
+    async fn tar_xz_valid_empty_and_unsafe_archives() {
+        for (entries, valid) in [
+            (
+                vec![("bin/run", tar::EntryType::file(), &b"binary"[..], None)],
+                true,
+            ),
+            (vec![], true),
+            (
+                vec![(
+                    "link",
+                    tar::EntryType::symlink(),
+                    &b""[..],
+                    Some("../outside"),
+                )],
+                false,
+            ),
+        ] {
+            let gzip = tgz(&entries);
+            let mut tar = Vec::new();
+            flate2::read::GzDecoder::new(gzip.as_slice())
+                .read_to_end(&mut tar)
+                .unwrap();
+            let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+            encoder.write_all(&tar).unwrap();
+            let body = encoder.finish().unwrap();
+            let checksum = hex::encode(sha2::Sha256::digest(&body));
+            let (url, server) = serve_body(body).await;
+            let temp = tempfile::tempdir().unwrap();
+            let provider = HttpRuntimes::new(temp.path().to_path_buf());
+            let result = provider
+                .fetch(
+                    "xz",
+                    "test",
+                    &FetchSpec {
+                        url,
+                        file_name: "runtime.tar.xz".into(),
+                        sha256: Some(checksum),
+                        sha1: None,
+                        archive: ArchiveKind::TarXz,
+                        untrusted: true,
+                    },
+                )
+                .await;
+            assert_eq!(result.is_ok(), valid);
+            if let Ok(root) = result {
+                assert!(!root.join("runtime.tar.xz").exists());
+                if !entries.is_empty() {
+                    assert_eq!(std::fs::read(root.join("bin/run")).unwrap(), b"binary");
+                }
+            } else {
+                assert!(!temp.path().join("xz/test").exists());
+            }
+            server.await.unwrap();
+        }
     }
 
     #[tokio::test]
