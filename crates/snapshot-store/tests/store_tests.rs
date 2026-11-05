@@ -100,6 +100,79 @@ fn dedup_second_snapshot() {
     assert!(i1.id != i2.id);
 }
 
+#[cfg(not(unix))]
+#[test]
+fn snapshot_records_portable_directory_and_file_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let base = tmp.path().join("server");
+    tree(&base, &[("data/nested/state.json", b"save")]);
+    fs::create_dir_all(base.join("data/empty")).unwrap();
+    let info = store
+        .snapshot(&base, &[PathPattern::new("data/")], meta())
+        .unwrap();
+    let manifest = store.manifest(&info.id).unwrap();
+    assert!(manifest
+        .files
+        .iter()
+        .any(|entry| entry.path == "data/empty"));
+    for entry in &manifest.files {
+        assert_eq!(
+            entry.mode,
+            Some(if entry.typ == "dir" { 0o755 } else { 0o644 }),
+            "{}",
+            entry.path
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_adds_owner_access_to_directories_and_preserves_other_mode_bits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(tmp.path().join("store")).unwrap();
+    let base = tmp.path().join("server");
+    tree(&base, &[("data/nested/state.json", b"save")]);
+    fs::create_dir_all(base.join("data/empty")).unwrap();
+    let include = [PathPattern::new("data/")];
+    let info = store.snapshot(&base, &include, meta()).unwrap();
+    let mut manifest = store.manifest(&info.id).unwrap();
+    for mode in [0, 0o044, 0o644, 0o2550] {
+        for entry in &mut manifest.files {
+            entry.mode = Some(if entry.typ == "dir" { mode } else { 0o640 });
+        }
+        let id = store
+            .put_manifest_bytes(&manifest.canonical_bytes().unwrap())
+            .unwrap();
+        let dest = tmp.path().join(format!("restored-{mode:o}"));
+        store.restore(&id, &dest, &include).unwrap();
+        assert_eq!(
+            fs::read(dest.join("data/nested/state.json")).unwrap(),
+            b"save"
+        );
+        assert!(dest.join("data/empty").is_dir());
+        for entry in &manifest.files {
+            let restored_mode = fs::metadata(dest.join(&entry.path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(
+                restored_mode,
+                if entry.typ == "dir" {
+                    mode | 0o700
+                } else {
+                    0o640
+                },
+                "{}",
+                entry.path
+            );
+        }
+    }
+}
+
 #[test]
 fn canonical_manifest_golden() {
     let m = Manifest {
