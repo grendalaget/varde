@@ -406,9 +406,11 @@ function Overview({
             )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted">
-                {crossplay ? "Join code" : "Address"}
+                {!s.public_url && crossplay ? "Join code" : "Address"}
               </span>
-              {crossplay ? (
+              {s.public_url ? (
+                <CopyText text={s.public_url} href={s.public_url} mono={false} />
+              ) : crossplay ? (
                 sum.join_code ? (
                   <CopyText text={sum.join_code} />
                 ) : (
@@ -422,13 +424,13 @@ function Overview({
                 <span className="text-muted">-</span>
               )}
             </div>
-            {s.game_id === "cs2" && (
+            {!s.public_url && s.game_id === "cs2" && (
               <p className="text-xs text-muted">
                 In CS2 open the console and run{" "}
                 <code>connect {sum.address || "<address>"}</code>.
               </p>
             )}
-            {crossplay ? (
+            {s.public_url ? null : crossplay ? (
               <p className="text-xs text-muted">
                 Crossplay server: players join from Valheim&apos;s Join game →
                 Join by code. The code can change when the server restarts or

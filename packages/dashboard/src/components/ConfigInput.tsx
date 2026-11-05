@@ -129,6 +129,9 @@ export function ConfigInput({
           value={String(value ?? "")}
           onChange={(e) => onChange(e.target.value)}
         >
+          {(value == null || value === "") && !f.options?.includes("") && (
+            <option value="">Choose an option</option>
+          )}
           {(f.options ?? []).map((o) => (
             <option key={String(o)} value={String(o)}>
               {optionLabel(String(o))}

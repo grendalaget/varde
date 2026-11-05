@@ -354,9 +354,11 @@ export function PageHeader({
 export function CopyText({
   text,
   mono = true,
+  href,
 }: {
   text: string;
   mono?: boolean;
+  href?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -364,10 +366,11 @@ export function CopyText({
     setCopied(false);
     return () => clearTimeout(timer.current);
   }, [text]);
-  return (
+  const copyButton = (
     <button
       type="button"
       title={copied ? "Copied" : "Copy"}
+      aria-label={href ? (copied ? "Copied" : "Copy") : undefined}
       onClick={() => {
         if (!navigator.clipboard) return;
         void navigator.clipboard.writeText(text).then(
@@ -387,7 +390,7 @@ export function CopyText({
         mono && "font-mono",
       )}
     >
-      {text}
+      {!href && text}
       <span className="relative -mr-0.5 h-3.5 w-3.5 shrink-0">
         <svg
           viewBox="0 0 24 24"
@@ -423,6 +426,19 @@ export function CopyText({
       </span>
     </button>
   );
+  return href ? (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="min-w-0 truncate text-foreground underline underline-offset-2"
+      >
+        {text}
+      </a>
+      {copyButton}
+    </span>
+  ) : copyButton;
 }
 
 /** Warm Glød wash across the top of a page; parent must be relative. */

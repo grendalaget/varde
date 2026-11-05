@@ -107,7 +107,11 @@ function PluginSetup() {
   const [setupPluginId, setSetupPluginId] = useState<string | null>(null);
 
   if (!canAdmin(group.role)) return null;
-  if (catalog.loading || enabledPlugins.loading) return null;
+  if (
+    (catalog.loading && !catalog.data) ||
+    (enabledPlugins.loading && !enabledPlugins.data)
+  )
+    return null;
   const enabled = new Set(
     (enabledPlugins.data?.plugins ?? [])
       .filter((plugin) => plugin.enabled)
@@ -172,10 +176,14 @@ function ServerCard({
 }) {
   const sum = s.summary;
   return (
-    <Link
-      to={`/servers/${s.id}`}
-      className="group relative block overflow-hidden rounded-2xl border border-separator bg-surface p-5 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-[0_18px_50px_-24px_rgb(0_0_0/0.8)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    <div
+      className="group relative block overflow-hidden rounded-2xl border border-separator bg-surface p-5 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-[0_18px_50px_-24px_rgb(0_0_0/0.8)]"
     >
+      <Link
+        to={`/servers/${s.id}`}
+        aria-label={`View ${s.name}`}
+        className="absolute inset-0 z-10 rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+      />
       <GameGlow
         id={s.game_id}
         className={
@@ -207,10 +215,15 @@ function ServerCard({
             <span className="text-muted">Not running</span>
           )}
         </Row>
-        <Row label={crossplay ? "Join code" : "Address"}>
-          {crossplay ? (
+        <Row label={!s.public_url && crossplay ? "Join code" : "Address"}>
+          {s.public_url ? (
+            <span className="relative z-20" onClick={(e) => e.stopPropagation()}>
+              <CopyText text={s.public_url} href={s.public_url} mono={false} />
+            </span>
+          ) : crossplay ? (
             sum.join_code ? (
               <span
+                className="relative z-20"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -225,6 +238,7 @@ function ServerCard({
             )
           ) : sum.address ? (
             <span
+              className="relative z-20"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -236,13 +250,13 @@ function ServerCard({
             <span className="text-muted">-</span>
           )}
         </Row>
-        {s.game_id === "cs2" && (
+        {!s.public_url && s.game_id === "cs2" && (
           <p className="text-xs text-muted">
             In CS2 open the console and run{" "}
             <code>connect {sum.address || "<address>"}</code>.
           </p>
         )}
-        {crossplay && (
+        {!s.public_url && crossplay && (
           <p className="text-xs text-muted">
             Crossplay server: players join from Valheim&apos;s Join game → Join
             by code. The code can change when the server restarts or moves to
@@ -267,7 +281,7 @@ function ServerCard({
           <Badge tone="red">Needs attention</Badge>
         </div>
       )}
-    </Link>
+    </div>
   );
 }
 
