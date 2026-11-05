@@ -3,6 +3,19 @@
 Per-game driver notes (runtime requirements, config schema, snapshot
 include/exclude lists) land here as each driver is implemented.
 
+## Auto Tournament
+
+Auto Tournament runs natively on Linux and Windows x86_64 using pinned Node.js,
+PostgreSQL and Caddy runtimes. Snapshots contain logical PostgreSQL dumps and
+DATA_DIR contents, not the native database cluster, and can migrate between
+Linux and Windows.
+
+On Windows the driver sets `AT_BUILTIN_WORKER=0`: the bundled `at-worker` is a
+Linux binary, so built-in demo/highlight processing is disabled. ffmpeg-based
+features are also unavailable on Windows hosts; this switch disables the
+built-in worker, not every demo/highlight API endpoint. Ready Up CS2 remains
+Linux-only.
+
 ## Counter-Strike 2 Dedicated
 
 CS2 runs the dedicated binary included in an existing Steam app 730 client

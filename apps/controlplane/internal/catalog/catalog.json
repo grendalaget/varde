@@ -5,7 +5,7 @@
     "ports": [{ "port": 3069, "protocol": "tcp" }],
     "gateway_port": 3069,
     "exclude_anchors": true,
-    "os": ["linux"],
+    "os": ["linux", "windows"],
     "arch": ["x86_64"],
     "min_memory_mb": 2048,
     "min_disk_mb": 2048,

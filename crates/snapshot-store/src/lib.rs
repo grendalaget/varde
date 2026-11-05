@@ -835,14 +835,19 @@ fn unix_mode(md: &fs::Metadata) -> u32 {
     md.mode() & 0o7777
 }
 #[cfg(not(unix))]
-fn unix_mode(_md: &fs::Metadata) -> u32 {
-    0o644
+fn unix_mode(md: &fs::Metadata) -> u32 {
+    if md.is_dir() {
+        0o755
+    } else {
+        0o644
+    }
 }
 
 #[cfg(unix)]
 fn apply_mode(path: &Path, mode: Option<u32>) {
     if let Some(m) = mode {
         use std::os::unix::fs::PermissionsExt;
+        let m = if path.is_dir() { m | 0o700 } else { m };
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(m));
     }
 }

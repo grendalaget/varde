@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 mod process;
 #[cfg(test)]
 mod tests;
+#[cfg(windows)]
+mod windows;
 
 pub const PORT: u32 = 3069;
 pub const IMAGE: &str = "sha256:a8b38b53b5d81a2325466947b3a5a95e5bf7cb9d1253e7d48b2a40e3ff377f7d";
@@ -91,6 +93,18 @@ fn spec(program: &Path, cwd: &Path, args: &[&str]) -> ProcessSpec {
         stdin: false,
     }
 }
+fn pg_tool(postgres: &Path, name: &str) -> PathBuf {
+    postgres
+        .join("bin")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+}
+
+fn caddy_public_root(app: &Path) -> String {
+    let root = app.join("public").display().to_string();
+    #[cfg(windows)]
+    let root = root.replace('\\', "/");
+    format!("\"{root}\"")
+}
 async fn command(mut command: tokio::process::Command) -> Result<()> {
     command.kill_on_drop(true);
     let result = tokio::time::timeout(Duration::from_secs(120), command.output()).await??;
@@ -106,13 +120,14 @@ async fn command(mut command: tokio::process::Command) -> Result<()> {
 fn pg_command(ctx: &DriverContext<'_>, name: &str) -> Result<tokio::process::Command> {
     let install = installation(ctx)?;
     let settings = settings(ctx)?;
-    let mut cmd = tokio::process::Command::new(install.postgres.join("bin").join(name));
+    let mut cmd = tokio::process::Command::new(pg_tool(&install.postgres, name));
     cmd.env("PGHOST", "127.0.0.1")
         .env("PGPORT", settings.pg_port.to_string())
         .env("PGUSER", "autotournament")
         .env("PGDATABASE", "autotournament")
-        .env("PGPASSWORD", settings.password)
-        .env("LD_LIBRARY_PATH", install.postgres.join("lib"));
+        .env("PGPASSWORD", settings.password);
+    #[cfg(unix)]
+    cmd.env("LD_LIBRARY_PATH", install.postgres.join("lib"));
     Ok(cmd)
 }
 async fn dump(ctx: &DriverContext<'_>) -> Result<()> {
@@ -404,8 +419,11 @@ impl GameDriver for AutoTournamentDriver {
         Ok(())
     }
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()> {
-        if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-            return Err("autotournament supports Linux x86_64 only".into());
+        if !cfg!(all(
+            any(target_os = "linux", windows),
+            target_arch = "x86_64"
+        )) {
+            return Err("autotournament supports Linux and Windows x86_64 only".into());
         }
         self.validate(ctx.config)?;
         let fetch = |url: &str, name: &str, hash: &str, archive| FetchSpec {
@@ -416,6 +434,7 @@ impl GameDriver for AutoTournamentDriver {
             archive,
             untrusted: false,
         };
+        #[cfg(not(windows))]
         let node = ctx
             .runtimes
             .fetch(
@@ -429,8 +448,28 @@ impl GameDriver for AutoTournamentDriver {
                 ),
             )
             .await?;
+        #[cfg(not(windows))]
         let pg = ctx.runtimes.fetch("postgres", "theseus-16.9.0-linux-amd64", &fetch("https://github.com/theseus-rs/postgresql-binaries/releases/download/16.9.0/postgresql-16.9.0-x86_64-unknown-linux-gnu.tar.gz", "postgres.tar.gz", "ecfd3be18704dd9c5f1db8c3dc8d1f3de52df270ca47ad5f7cd07a5e9f288a7f",ArchiveKind::Tgz)).await?;
+        #[cfg(not(windows))]
         let caddy = ctx.runtimes.fetch("caddy", "2.10.2-linux-amd64", &fetch("https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz", "caddy.tar.gz", "5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd",ArchiveKind::Tgz)).await?;
+        #[cfg(windows)]
+        let node = ctx
+            .runtimes
+            .fetch(
+                "node",
+                "24.22.2-win-x64",
+                &fetch(
+                    "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+                    "node.zip",
+                    "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+                    ArchiveKind::Zip,
+                ),
+            )
+            .await?;
+        #[cfg(windows)]
+        let pg = ctx.runtimes.fetch("postgres", "theseus-16.9.0-windows-amd64", &fetch("https://github.com/theseus-rs/postgresql-binaries/releases/download/16.9.0/postgresql-16.9.0-x86_64-pc-windows-msvc.zip", "postgres.zip", "08bfbef0632e22853b1fff857354d9ee5a9524fdb88cbaec8d49d08d44ad2a95", ArchiveKind::Zip)).await?;
+        #[cfg(windows)]
+        let caddy = ctx.runtimes.fetch("caddy", "2.10.2-windows-amd64", &fetch("https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_windows_amd64.zip", "caddy.zip", "9fd1ef9be5d9b05852b66ccc25f96f23d8651bcab20779861a745bdffa273722", ArchiveKind::Zip)).await?;
         let app = ctx
             .runtimes
             .fetch_oci(&OciSpec {
@@ -444,11 +483,20 @@ impl GameDriver for AutoTournamentDriver {
             .await?
             .join("app");
         tokio::fs::create_dir_all(ctx.deployment_dir).await?;
+        #[cfg(not(windows))]
         let postgres = pg.join("postgresql-16.9.0-x86_64-unknown-linux-gnu");
+        #[cfg(windows)]
+        let postgres = pg.join("postgresql-16.9.0-x86_64-pc-windows-msvc");
         let install = Installation {
+            #[cfg(not(windows))]
             node: node.join("node-v24.22.2-linux-x64/bin/node"),
+            #[cfg(windows)]
+            node: node.join("node-v24.22.2-win-x64/node.exe"),
             postgres,
+            #[cfg(not(windows))]
             caddy: caddy.join("caddy"),
+            #[cfg(windows)]
+            caddy: caddy.join("caddy.exe"),
             app,
         };
         tokio::fs::write(
@@ -496,10 +544,7 @@ impl GameDriver for AutoTournamentDriver {
                 "localhost:3000",
                 &format!("127.0.0.1:{}", settings.api_port),
             )
-            .replace(
-                "/app/public",
-                &format!("\"{}\"", install.app.join("public").display()),
-            );
+            .replace("/app/public", &caddy_public_root(&install.app));
         tokio::fs::write(ctx.server_dir.join("Caddyfile"), caddy).await?;
         Ok(())
     }
@@ -508,6 +553,8 @@ impl GameDriver for AutoTournamentDriver {
         let settings = settings(ctx)?;
         // Upstream listens on all interfaces; constrain its HTTP server without modifying AT.
         let mut node = spec(&install.node,&install.app,&["--import","data:text/javascript,import net from 'node:net';const listen=net.Server.prototype.listen;net.Server.prototype.listen=function(port,...args){return listen.call(this,port,'127.0.0.1',...args)};","dist/index.js"]);
+        #[cfg(windows)]
+        node.args[1].push("process.on('SIGBREAK',()=>process.emit('SIGTERM','SIGTERM'));");
         let values = [
             ("NODE_ENV", "production".into()),
             ("PORT", settings.api_port.to_string()),
@@ -546,6 +593,9 @@ impl GameDriver for AutoTournamentDriver {
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
+        #[cfg(windows)]
+        // Demos/highlight processing and ffmpeg-based features are unavailable on Windows hosts.
+        node.env.push(("AT_BUILTIN_WORKER".into(), "0".into()));
         Ok(node)
     }
     async fn spawn(
@@ -567,7 +617,7 @@ impl GameDriver for AutoTournamentDriver {
             if cluster.exists() {
                 tokio::fs::remove_dir_all(&cluster).await?;
             }
-            let mut cmd = tokio::process::Command::new(install.postgres.join("bin/initdb"));
+            let mut cmd = tokio::process::Command::new(pg_tool(&install.postgres, "initdb"));
             cmd.arg("-D")
                 .arg(&cluster)
                 .args([
@@ -579,26 +629,42 @@ impl GameDriver for AutoTournamentDriver {
                     "--pwfile",
                 ])
                 .arg(ctx.server_dir.join("postgres-password"));
+            #[cfg(unix)]
             cmd.env("LD_LIBRARY_PATH", install.postgres.join("lib"));
             command(cmd).await?;
         }
-        let mut pg = spec(&install.postgres.join("bin/postgres"), ctx.server_dir, &[]);
-        pg.args = vec![
-            "-D".into(),
-            cluster.as_os_str().into(),
-            "-h".into(),
-            "127.0.0.1".into(),
-            "-p".into(),
-            settings.pg_port.to_string().into(),
-            "-k".into(),
-            "".into(),
-        ];
-        pg.env = vec![(
-            "LD_LIBRARY_PATH".into(),
-            install.postgres.join("lib").into_os_string(),
-        )];
+        #[cfg(not(windows))]
+        let pg = {
+            let mut pg = spec(&install.postgres.join("bin/postgres"), ctx.server_dir, &[]);
+            pg.args = vec![
+                "-D".into(),
+                cluster.as_os_str().into(),
+                "-h".into(),
+                "127.0.0.1".into(),
+                "-p".into(),
+                settings.pg_port.to_string().into(),
+                "-k".into(),
+                "".into(),
+            ];
+            pg.env = vec![(
+                "LD_LIBRARY_PATH".into(),
+                install.postgres.join("lib").into_os_string(),
+            )];
+            pg
+        };
         drop(pg_reservation);
+        #[cfg(not(windows))]
         let pg: Arc<dyn ProcessHandle> = executor.spawn(&pg).await?.into();
+        #[cfg(windows)]
+        let pg: Arc<dyn ProcessHandle> = windows::Postgres::start(
+            executor,
+            &install.postgres,
+            ctx.server_dir,
+            &cluster,
+            settings.pg_port,
+        )
+        .await?
+        .into();
         let result = async {
             let mut ready = false;
             for _ in 0..100 {
