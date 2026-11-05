@@ -426,6 +426,62 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}/managed-server:
+    get:
+      operationId: getGroupPluginManagedServer
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+      responses:
+        "200":
+          description: Managed server status (owner/admin only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagedServerStatus" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}/managed-server/start:
+    post:
+      operationId: startGroupPluginManagedServer
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+      responses:
+        "200":
+          description: Managed server created or reused and start requested (owner/admin only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagedServerStatus" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/groups/{groupId}/plugins/{pluginId}/managed-server/stop:
+    post:
+      operationId: stopGroupPluginManagedServer
+      tags: [plugins]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+        - { $ref: "#/components/parameters/PluginId" }
+      responses:
+        "200":
+          description: Managed server stop requested (owner/admin only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagedServerStatus" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/groups/{groupId}/plugins/{pluginId}/pages/{pageId}/list:
     post:
       operationId: listPluginPage
@@ -1770,12 +1826,33 @@ components:
         name: { type: string }
         description: { type: string }
         version: { type: string }
+        managed_server: { $ref: "#/components/schemas/PluginManagedServer" }
         settings:
           type: array
           items: { $ref: "#/components/schemas/PluginField" }
         pages:
           type: array
           items: { $ref: "#/components/schemas/PluginPage" }
+    PluginManagedServer:
+      type: object
+      required: [game, mode_setting, config, bindings]
+      properties:
+        game: { type: string }
+        mode_setting: { type: string }
+        config: { type: object, additionalProperties: { type: string } }
+        bindings: { type: object, additionalProperties: { type: string } }
+    ManagedServerStatus:
+      type: object
+      required: [phase]
+      properties:
+        phase:
+          type: string
+          enum: [stopped, preparing, starting, ready, failed]
+        reason: { type: string }
+        server_id: { type: string }
+        public_url: { type: string }
+        setup_code: { type: string }
+        node_name: { type: string }
     PluginField:
       type: object
       required: [name, type]

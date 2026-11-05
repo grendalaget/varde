@@ -228,6 +228,10 @@ func (s *Server) ListServers(ctx context.Context, req gen.ListServersRequestObje
 }
 
 func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestObject) (gen.CreateServerResponseObject, error) {
+	return s.createServer(ctx, req, nil)
+}
+
+func (s *Server) createServer(ctx context.Context, req gen.CreateServerRequestObject, managed *store.ManagedPluginServer) (gen.CreateServerResponseObject, error) {
 	u, _, err := s.requireRole(ctx, req.GroupId, "admin")
 	if err != nil {
 		return nil, err
@@ -247,7 +251,11 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 	if b.Config != nil {
 		cfg = *b.Config
 	}
-	if verr := game.ValidateConfig(cfg); len(verr) > 0 {
+	validationConfig, err := s.managedServerConfig(cfg, managed)
+	if err != nil {
+		return nil, err
+	}
+	if verr := game.ValidateConfig(validationConfig); len(verr) > 0 {
 		return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), map[string]any{"fields": verr})
 	}
 	lim, err := s.Store.GetLimits(ctx, req.GroupId)
@@ -328,7 +336,7 @@ func (s *Server) CreateServer(ctx context.Context, req gen.CreateServerRequestOb
 		ID: svcID, ServerID: srv.ID, GroupID: req.GroupId,
 		LoopbackIP: ip, PortsJSON: mustJSON(ports),
 	}
-	if err := s.Store.CreateServer(ctx, srv, svc); err != nil {
+	if err := s.Store.CreateManagedServer(ctx, srv, svc, managed); err != nil {
 		return nil, err
 	}
 	s.Recon.WakeGroup(srv.GroupID)

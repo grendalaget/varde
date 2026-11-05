@@ -144,16 +144,17 @@ type Page struct {
 }
 
 type Manifest struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description,omitempty"`
-	Version      string  `json:"version"`
-	BaseURL      string  `json:"base_url"`
-	SecretEnv    string  `json:"secret_env,omitempty"`
-	SecretFile   string  `json:"secret_file,omitempty"`
-	ServiceToken string  `json:"service_token,omitempty"`
-	Settings     []Field `json:"settings,omitempty"`
-	Pages        []Page  `json:"pages,omitempty"`
+	ManagedServer *ManagedServer `json:"managed_server,omitempty"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description,omitempty"`
+	Version       string         `json:"version"`
+	BaseURL       string         `json:"base_url"`
+	SecretEnv     string         `json:"secret_env,omitempty"`
+	SecretFile    string         `json:"secret_file,omitempty"`
+	ServiceToken  string         `json:"service_token,omitempty"`
+	Settings      []Field        `json:"settings,omitempty"`
+	Pages         []Page         `json:"pages,omitempty"`
 }
 
 type Plugin struct {
@@ -286,6 +287,9 @@ func validateManifest(m *Manifest, requireSecretSource bool) error {
 	}
 	if err := validateFields(m.Settings, true); err != nil {
 		return fmt.Errorf("settings: %w", err)
+	}
+	if err := validateManagedServer(m); err != nil {
+		return err
 	}
 	pageIDs := make(map[string]struct{}, len(m.Pages))
 	for i := range m.Pages {

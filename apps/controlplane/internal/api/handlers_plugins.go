@@ -39,6 +39,9 @@ func pluginInfo(plugin *plugins.Plugin) gen.Plugin {
 	if plugin.Description != "" {
 		result.Description = &plugin.Description
 	}
+	if managed := plugin.ManagedServer; managed != nil {
+		result.ManagedServer = &gen.PluginManagedServer{Game: managed.Game, ModeSetting: managed.ModeSetting, Config: managed.Config, Bindings: managed.Bindings}
+	}
 	for _, field := range plugin.Settings {
 		if field.Hidden {
 			continue
@@ -133,7 +136,7 @@ func groupPluginResponse(plugin *plugins.Plugin, enabled bool, settings map[stri
 	public := make(map[string]any)
 	secrets := append([]string(nil), secretsSet...)
 	for _, field := range plugin.Settings {
-		if field.Hidden {
+		if field.Hidden || (plugin.Managed(settings) && plugin.Bound(field.Name)) {
 			continue
 		}
 		if field.Type == "secret" || field.Secret {
@@ -163,6 +166,8 @@ func uniqueStrings(values []string) []string {
 }
 
 func (s *Server) PutGroupPlugin(ctx context.Context, req gen.PutGroupPluginRequestObject) (gen.PutGroupPluginResponseObject, error) {
+	s.managedMu.Lock()
+	defer s.managedMu.Unlock()
 	plugin, ok := s.Plugins.Get(req.PluginId)
 	if !ok {
 		return nil, errResp(gen.NotFound, "plugin not found", nil)
@@ -193,26 +198,12 @@ func (s *Server) PutGroupPlugin(ctx context.Context, req gen.PutGroupPluginReque
 	if err != nil {
 		return nil, errResp(gen.Validation, err.Error(), nil)
 	}
-	hookReply, err := s.callPlugin(ctx, req.GroupId, plugin, pluginUser(u, role), "settings", plugin.BaseURL+"/varde/v1/settings", merged, nil)
-	if err != nil {
-		return nil, err
-	}
-	var hook struct {
-		Store map[string]any `json:"store"`
-	}
-	if err := json.Unmarshal(hookReply, &hook); err != nil {
-		return nil, pluginUnavailable(plugin)
-	}
-	for key, value := range hook.Store {
-		field, found := findPluginField(plugin.Settings, key)
-		if !found || !field.Hidden {
-			return nil, pluginUnavailable(plugin)
+	if !plugin.Managed(merged) {
+		if err := s.applyPluginSettingsHook(ctx, req.GroupId, plugin, pluginUser(u, role), merged, ""); err != nil {
+			return nil, err
 		}
-		if err := field.Validate(value); err != nil {
-			return nil, pluginUnavailable(plugin)
-		}
-		merged[key] = value
 	}
+	response := groupPluginResponse(plugin, true, merged, nil)
 	sealed, err := s.sealPluginSettings(req.GroupId, plugin, merged)
 	if err != nil {
 		return nil, err
@@ -228,11 +219,27 @@ func (s *Server) PutGroupPlugin(ctx context.Context, req gen.PutGroupPluginReque
 	if err := s.Store.UpsertGroupPlugin(ctx, row); err != nil {
 		return nil, err
 	}
+	if (previous == nil || !plugin.Managed(previous)) && plugin.Managed(merged) {
+		if managed, err := s.Store.ManagedPluginServer(ctx, req.GroupId, plugin.ID); err == nil {
+			managed.BindingDigest = ""
+			managed.RetryAt = 0
+			if err := s.Store.UpdateManagedPluginBinding(ctx, managed); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if !plugin.Managed(merged) {
+		if err := s.stopManagedPluginServer(ctx, req.GroupId, plugin.ID); err != nil {
+			return nil, err
+		}
+	}
 	_ = s.Store.Audit(ctx, s.Store.DB, nil, "group", req.GroupId, "plugin.enabled", u.ID, map[string]any{"plugin_id": plugin.ID})
-	return gen.PutGroupPlugin200JSONResponse(groupPluginResponse(plugin, true, merged, nil)), nil
+	return gen.PutGroupPlugin200JSONResponse(response), nil
 }
 
 func (s *Server) DeleteGroupPlugin(ctx context.Context, req gen.DeleteGroupPluginRequestObject) (gen.DeleteGroupPluginResponseObject, error) {
+	s.managedMu.Lock()
+	defer s.managedMu.Unlock()
 	plugin, ok := s.Plugins.Get(req.PluginId)
 	if !ok {
 		return nil, errResp(gen.NotFound, "plugin not found", nil)
@@ -255,6 +262,9 @@ func (s *Server) DeleteGroupPlugin(ctx context.Context, req gen.DeleteGroupPlugi
 			}
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err := s.stopManagedPluginServer(ctx, req.GroupId, plugin.ID); err != nil {
 		return nil, err
 	}
 	if err := s.Store.DeleteGroupPlugin(ctx, req.GroupId, plugin.ID); err != nil {
@@ -383,6 +393,10 @@ func pluginUser(user *store.User, role string) map[string]any {
 }
 
 func (s *Server) callPlugin(ctx context.Context, groupID string, plugin *plugins.Plugin, user map[string]any, op, endpoint string, settings, values map[string]any) ([]byte, error) {
+	return s.callPluginIdempotent(ctx, groupID, plugin, user, op, endpoint, settings, values, "")
+}
+
+func (s *Server) callPluginIdempotent(ctx context.Context, groupID string, plugin *plugins.Plugin, user map[string]any, op, endpoint string, settings, values map[string]any, key string) ([]byte, error) {
 	now := time.Now()
 	jti := make([]byte, 16)
 	if _, err := rand.Read(jti); err != nil {
@@ -413,6 +427,9 @@ func (s *Server) callPlugin(ctx context.Context, groupID string, plugin *plugins
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Varde-Op", op)
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
 	client := s.PluginHTTP
 	if client == nil {
 		client = outbound.NewClient(10 * time.Second)
@@ -522,6 +539,14 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 	for key, value := range previous {
 		merged[key] = value
 	}
+	if plugin.ManagedServer != nil {
+		if mode, ok := input[plugin.ManagedServer.ModeSetting]; ok {
+			if value, valid := mode.(string); !valid || value == "" {
+				return nil, fmt.Errorf("%s must be a hosting mode option", plugin.ManagedServer.ModeSetting)
+			}
+			merged[plugin.ManagedServer.ModeSetting] = mode
+		}
+	}
 	for key := range input {
 		field, ok := findPluginField(plugin.Settings, key)
 		if !ok {
@@ -529,6 +554,9 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 		}
 		if field.Hidden {
 			return nil, fmt.Errorf("hidden setting %q cannot be supplied", key)
+		}
+		if plugin.Managed(merged) && plugin.Bound(key) {
+			return nil, fmt.Errorf("managed setting %q is read-only", key)
 		}
 	}
 	for _, field := range plugin.Settings {
@@ -545,6 +573,16 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 				return nil, fmt.Errorf("%s must be a string", field.Name)
 			}
 			if text == "" {
+				mapped := false
+				if plugin.ManagedServer != nil {
+					for _, source := range plugin.ManagedServer.Config {
+						mapped = mapped || source == field.Name
+					}
+				}
+				if !mapped {
+					continue
+				}
+				delete(merged, field.Name)
 				continue
 			}
 		}
@@ -554,7 +592,7 @@ func mergePluginSettings(plugin *plugins.Plugin, previous, input map[string]any)
 		merged[field.Name] = value
 	}
 	for _, field := range plugin.Settings {
-		if field.Hidden {
+		if field.Hidden || (plugin.Managed(merged) && plugin.Bound(field.Name)) {
 			continue
 		}
 		value, ok := merged[field.Name]

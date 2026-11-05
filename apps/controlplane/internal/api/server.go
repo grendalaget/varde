@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/grendalaget/varde/go/identity"
 
@@ -80,7 +81,9 @@ type Server struct {
 	// return, or http.Server.Shutdown would wait out their full timeout.
 	Draining <-chan struct{}
 
-	linkFails *failLimiter // failed device-link lookups; set by NewHandler
+	linkFails     *failLimiter // failed device-link lookups; set by NewHandler
+	managedMu     sync.Mutex
+	ManagedLeader interface{ IsLeader() bool }
 }
 
 type ctxKey int

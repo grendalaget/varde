@@ -445,6 +445,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 		Secrets:       secretManager,
 		Plugins:       pluginRegistry,
 		PluginManager: pluginSupervisor,
+		ManagedLeader: pluginLeader,
 		PluginHTTP:    outbound.NewClient(10 * time.Second),
 		Cfg:           api.Config{PublicURL: cfg.publicURL, SteamAPIKey: cfg.steamAPIKey, Dev: cfg.dev, Timings: timings, Relays: cfg.relays, Gateway: gatewayConf, Version: version, Operators: api.ParseOperatorEmails(os.Getenv("VARDE_OPERATORS"))},
 		Recon:         recon,
@@ -465,6 +466,7 @@ func serve(ctx context.Context, cfg *serveCfg, logOut io.Writer) error {
 	go recon.Run(ctx)
 	go recon.RunRetention(ctx)
 	go pluginSupervisor.Run(ctx)
+	go srv.RunManagedServers(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
