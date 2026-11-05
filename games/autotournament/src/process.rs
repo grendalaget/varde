@@ -11,6 +11,8 @@ use tokio::sync::{broadcast, watch};
 
 pub(super) struct Stack {
     inner: Arc<Inner>,
+    #[cfg(windows)]
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 struct Inner {
     children: Vec<Arc<dyn ProcessHandle>>,
@@ -21,6 +23,8 @@ struct Inner {
     output: broadcast::Sender<OutputLine>,
     ring: Mutex<VecDeque<OutputLine>>,
     exit: watch::Sender<Option<ExitStatus>>,
+    #[cfg(windows)]
+    suspended: Mutex<[Option<super::windows::SuspendedTree>; 2]>,
 }
 impl Inner {
     fn emit(&self, line: OutputLine) {
@@ -32,6 +36,12 @@ impl Inner {
         let _ = self.output.send(line);
     }
     async fn stop_one(&self, index: usize, hard: bool) -> Result<()> {
+        #[cfg(windows)]
+        if index > 0 {
+            if let Some(tree) = self.suspended.lock().unwrap()[index - 1].take() {
+                let _ = tree.resume();
+            }
+        }
         if !self.exited[index].load(Ordering::SeqCst) {
             let child = &self.children[index];
             #[cfg(unix)]
@@ -91,7 +101,11 @@ impl Stack {
             output,
             ring: Mutex::new(VecDeque::new()),
             exit,
+            #[cfg(windows)]
+            suspended: Mutex::new([None, None]),
         });
+        #[cfg(windows)]
+        let mut tasks = Vec::new();
         for index in 0..inner.children.len() {
             let child = inner.children[index].clone();
             let mut output = child.output();
@@ -99,7 +113,7 @@ impl Stack {
                 inner.emit(line);
             }
             let state = inner.clone();
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let mut exit = state.exit.subscribe();
                 loop {
                     if exit.borrow().is_some() {
@@ -116,8 +130,12 @@ impl Stack {
                     }
                 }
             });
+            #[cfg(windows)]
+            tasks.push(task);
+            #[cfg(not(windows))]
+            drop(task);
             let state = inner.clone();
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let _ = child.wait().await;
                 state.exited[index].store(true, Ordering::SeqCst);
                 if !state.stopping.load(Ordering::SeqCst)
@@ -126,12 +144,24 @@ impl Stack {
                     let _ = state.stop_all(false).await;
                 }
             });
+            #[cfg(windows)]
+            tasks.push(task);
+            #[cfg(not(windows))]
+            drop(task);
         }
-        Self { inner }
+        Self {
+            inner,
+            #[cfg(windows)]
+            tasks,
+        }
     }
 }
 impl Drop for Stack {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        for task in &self.tasks {
+            task.abort();
+        }
         #[cfg(unix)]
         for (index, child) in self.inner.children.iter().enumerate() {
             if !self.inner.exited[index].load(Ordering::SeqCst) {
@@ -169,9 +199,42 @@ impl ProcessHandle for Stack {
                     }
                     Ok(())
                 }
-                #[cfg(not(unix))]
+                #[cfg(windows)]
                 {
-                    Err("autotournament snapshot pause requires Linux".into())
+                    let mut suspended = self.inner.suspended.lock().unwrap();
+                    if line == "pause" {
+                        let mut trees = [None, None];
+                        for index in [1, 2] {
+                            if self.inner.exited[index].load(Ordering::SeqCst) {
+                                return Err("autotournament frontend exited".into());
+                            }
+                            if suspended[index - 1].is_none() {
+                                trees[index - 1] = Some(super::windows::SuspendedTree::suspend(
+                                    self.inner.children[index].pid(),
+                                )?);
+                            }
+                        }
+                        for (target, tree) in suspended.iter_mut().zip(trees) {
+                            if tree.is_some() {
+                                *target = tree;
+                            }
+                        }
+                    } else {
+                        let mut error = None;
+                        for tree in suspended.iter_mut().filter_map(Option::take) {
+                            if let Err(e) = tree.resume() {
+                                error = Some(e);
+                            }
+                        }
+                        if let Some(error) = error {
+                            return Err(error);
+                        }
+                    }
+                    Ok(())
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    Err("autotournament snapshot pause requires Linux or Windows".into())
                 }
             }
             "frontend-stop" => {

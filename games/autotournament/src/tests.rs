@@ -259,7 +259,10 @@ fn snapshot_patterns_include_deep_data_not_cluster_or_credentials() {
 
 #[tokio::test]
 async fn configure_persists_secrets_maps_ports_and_constructs_process() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("at spaced path ")
+        .tempdir()
+        .unwrap();
     let dir = tmp.path();
     let provider = runtimes::HttpRuntimes::new(dir.join("cache"));
     let deployment = DeploymentSpec::parse(&json!({}));
@@ -329,9 +332,22 @@ async fn configure_persists_secrets_maps_ports_and_constructs_process() {
     assert!(caddy.contains("trusted_proxies static 127.0.0.1/32 ::1/128"));
     assert!(caddy.contains("http://:23456 {\n\tbind 127.0.0.1"));
     assert!(caddy.contains(&format!("127.0.0.1:{}", settings(&ctx).unwrap().api_port)));
+    assert!(caddy.contains(&format!("root * {}", caddy_public_root(&install.app))));
+    #[cfg(windows)]
+    assert!(!caddy.contains('\\'));
     let spec = driver.process_spec(&ctx).unwrap();
     assert_eq!(spec.program, install.node);
+    #[cfg(windows)]
+    assert!(spec.args[1]
+        .to_string_lossy()
+        .contains("process.on('SIGBREAK'"));
     let env: std::collections::HashMap<_, _> = spec.env.into_iter().collect();
+    #[cfg(windows)]
+    assert_eq!(
+        env.get(&OsString::from("AT_BUILTIN_WORKER")),
+        Some(&OsString::from("0"))
+    );
+    assert!(!env.contains_key(&OsString::from("LD_LIBRARY_PATH")));
     assert_eq!(
         env.get(&OsString::from("API_TOKENS")),
         Some(&OsString::from(&token))
