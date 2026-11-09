@@ -28,6 +28,9 @@ var spoofHeaders = []string{"X-Real-IP", "Forwarded", "X-Forwarded-Client-Cert",
 func upstream(t *testing.T, name string) *httptest.Server {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Set-Cookie", "host=ok; Path=/; Secure; HttpOnly")
+		w.Header().Add("Set-Cookie", "parent=bad; DoMaIn=.varde.games; Path=/")
+		w.Header().Set("Clear-Site-Data", `"*"`)
 		if r.URL.Path == "/ws" {
 			ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
@@ -114,6 +117,14 @@ func request(t *testing.T, cli *http.Client, url, host, method string, body io.R
 	if resp.StatusCode == http.StatusOK && resp.Header.Get("X-Saw-Custom") != "preserved" {
 		t.Error("gateway removed application header")
 	}
+	if resp.StatusCode == http.StatusOK {
+		if cookies := resp.Header.Values("Set-Cookie"); len(cookies) != 1 || cookies[0] != "host=ok; Path=/; Secure; HttpOnly" {
+			t.Errorf("proxied Set-Cookie = %q, want only the host cookie", cookies)
+		}
+		if resp.Header.Get("Clear-Site-Data") != "" {
+			t.Error("gateway forwarded Clear-Site-Data")
+		}
+	}
 	return resp
 }
 
@@ -163,11 +174,14 @@ func TestHTTPWebsocketAndEpochFailover(t *testing.T) {
 				t.Error("forwarded headers incorrect or spoofable")
 			}
 			_ = resp.Body.Close()
-			ws, _, err := websocket.Dial(context.Background(), strings.Replace(srv.URL, "http", "ws", 1)+"/ws", &websocket.DialOptions{Host: publicHost, HTTPClient: cli})
+			ws, upgrade, err := websocket.Dial(context.Background(), strings.Replace(srv.URL, "http", "ws", 1)+"/ws", &websocket.DialOptions{Host: publicHost, HTTPClient: cli})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = ws.CloseNow() }()
+			if cookies := upgrade.Header.Values("Set-Cookie"); len(cookies) != 1 || cookies[0] != "host=ok; Path=/; Secure; HttpOnly" || upgrade.Header.Get("Clear-Site-Data") != "" {
+				t.Errorf("upgrade response headers escaped cookie isolation: %v", upgrade.Header)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			if err := ws.Write(ctx, websocket.MessageText, []byte("echo")); err != nil {
