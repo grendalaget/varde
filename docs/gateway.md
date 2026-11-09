@@ -80,8 +80,8 @@ hostname or include the bare name as another certificate subject.
 Catalog games declare a TCP `gateway_port` and can set `exclude_anchors` to require
 a compatible group PC. Auto Tournament sets both; without a gateway configured,
 create/start fails with `gateway_unconfigured`. Placement failure returns
-`group_pc_required`, which clients can display as “Tournaments need a Linux PC in
-your group”.
+`group_pc_required`, which clients can display as “Tournaments need a PC in your
+group”.
 
 Each server's immutable `gateway_label` is persisted independently of its name:
 the canonical random server ID's underscore becomes a hyphen. This preserves its
