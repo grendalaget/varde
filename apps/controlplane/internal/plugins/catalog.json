@@ -8,27 +8,27 @@
     "assets": {
       "linux/amd64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-linux-amd64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "46ff79eb7c2f75f54874e0d1af776b97557f4d1ac8efd91717f97a16f657093c"
       },
       "linux/arm64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-linux-arm64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "3f3b79daaa2b17f5c43afc99363c06bf649a13d8ff9e399689709d27800a7d55"
       },
       "darwin/amd64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-darwin-amd64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "5d0eabe8d646091ef3be6ccf312c7d6b89bd5855496dda7214de320310351b9a"
       },
       "darwin/arm64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-darwin-arm64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "08a9bc9f0c5efac3fe54946db282d5383fb8f3ca12e62f9d7eb0a11c5e0be873"
       },
       "windows/amd64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-windows-amd64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "31a410b79fb45939536b1a740795dcb5b68ca786775d9aba594e07332373bef1"
       },
       "windows/arm64": {
         "url": "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v0.1.0/varde-plugin-autotournament-0.1.0-windows-arm64.tar.gz",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "sha256": "cf4cdba298871498a7fb49948f6343beff37467d29311767b96bd06e48236b51"
       }
     }
   }

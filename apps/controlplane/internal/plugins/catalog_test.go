@@ -19,11 +19,13 @@ func TestEmbeddedCatalog(t *testing.T) {
 		t.Fatalf("catalog version/assets = %q/%d", entry.Version, len(entry.Assets))
 	}
 	for target, asset := range entry.Assets {
-		if !strings.HasPrefix(asset.URL, "https://github.com/grendalaget/varde-plugin-autotournament/") {
-			t.Errorf("%s URL = %q", target, asset.URL)
+		wantURL := "https://github.com/grendalaget/varde-plugin-autotournament/releases/download/v" + entry.Version +
+			"/varde-plugin-autotournament-" + entry.Version + "-" + strings.ReplaceAll(target, "/", "-") + ".tar.gz"
+		if asset.URL != wantURL {
+			t.Errorf("%s URL = %q, want %q", target, asset.URL, wantURL)
 		}
-		if asset.SHA256 != strings.Repeat("0", 64) {
-			t.Errorf("%s digest = %q, want release placeholder", target, asset.SHA256)
+		if asset.SHA256 == strings.Repeat("0", 64) {
+			t.Errorf("%s digest is still a release placeholder", target)
 		}
 	}
 }
