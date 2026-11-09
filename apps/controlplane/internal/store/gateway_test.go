@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/grendalaget/varde/go/gatewaytoken"
@@ -30,6 +31,19 @@ func TestGatewayLabelPersistenceAndMigration(t *testing.T) {
 				t.Fatal("CreateServer gateway labels = nil, want persisted labels")
 			}
 			label := *a.GatewayLabel
+			if !strings.HasPrefix(label, "srv-") {
+				t.Errorf("CreateServer label = %q, want reserved srv- namespace", label)
+			}
+			for _, reserved := range []string{"gateway", "www", "cp", "api", "auth", "admin", "docs"} {
+				a.Name = reserved
+				if err := s.UpdateServerMeta(ctx, a); err != nil {
+					t.Fatal(err)
+				}
+				got, err := s.GetServer(ctx, a.ID)
+				if err != nil || got.GatewayLabel == nil || *got.GatewayLabel != label {
+					t.Fatalf("UpdateServerMeta(name=%q) = %+v, %v, want label %q", reserved, got, err, label)
+				}
+			}
 			if !gatewaytoken.ValidLabel(label) || label == *b.GatewayLabel {
 				t.Errorf("CreateServer labels = %q, %q, want distinct DNS labels", label, *b.GatewayLabel)
 			}

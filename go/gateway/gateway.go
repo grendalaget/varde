@@ -118,7 +118,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 	s.requests.Inc()
-	l.active.proxy.ServeHTTP(w, r)
+	l.active.proxy.ServeHTTP(&isolatedResponseWriter{ResponseWriter: w}, r)
 }
 
 func (s *Server) allowed(c gatewaytoken.Claims) bool {
@@ -229,7 +229,7 @@ func (s *Server) newTunnel(session *yamux.Session) *tunnel {
 		pr.Out.Host = pr.In.Host
 		stripForwardingHeaders(pr.Out.Header)
 		pr.SetXForwarded()
-	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+	}, ModifyResponse: isolateResponse, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
 			http.Error(w, "Request body too large.", http.StatusRequestEntityTooLarge)

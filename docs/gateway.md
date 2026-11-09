@@ -52,7 +52,7 @@ certificate/key; mesh IPC never permits insecure WebSocket URLs.
 For a separate gateway, start the control plane with:
 
 ```sh
-varde-control-plane --gateway url=wss://gateway.example.org/v1/tunnel,domain=example.site
+varde-control-plane --gateway url=wss://gateway.play.varde.games/v1/tunnel,domain=play.varde.games
 ```
 
 The environment equivalent is `VARDE_GATEWAY`. Configure the separate gateway's
@@ -62,7 +62,7 @@ relay tokens reuse the persisted CP Ed25519 key, with different audiences.
 Alternatively, run the TLS gateway in the CP process:
 
 ```sh
-varde-control-plane --embedded-gateway --gateway-domain example.site \
+varde-control-plane --embedded-gateway --gateway-domain play.varde.games \
   --gateway-addr :443 --gateway-tls-cert wildcard.pem --gateway-tls-key wildcard.key
 ```
 
@@ -71,8 +71,11 @@ The corresponding environment variables are `VARDE_EMBEDDED_GATEWAY`,
 `VARDE_GATEWAY_TLS_KEY`. Embedded mode advertises the hostname from the CP's
 `--public-url` and the gateway listener's port. If that is not an agent-reachable
 address, also supply `--gateway` with the public tunnel URL and the same domain.
-Wildcard DNS must point `*.example.site` at the gateway, and its certificate must
-cover those hosts and the advertised tunnel endpoint.
+Production uses `play.varde.games`. Wildcard DNS must point `*.play.varde.games`
+at the gateway, and its certificate must cover `*.play.varde.games`, including
+`gateway.play.varde.games` when that is the advertised tunnel endpoint. A wildcard
+certificate does not cover the bare `play.varde.games` name; advertise a covered
+hostname or include the bare name as another certificate subject.
 
 Catalog games declare a TCP `gateway_port` and can set `exclude_anchors` to require
 a compatible group PC. Auto Tournament sets both; without a gateway configured,
@@ -84,6 +87,9 @@ Each server's immutable `gateway_label` is persisted independently of its name:
 the canonical random server ID's underscore becomes a hyphen. This preserves its
 100 bits of randomness and is injective over canonical IDs; the database also
 enforces label uniqueness. Existing servers are backfilled by the same rule.
+Allocated labels always start with `srv-`, so server names cannot claim reserved
+hostnames such as `gateway`, `www`, `cp`, `api`, `auth`, `admin`, or `docs`.
+Keep operator endpoints outside the reserved `srv-` application namespace.
 The server API exposes `public_url = https://<gateway_label>.<domain>`, and the CP
 overrides the driver's `public_url` with it in desired state.
 
@@ -92,3 +98,30 @@ Only the active serving lease receives an `ExecutionDirective.gateway` containin
 lease epoch. Stable eight-minute refresh windows produce two-to-ten-minute token
 lifetimes, refreshing at least two minutes before expiry without reconnecting on
 every heartbeat. Lease fencing withdraws the tunnel independently of token expiry.
+
+## Browser isolation
+
+The gateway drops every upstream `Set-Cookie` header that contains a `Domain`
+attribute, including mixed-case attributes, empty values and leading dots.
+Host-only cookies pass through unchanged, including multiple separate cookies.
+Dropping rather than rewriting fails closed without changing an app's intended
+cookie scope. Apps must omit `Domain` to use cookies through the gateway.
+Legacy `Set-Cookie2` and all `Clear-Site-Data` headers are removed too: the latter's
+cookie clearing can reach the entire registrable domain. The same filtering
+applies to trailers and WebSocket upgrade response headers.
+
+HSTS `includeSubDomains` can cover only descendants of the hosted hostname,
+not `play.varde.games` or its siblings. CORS, CSP, service workers, redirects and
+alternative services do not grant an app authority over another origin.
+No shared-domain CORS or authentication trust should be granted to hosted apps.
+
+These hosts still share the `varde.games` site, not an independent security
+boundary. App JavaScript can try to write unprefixed parent-domain cookies;
+response filtering cannot prevent that. The site must use Secure, host-only
+`__Host-` authentication cookies and validate request origins against an explicit
+allowlist. Do not accept old domain-wide auth cookies as a migration fallback.
+Cookie quota/header flooding and same-site requests remain risks of hosting
+untrusted apps beneath the same registrable domain.
+Custom site `/api/cp/*` mutation handlers need their own Origin/CSRF guard;
+Better Auth's endpoint allowlist does not cover them. Do not enable untrusted
+wildcard apps until that guard is in place and legacy site sessions are revoked.
