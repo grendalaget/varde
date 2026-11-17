@@ -409,7 +409,11 @@ function Overview({
                 {!s.public_url && crossplay ? "Join code" : "Address"}
               </span>
               {s.public_url ? (
-                <CopyText text={s.public_url} href={s.public_url} mono={false} />
+                <CopyText
+                  text={s.public_url}
+                  href={s.public_url}
+                  mono={false}
+                />
               ) : crossplay ? (
                 sum.join_code ? (
                   <CopyText text={sum.join_code} />
@@ -425,10 +429,10 @@ function Overview({
               )}
             </div>
             {!s.public_url && s.game_id === "cs2" && (
-              <p className="text-xs text-muted">
-                In CS2 open the console and run{" "}
-                <code>connect {sum.address || "<address>"}</code>.
-              </p>
+              <Cs2Join
+                address={sum.address}
+                running={s.observed_state === "running"}
+              />
             )}
             {s.public_url ? null : crossplay ? (
               <p className="text-xs text-muted">
@@ -962,6 +966,54 @@ function KV({ k, v }: { k: string; v?: string | null }) {
     <div className="flex gap-3">
       <dt className="w-28 shrink-0 text-muted sm:w-36">{k}</dt>
       <dd className="min-w-0 break-all text-foreground">{v ?? "-"}</dd>
+    </div>
+  );
+}
+
+function Cs2Join({
+  address,
+  running,
+}: {
+  address?: string | null;
+  running: boolean;
+}) {
+  if (!address)
+    return (
+      <p className="text-xs text-muted">
+        Start the server to get the command for joining from CS2.
+      </p>
+    );
+  return (
+    <div className="space-y-2.5 rounded-xl border border-separator p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium text-foreground">
+          Copy the CS2 join command
+        </span>
+        <CopyText text={`connect ${address}`} />
+      </div>
+      {!running && (
+        <p className="text-xs text-muted">
+          The server isn&apos;t running yet. Start it first, or CS2 can&apos;t
+          connect.
+        </p>
+      )}
+      <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+        <li>Keep Varde running on your PC: the address goes through it.</li>
+        <li>
+          In CS2, open Settings → Game and set{" "}
+          <strong className="text-foreground">
+            Enable Developer Console (~)
+          </strong>{" "}
+          to Yes. You only do this once.
+        </li>
+        <li>
+          Press the <kbd>~</kbd> key (below Esc) to open the console.
+        </li>
+        <li>
+          Paste the command and press Enter. If the server has a password, first
+          enter <code>password</code> followed by the password.
+        </li>
+      </ol>
     </div>
   );
 }
