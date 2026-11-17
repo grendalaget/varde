@@ -91,11 +91,11 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace -- -D warnings
       - name: test
-        # game-cs2 tests load the libcs2_bind.so shim from beside the test
-        # binary; build the cdylib explicitly instead of relying on cargo test.
+        # game-cs2 tests need the libcs2_bind.so shim. Cargo 1.100's build-dir
+        # layout no longer puts test binaries beside it, so point at it.
         run: |
           cargo build -p cs2-bind
-          cargo test --workspace
+          VARDE_CS2_BIND_SHIM="$PWD/target/debug/libcs2_bind.so" cargo test --workspace
 
   web:
     runs-on: ${{ matrix.os }}
