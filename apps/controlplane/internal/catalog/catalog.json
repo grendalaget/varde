@@ -55,7 +55,7 @@
   },
   {
     "id": "cs2",
-    "name": "Counter-Strike 2 Dedicated",
+    "name": "Counter-Strike 2",
     "ports": [{ "port": 27015, "protocol": "udp" }],
     "os": ["linux", "windows"],
     "arch": ["x86_64"],
@@ -68,16 +68,16 @@
     "config_fields": [
       { "name": "server_name", "type": "string", "required": true },
       { "name": "password", "type": "secret", "secret": true, "required": false },
-      { "name": "game_mode", "type": "select", "options": ["casual", "competitive", "wingman", "arms_race", "deathmatch"], "default": "competitive" },
+      { "name": "game_mode", "type": "select", "options": ["casual", "competitive", "wingman", "retakes", "arms_race", "deathmatch"], "default": "competitive" },
       { "name": "map", "type": "string", "default": "de_dust2" },
       { "name": "max_players", "type": "int", "default": 10, "min": 2, "max": 64 },
       { "name": "bots", "type": "int", "default": 0, "min": 0, "max": 64, "help": "0 for none" },
-      { "name": "gslt", "label": "Steam server token (GSLT)", "type": "secret", "secret": true, "required": false, "help": "Steam Game Server Login Token; without it the server is LAN-only (connections through Varde count as local)" }
+      { "name": "gslt", "label": "Steam server token (GSLT)", "type": "secret", "secret": true, "required": false, "help": "Optional. Leave it blank when friends join through Varde: their connections count as local. Only players connecting without Varde need the server to have a Steam Game Server Login Token." }
     ]
   },
   {
     "id": "valheim",
-    "name": "Valheim Dedicated",
+    "name": "Valheim",
     "ports": [
       { "port": 2456, "protocol": "udp" },
       { "port": 2457, "protocol": "udp" }

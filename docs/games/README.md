@@ -16,7 +16,7 @@ features are also unavailable on Windows hosts; this switch disables the
 built-in worker, not every demo/highlight API endpoint. Ready Up CS2 remains
 Linux-only.
 
-## Counter-Strike 2 Dedicated
+## Counter-Strike 2
 
 CS2 runs the dedicated binary included in an existing Steam app 730 client
 installation on Linux/Windows x86_64. No second 69 GB download is needed.
@@ -117,7 +117,11 @@ would isolate `steam_appid.txt`/`boot.vcfg` writes and keep the shared install r
 per-server network namespaces remain stronger isolation for all sockets, including Steam's unmodified ephemeral binds.
 The agent runs as unprivileged `varde`; Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor.
 
-Modes: casual, competitive (default), wingman, arms_race and deathmatch.
+Modes: casual, competitive (default), wingman, retakes, arms_race and deathmatch.
+`retakes` is Valve's built-in Retakes (`game_type 0`, `game_mode 5`, which execs
+`gamemode_retakecasual.cfg`); Valve lists de_inferno, de_mirage, de_dust2, de_nuke,
+de_overpass, de_train, de_vertigo and de_ancient for it. Varde's post-map cfg still
+sets the bot quota, so retakes rounds use the configured bots rather than Valve's fill.
 The default map is `de_dust2`, player limit 10 (2–64), and bot quota 0 (0–64).
 Hostname, password and bot quota are written to generated configuration, not
 process arguments. After map initialization, a loopback RCON connection with a
@@ -160,7 +164,7 @@ cargo test -p game-cs2 --test net -- --nocapture
 Alternatively use `VARDE_CS2_DIR=/path/to/install`. The gated test requires an
 existing install; normal driver operation still supports SteamCMD fallback.
 
-## Valheim Dedicated
+## Valheim
 
 Valheim installs SteamCMD app 896660. On Linux, the host needs glibc 2.29 or
 newer and the runtime shared libraries `libatomic1` and `libpulse0`
