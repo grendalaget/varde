@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { Execution, Server } from "./src/api/client";
 import {
   activeExecution,
+  crashed,
   hostAwayNote,
   isStartingUp,
   restartsOnSave,
@@ -78,6 +79,14 @@ test("only changed game settings on a running server restart it", () => {
 });
 
 test("host-away note depends on whether another PC can take over", () => {
-  expect(hostAwayNote("Ola-PC", 1)).toContain("restarts it on another");
+  expect(hostAwayNote("Ola-PC", 1)).toContain("If another online PC in the group can run this game");
   expect(hostAwayNote("Ola-PC", 0)).toContain("until Ola-PC is back");
+});
+
+test("only a crashed run needs Try again; placement failures retry", () => {
+  const srv = { desired_state: "running", observed_state: "failed" } as Server;
+  expect(crashed(srv, [{ end_reason: "failed" } as Execution])).toBe(true);
+  expect(crashed(srv, [{ end_reason: "restore_failed" } as Execution])).toBe(true);
+  expect(crashed(srv, [{ end_reason: "stopped" } as Execution])).toBe(false);
+  expect(crashed(srv, [])).toBe(false);
 });

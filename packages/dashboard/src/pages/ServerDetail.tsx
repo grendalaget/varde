@@ -40,6 +40,7 @@ import SaveSafety from "../components/SaveSafety";
 import { INVITE_TERMS, useInvite } from "../lib/invite";
 import {
   activeExecution,
+  crashed,
   hostAwayNote,
   isStartingUp,
   restartsOnSave,
@@ -150,6 +151,7 @@ export default function ServerDetail({ id }: { id: string }) {
           </div>
           <Actions
             s={s}
+            executions={execs.data?.executions ?? []}
             onChange={() => {
               void server.refresh();
               void execs.refresh();
@@ -205,7 +207,15 @@ export default function ServerDetail({ id }: { id: string }) {
   );
 }
 
-function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
+function Actions({
+  s,
+  executions,
+  onChange,
+}: {
+  s: Server;
+  executions: Execution[];
+  onChange: () => void;
+}) {
   const { group, nodes, refreshNodes } = useSession();
   const thisNode = useThisNode();
   const { moveThisPc } = usePlatform();
@@ -287,7 +297,7 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         };
   }
   const fix = startFix();
-  const failed = running && s.observed_state === "failed";
+  const failed = crashed(s, executions);
 
   return (
     <div className="relative flex flex-col items-end gap-2">
@@ -461,7 +471,7 @@ function Overview({
         <Card>
           <CardHeader title="Connect" />
           <div className="space-y-3 p-4 text-sm">
-            {s.desired_state === "running" && s.observed_state === "failed" && (
+            {crashed(s, executions) && (
               <WarnNote>
                 <p>
                   The game stopped unexpectedly
@@ -481,6 +491,15 @@ function Overview({
                 </p>
               </WarnNote>
             )}
+            {s.desired_state === "running" &&
+              s.observed_state === "failed" &&
+              !crashed(s, executions) && (
+                <WarnNote>
+                  No PC in the group can host this server right now. Varde
+                  keeps trying and starts it when a PC that can run it is
+                  online with hosting turned on.
+                </WarnNote>
+              )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted">
                 {!s.public_url && crossplay ? "Join code" : "Address"}

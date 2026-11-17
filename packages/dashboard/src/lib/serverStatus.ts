@@ -61,9 +61,22 @@ function sortKeys(o: Record<string, unknown>) {
   );
 }
 
+/**
+ * The last run crashed: Varde doesn't restart it by itself. Other "failed"
+ * states (no PC can host it right now) are retried automatically.
+ */
+export function crashed(s: Server, executions: Execution[]): boolean {
+  const reason = executions[0]?.end_reason;
+  return (
+    s.desired_state === "running" &&
+    s.observed_state === "failed" &&
+    (reason === "failed" || reason === "restore_failed")
+  );
+}
+
 /** What happens if the hosting PC sleeps, shuts down or loses its connection. */
 export function hostAwayNote(host: string, otherHosts: number): string {
   return otherHosts > 0
-    ? `Keep ${host} awake while you play. If it sleeps, shuts down or loses its connection, the game stops for everyone, then Varde restarts it on another online PC that can host, from the newest save an online PC has a copy of. Play since that save can be lost.`
+    ? `Keep ${host} awake while you play. If it sleeps, shuts down or loses its connection, the game stops for everyone. If another online PC in the group can run this game and has a copy of the save, Varde restarts it there from the newest copy; play since that save can be lost. Otherwise it waits for ${host}.`
     : `Keep ${host} awake while you play. If it sleeps, shuts down or loses its connection, the game stops for everyone until ${host} is back: no other online PC in the group can host it.`;
 }
