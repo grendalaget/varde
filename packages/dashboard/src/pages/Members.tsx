@@ -13,14 +13,13 @@ import {
 import { useLoad } from "../lib/data";
 import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
-import { usePlatform } from "../lib/platform";
+import { INVITE_TERMS, useInvite } from "../lib/invite";
 
 export default function Members() {
   const { group, me, refreshMe } = useSession();
-  const { cpOrigin } = usePlatform();
   const admin = canAdmin(group.role);
   const owner = group.role === "owner";
-  const [invite, setInvite] = useState<string | null>(null);
+  const inv = useInvite(group.group_id);
   const [err, setErr] = useState<string | null>(null);
   const members = useLoad(
     () =>
@@ -52,40 +51,23 @@ export default function Members() {
           admin && (
             <Button
               variant="primary"
-              onClick={async () => {
-                setErr(null);
-                const { data, error } = await api.POST(
-                  "/v1/groups/{groupId}/invites",
-                  {
-                    params: { path: { groupId: group.group_id } },
-                    body: {
-                      role: "member",
-                      expires_at: Date.now() + 7 * 24 * 3600 * 1000,
-                      max_uses: 10,
-                    },
-                  },
-                );
-                if (error || !data) setErr(errorMessage(error));
-                else setInvite(`${cpOrigin}/invite/${data.code}`);
-              }}
+              busy={inv.busy}
+              onClick={() => void inv.create()}
             >
               Invite friends
             </Button>
           )
         }
       />
-      {invite && (
+      {inv.link && (
         <Card className="vd-pop mb-4">
-          <CardHeader
-            title="Invite link"
-            subtitle="Valid for 7 days, up to 10 people."
-          />
+          <CardHeader title="Invite link" subtitle={INVITE_TERMS} />
           <div className="p-4">
-            <CopyText text={invite} />
+            <CopyText text={inv.link} />
           </div>
         </Card>
       )}
-      <ErrorNote>{err}</ErrorNote>
+      <ErrorNote>{err ?? inv.error}</ErrorNote>
       <Card>
         <ul className="vd-stagger divide-y divide-separator">
           {(members.data?.members ?? []).map((m) => (

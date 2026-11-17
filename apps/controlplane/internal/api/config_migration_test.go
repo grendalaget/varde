@@ -91,3 +91,38 @@ func TestConfigRedeployWaitsForWarmMigration(t *testing.T) {
 		t.Fatalf("redeploy request not consumed: %d: %v", pending, err)
 	}
 }
+
+// The dashboard tells players that saving changed game settings restarts a
+// running server now; keep that true.
+func TestConfigEditRestartsRunningServer(t *testing.T) {
+	e := newEnv(t)
+	a := e.newAgent("host")
+	javaCaps := caps()
+	javaCaps["runtimes"] = []string{"native", "java"}
+	a.heartbeatCaps(nil, javaCaps)
+	id := e.createServer("minecraft", "Config restart", nil)
+	host, execution, epoch := e.startToRunning(id, a)
+
+	e.mustOK(e.do("PATCH", "/v1/servers/"+id, map[string]any{"name": "Config restart"}, e.token))
+	e.reconcile()
+	if active := e.activeExec(id); active == nil || active["id"] != execution {
+		t.Fatalf("a name-only edit restarted the server: %+v", active)
+	}
+
+	e.mustOK(e.do("PATCH", "/v1/servers/"+id, map[string]any{"config": map[string]any{"motd": "new"}}, e.token))
+	e.reconcile()
+	d, _ := host.heartbeat(nil)
+	if len(d.Executions) != 1 || d.Executions[0].ExecutionID != execution || d.Executions[0].Action != "stop" {
+		t.Fatalf("config edit did not stop the running execution: %+v", d.Executions)
+	}
+	if r := host.execStatus(execution, id, epoch, "stopped"); r.Status != 204 {
+		t.Fatalf("status stopped: %d %s", r.Status, r.Raw)
+	}
+	host.heartbeatCaps(nil, javaCaps)
+	e.reconcile()
+	active := e.activeExec(id)
+	if active == nil || active["id"] == execution {
+		srv := e.mustOK(e.do("GET", "/v1/servers/"+id, nil, e.token))
+		t.Fatalf("server was not restarted after the config edit: %+v desired=%v observed=%v", active, srv["desired_state"], srv["observed_state"])
+	}
+}

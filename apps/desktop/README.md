@@ -28,7 +28,7 @@ window.
   visible, so it reads as one window that changes content:
   - *Setup face* (`main`, mouve design-system UI in `ui/`): Varde address →
     code, Copy code / Open again / Cancel, countdown, federated
-    "Log in with Varde", "Linked to <group> as <name>", "Varde isn't
+    "Sign in with Varde", "Linked to <group> as <name>", "Varde isn't
     running" with a Start button. An administrator's pending re-link shows
     "An administrator is re-linking this PC" instead of Cancel outside the
     elevated window. Without WebView2 it falls back to message boxes.

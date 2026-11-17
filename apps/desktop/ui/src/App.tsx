@@ -165,7 +165,7 @@ export default function App() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  // "Log in with Varde" progress; null until the button is clicked
+  // "Sign in with Varde" progress; null until the button is clicked
   const [fed, setFed] = useState<FedState | null>(null);
   const [fedGroup, setFedGroup] = useState("");
   const closeTimer = useRef<number | undefined>(undefined);
@@ -546,7 +546,7 @@ export default function App() {
                     busy={linkBusy}
                     onClick={() => void beginVardeLogin()}
                   >
-                    Continue with your Varde account
+                    Sign in with Varde
                   </Button>
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => setServerOpen(true)}>
@@ -571,7 +571,7 @@ export default function App() {
         {view === "fed" && fed && (
           <section className="vd-enter">
             <h1 className="font-display text-xl font-semibold tracking-tight">
-              Log in with Varde
+              Sign in with Varde
             </h1>
             {fed.stage === "confirm" && (
               <>
@@ -580,7 +580,7 @@ export default function App() {
                   {fed.email ? <strong>{fed.email}</strong> : "your account"}.
                 </p>
                 <p className="mt-2 text-sm text-muted">
-                  Only continue if you just clicked Log in with Varde.
+                  Only continue if you just clicked Sign in with Varde.
                 </p>
               </>
             )}
@@ -755,7 +755,8 @@ export default function App() {
             </h1>
             <p className="mt-2.5 text-sm leading-relaxed">{describe(status)}</p>
             <p className="mt-2 text-sm text-muted">
-              The Varde service is running on this PC.
+              Varde keeps running in the background when you close this window,
+              so you can join and host servers. Exit Varde stops it on this PC.
             </p>
             {status.save_line && (
               <p className="mt-2 text-sm text-muted">{status.save_line}</p>

@@ -34,7 +34,7 @@ export interface LinkDefaults {
   os: string;
 }
 
-// "federated-auth" payloads from the tray ("Log in with Varde" progress).
+// "federated-auth" payloads from the tray ("Sign in with Varde" progress).
 export type FedState =
   | { stage: "confirm"; email: string; name: string }
   | { stage: "waiting_browser" }
