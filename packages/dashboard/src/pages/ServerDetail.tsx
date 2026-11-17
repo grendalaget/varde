@@ -363,7 +363,7 @@ function Actions({
         </p>
       )}
       {moving && (
-        <div className="vd-menu absolute right-0 top-full z-10 mt-2 w-72 max-w-[calc(100vw-2rem)] space-y-2 rounded-md border border-border bg-surface p-3 text-sm shadow-lg">
+        <div className="vd-menu w-full max-w-sm space-y-2 rounded-md border border-border bg-surface p-3 text-sm shadow-lg">
           <p className="text-xs text-muted">
             {s.game_id === "minecraft"
               ? "Varde copies the save to the PC you pick and tries to hand players over without stopping. Players may still be disconnected; they can rejoin from this page."
