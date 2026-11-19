@@ -18,7 +18,7 @@ import {
   Toggle,
 } from "../components/ui";
 import { GameMark } from "../components/GameMark";
-import { navigate } from "../lib/router";
+import { navigate, useLocation } from "../lib/router";
 import { useSession, type MeGroup } from "../lib/session";
 import {
   askedFields,
@@ -30,6 +30,13 @@ import {
 import { configDefaults } from "../lib/config-defaults";
 import { ConfigInput } from "../components/ConfigInput";
 import { isWideField } from "../lib/configField";
+import {
+  applyCs2Mode,
+  CS2_ADVANCED,
+  cs2Modes,
+  hostReadiness,
+  mapName,
+} from "../lib/cs2";
 
 function needs(g?: Game) {
   if (!g) return "";
@@ -43,6 +50,8 @@ function needs(g?: Game) {
 export default function NewServer() {
   const { me, group, nodes, nodesLoaded, selectGroup } = useSession();
   const { games } = useGames();
+  const { search } = useLocation();
+  const wanted = search.get("game");
   const [gameId, setGameId] = useState("");
   const [name, setName] = useState("");
   const [config, setConfig] = useState<Record<string, unknown>>({});
@@ -51,24 +60,30 @@ export default function NewServer() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [slotsTouched, setSlotsTouched] = useState(false);
 
-  const visibleGames = games.filter(
-    (g) => g.id !== "testgame" || import.meta.env.DEV,
-  );
+  // games first; web tools (they get a gateway URL, like Auto Tournament) last
+  const visibleGames = games
+    .filter((g) => g.id !== "testgame" || import.meta.env.DEV)
+    .sort((a, b) => Number(!!a.gateway_port) - Number(!!b.gateway_port));
   const game = useMemo(
     () => games.find((g) => g.id === gameId),
     [games, gameId],
   );
   const fields = askedFields(game);
   const namesInGame = !!game && fields.length < game.config_fields.length;
+  const cs2 = game?.id === "cs2";
 
+  // keep the game the player came for (?game=cs2); otherwise let them pick
   useEffect(() => {
-    if (!gameId && visibleGames.length) setGameId(visibleGames[0].id);
-  }, [gameId, visibleGames]);
+    if (!gameId && wanted && visibleGames.some((g) => g.id === wanted))
+      setGameId(wanted);
+  }, [gameId, wanted, visibleGames]);
 
   useEffect(() => {
     if (!game) return;
     setConfig(configDefaults(game.config_fields));
+    setSlotsTouched(false);
   }, [game]);
 
   const hosts = nodes.filter(
@@ -78,6 +93,11 @@ export default function NewServer() {
   const canStart = !nodesLoaded || hosts.length > 0;
   const starting = startNow && canStart;
   const host = hosts.find((n) => n.id === preferred);
+  const readiness = (n: (typeof hosts)[number]) =>
+    game
+      ? hostReadiness(n, game.steam_app, game.min_disk_mb, game.min_memory_mb)
+      : null;
+  const hostNote = host ? readiness(host) : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -122,7 +142,7 @@ export default function NewServer() {
     <>
       <PageHeader
         title="New server"
-        subtitle="Pick a game and give it a name. Varde runs it on one of your group's machines."
+        subtitle="Pick a game and give it a name. Varde runs it on one of your group's PCs."
       />
       {nodesLoaded && nodes.length === 0 && (
         <NoMachines
@@ -136,7 +156,11 @@ export default function NewServer() {
         className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_19rem]"
       >
         <div className="vd-stagger min-w-0 space-y-10">
-          <Section n={1} title="Game">
+          <Section
+            n={1}
+            title="What do you want to play?"
+            hint={game ? undefined : "Pick a game to see its settings."}
+          >
             <div
               role="radiogroup"
               aria-label="Game"
@@ -172,7 +196,17 @@ export default function NewServer() {
             />
           </Section>
 
-          {fields.length > 0 && (
+          {cs2 && game && (
+            <Cs2Settings
+              game={game}
+              config={config}
+              onChange={setConfig}
+              slotsTouched={slotsTouched}
+              onSlotsTouched={() => setSlotsTouched(true)}
+            />
+          )}
+
+          {!cs2 && fields.length > 0 && (
             <Section n={3} title="Settings" hint="You can change these later.">
               <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">
                 {fields.map((f) => (
@@ -194,7 +228,7 @@ export default function NewServer() {
           )}
 
           <Section
-            n={fields.length > 0 ? 4 : 3}
+            n={cs2 ? 5 : fields.length > 0 ? 4 : 3}
             title="Machine"
             hint="Varde prefers this machine when it's online, and uses another one otherwise."
           >
@@ -207,22 +241,31 @@ export default function NewServer() {
                 selected={preferred === ""}
                 onSelect={() => setPreferred("")}
                 title="Any machine"
-                sub="Recommended"
+                sub="Recommended: Varde picks one that can run it"
               />
-              {hosts.map((n) => (
-                <ChoiceCard
-                  key={n.id}
-                  selected={preferred === n.id}
-                  onSelect={() => setPreferred(n.id)}
-                  title={n.name}
-                  sub={
-                    <>
-                      <Dot tone={n.online ? "green" : "neutral"} />
-                      {n.online ? "Online" : "Offline"}
-                    </>
-                  }
-                />
-              ))}
+              {hosts.map((n) => {
+                const r = readiness(n);
+                return (
+                  <ChoiceCard
+                    key={n.id}
+                    selected={preferred === n.id}
+                    onSelect={() => setPreferred(n.id)}
+                    title={n.name}
+                    sub={
+                      <>
+                        <Dot tone={n.online ? "green" : "neutral"} />
+                        {n.online ? "Online" : "Offline"}
+                        {r && (
+                          <span className={r.ok ? undefined : "text-warning"}>
+                            {" "}
+                            · {r.note}
+                          </span>
+                        )}
+                      </>
+                    }
+                  />
+                );
+              })}
             </div>
           </Section>
         </div>
@@ -245,6 +288,13 @@ export default function NewServer() {
                 <Row label="Runs on" value={host?.name ?? "Any machine"} />
                 <Row label="Needs" value={needs(game)} />
               </dl>
+              {game?.steam_app && (
+                <p className="text-xs text-muted">
+                  {hostNote?.installed
+                    ? `${game.name} is already installed on ${host?.name}, so nothing extra downloads.`
+                    : "If the game is installed through Steam on the host PC, Varde uses it. Otherwise the first start downloads the dedicated server, which can take a while."}
+                </p>
+              )}
               <div className="border-t border-separator pt-4">
                 <Toggle
                   checked={starting}
@@ -259,6 +309,11 @@ export default function NewServer() {
                 {!canStart && (
                   <p className="mt-1.5 text-xs text-muted">
                     Add a machine to the group to start it.
+                  </p>
+                )}
+                {canStart && !starting && (
+                  <p className="mt-1.5 text-xs text-muted">
+                    You can start it later from the server page.
                   </p>
                 )}
               </div>
@@ -297,6 +352,116 @@ export default function NewServer() {
           </div>
         </aside>
       </form>
+    </>
+  );
+}
+
+function Cs2Settings({
+  game,
+  config,
+  onChange,
+  slotsTouched,
+  onSlotsTouched,
+}: {
+  game: Game;
+  config: Record<string, unknown>;
+  onChange: (c: Record<string, unknown>) => void;
+  slotsTouched: boolean;
+  onSlotsTouched: () => void;
+}) {
+  const modes = cs2Modes(
+    game.config_fields.find((f) => f.name === "game_mode")?.options,
+  );
+  const mode = modes.find((m) => m.id === config.game_mode) ?? modes[0];
+  const map = typeof config.map === "string" ? config.map : "";
+  const otherMap = !!mode && !mode.maps.includes(map);
+  const advanced = game.config_fields.filter((f) =>
+    CS2_ADVANCED.includes(f.name),
+  );
+  return (
+    <>
+      <Section n={3} title="Mode" hint="You can change these later.">
+        <div
+          role="radiogroup"
+          aria-label="Mode"
+          className="grid gap-2.5 sm:grid-cols-2"
+        >
+          {modes.map((m) => (
+            <ChoiceCard
+              key={m.id}
+              selected={m.id === mode?.id}
+              onSelect={() => onChange(applyCs2Mode(config, m, slotsTouched))}
+              title={m.name}
+              sub={m.blurb}
+            />
+          ))}
+        </div>
+      </Section>
+
+      {mode && (
+        <Section n={4} title="Map">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <select
+              className={inputClass}
+              aria-label="Map"
+              value={otherMap ? "" : map}
+              onChange={(e) => onChange({ ...config, map: e.target.value })}
+            >
+              {mode.maps.map((id) => (
+                <option key={id} value={id}>
+                  {mapName(id)}
+                </option>
+              ))}
+              <option value="">Another map…</option>
+            </select>
+            {otherMap && (
+              <input
+                className={cx(inputClass, "font-mono")}
+                aria-label="Map name"
+                required
+                value={map}
+                onChange={(e) => onChange({ ...config, map: e.target.value })}
+                placeholder="e.g. de_cache"
+              />
+            )}
+          </div>
+        </Section>
+      )}
+
+      {advanced.length > 0 && (
+        <details className="group rounded-2xl border border-separator bg-surface sm:ml-9">
+          <summary className="cursor-pointer list-none rounded-2xl px-4 py-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+            <span className="font-medium text-foreground">Advanced</span>
+            <span className="text-muted">
+              {" "}
+              · password, player slots, bots, Steam token
+            </span>
+          </summary>
+          <div className="space-y-4 border-t border-separator p-4">
+            <p className="text-sm text-muted">
+              Most game nights don&apos;t need these. Player slots follow the
+              mode unless you change them here.
+            </p>
+            <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+              {advanced.map((f) => (
+                <div
+                  key={f.name}
+                  className={isWideField(f) ? "sm:col-span-2" : undefined}
+                >
+                  <ConfigInput
+                    f={f}
+                    value={config[f.name]}
+                    onChange={(v) => {
+                      if (f.name === "max_players") onSlotsTouched();
+                      onChange({ ...config, [f.name]: v });
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
+      )}
     </>
   );
 }

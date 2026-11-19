@@ -720,14 +720,29 @@ export default function App() {
             </h1>
             <p className="mt-2.5 text-sm leading-relaxed">{describe(status)}</p>
             <p className="mt-2 text-sm text-muted">
-              The Varde service is running on this PC.
+              The Varde service is running on this PC. Next, open Varde to
+              create a server or join your group&apos;s.
             </p>
+            <ErrorNote detail={linkedError?.detail}>
+              {linkedError?.text}
+            </ErrorNote>
             <div className="mt-3.5 flex flex-wrap gap-2">
               <Button
                 variant="primary"
+                onClick={() => {
+                  setLinkedError(null);
+                  void invoke("open_varde").catch((e) =>
+                    setLinkedError(errorParts(e)),
+                  );
+                }}
+              >
+                <DashboardIcon /> Open Varde
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => void invoke("close_window")}
               >
-                Close
+                <CloseIcon /> Close
               </Button>
             </div>
           </section>
