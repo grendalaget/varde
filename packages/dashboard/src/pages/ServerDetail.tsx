@@ -9,6 +9,7 @@ import {
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardHeader,
   ChoiceCard,
@@ -36,6 +37,15 @@ import { ConfigInput } from "../components/ConfigInput";
 import { usePlatform } from "../lib/platform";
 import { isWideField } from "../lib/configField";
 import SaveSafety from "../components/SaveSafety";
+import { INVITE_TERMS, useInvite } from "../lib/invite";
+import {
+  activeExecution,
+  crashed,
+  hostAwayNote,
+  isStartingUp,
+  restartsOnSave,
+  startupSteps,
+} from "../lib/serverStatus";
 import {
   askedFields,
   gameBackdrop,
@@ -141,6 +151,7 @@ export default function ServerDetail({ id }: { id: string }) {
           </div>
           <Actions
             s={s}
+            executions={execs.data?.executions ?? []}
             onChange={() => {
               void server.refresh();
               void execs.refresh();
@@ -174,7 +185,9 @@ export default function ServerDetail({ id }: { id: string }) {
           <Overview
             s={s}
             snapshots={snapshots}
+            executions={execs.data?.executions ?? []}
             crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+            onLogs={() => setTab("logs")}
           />
         )}
         {tab === "saves" && (
@@ -194,7 +207,15 @@ export default function ServerDetail({ id }: { id: string }) {
   );
 }
 
-function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
+function Actions({
+  s,
+  executions,
+  onChange,
+}: {
+  s: Server;
+  executions: Execution[];
+  onChange: () => void;
+}) {
   const { group, nodes, refreshNodes } = useSession();
   const thisNode = useThisNode();
   const { moveThisPc } = usePlatform();
@@ -276,12 +297,22 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
         };
   }
   const fix = startFix();
+  const failed = crashed(s, executions);
 
   return (
     <div className="relative flex flex-col items-end gap-2">
       <div className="flex flex-wrap justify-end gap-2">
         {running ? (
           <>
+            {failed && (
+              <Button
+                variant="primary"
+                busy={busy === "start"}
+                onClick={() => void start()}
+              >
+                Try again
+              </Button>
+            )}
             <Button
               busy={busy === "save"}
               disabled={s.observed_state !== "running"}
@@ -304,6 +335,7 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
             <Button
               variant="danger"
               busy={busy === "stop"}
+              title="Ends the game for everyone on it. Varde tries to take a final save first."
               onClick={() =>
                 run("stop", () =>
                   api.POST("/v1/servers/{serverId}/stop", {
@@ -325,26 +357,38 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
           </Button>
         )}
       </div>
+      {running && !failed && (
+        <p className="max-w-sm text-right text-xs text-muted">
+          Stop ends the game for everyone on it. Varde tries to take a final save first.
+        </p>
+      )}
       {moving && (
-        <div className="vd-menu absolute right-0 top-full z-10 mt-2 flex items-center gap-2 rounded-md border border-border bg-surface p-2 text-sm shadow-lg">
-          <span className="text-muted">Move to</span>
-          {targets.map((n) => (
-            <Button
-              key={n.id}
-              busy={busy === "move:" + n.id}
-              onClick={async () => {
-                await run("move:" + n.id, () =>
-                  api.POST("/v1/servers/{serverId}/move", {
-                    params: { path: { serverId: s.id } },
-                    body: { target_node_id: n.id },
-                  }),
-                );
-                setMoving(false);
-              }}
-            >
-              {n.name}
-            </Button>
-          ))}
+        <div className="vd-menu w-full max-w-sm space-y-2 rounded-md border border-border bg-surface p-3 text-sm shadow-lg">
+          <p className="text-xs text-muted">
+            {s.game_id === "minecraft"
+              ? "Varde copies the save to the PC you pick and tries to hand players over without stopping. Players may still be disconnected; they can rejoin from this page."
+              : "Varde stops the game, saves, copies the save to the PC you pick and starts it there. Players are disconnected and can rejoin from this page once it's running."}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted">Move to</span>
+            {targets.map((n) => (
+              <Button
+                key={n.id}
+                busy={busy === "move:" + n.id}
+                onClick={async () => {
+                  await run("move:" + n.id, () =>
+                    api.POST("/v1/servers/{serverId}/move", {
+                      params: { path: { serverId: s.id } },
+                      body: { target_node_id: n.id },
+                    }),
+                  );
+                  setMoving(false);
+                }}
+              >
+                {n.name}
+              </Button>
+            ))}
+          </div>
         </div>
       )}
       {err && (
@@ -379,13 +423,28 @@ function Actions({ s, onChange }: { s: Server; onChange: () => void }) {
 function Overview({
   s,
   snapshots,
+  executions,
   crossplay,
+  onLogs,
 }: {
   s: Server;
   snapshots: Snapshot[];
+  executions: Execution[];
   crossplay: boolean;
+  onLogs: () => void;
 }) {
+  const { group, nodes } = useSession();
+  const nodeName = useNodeName();
   const sum = s.summary;
+  const hostId = sum.hosting_on?.node_id;
+  const otherHosts = nodes.filter(
+    (n) =>
+      n.hosting_enabled &&
+      n.admin_state === "active" &&
+      n.online &&
+      n.id !== hostId,
+  ).length;
+  const lastRun = executions[0];
   const events = useMergedEvents(
     (e) => e.server_id === s.id && e.type !== "execution.state",
   );
@@ -395,15 +454,52 @@ function Overview({
   return (
     <div className="vd-stagger grid gap-6 lg:grid-cols-3">
       <div className="vd-stagger space-y-6 lg:col-span-2">
+        {s.desired_state === "running" && s.observed_state === "running" && (
+          <ReadyCallout
+            s={s}
+            groupId={group.group_id}
+            admin={canAdmin(group.role)}
+          />
+        )}
+        {isStartingUp(s) && (
+          <StartupProgress
+            s={s}
+            exec={activeExecution(executions)}
+            host={nodeName}
+          />
+        )}
         <Card>
           <CardHeader title="Connect" />
           <div className="space-y-3 p-4 text-sm">
-            {s.observed_state === "failed" && (
+            {crashed(s, executions) && (
               <WarnNote>
-                The game stopped unexpectedly. Check the logs, then press Stop
-                and Start to try again.
+                <p>
+                  The game stopped unexpectedly
+                  {lastRun ? ` on ${nodeName(lastRun.node_id)}` : ""}
+                  {lastRun?.message ? `: ${lastRun.message}` : "."}
+                </p>
+                <p className="mt-1">
+                  Varde won&apos;t restart it by itself. Check the logs, then
+                  press Try again.{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2"
+                    onClick={onLogs}
+                  >
+                    Open logs
+                  </button>
+                </p>
               </WarnNote>
             )}
+            {s.desired_state === "running" &&
+              s.observed_state === "failed" &&
+              !crashed(s, executions) && (
+                <WarnNote>
+                  No PC in the group can host this server right now. Varde
+                  keeps trying and starts it when a PC that can run it is
+                  online with hosting turned on.
+                </WarnNote>
+              )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted">
                 {!s.public_url && crossplay ? "Join code" : "Address"}
@@ -458,6 +554,11 @@ function Overview({
                 <span className="text-muted">Not running</span>
               )}
             </div>
+            {sum.hosting_on && (
+              <p className="text-xs text-muted">
+                {hostAwayNote(sum.hosting_on.name, otherHosts)}
+              </p>
+            )}
           </div>
         </Card>
         <Card>
@@ -726,6 +827,7 @@ function ServerSettings({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const restarts = restartsOnSave(s, withServerName(game, config, name));
 
   return (
     <form
@@ -750,8 +852,8 @@ function ServerSettings({
         if (error) setErr(errorMessage(error));
         else {
           setMsg(
-            s.desired_state === "running"
-              ? "Saved. Game settings apply on next start."
+            restarts
+              ? "Saved. The server is restarting with the new settings."
               : "Saved",
           );
           await onSaved();
@@ -885,7 +987,13 @@ function ServerSettings({
         ) : (
           <span />
         )}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {restarts && !busy && (
+            <span className="text-sm text-muted">
+              Saving restarts the server now: players are disconnected and can
+              rejoin.
+            </span>
+          )}
           {msg && (
             <span className="vd-fade text-sm text-emerald-400">{msg}</span>
           )}
@@ -1015,5 +1123,110 @@ function Cs2Join({
         </li>
       </ol>
     </div>
+  );
+}
+
+function ReadyCallout({
+  s,
+  groupId,
+  admin,
+}: {
+  s: Server;
+  groupId: string;
+  admin: boolean;
+}) {
+  const inv = useInvite(groupId);
+  return (
+    <div>
+      <Callout
+        title="Your server is ready"
+        actions={
+          admin && (
+            <Button
+              variant="primary"
+              busy={inv.busy}
+              onClick={() => void inv.create()}
+            >
+              Invite friends
+            </Button>
+          )
+        }
+      >
+        {s.game_id === "cs2" && !s.public_url
+          ? "Friends in the group with Varde running can join now with the CS2 join command below."
+          : "Friends in the group with Varde running can join now with the details below."}
+      </Callout>
+      {inv.link && (
+        <Card className="vd-pop -mt-3 mb-6">
+          <CardHeader title="Invite link" subtitle={INVITE_TERMS} />
+          <div className="p-4">
+            <CopyText text={inv.link} />
+          </div>
+        </Card>
+      )}
+      <ErrorNote>{inv.error}</ErrorNote>
+    </div>
+  );
+}
+
+function StartupProgress({
+  s,
+  exec,
+  host,
+}: {
+  s: Server;
+  exec: Execution | undefined;
+  host: (id?: string | null) => string;
+}) {
+  const title =
+    s.observed_state === "recovering"
+      ? "Recovering the server"
+      : s.observed_state === "migrating"
+        ? "Moving the server"
+        : "Starting the server";
+  return (
+    <Card>
+      <CardHeader
+        title={title}
+        subtitle={
+          exec
+            ? `On ${host(exec.node_id)}. Varde shows each step as the PC reports it; there's no download percentage or time estimate.`
+            : s.observed_state === "recovering"
+              ? "The PC hosting it stopped answering. Varde is waiting for a PC that can host it."
+              : "Waiting for a PC in the group to take it."
+        }
+      />
+      <ol className="space-y-2 p-4 text-sm">
+        {startupSteps(exec).map((step) => (
+          <li
+            key={step.key}
+            aria-current={step.status === "current" ? "step" : undefined}
+            className={cx(
+              "flex items-center gap-2.5",
+              step.status === "todo" ? "text-muted" : "text-foreground",
+            )}
+          >
+            <Dot
+              tone={
+                step.status === "done"
+                  ? "green"
+                  : step.status === "current"
+                    ? "blue"
+                    : "neutral"
+              }
+            />
+            {step.label}
+            {step.status === "current" &&
+              step.key === "preparing" &&
+              s.game_id === "cs2" && (
+                <span className="text-xs text-muted">
+                  The first start on a PC without CS2 downloads the game server
+                  through Steam, which can take a long time.
+                </span>
+              )}
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }

@@ -310,7 +310,7 @@ function MachineRow({
                 onClick={async () => {
                   if (
                     !confirm(
-                      `Remove ${n.name} from the group? Its backups will no longer count.`,
+                      `Remove ${n.name} from the group? A server it's hosting stops and restarts on another PC that can host, if there is one, from the newest save another online PC has a copy of. Save copies on ${n.name} stop counting, and it needs to be linked again to rejoin.`,
                     )
                   )
                     return;

@@ -1513,7 +1513,7 @@ async fn start_link_ipc(app: &AppHandle, url: String) -> Result<pb::Status, Stri
     Ok(s)
 }
 
-// ---- "Log in with Varde": varde.games federation ----
+// ---- "Sign in with Varde": varde.games federation ----
 
 /// The site's desktop sign-in page; it bounces back through varde://.
 const SITE_DESKTOP_URL: &str = "https://varde.games/auth/desktop";
