@@ -575,6 +575,7 @@ impl Cs2Driver {
             "casual" => Ok((0, 0)),
             "competitive" => Ok((0, 1)),
             "wingman" => Ok((0, 2)),
+            "retakes" => Ok((0, 5)),
             "arms_race" => Ok((1, 0)),
             "deathmatch" => Ok((1, 2)),
             _ => Err("cs2: unsupported game_mode".into()),

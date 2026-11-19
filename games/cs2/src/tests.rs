@@ -1254,6 +1254,7 @@ fn args_cfg_and_modes() {
         ("casual", 0, 0),
         ("competitive", 0, 1),
         ("wingman", 0, 2),
+        ("retakes", 0, 5),
         ("arms_race", 1, 0),
         ("deathmatch", 1, 2),
     ] {
