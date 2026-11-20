@@ -34,7 +34,7 @@ export default function CreateGroup({
         }}
       >
         <div>
-          <h1 className="text-lg font-semibold">Create your group</h1>
+          <h1 className="vd-page-title">Create your group</h1>
           <p className="mt-1 text-sm text-muted">
             A group is you and your friends. Machines and servers belong to the
             group, so anyone's PC can host.
@@ -63,7 +63,7 @@ export default function CreateGroup({
         }}
       >
         <div>
-          <h2 className="text-lg font-semibold">Join your friends' group</h2>
+          <h2 className="vd-section-title">Join your friends' group</h2>
           <p className="mt-1 text-sm text-muted">
             Someone invited you? Paste the invite link or its code.
           </p>

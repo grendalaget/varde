@@ -59,8 +59,9 @@ export default function PluginPage({ pluginId, pageId }: { pluginId: string; pag
         </Card>
       )}
       <div className="space-y-5">
-        {page.actions.map((action) => (
+        {page.actions.map((action, index) => (
           <PluginActionForm
+            primary={index === 0}
             key={action.id}
             groupId={group.group_id}
             pluginId={plugin.id}
@@ -75,9 +76,10 @@ export default function PluginPage({ pluginId, pageId }: { pluginId: string; pag
 }
 
 function PluginActionForm({
-  groupId, pluginId, pageId, action, members,
+  groupId, pluginId, pageId, action, members, primary,
 }: {
   groupId: string;
+  primary: boolean;
   pluginId: string;
   pageId: string;
   action: Schemas["PluginAction"];
@@ -135,7 +137,7 @@ function PluginActionForm({
           </div>
         )}
         <div className="flex justify-end">
-          <Button variant="primary" type="submit" busy={busy}>{action.title}</Button>
+          <Button variant={primary ? "primary" : "secondary"} type="submit" busy={busy}>{action.title}</Button>
         </div>
       </form>
     </Card>

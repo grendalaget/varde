@@ -260,7 +260,7 @@ export default function Settings() {
             </div>
           ) : (
             <Button
-                variant="primary"
+                variant={admin ? "secondary" : "primary"}
                 className="w-full sm:w-auto"
                 type="button"
                 disabled={!linkSteam}

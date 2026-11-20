@@ -4,7 +4,6 @@ import type { paths } from "../api/schema";
 import {
   Badge,
   Button,
-  Callout,
   Card,
   cx,
   Dot,
@@ -61,20 +60,20 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <Callout tone="violet" title="Tip: add an always-on backup">
-          A NAS, home server or small VPS always has the latest save, even when
+        <p className="mb-5 text-xs text-muted">
+          <strong className="font-medium text-foreground">
+            Tip: add an always-on backup.
+          </strong>{" "}
+          A NAS, home server or small VPS can keep the latest save when
           everyone's PC is off.
-        </Callout>
+        </p>
       )}
       {nodes.length === 0 ? (
         <Card>
           <Empty
             action={
               canAdmin(group.role) && (
-                <Button
-                  variant="primary"
-                  onClick={() => navigate("/machines/add")}
-                >
+                <Button onClick={() => navigate("/machines/add")}>
                   Add a machine
                 </Button>
               )
@@ -84,7 +83,7 @@ export default function Machines() {
           </Empty>
         </Card>
       ) : (
-        <div className="vd-stagger space-y-3">
+        <Card className="machine-list divide-y divide-separator">
           {nodes.map((n) => (
             <MachineRow
               key={n.id}
@@ -93,7 +92,7 @@ export default function Machines() {
               isThisPc={n.id === thisNodeId}
             />
           ))}
-        </div>
+        </Card>
       )}
     </>
   );
@@ -174,16 +173,14 @@ function MachineRow({
   const caps = n.capabilities;
   const live = n.liveness ?? (n.online ? "online" : "offline");
   return (
-    <Card>
+    <article>
       <div className="flex flex-wrap items-center gap-4 px-4 py-3">
         <div className="flex min-w-0 basis-full items-center gap-3.5 sm:basis-0 sm:flex-1">
           <span className="relative shrink-0">
             <span
               className={cx(
                 "grid size-10 place-items-center rounded-xl ring-1 ring-inset transition-colors duration-300",
-                hosting.length > 0
-                  ? "bg-glod/15 text-glod ring-glod/30"
-                  : "bg-default text-muted ring-border",
+                "bg-default text-muted ring-border",
               )}
             >
               <Icon
@@ -197,9 +194,9 @@ function MachineRow({
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate font-medium text-foreground">
+              <h2 className="vd-section-title truncate text-foreground">
                 {n.name}
-              </span>
+              </h2>
               {isThisPc && <Badge>This PC</Badge>}
               {hosting.length > 0 && (
                 <Badge
@@ -244,7 +241,7 @@ function MachineRow({
             {conns.map((c) => (
               <Badge
                 key={c.node_id}
-                tone={c.path === "direct" ? "green" : "warn"}
+                tone="neutral"
                 title={`Connection to ${c.name ?? c.node_id}`}
               >
                 {c.name ?? c.node_id}:{" "}
@@ -328,6 +325,6 @@ function MachineRow({
         </div>
       )}
       <ErrorNote>{err}</ErrorNote>
-    </Card>
+    </article>
   );
 }

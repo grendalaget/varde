@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
   errorMessage,
@@ -9,7 +9,6 @@ import {
 import {
   Badge,
   Button,
-  Callout,
   Card,
   CardHeader,
   ChoiceCard,
@@ -20,11 +19,9 @@ import {
   ErrorNote,
   Field,
   inputClass,
-  ServerStateBadge,
   WarnNote,
 } from "../components/ui";
-import { HostMarker, PageLoader } from "../components/Logo";
-import { GameMark } from "../components/GameMark";
+import { HostMarker, PageLoader, StateCairn } from "../components/Logo";
 import { Icon } from "../components/icons";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
@@ -41,14 +38,12 @@ import { INVITE_TERMS, useInvite } from "../lib/invite";
 import {
   activeExecution,
   crashed,
-  hostAwayNote,
   isStartingUp,
   restartsOnSave,
   startupSteps,
 } from "../lib/serverStatus";
 import {
   askedFields,
-  gameBackdrop,
   isCrossplayEnabled,
   useGames,
   withServerName,
@@ -118,7 +113,7 @@ export default function ServerDetail({ id }: { id: string }) {
   ];
 
   return (
-    <>
+    <div className="server-detail">
       <div className="mb-3 text-sm">
         <Link
           to="/"
@@ -128,21 +123,12 @@ export default function ServerDetail({ id }: { id: string }) {
           Servers
         </Link>
       </div>
-      <header className="vd-enter relative mb-5 overflow-hidden rounded-2xl border border-separator bg-surface shadow-surface">
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{ background: gameBackdrop(s.game_id) }}
-        />
-        <div className="relative flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <GameMark id={s.game_id} name={games.name(s.game_id)} size="lg" />
+      <header className="vd-enter detail-heading">
+        <div className="flex flex-wrap items-center justify-between gap-5">
+          <div className="min-w-0">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <h1 className="truncate font-display text-[1.75rem] leading-tight font-semibold tracking-tight text-foreground">
-                  {s.name}
-                </h1>
-                <ServerStateBadge state={s.observed_state} />
+                <h1 className="vd-page-title">{s.name}</h1>
               </div>
               <p className="mt-0.5 text-sm text-muted">
                 {games.name(s.game_id)}
@@ -151,6 +137,7 @@ export default function ServerDetail({ id }: { id: string }) {
           </div>
           <Actions
             s={s}
+            primary={tab !== "settings"}
             executions={execs.data?.executions ?? []}
             onChange={() => {
               void server.refresh();
@@ -159,32 +146,27 @@ export default function ServerDetail({ id }: { id: string }) {
           />
         </div>
       </header>
-      <div
-        role="tablist"
-        className="mb-6 flex w-fit max-w-full gap-1 overflow-x-auto rounded-full border border-separator bg-surface p-1 [scrollbar-width:none]"
-      >
+      <ServerFacts
+        s={s}
+        crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
+      />
+      <div role="tablist" aria-label="Server sections" className="detail-tabs">
         {tabs.map(([t, label]) => (
           <button
             key={t}
             role="tab"
             aria-selected={tab === t}
             onClick={() => setTab(t)}
-            className={cx(
-              "shrink-0 rounded-full px-3.5 py-1.5 text-sm transition-colors duration-200 ease-vd-out",
-              tab === t
-                ? "bg-default font-medium text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]"
-                : "text-muted hover:text-foreground",
-            )}
+            className="transition-colors duration-300 ease-out"
           >
             {label}
           </button>
         ))}
       </div>
-      <div key={tab} className="vd-in">
+      <div key={tab} className="vd-in detail-panel">
         {tab === "overview" && (
           <Overview
             s={s}
-            snapshots={snapshots}
             executions={execs.data?.executions ?? []}
             crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
             onLogs={() => setTab("logs")}
@@ -203,16 +185,79 @@ export default function ServerDetail({ id }: { id: string }) {
           <Details s={s} executions={execs.data?.executions ?? []} />
         )}
       </div>
-    </>
+    </div>
+  );
+}
+
+function ServerFacts({ s, crossplay }: { s: Server; crossplay: boolean }) {
+  const sum = s.summary;
+  const address = s.public_url || (crossplay ? sum.join_code : sum.address);
+  return (
+    <dl className="hero-facts">
+      <div>
+        <dt>Status</dt>
+        <dd className="flex items-center gap-2">
+          <StateCairn state={s.observed_state} className="h-5 w-5" />
+          {s.observed_state.replace(/^./, (c) => c.toUpperCase())}
+        </dd>
+      </div>
+      <div className="address-fact">
+        <dt>{crossplay && !s.public_url ? "Join code" : "Address"}</dt>
+        <dd className="big-address">
+          {address ? (
+            <CopyText text={address} href={s.public_url || undefined} plain />
+          ) : (
+            <span className="text-muted">
+              {crossplay && s.observed_state === "running"
+                ? "Waiting for code…"
+                : "—"}
+            </span>
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt>Hosting on</dt>
+        <dd className="fact-host">
+          {sum.hosting_on ? (
+            <HostMarker
+              nodeId={sum.hosting_on.node_id}
+              name={sum.hosting_on.name}
+            />
+          ) : (
+            <span className="text-muted">Not running</span>
+          )}
+        </dd>
+      </div>
+      <div className="save-fact">
+        <dt>Latest safe save</dt>
+        <dd className="big-save">
+          {sum.latest_safe_save ? (
+            <time
+              dateTime={new Date(sum.latest_safe_save.created_at).toISOString()}
+            >
+              {timeAgo(sum.latest_safe_save.created_at)}
+            </time>
+          ) : (
+            "None yet"
+          )}
+        </dd>
+        <dt className="replica-label">Backed up on</dt>
+        <dd className="replica-line">
+          <SaveSafety summary={sum} plain />
+        </dd>
+      </div>
+    </dl>
   );
 }
 
 function Actions({
   s,
+  primary,
   executions,
   onChange,
 }: {
   s: Server;
+  primary: boolean;
   executions: Execution[];
   onChange: () => void;
 }) {
@@ -222,6 +267,7 @@ function Actions({
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<{ msg: string; code?: string } | null>(null);
   const [moving, setMoving] = useState(false);
+  const stopDialog = useRef<HTMLDialogElement>(null);
   const running = s.desired_state === "running";
   const hostId = s.summary.hosting_on?.node_id;
   const targets = nodes.filter(
@@ -306,7 +352,7 @@ function Actions({
           <>
             {failed && (
               <Button
-                variant="primary"
+                variant={primary ? "primary" : "secondary"}
                 busy={busy === "start"}
                 onClick={() => void start()}
               >
@@ -314,6 +360,7 @@ function Actions({
               </Button>
             )}
             <Button
+              variant={primary && !failed ? "primary" : "secondary"}
               busy={busy === "save"}
               disabled={s.observed_state !== "running"}
               onClick={() =>
@@ -335,21 +382,14 @@ function Actions({
             <Button
               variant="danger"
               busy={busy === "stop"}
-              title="Ends the game for everyone on it. Varde tries to take a final save first."
-              onClick={() =>
-                run("stop", () =>
-                  api.POST("/v1/servers/{serverId}/stop", {
-                    params: { path: { serverId: s.id } },
-                  }),
-                )
-              }
+              onClick={() => stopDialog.current?.showModal()}
             >
               Stop
             </Button>
           </>
         ) : (
           <Button
-            variant="primary"
+            variant={primary ? "primary" : "secondary"}
             busy={busy === "start"}
             onClick={() => void start()}
           >
@@ -357,11 +397,35 @@ function Actions({
           </Button>
         )}
       </div>
-      {running && !failed && (
-        <p className="max-w-sm text-right text-xs text-muted">
-          Stop ends the game for everyone on it. Varde tries to take a final save first.
+      <dialog
+        ref={stopDialog}
+        aria-labelledby="stop-title"
+        className="stop-dialog"
+      >
+        <h2 id="stop-title" className="vd-section-title">
+          Stop {s.name}?
+        </h2>
+        <p>
+          Stop ends the game for everyone on it. Varde tries to take a final
+          save first.
         </p>
-      )}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button onClick={() => stopDialog.current?.close()}>Cancel</Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              stopDialog.current?.close();
+              void run("stop", () =>
+                api.POST("/v1/servers/{serverId}/stop", {
+                  params: { path: { serverId: s.id } },
+                }),
+              );
+            }}
+          >
+            Stop server
+          </Button>
+        </div>
+      </dialog>
       {moving && (
         <div className="vd-menu w-full max-w-sm space-y-2 rounded-md border border-border bg-surface p-3 text-sm shadow-lg">
           <p className="text-xs text-muted">
@@ -401,11 +465,7 @@ function Actions({
                 : (fix?.msg ?? err.msg)}
           </ErrorNote>
           {fix && (
-            <Button
-              variant="primary"
-              busy={busy === "fix"}
-              onClick={() => void fix.go()}
-            >
+            <Button busy={busy === "fix"} onClick={() => void fix.go()}>
               {fix.label}
             </Button>
           )}
@@ -422,13 +482,11 @@ function Actions({
 
 function Overview({
   s,
-  snapshots,
   executions,
   crossplay,
   onLogs,
 }: {
   s: Server;
-  snapshots: Snapshot[];
   executions: Execution[];
   crossplay: boolean;
   onLogs: () => void;
@@ -448,28 +506,18 @@ function Overview({
   const events = useMergedEvents(
     (e) => e.server_id === s.id && e.type !== "execution.state",
   );
-  const latestSafe = snapshots.find(
-    (x) => x.id === sum.latest_safe_save?.snapshot_id,
-  );
   return (
-    <div className="vd-stagger grid gap-6 lg:grid-cols-3">
-      <div className="vd-stagger space-y-6 lg:col-span-2">
-        {s.desired_state === "running" && s.observed_state === "running" && (
-          <ReadyCallout
-            s={s}
-            groupId={group.group_id}
-            admin={canAdmin(group.role)}
-          />
-        )}
-        {isStartingUp(s) && (
-          <StartupProgress
-            s={s}
-            exec={activeExecution(executions)}
-            host={nodeName}
-          />
-        )}
+    <div className="detail-overview">
+      {isStartingUp(s) && (
+        <StartupProgress
+          s={s}
+          exec={activeExecution(executions)}
+          host={nodeName}
+        />
+      )}
+      <section className="detail-connect">
+        <h2 className="vd-section-title">Connect</h2>
         <Card>
-          <CardHeader title="Connect" />
           <div className="space-y-3 p-4 text-sm">
             {crashed(s, executions) && (
               <WarnNote>
@@ -495,103 +543,55 @@ function Overview({
               s.observed_state === "failed" &&
               !crashed(s, executions) && (
                 <WarnNote>
-                  No PC in the group can host this server right now. Varde
-                  keeps trying and starts it when a PC that can run it is
-                  online with hosting turned on.
+                  No PC in the group can host this server right now. Varde keeps
+                  trying and starts it when a PC that can run it is online with
+                  hosting turned on.
                 </WarnNote>
               )}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted">
-                {!s.public_url && crossplay ? "Join code" : "Address"}
-              </span>
-              {s.public_url ? (
-                <CopyText
-                  text={s.public_url}
-                  href={s.public_url}
-                  mono={false}
-                />
-              ) : crossplay ? (
-                sum.join_code ? (
-                  <CopyText text={sum.join_code} />
-                ) : (
-                  <span className="text-muted">
-                    {s.observed_state === "running" ? "Waiting for code…" : "-"}
-                  </span>
-                )
-              ) : sum.address ? (
-                <CopyText text={sum.address} />
-              ) : (
-                <span className="text-muted">-</span>
-              )}
-            </div>
+            <h3 className="font-medium">Join the game</h3>
             {!s.public_url && s.game_id === "cs2" && (
               <Cs2Join
                 address={sum.address}
                 running={s.observed_state === "running"}
               />
             )}
-            {s.public_url ? null : crossplay ? (
+            {s.public_url ? (
+              <p>Open the address above in your browser to join.</p>
+            ) : crossplay ? (
               <p className="text-xs text-muted">
-                Crossplay server: players join from Valheim&apos;s Join game →
-                Join by code. The code can change when the server restarts or
-                moves to another machine, so check here for the current one.
+                In Valheim, choose Join game → Join by code; check here after a
+                restart or move.
               </p>
             ) : (
               <p className="text-xs text-muted">
-                This address works from any machine in the group with Varde
-                running, and it stays the same when the server moves to another
-                machine.
+                Join from any group machine with Varde running; the address
+                stays the same after a move.
               </p>
             )}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted">Hosting on</span>
-              {sum.hosting_on ? (
-                <HostMarker
-                  nodeId={sum.hosting_on.node_id}
-                  name={sum.hosting_on.name}
-                />
-              ) : (
-                <span className="text-muted">Not running</span>
-              )}
-            </div>
+            <h3 className="border-t border-separator pt-4 font-medium">Host</h3>
             {sum.hosting_on && (
               <p className="text-xs text-muted">
-                {hostAwayNote(sum.hosting_on.name, otherHosts)}
+                {otherHosts
+                  ? "Another machine can take over if the host goes offline."
+                  : "Keep the hosting machine online; no other machine can take over yet."}
               </p>
             )}
+            {s.desired_state === "running" &&
+              s.observed_state === "running" && (
+                <ReadyCallout
+                  groupId={group.group_id}
+                  admin={canAdmin(group.role)}
+                />
+              )}
           </div>
         </Card>
+      </section>
+      <section className="detail-activity">
+        <h2 className="vd-section-title">Recent activity</h2>
         <Card>
-          <CardHeader title="Recent activity" />
-          <EventList events={events.slice(0, 15)} />
+          <EventList events={events} limit={5} />
         </Card>
-      </div>
-      <Card className="h-fit">
-        <CardHeader title="Latest safe save" />
-        <div className="space-y-3 p-4 text-sm">
-          {sum.latest_safe_save ? (
-            <>
-              <div className="text-foreground">
-                {timeAgo(sum.latest_safe_save.created_at)}
-                <span className="block text-xs text-muted">
-                  {dateTime(sum.latest_safe_save.created_at)}
-                </span>
-              </div>
-              {latestSafe?.size_bytes != null && (
-                <div className="text-xs text-muted">
-                  {bytes(latestSafe.size_bytes)} of game data
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-muted">
-              No safe save yet. One is taken automatically while the server
-              runs.
-            </p>
-          )}
-          <SaveSafety summary={sum} />
-        </div>
-      </Card>
+      </section>
     </div>
   );
 }
@@ -614,6 +614,31 @@ const REASON: Record<string, string> = {
   migration: "Move",
 };
 
+function DetailSection({
+  title,
+  subtitle,
+  actions,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="detail-section">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="vd-section-title">{title}</h2>
+          {subtitle && <p className="mt-1 text-xs text-muted">{subtitle}</p>}
+        </div>
+        {actions}
+      </div>
+      <Card>{children}</Card>
+    </section>
+  );
+}
+
 function Saves({
   s,
   snapshots,
@@ -627,11 +652,10 @@ function Saves({
   const { nodes } = useSession();
   const anchorIds = new Set(nodes.filter((n) => n.anchor).map((n) => n.id));
   return (
-    <Card>
-      <CardHeader
-        title="Saves"
-        subtitle={`A save is safe once ${s.min_commit_replicas} ${s.min_commit_replicas === 1 ? "machine holds" : "machines hold"} it. Pinned saves are never cleaned up.`}
-      />
+    <DetailSection
+      title="Saves"
+      subtitle={`A save is safe once ${s.min_commit_replicas} ${s.min_commit_replicas === 1 ? "machine holds" : "machines hold"} it. Pinned saves are never cleaned up.`}
+    >
       {snapshots.length === 0 ? (
         <Empty>No saves yet.</Empty>
       ) : (
@@ -730,7 +754,7 @@ function Saves({
           </table>
         </div>
       )}
-    </Card>
+    </DetailSection>
   );
 }
 
@@ -761,27 +785,26 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
   }, [logs.data]);
 
   return (
-    <Card>
-      <CardHeader
-        title="Logs"
-        actions={
-          executions.length > 0 && (
-            <select
-              className="max-w-48 rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
-              value={effective}
-              onChange={(e) => setExecId(e.target.value)}
-            >
-              {executions.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {nodeName(e.node_id)} ·{" "}
-                  {e.started_at ? dateTime(e.started_at) : "not started"}
-                  {e.ended_at ? "" : " (current)"}
-                </option>
-              ))}
-            </select>
-          )
-        }
-      />
+    <DetailSection
+      title="Logs"
+      actions={
+        executions.length > 0 && (
+          <select
+            className="max-w-48 rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
+            value={effective}
+            onChange={(e) => setExecId(e.target.value)}
+          >
+            {executions.map((e) => (
+              <option key={e.id} value={e.id}>
+                {nodeName(e.node_id)} ·{" "}
+                {e.started_at ? dateTime(e.started_at) : "not started"}
+                {e.ended_at ? "" : " (current)"}
+              </option>
+            ))}
+          </select>
+        )
+      }
+    >
       <pre
         ref={box}
         className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-foreground"
@@ -803,7 +826,7 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
               </div>
             ))}
       </pre>
-    </Card>
+    </DetailSection>
   );
 }
 
@@ -860,8 +883,7 @@ function ServerSettings({
         }
       }}
     >
-      <Card>
-        <CardHeader title="Game" />
+      <DetailSection title="Game">
         <div className="grid gap-x-5 gap-y-5 p-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Field
@@ -893,9 +915,8 @@ function ServerSettings({
             </div>
           ))}
         </div>
-      </Card>
-      <Card>
-        <CardHeader title="Hosting & saves" />
+      </DetailSection>
+      <DetailSection title="Hosting & saves">
         <div className="grid gap-4 p-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Field
@@ -961,7 +982,7 @@ function ServerSettings({
             />
           </Field>
         </div>
-      </Card>
+      </DetailSection>
       <ErrorNote>{err}</ErrorNote>
       <div className="flex items-center justify-between">
         {admin ? (
@@ -1010,8 +1031,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
   const nodeName = useNodeName();
   return (
     <div className="vd-stagger space-y-6">
-      <Card>
-        <CardHeader title="Identity" subtitle="Engineering view" />
+      <DetailSection title="Identity" subtitle="Engineering view">
         <dl className="grid gap-x-6 gap-y-2 p-4 font-mono text-xs sm:grid-cols-2">
           <KV k="server_id" v={s.id} />
           <KV k="epoch" v={String(s.epoch)} />
@@ -1027,12 +1047,11 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
             v={`${s.desired_state} / ${s.observed_state}`}
           />
         </dl>
-      </Card>
-      <Card>
-        <CardHeader
-          title="Executions"
-          subtitle="Each run holds a lease; a new epoch fences the previous one."
-        />
+      </DetailSection>
+      <DetailSection
+        title="Executions"
+        subtitle="Each run holds a lease; a new epoch fences the previous one."
+      >
         <div className="overflow-x-auto">
           <table className="w-full font-mono text-xs">
             <thead className="text-left uppercase tracking-wider text-muted">
@@ -1064,7 +1083,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
             </tbody>
           </table>
         </div>
-      </Card>
+      </DetailSection>
     </div>
   );
 }
@@ -1092,7 +1111,7 @@ function Cs2Join({
       </p>
     );
   return (
-    <div className="space-y-2.5 rounded-xl border border-separator p-3">
+    <div className="space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium text-foreground">
           Copy the CS2 join command
@@ -1105,57 +1124,26 @@ function Cs2Join({
           connect.
         </p>
       )}
-      <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-        <li>Keep Varde running on your PC: the address goes through it.</li>
-        <li>
-          In CS2, open Settings → Game and set{" "}
-          <strong className="text-foreground">
-            Enable Developer Console (~)
-          </strong>{" "}
-          to Yes. You only do this once.
-        </li>
-        <li>
-          Press the <kbd>~</kbd> key (below Esc) to open the console.
-        </li>
-        <li>
-          Paste the command and press Enter. If the server has a password, first
-          enter <code>password</code> followed by the password.
-        </li>
-      </ol>
+      <p className="text-xs text-muted">
+        With Varde running, enable CS2&apos;s developer console (~), then paste
+        the join command.
+      </p>
     </div>
   );
 }
 
-function ReadyCallout({
-  s,
-  groupId,
-  admin,
-}: {
-  s: Server;
-  groupId: string;
-  admin: boolean;
-}) {
+function ReadyCallout({ groupId, admin }: { groupId: string; admin: boolean }) {
   const inv = useInvite(groupId);
   return (
     <div>
-      <Callout
-        title="Your server is ready"
-        actions={
-          admin && (
-            <Button
-              variant="primary"
-              busy={inv.busy}
-              onClick={() => void inv.create()}
-            >
-              Invite friends
-            </Button>
-          )
-        }
-      >
-        {s.game_id === "cs2" && !s.public_url
-          ? "Friends in the group with Varde running can join now with the CS2 join command below."
-          : "Friends in the group with Varde running can join now with the details below."}
-      </Callout>
+      <p className="mb-2 text-xs text-muted">
+        Invite friends to join the group.
+      </p>
+      {admin && (
+        <Button busy={inv.busy} onClick={() => void inv.create()}>
+          Invite friends
+        </Button>
+      )}
       {inv.link && (
         <Card className="vd-pop -mt-3 mb-6">
           <CardHeader title="Invite link" subtitle={INVITE_TERMS} />

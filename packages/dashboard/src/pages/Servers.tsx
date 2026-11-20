@@ -1,31 +1,27 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage, type Server } from "../api/client";
+import { api, errorMessage } from "../api/client";
 import {
-  Badge,
   Button,
   Card,
   CardHeader,
-  CopyText,
   Empty,
   ErrorNote,
   PageHeader,
-  ServerStateBadge,
 } from "../components/ui";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
-import { timeAgo } from "../lib/format";
-import { Link, navigate } from "../lib/router";
+import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
 import PluginSettingsPanel from "./PluginSettings";
-import SaveSafety from "../components/SaveSafety";
-import { HostMarker } from "../components/Logo";
-import { GameGlow, GameMark } from "../components/GameMark";
+import { PageLoader } from "../components/Logo";
+import { ServerList } from "../components/ServerList";
 import { isCrossplayEnabled, useGames } from "../lib/games";
+import { Icon } from "../components/icons";
 
 export default function Servers() {
   const { group } = useSession();
   const games = useGames();
-  const { data, refresh, loading } = useLoad(
+  const { data, refresh, loading, error } = useLoad(
     () =>
       api.GET("/v1/groups/{groupId}/servers", {
         params: { path: { groupId: group.group_id } },
@@ -48,19 +44,24 @@ export default function Servers() {
         subtitle="Each server runs on one machine at a time and is backed up on the others."
         actions={
           <Button variant="primary" onClick={() => navigate("/servers/new")}>
+            <Icon name="plus" className="size-3.5" />
             New server
           </Button>
         }
       />
       <PluginSetup />
-      {!loading && servers.length === 0 && (
+      {loading && !data && <PageLoader />}
+      {error && (
+        <ErrorNote>
+          {errorMessage(error)}{" "}
+          <Button onClick={() => void refresh()}>Try again</Button>
+        </ErrorNote>
+      )}
+      {!loading && !error && servers.length === 0 && (
         <Card className="vd-enter">
           <Empty
             action={
-              <Button
-                variant="primary"
-                onClick={() => navigate("/servers/new")}
-              >
+              <Button onClick={() => navigate("/servers/new")}>
                 Create your first server
               </Button>
             }
@@ -70,16 +71,15 @@ export default function Servers() {
           </Empty>
         </Card>
       )}
-      <div className="vd-stagger grid gap-4 md:grid-cols-2">
-        {servers.map((s) => (
-          <ServerCard
-            key={s.id}
-            s={s}
-            gameName={games.name(s.game_id)}
-            crossplay={isCrossplayEnabled(games.get(s.game_id), s.config)}
-          />
-        ))}
-      </div>
+      {servers.length > 0 && (
+        <ServerList
+          entries={servers.map((s) => ({
+            server: s,
+            gameName: games.name(s.game_id),
+            crossplay: isCrossplayEnabled(games.get(s.game_id), s.config),
+          }))}
+        />
+      )}
     </>
   );
 }
@@ -143,10 +143,7 @@ function PluginSetup() {
                   subtitle={plugin.description || undefined}
                 />
                 <div className="flex justify-end p-4 pt-0">
-                  <Button
-                    variant="primary"
-                    onClick={() => setSetupPluginId(plugin.id)}
-                  >
+                  <Button onClick={() => setSetupPluginId(plugin.id)}>
                     Set up
                   </Button>
                 </div>
@@ -162,140 +159,5 @@ function PluginSetup() {
         />
       )}
     </section>
-  );
-}
-
-function ServerCard({
-  s,
-  gameName,
-  crossplay,
-}: {
-  s: Server;
-  gameName: string;
-  crossplay: boolean;
-}) {
-  const sum = s.summary;
-  return (
-    <div
-      className="group relative block overflow-hidden rounded-2xl border border-separator bg-surface p-5 transition-all duration-200 ease-vd-out hover:-translate-y-0.5 hover:border-field-border hover:shadow-[0_18px_50px_-24px_rgb(0_0_0/0.8)]"
-    >
-      <Link
-        to={`/servers/${s.id}`}
-        aria-label={`View ${s.name}`}
-        className="absolute inset-0 z-10 rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
-      />
-      <GameGlow
-        id={s.game_id}
-        className={
-          s.observed_state === "running"
-            ? "opacity-25"
-            : "opacity-[0.06] group-hover:opacity-15"
-        }
-      />
-      <div className="relative flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <GameMark id={s.game_id} name={gameName} />
-          <div className="min-w-0">
-            <h3 className="truncate text-[15px] font-semibold text-foreground">
-              {s.name}
-            </h3>
-            <p className="truncate text-xs text-muted">{gameName}</p>
-          </div>
-        </div>
-        <ServerStateBadge state={s.observed_state} />
-      </div>
-      <dl className="relative mt-5 space-y-2.5 border-t border-separator pt-4 text-sm">
-        <Row label="Hosting on">
-          {sum.hosting_on ? (
-            <HostMarker
-              nodeId={sum.hosting_on.node_id}
-              name={sum.hosting_on.name}
-            />
-          ) : (
-            <span className="text-muted">Not running</span>
-          )}
-        </Row>
-        <Row label={!s.public_url && crossplay ? "Join code" : "Address"}>
-          {s.public_url ? (
-            <span className="relative z-20" onClick={(e) => e.stopPropagation()}>
-              <CopyText text={s.public_url} href={s.public_url} mono={false} />
-            </span>
-          ) : crossplay ? (
-            sum.join_code ? (
-              <span
-                className="relative z-20"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-              >
-                <CopyText text={sum.join_code} />
-              </span>
-            ) : (
-              <span className="text-muted">
-                {s.observed_state === "running" ? "Waiting for code…" : "-"}
-              </span>
-            )
-          ) : sum.address ? (
-            <span
-              className="relative z-20"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
-              <CopyText text={sum.address} />
-            </span>
-          ) : (
-            <span className="text-muted">-</span>
-          )}
-        </Row>
-        {!s.public_url && s.game_id === "cs2" && (
-          <p className="text-xs text-muted">
-            In CS2 open the console and run{" "}
-            <code>connect {sum.address || "<address>"}</code>.
-          </p>
-        )}
-        {!s.public_url && crossplay && (
-          <p className="text-xs text-muted">
-            Crossplay server: players join from Valheim&apos;s Join game → Join
-            by code. The code can change when the server restarts or moves to
-            another machine, so check here for the current one.
-          </p>
-        )}
-        <Row label="Latest safe save">
-          {sum.latest_safe_save ? (
-            <span className="text-foreground">
-              {timeAgo(sum.latest_safe_save.created_at)}
-            </span>
-          ) : (
-            <span className="text-muted">None yet</span>
-          )}
-        </Row>
-      </dl>
-      <div className="relative mt-3">
-        <SaveSafety summary={sum} compact />
-      </div>
-      {s.desired_state === "running" && s.observed_state === "failed" && (
-        <div className="mt-2">
-          <Badge tone="red">Needs attention</Badge>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Row({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <dt className="text-muted">{label}</dt>
-      <dd className="min-w-0 truncate text-right">{children}</dd>
-    </div>
   );
 }

@@ -67,13 +67,22 @@ export default function Members() {
           </div>
         </Card>
       )}
-      <ErrorNote>{err ?? inv.error}</ErrorNote>
+      <ErrorNote>
+        {err ??
+          inv.error ??
+          (members.error ? errorMessage(members.error) : null)}
+      </ErrorNote>
       <Card>
         <ul className="vd-stagger divide-y divide-separator">
+          {!members.loading &&
+            !members.error &&
+            !members.data?.members?.length && (
+              <li className="p-5 text-sm text-muted">No members yet.</li>
+            )}
           {(members.data?.members ?? []).map((m) => (
             <li
               key={m.user_id}
-              className="flex items-center justify-between gap-3 px-4 py-3"
+              className="member-row flex flex-wrap items-center justify-between gap-4 px-5 py-5"
             >
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar
@@ -81,12 +90,12 @@ export default function Members() {
                   className="size-9 rounded-full text-xs"
                 />
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-foreground">
+                  <h2 className="vd-section-title truncate text-foreground">
                     {m.display_name}
                     {m.user_id === me.user.id && (
                       <span className="text-muted"> (you)</span>
                     )}
-                  </div>
+                  </h2>
                   <div className="truncate text-xs text-muted">{m.email}</div>
                 </div>
               </div>
@@ -125,7 +134,7 @@ export default function Members() {
                       <option value="member">Member</option>
                     </select>
                     <Button
-                      variant="ghost"
+                      variant="danger"
                       onClick={async () => {
                         if (
                           !confirm(`Remove ${m.display_name} from the group?`)
