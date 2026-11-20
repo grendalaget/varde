@@ -502,10 +502,6 @@ export default function App() {
                 This PC leaves its current group and gets a new identity.
               </WarnNote>
             )}
-            <section className="tray-save">
-              <h2>Latest safe save</h2>
-              <p>Available after you link this PC to your group.</p>
-            </section>
             <form
               className="mt-3.5 flex flex-col gap-3.5"
               onSubmit={(e) => {
@@ -577,13 +573,21 @@ export default function App() {
                   >
                     Sign in with Varde
                   </Button>
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => setServerOpen(true)}>
-                      Use a self-hosted instance
-                    </Button>
-                    <Button variant="ghost" type="submit" busy={linkBusy}>
+                  <div className="flex flex-wrap justify-between gap-2 text-xs text-muted">
+                    <button
+                      type="button"
+                      className="transition-colors hover:text-foreground focus-visible:outline-foreground"
+                      onClick={() => setServerOpen(true)}
+                    >
+                      Self-hosted instance
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={linkBusy}
+                      className="transition-colors hover:text-foreground focus-visible:outline-foreground disabled:opacity-50"
+                    >
                       Use a code instead
-                    </Button>
+                    </button>
                   </div>
                 </>
               ) : (
@@ -718,9 +722,6 @@ export default function App() {
               {code}
             </div>
             <p className="text-sm text-muted">{expiry}</p>
-            <p className="mt-2 text-xs text-muted">
-              Latest safe save: available after linking.
-            </p>
             {locked && (
               <p className="mt-1 text-sm text-muted">
                 {onMac
@@ -918,10 +919,6 @@ export default function App() {
                 ? "It normally starts when you log in."
                 : "It normally starts with Windows. Starting it needs administrator approval once."}
             </p>
-            <section className="tray-save">
-              <h2>Latest safe save</h2>
-              <p>Start Varde to check your saves.</p>
-            </section>
             <ErrorNote detail={noagentError?.detail}>
               {noagentError?.text}
             </ErrorNote>
@@ -942,13 +939,17 @@ export default function App() {
       </main>
       {(view === "form" || view === "code" || view === "noagent") && (
         <footer className="tray-quiet-footer">
-          <div className="flex justify-between">
-            <Button
-              variant="ghost"
-              onClick={() => void invoke("open_url", { url: effectiveUrl })}
-            >
-              Open in browser
-            </Button>
+          <div
+            className={`flex ${view === "form" ? "justify-end" : "justify-between"}`}
+          >
+            {view !== "form" && (
+              <Button
+                variant="ghost"
+                onClick={() => void invoke("open_url", { url: effectiveUrl })}
+              >
+                Open in browser
+              </Button>
+            )}
             <Button variant="ghost" onClick={() => void invoke("close_window")}>
               Close
             </Button>
