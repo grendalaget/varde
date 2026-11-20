@@ -241,6 +241,7 @@ function ServerFacts({ s, crossplay }: { s: Server; crossplay: boolean }) {
             "None yet"
           )}
         </dd>
+        <dt className="replica-label">Backed up on</dt>
         <dd className="replica-line">
           <SaveSafety summary={sum} plain />
         </dd>

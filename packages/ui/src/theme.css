@@ -705,6 +705,10 @@ main:has(.server-detail) {
 .hero-facts .big-save {
   font-size: 19px;
 }
+.hero-facts .replica-label {
+  margin-top: 12px;
+  margin-bottom: 7px;
+}
 .detail-tabs {
   display: flex;
   gap: 27px;
@@ -886,9 +890,14 @@ main:has(.server-detail) {
     grid-column: 1;
     grid-row: 2;
   }
+  .save-fact .replica-label {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0 0 11px;
+  }
   .hero-facts .replica-line {
     grid-column: 2;
-    grid-row: 1/3;
+    grid-row: 2;
     margin: 0;
   }
   .detail-tabs {
