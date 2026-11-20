@@ -71,9 +71,7 @@ export default function Machines() {
           <Empty
             action={
               canAdmin(group.role) && (
-                <Button
-                  onClick={() => navigate("/machines/add")}
-                >
+                <Button onClick={() => navigate("/machines/add")}>
                   Add a machine
                 </Button>
               )
@@ -83,7 +81,7 @@ export default function Machines() {
           </Empty>
         </Card>
       ) : (
-        <div className="vd-stagger space-y-3">
+        <Card className="machine-list divide-y divide-separator">
           {nodes.map((n) => (
             <MachineRow
               key={n.id}
@@ -92,7 +90,7 @@ export default function Machines() {
               isThisPc={n.id === thisNodeId}
             />
           ))}
-        </div>
+        </Card>
       )}
     </>
   );
@@ -173,7 +171,7 @@ function MachineRow({
   const caps = n.capabilities;
   const live = n.liveness ?? (n.online ? "online" : "offline");
   return (
-    <Card>
+    <article>
       <div className="flex flex-wrap items-center gap-4 px-4 py-3">
         <div className="flex min-w-0 basis-full items-center gap-3.5 sm:basis-0 sm:flex-1">
           <span className="relative shrink-0">
@@ -194,9 +192,9 @@ function MachineRow({
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate font-medium text-foreground">
+              <h2 className="vd-section-title truncate text-foreground">
                 {n.name}
-              </span>
+              </h2>
               {isThisPc && <Badge>This PC</Badge>}
               {hosting.length > 0 && (
                 <Badge
@@ -241,7 +239,7 @@ function MachineRow({
             {conns.map((c) => (
               <Badge
                 key={c.node_id}
-                tone={c.path === "direct" ? "green" : "warn"}
+                tone="neutral"
                 title={`Connection to ${c.name ?? c.node_id}`}
               >
                 {c.name ?? c.node_id}:{" "}
@@ -325,6 +323,6 @@ function MachineRow({
         </div>
       )}
       <ErrorNote>{err}</ErrorNote>
-    </Card>
+    </article>
   );
 }
