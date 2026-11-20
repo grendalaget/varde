@@ -39,7 +39,7 @@ const GLYPHS = [
   "%",
   "@",
 ];
-const RUNE_SLOTS = [
+const RUNE_SLOTS: [number, string][] = [
   [9, "ᚠ"],
   [11, "ᚱ"],
   [13, "ᛋ"],
@@ -172,10 +172,27 @@ const COL = {
   peak: [0.96, 0.94, 0.93],
   glod: [1, 0.357, 0.122],
 };
-function drawGlyphProbe(ch, font) {
+const UNIFORM_NAMES = [
+  "u_res",
+  "u_time",
+  "u_cell",
+  "u_atlasN",
+  "u_mark",
+  "u_ripples[0]",
+  "u_colBase",
+  "u_colPeak",
+  "u_colGlod",
+  "u_atlas",
+  "u_markTex",
+] as const;
+type UniformName = (typeof UNIFORM_NAMES)[number];
+type UniformLocations = Record<UniformName, WebGLUniformLocation | null>;
+
+function drawGlyphProbe(ch: string, font: string) {
   const c = document.createElement("canvas");
   c.width = c.height = 32;
   const x = c.getContext("2d", { willReadFrequently: true });
+  if (!x) throw new Error("Glyph canvas unavailable");
   x.font = font;
   x.textAlign = "center";
   x.textBaseline = "middle";
@@ -192,22 +209,26 @@ function resolveGlyphSet() {
       const img = drawGlyphProbe(rune, font);
       if (img !== tofu && img !== drawGlyphProbe(" ", font)) set[slot] = rune;
     }
-  } catch {}
+  } catch {
+    // Keep the standard glyphs if probing is unavailable.
+  }
   return set;
 }
-function makeAtlas(gl) {
+function makeAtlas(gl: WebGL2RenderingContext) {
   const set = resolveGlyphSet();
   const T = 64;
   const c = document.createElement("canvas");
   c.width = set.length * T;
   c.height = T;
   const x = c.getContext("2d");
+  if (!x) throw new Error("Atlas canvas unavailable");
   x.font = `500 46px ${MONO}`;
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillStyle = "#fff";
   set.forEach((g, i) => x.fillText(g, i * T + T / 2, T * 0.54));
   const tex = gl.createTexture();
+  if (!tex) throw new Error("Atlas texture allocation failed");
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -216,14 +237,17 @@ function makeAtlas(gl) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, c);
   return tex;
 }
-function makeMarkMask(gl) {
+function makeMarkMask(gl: WebGL2RenderingContext) {
   const S = 512;
   const c = document.createElement("canvas");
   c.width = c.height = S;
   const x = c.getContext("2d");
+  if (!x) throw new Error("Mark canvas unavailable");
   try {
     x.filter = "blur(1.2px)";
-  } catch {}
+  } catch {
+    // Canvas filters are optional.
+  }
   x.fillStyle = "#f00";
   for (const s of MARK_STONES) x.fill(new Path2D(s.d));
   const host = MARK_STONES.find((s) => s.host);
@@ -232,6 +256,7 @@ function makeMarkMask(gl) {
     x.fill(new Path2D(host.d));
   }
   const tex = gl.createTexture();
+  if (!tex) throw new Error("Mark texture allocation failed");
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -240,15 +265,19 @@ function makeMarkMask(gl) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, c);
   return tex;
 }
-function compile(gl, type, src) {
+function compile(gl: WebGL2RenderingContext, type: number, src: string) {
   const sh = gl.createShader(type);
+  if (!sh) throw new Error("Shader allocation failed");
   gl.shaderSource(sh, src);
   gl.compileShader(sh);
   if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS))
     throw new Error(gl.getShaderInfoLog(sh) ?? "shader compile failed");
   return sh;
 }
-export function initAsciiClouds(element, markSelector = "#vd-hero-mark") {
+export function initAsciiClouds(
+  element: HTMLCanvasElement,
+  markSelector = "#vd-hero-mark",
+): (() => void) | undefined {
   const canvas = element;
   const host = canvas?.parentElement;
   const section = host?.parentElement;
@@ -266,11 +295,11 @@ export function initAsciiClouds(element, markSelector = "#vd-hero-mark") {
   let raf = 0;
   let visible = true;
   let dpr = 1;
-  let markSvg = null;
-  const loc = {};
+  let markSvg: SVGSVGElement | null = null;
+  let loc: UniformLocations;
   const ripples = new Float32Array(MAX_RIPPLES * 4).fill(-1);
   let slot = 0;
-  const render = (now) => {
+  const render = (now: number) => {
     gl.uniform1f(loc.u_time, now / 1000);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
@@ -301,27 +330,16 @@ export function initAsciiClouds(element, markSelector = "#vd-hero-mark") {
   };
   const init = () => {
     const program = gl.createProgram();
+    if (!program) throw new Error("Program allocation failed");
     gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, VERT));
     gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, FRAG));
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
       throw new Error(gl.getProgramInfoLog(program) ?? "link failed");
     gl.useProgram(program);
-    const U = (n) => gl.getUniformLocation(program, n);
-    for (const n of [
-      "u_res",
-      "u_time",
-      "u_cell",
-      "u_atlasN",
-      "u_mark",
-      "u_ripples[0]",
-      "u_colBase",
-      "u_colPeak",
-      "u_colGlod",
-      "u_atlas",
-      "u_markTex",
-    ])
-      loc[n] = U(n);
+    loc = Object.fromEntries(
+      UNIFORM_NAMES.map((name) => [name, gl.getUniformLocation(program, name)]),
+    ) as UniformLocations;
     gl.activeTexture(gl.TEXTURE0);
     makeAtlas(gl);
     gl.activeTexture(gl.TEXTURE1);
@@ -353,7 +371,7 @@ export function initAsciiClouds(element, markSelector = "#vd-hero-mark") {
       markSvg.style.opacity = "";
     }
   };
-  const onDown = (e) => {
+  const onDown = (e: PointerEvent) => {
     const sr = section.getBoundingClientRect();
     ripples.set(
       [
@@ -367,13 +385,13 @@ export function initAsciiClouds(element, markSelector = "#vd-hero-mark") {
     slot = (slot + 1) % MAX_RIPPLES;
     gl.uniform4fv(loc["u_ripples[0]"], ripples);
   };
-  const tick = (now) => {
+  const tick = (now: number) => {
     raf = 0;
     if (dead || !visible || document.hidden) return;
     render(now);
     raf = requestAnimationFrame(tick);
   };
-  const onLost = (e) => {
+  const onLost = (e: Event) => {
     e.preventDefault();
     dead = true;
     if (raf) {

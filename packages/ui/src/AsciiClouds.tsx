@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { initAsciiClouds } from "./asciiCloudRenderer.js";
+import { initAsciiClouds } from "./asciiCloudRenderer";
 
 export function AsciiClouds() {
   const host = useRef<HTMLDivElement>(null);
