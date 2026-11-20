@@ -30,9 +30,9 @@ export function Logo({
       <title>{title}</title>
       <path className="vd-s" d={LOCKUP.base} />
       <path className="vd-s" d={LOCKUP.slab} />
-      <path className={stoneClass("lit", 2)} d={LOCKUP.peer} />
-      <path className={stoneClass("lit", 1)} d={LOCKUP.host} />
-      <path className={stoneClass("lit", 3)} d={LOCKUP.cap} />
+      <path className={stoneClass("idle", 2)} d={LOCKUP.peer} />
+      <path className={stoneClass("idle", 1)} d={LOCKUP.host} />
+      <path className={stoneClass("idle", 3)} d={LOCKUP.cap} />
       <path className="vd-s" d={LOCKUP.word} />
     </svg>
   );

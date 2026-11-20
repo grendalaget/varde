@@ -151,6 +151,7 @@ export default function ServerDetail({ id }: { id: string }) {
           </div>
           <Actions
             s={s}
+            primary={tab !== "settings"}
             executions={execs.data?.executions ?? []}
             onChange={() => {
               void server.refresh();
@@ -209,10 +210,12 @@ export default function ServerDetail({ id }: { id: string }) {
 
 function Actions({
   s,
+  primary,
   executions,
   onChange,
 }: {
   s: Server;
+  primary: boolean;
   executions: Execution[];
   onChange: () => void;
 }) {
@@ -306,7 +309,7 @@ function Actions({
           <>
             {failed && (
               <Button
-                variant="primary"
+                variant={primary ? "primary" : "secondary"}
                 busy={busy === "start"}
                 onClick={() => void start()}
               >
@@ -314,6 +317,7 @@ function Actions({
               </Button>
             )}
             <Button
+              variant={primary && !failed ? "primary" : "secondary"}
               busy={busy === "save"}
               disabled={s.observed_state !== "running"}
               onClick={() =>
@@ -349,7 +353,7 @@ function Actions({
           </>
         ) : (
           <Button
-            variant="primary"
+            variant={primary ? "primary" : "secondary"}
             busy={busy === "start"}
             onClick={() => void start()}
           >
@@ -402,7 +406,6 @@ function Actions({
           </ErrorNote>
           {fix && (
             <Button
-              variant="primary"
               busy={busy === "fix"}
               onClick={() => void fix.go()}
             >
@@ -1143,7 +1146,6 @@ function ReadyCallout({
         actions={
           admin && (
             <Button
-              variant="primary"
               busy={inv.busy}
               onClick={() => void inv.create()}
             >

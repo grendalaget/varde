@@ -221,7 +221,7 @@ function PluginSettings({
 
   const secretNames = record?.secrets_set ?? [];
   return (
-    <div className="rounded-xl border border-separator">
+    <Card>
       <CardHeader
         title={plugin.name}
         subtitle={`${plugin.version}, ${record?.enabled ? "Enabled" : "Not enabled"}`}
@@ -390,7 +390,7 @@ function PluginSettings({
             <>
               {record?.enabled && <Button variant="ghost" disabled={busy} onClick={disable}>Disable</Button>}
               <Button
-                variant="primary"
+                variant="secondary"
                 disabled={
                   busy || (managed && (!status.data || status.error != null))
                 }
@@ -416,7 +416,7 @@ function PluginSettings({
           )}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 

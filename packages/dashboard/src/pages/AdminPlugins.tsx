@@ -83,6 +83,9 @@ function WebAdminPlugins({ operator }: { operator: boolean }) {
     );
   }
   if (plugins.loading && !plugins.data) return <PageLoader />;
+  const primaryId = plugins.data?.plugins.find(
+    (plugin) => !plugin.installed || plugin.update_available || plugin.status === "error",
+  )?.id;
 
   return (
     <>
@@ -118,7 +121,7 @@ function WebAdminPlugins({ operator }: { operator: boolean }) {
                 <div className="flex flex-wrap justify-end gap-2">
                   {!plugin.installed ? (
                     <Button
-                      variant="primary"
+                      variant={plugin.id === primaryId ? "primary" : "secondary"}
                       disabled={pending !== null}
                       busy={pending?.id === plugin.id && pending.action === "install"}
                       onClick={() => void run(plugin, "install")}
@@ -129,7 +132,7 @@ function WebAdminPlugins({ operator }: { operator: boolean }) {
                     <>
                       {plugin.update_available && (
                         <Button
-                          variant="primary"
+                          variant={plugin.id === primaryId ? "primary" : "secondary"}
                           disabled={pending !== null}
                           busy={pending?.id === plugin.id && pending.action === "update"}
                           onClick={() => void run(plugin, "update")}
@@ -139,7 +142,7 @@ function WebAdminPlugins({ operator }: { operator: boolean }) {
                       )}
                       {plugin.status === "error" && (
                         <Button
-                          variant="primary"
+                          variant={plugin.id === primaryId && !plugin.update_available ? "primary" : "secondary"}
                           disabled={pending !== null}
                           busy={pending?.id === plugin.id && pending.action === "install"}
                           onClick={() => void run(plugin, "install")}

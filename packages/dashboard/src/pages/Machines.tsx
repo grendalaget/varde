@@ -72,7 +72,6 @@ export default function Machines() {
             action={
               canAdmin(group.role) && (
                 <Button
-                  variant="primary"
                   onClick={() => navigate("/machines/add")}
                 >
                   Add a machine
@@ -181,9 +180,7 @@ function MachineRow({
             <span
               className={cx(
                 "grid size-10 place-items-center rounded-xl ring-1 ring-inset transition-colors duration-300",
-                hosting.length > 0
-                  ? "bg-glod/15 text-glod ring-glod/30"
-                  : "bg-default text-muted ring-border",
+                "bg-default text-muted ring-border",
               )}
             >
               <Icon

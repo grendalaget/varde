@@ -7,6 +7,7 @@ import {
   type Node,
 } from "./api/client";
 import { Logo, PageLoader } from "./components/Logo";
+import { navItemClass } from "@varde/ui/ui";
 import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
 import { Icon, type IconName } from "./components/icons";
 import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
@@ -498,19 +499,15 @@ function Layout() {
                 <Link
                   key={n.to}
                   to={n.to}
-                  className={cx(
-                    "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors duration-150 ease-vd-out",
-                    active
-                      ? "bg-default font-medium text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]"
-                      : "text-muted hover:bg-surface-secondary hover:text-foreground",
-                  )}
+                  className={cx("group", navItemClass(active))}
+                  aria-current={active ? "page" : undefined}
                 >
                   <Icon
                     name={n.icon}
                     className={cx(
                       "size-[18px] shrink-0 transition-colors duration-150",
                       active
-                        ? "text-accent"
+                        ? "text-take"
                         : "text-muted group-hover:text-foreground",
                     )}
                   />
@@ -576,8 +573,8 @@ function Shell({
     setOpen(false);
   }
   return (
-    <div className="min-h-screen bg-background text-foreground md:flex">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-separator bg-background/90 px-4 py-3 backdrop-blur md:hidden">
+    <div className="min-h-screen bg-background text-foreground lg:flex">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-separator bg-surface px-5 py-3 lg:hidden">
         <Link to="/" className="vd-hover flex" aria-label="Varde home">
           <Logo className="h-7" />
         </Link>
@@ -607,21 +604,21 @@ function Shell({
       </header>
       {open && (
         <div
-          className="vd-fade fixed inset-0 z-40 bg-black/60 md:hidden"
+          className="vd-fade fixed inset-0 z-40 bg-black/60 lg:hidden"
           onClick={() => setOpen(false)}
         />
       )}
       <aside
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-separator bg-surface px-3 py-4 transition-transform duration-300 ease-vd-out md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-separator bg-surface px-3 py-5 transition-transform duration-300 ease-vd-out lg:sticky lg:top-0 lg:h-screen lg:w-[212px] lg:shrink-0 lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
         {sidebar}
       </aside>
-      <main className="relative min-w-0 flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8">
+      <main className="relative min-w-0 flex-1 px-[18px] py-7 lg:px-[36px] lg:py-[43px]">
         <TopGlow />
-        <div className="relative mx-auto max-w-5xl">{children}</div>
+        <div className="relative mx-auto max-w-[1280px]">{children}</div>
       </main>
     </div>
   );

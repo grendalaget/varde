@@ -48,7 +48,7 @@ export function withServerName(
 
 // Tile colour and monogram per game; unknown games get a neutral stone.
 const ART: Record<string, { tint: string; mark: string }> = {
-  cs2: { tint: "#f0a23b", mark: "CS" },
+  cs2: { tint: "#958d8b", mark: "CS" },
   minecraft: { tint: "#5fb04f", mark: "MC" },
   valheim: { tint: "#6c9bd4", mark: "V" },
 };

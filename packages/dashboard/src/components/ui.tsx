@@ -1,4 +1,4 @@
-import { cx } from "@varde/ui/ui";
+import { cx, Surface } from "@varde/ui/ui";
 import { Mark, StateCairn } from "./Logo";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -14,14 +14,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <div
-      className={cx(
-        "rounded-2xl border border-separator bg-surface shadow-surface",
-        className,
-      )}
-    >
-      {children}
-    </div>
+    <Surface className={className}>{children}</Surface>
   );
 }
 
@@ -45,7 +38,7 @@ export function CardHeader({
           </span>
         )}
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <h2 className="vd-section-title">{title}</h2>
           {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
         </div>
       </div>
@@ -78,7 +71,7 @@ export function Badge({
     blue: "bg-info/10 text-info ring-info/30",
     violet: "bg-violet/10 text-violet ring-violet/30",
     neutral: "bg-default/60 text-muted ring-border",
-    host: "bg-glod/10 text-foreground ring-glod/40",
+    host: "bg-default/60 text-foreground ring-border",
   };
   return (
     <span
@@ -161,13 +154,13 @@ export function Toggle({
       <span
         className={cx(
           "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-vd-out",
-          checked ? "bg-accent" : "bg-field-border",
+          checked ? "bg-take" : "bg-field-border",
         )}
       >
         <span
           className={cx(
-            "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-spring active:scale-90",
-            checked ? "bg-accent-foreground" : "bg-foreground",
+            "inline-block h-4 w-4 rounded-full shadow transition-transform duration-300 ease-vd-out active:scale-90",
+            checked ? "bg-natt" : "bg-foreground",
             checked ? "translate-x-4" : "translate-x-0.5",
           )}
         />
@@ -228,7 +221,7 @@ export function Callout({
       className={cx(
         "vd-enter mb-6 flex flex-wrap items-center gap-4 rounded-2xl border px-5 py-4",
         tone === "accent"
-          ? "border-accent/30 bg-accent-soft"
+          ? "border-separator bg-surface"
           : "border-violet/30 bg-violet/10",
       )}
     >
@@ -249,8 +242,6 @@ export function Avatar({
   name: string;
   className?: string;
 }) {
-  let hue = 0;
-  for (const c of name) hue = (hue * 31 + c.charCodeAt(0)) % 360;
   const initials = name
     .split(/\s+/)
     .filter(Boolean)
@@ -261,12 +252,9 @@ export function Avatar({
     <span
       aria-hidden
       className={cx(
-        "grid shrink-0 place-items-center font-semibold text-natt shadow-[inset_0_1px_0_rgb(255_255_255/0.3)]",
+        "grid shrink-0 place-items-center border border-border bg-skifer-700 font-semibold text-take",
         className,
       )}
-      style={{
-        background: `linear-gradient(145deg, oklch(80% 0.09 ${hue}), oklch(62% 0.11 ${hue}))`,
-      }}
     >
       {initials || "?"}
     </span>
@@ -339,12 +327,12 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="vd-enter mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="vd-enter mb-[28px] flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h1 className="font-display text-[1.75rem] leading-tight font-semibold tracking-tight text-foreground">
+        <h1 className="vd-page-title">
           {title}
         </h1>
-        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        {subtitle && <p className="mt-[10px] text-[13px] leading-normal text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
@@ -355,10 +343,12 @@ export function CopyText({
   text,
   mono = true,
   href,
+  plain = false,
 }: {
   text: string;
   mono?: boolean;
   href?: string;
+  plain?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -370,7 +360,7 @@ export function CopyText({
     <button
       type="button"
       title={copied ? "Copied" : "Copy"}
-      aria-label={href ? (copied ? "Copied" : "Copy") : undefined}
+      aria-label={copied ? "Copied" : `Copy ${text}`}
       onClick={() => {
         if (!navigator.clipboard) return;
         void navigator.clipboard.writeText(text).then(
@@ -383,7 +373,8 @@ export function CopyText({
         );
       }}
       className={cx(
-        "group inline-flex items-center gap-1.5 rounded bg-field px-2 py-0.5 text-left text-sm ring-1 transition-all duration-200 ease-vd-out active:scale-[0.96]",
+        "group inline-flex max-w-full items-center gap-1.5 rounded text-left transition-all duration-200 ease-vd-out active:scale-[0.96]",
+        plain ? "server-copy" : "bg-field px-2 py-0.5 text-sm ring-1",
         copied
           ? "text-emerald-300 ring-emerald-500/50"
           : "text-foreground ring-field-border hover:ring-field-border-focus",
@@ -443,10 +434,5 @@ export function CopyText({
 
 /** Warm Glød wash across the top of a page; parent must be relative. */
 export function TopGlow() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(60%_100%_at_50%_0%,color-mix(in_oklab,var(--accent)_7%,transparent),transparent)]"
-    />
-  );
+  return null;
 }

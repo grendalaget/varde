@@ -457,7 +457,7 @@ export default function App() {
       <main>
         {view === "wait" && (
           <section className="vd-fade flex items-center gap-3 text-sm text-muted">
-            <Mark state="moving" className="h-7 w-7 text-foreground" />
+            <Mark state="idle" className="h-7 w-7 text-foreground" />
             Starting Varde...
           </section>
         )}
@@ -805,7 +805,7 @@ export default function App() {
               </Button>
               {/* same as the tray's Exit: drains the service and quits the
                   app; the app side confirms first while this PC is hosting */}
-              <Button onClick={() => void invoke("exit_varde")}>
+              <Button variant="ghost" className="text-danger-soft-foreground" onClick={() => void invoke("exit_varde")}>
                 <PowerIcon /> Exit Varde…
               </Button>
               <Button

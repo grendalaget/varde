@@ -2,7 +2,7 @@
 // and dashboard. packages/dashboard/src/components/ui.tsx re-exports cx,
 // Button, Field and inputClass from here and adds the dashboard's own, larger set.
 import { Button as HButton } from "@heroui/react";
-import { useId } from "react";
+import { createContext, useContext, useId } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -10,6 +10,32 @@ export function cx(...c: (string | false | null | undefined)[]) {
 }
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
+
+const SurfaceContext = createContext(false);
+
+export function Surface({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const nested = useContext(SurfaceContext);
+  return (
+    <SurfaceContext.Provider value={true}>
+      <div className={cx(!nested && "vd-surface", className)}>{children}</div>
+    </SurfaceContext.Provider>
+  );
+}
+
+export function navItemClass(active: boolean) {
+  return cx(
+    "vd-nav-item",
+    active
+      ? "bg-skifer-800 font-medium text-take"
+      : "text-muted hover:bg-skifer-800 hover:text-take",
+  );
+}
 
 export function Button({
   variant = "secondary",

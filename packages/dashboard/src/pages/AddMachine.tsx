@@ -78,7 +78,7 @@ export default function AddMachine() {
           />
           <div className="flex flex-wrap items-center gap-3 px-4 pt-4">
             <Button
-              variant={onLinkedPc ? "secondary" : "primary"}
+              variant={onLinkedPc || code.trim() ? "secondary" : "primary"}
               onClick={() => openExternal(DOWNLOAD_URL)}
             >
               Download Varde
@@ -106,7 +106,7 @@ export default function AddMachine() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
-            <Button variant="primary" type="submit" disabled={!code.trim()}>
+            <Button variant={onLinkedPc || code.trim() ? "primary" : "secondary"} type="submit" disabled={!code.trim()}>
               Continue
             </Button>
           </form>

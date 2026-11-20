@@ -27,7 +27,7 @@ export function Loader({
       )}
     >
       <Mark
-        state="moving"
+        state="idle"
         small={small}
         className={
           small ? "h-3.5 w-3.5 text-current" : "h-10 w-10 text-foreground"
@@ -135,7 +135,5 @@ export function StateCairn({
       </svg>
     );
   }
-  const s: MarkState =
-    state === "running" ? "lit" : MOVING_STATES.has(state) ? "moving" : "idle";
-  return <Mark state={s} small className={cx("text-foreground", className)} />;
+  return <Mark state="idle" small className={cx("text-foreground", className)} />;
 }
