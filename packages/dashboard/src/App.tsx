@@ -7,7 +7,7 @@ import {
   type Node,
 } from "./api/client";
 import { Logo, PageLoader } from "./components/Logo";
-import { navItemClass } from "@varde/ui/ui";
+import { AsciiClouds, navItemClass } from "@varde/ui/ui";
 import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
 import { Icon, type IconName } from "./components/icons";
 import { GroupEventsProvider, useGroupEvents, useOnEvent } from "./lib/events";
@@ -627,7 +627,7 @@ function Shell({
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <main className="relative flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
-      <TopGlow />
+      <AsciiClouds />
       <div className="relative w-full max-w-sm">{children}</div>
     </main>
   );

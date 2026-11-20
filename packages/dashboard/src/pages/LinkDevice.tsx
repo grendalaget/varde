@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AsciiClouds } from "@varde/ui/ui";
 import { api, errorMessage } from "../api/client";
 import {
   Button,
@@ -35,7 +36,8 @@ export default function LinkDevice({ code }: { code: string }) {
 
   const d = link.data;
   return (
-    <>
+    <div className="relative isolate min-h-[calc(100svh-86px)]">
+      <AsciiClouds />
       <PageHeader title="Add this machine?" />
       <Card className="vd-enter max-w-lg">
         <CardHeader
@@ -112,6 +114,6 @@ export default function LinkDevice({ code }: { code: string }) {
           )}
         </div>
       </Card>
-    </>
+    </div>
   );
 }

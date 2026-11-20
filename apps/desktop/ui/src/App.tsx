@@ -20,6 +20,7 @@ import {
 } from "./tauri";
 import {
   Button,
+  AsciiClouds,
   describeError,
   ErrorNote,
   errorParts,
@@ -450,11 +451,29 @@ export default function App() {
   const onMac = defaults?.os === "macos";
 
   return (
-    <div className="h-full overflow-y-auto px-7 py-6 text-foreground">
-      <header className="mb-7 flex items-center">
+    <div
+      className={`tray-shell text-foreground ${status?.state === "offline" ? "tray-offline" : ""}`}
+    >
+      {view === "form" && <AsciiClouds />}
+      <header className="tray-header flex items-center justify-between">
         <Logo className="h-7" />
+        <span className="text-[10px] text-muted">
+          {view === "linked"
+            ? status?.state === "offline"
+              ? "Offline"
+              : status?.state === "online"
+                ? "Connected"
+                : "Connecting"
+            : locked
+              ? "Re-linking"
+              : view === "code"
+                ? "Linking"
+                : view === "noagent"
+                  ? "Service unavailable"
+                  : "This PC"}
+        </span>
       </header>
-      <main>
+      <main className="tray-main">
         {view === "wait" && (
           <section className="vd-fade flex items-center gap-3 text-sm text-muted">
             <Mark state="idle" className="h-7 w-7 text-foreground" />
@@ -464,19 +483,29 @@ export default function App() {
 
         {view === "form" && (
           <section className="vd-enter">
-            <h1 className="font-display text-xl font-semibold tracking-tight">
-              {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
-            </h1>
+            <div className="tray-hero">
+              <Mark state="idle" className="h-[59px] w-[59px]" />
+              <div>
+                <h1>
+                  {defaults?.relink ? "Re-link this PC" : "Set up this PC"}
+                </h1>
+                <p>Bring your PC to the group</p>
+              </div>
+            </div>
             <p className="mt-2.5 text-sm leading-relaxed">
               {defaults?.relink
                 ? "Varde opens your dashboard so you can approve this PC. Sign up there, then create a group or join your friends with an invite link."
-                : "Sign in with your varde.games account to link this PC to a group. Running your own server? Use the self-hosted option instead."}
+                : "Sign in to link this PC to your group, then join and host game servers together."}
             </p>
             {defaults?.relink && (
               <WarnNote>
                 This PC leaves its current group and gets a new identity.
               </WarnNote>
             )}
+            <section className="tray-save">
+              <h2>Latest safe save</h2>
+              <p>Available after you link this PC to your group.</p>
+            </section>
             <form
               className="mt-3.5 flex flex-col gap-3.5"
               onSubmit={(e) => {
@@ -670,9 +699,13 @@ export default function App() {
 
         {view === "code" && status && (
           <section className="vd-enter">
-            <h1 className="font-display text-xl font-semibold tracking-tight">
-              Approve this PC in your browser
-            </h1>
+            <div className="tray-hero">
+              <Mark state="idle" className="h-[59px] w-[59px]" />
+              <div>
+                <h1>{locked ? "Re-linking this PC" : "Approve this PC"}</h1>
+                <p>Finish linking in your browser</p>
+              </div>
+            </div>
             <p className="mt-2.5 text-sm leading-relaxed">
               Your browser opened Varde. Check that it shows this code, then
               approve:
@@ -685,6 +718,9 @@ export default function App() {
               {code}
             </div>
             <p className="text-sm text-muted">{expiry}</p>
+            <p className="mt-2 text-xs text-muted">
+              Latest safe save: available after linking.
+            </p>
             {locked && (
               <p className="mt-1 text-sm text-muted">
                 {onMac
@@ -698,6 +734,7 @@ export default function App() {
                 <CopyIcon /> {copied ? "Copied" : "Copy code"}
               </Button>
               <Button
+                variant="primary"
                 onClick={() =>
                   void invoke("open_url", { url: status.link_url })
                 }
@@ -749,17 +786,57 @@ export default function App() {
         )}
 
         {view === "linked" && status && (
-          <section className="vd-enter">
-            <h1 className="font-display text-xl font-semibold tracking-tight">
-              This PC is linked
-            </h1>
-            <p className="mt-2.5 text-sm leading-relaxed">{describe(status)}</p>
-            <p className="mt-2 text-sm text-muted">
-              Varde keeps running in the background when you close this window,
-              so you can join and host servers. Exit Varde stops it on this PC.
-            </p>
-            {status.save_line && (
-              <p className="mt-2 text-sm text-muted">{status.save_line}</p>
+          <section className="vd-enter tray-linked">
+            <div className="tray-hero">
+              <Mark
+                state={
+                  status.state !== "offline" && status.hosting ? "lit" : "idle"
+                }
+                className="h-[59px] w-[59px]"
+              />
+              <div>
+                <h1>
+                  {status.state === "offline"
+                    ? "This PC is offline"
+                    : status.hosting
+                      ? "This PC is hosting"
+                      : status.state === "connecting"
+                        ? "Connecting…"
+                        : "This PC is online"}
+                </h1>
+                <p>
+                  {status.state === "offline"
+                    ? "Not connected to Varde"
+                    : status.hosting
+                      ? "Keeping your group’s game running"
+                      : "Ready to join and host"}
+                </p>
+              </div>
+            </div>
+            <dl className="tray-facts">
+              <div>
+                <dt>PC</dt>
+                <dd>{status.node_name || "This PC"}</dd>
+              </div>
+              <div>
+                <dt>Group</dt>
+                <dd>{status.group_name || "Connecting…"}</dd>
+              </div>
+            </dl>
+            <section className="tray-save">
+              <h2>Latest safe save</h2>
+              <p>
+                {status.save_line?.replace(/^Latest safe save:\s*/i, "") ||
+                  (status.state === "offline"
+                    ? "Reconnect to check the latest safe save."
+                    : "No save information available yet.")}
+              </p>
+            </section>
+            {status.state === "offline" && (
+              <p className="tray-offline-note">
+                Varde will reconnect automatically. This PC cannot receive new
+                saves while offline.
+              </p>
             )}
             {status.update_line && (
               <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
@@ -805,7 +882,11 @@ export default function App() {
               </Button>
               {/* same as the tray's Exit: drains the service and quits the
                   app; the app side confirms first while this PC is hosting */}
-              <Button variant="ghost" className="text-danger-soft-foreground" onClick={() => void invoke("exit_varde")}>
+              <Button
+                variant="ghost"
+                className="tray-exit text-danger-soft-foreground"
+                onClick={() => void invoke("exit_varde")}
+              >
                 <PowerIcon /> Exit Varde…
               </Button>
               <Button
@@ -820,9 +901,13 @@ export default function App() {
 
         {view === "noagent" && (
           <section className="vd-enter">
-            <h1 className="font-display text-xl font-semibold tracking-tight">
-              Varde isn't running
-            </h1>
+            <div className="tray-hero">
+              <Mark state="idle" className="h-[59px] w-[59px]" />
+              <div>
+                <h1>Varde isn't running</h1>
+                <p>Start the service to reconnect</p>
+              </div>
+            </div>
             <WarnNote>
               <strong>Service unreachable.</strong> The Varde service on this PC
               isn't answering. Varde can't host or join servers until it runs
@@ -833,6 +918,10 @@ export default function App() {
                 ? "It normally starts when you log in."
                 : "It normally starts with Windows. Starting it needs administrator approval once."}
             </p>
+            <section className="tray-save">
+              <h2>Latest safe save</h2>
+              <p>Start Varde to check your saves.</p>
+            </section>
             <ErrorNote detail={noagentError?.detail}>
               {noagentError?.text}
             </ErrorNote>
@@ -847,16 +936,32 @@ export default function App() {
                 <PowerIcon />{" "}
                 {busy["svc-start"] ? "Starting..." : "Start Varde"}
               </Button>
-              <Button
-                variant="ghost"
-                onClick={() => void invoke("close_window")}
-              >
-                <CloseIcon /> Close
-              </Button>
             </div>
           </section>
         )}
       </main>
+      {(view === "form" || view === "code" || view === "noagent") && (
+        <footer className="tray-quiet-footer">
+          <div className="flex justify-between">
+            <Button
+              variant="ghost"
+              onClick={() => void invoke("open_url", { url: effectiveUrl })}
+            >
+              Open in browser
+            </Button>
+            <Button variant="ghost" onClick={() => void invoke("close_window")}>
+              Close
+            </Button>
+          </div>
+          <Button
+            variant="ghost"
+            className="tray-exit"
+            onClick={() => void invoke("exit_varde")}
+          >
+            Exit Varde
+          </Button>
+        </footer>
+      )}
     </div>
   );
 }

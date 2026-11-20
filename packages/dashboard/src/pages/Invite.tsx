@@ -25,7 +25,7 @@ export default function InvitePage({
         <PageLoader label="Loading invite…" />
       ) : (
         <>
-          <h1 className="text-lg font-semibold">Join {inv.data.group_name}?</h1>
+          <h1 className="vd-page-title">Join {inv.data.group_name}?</h1>
           <p className="text-sm text-muted">
             You'll be able to play the group's servers and add your own
             machines.

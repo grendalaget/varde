@@ -480,6 +480,185 @@ body {
   }
 }
 
+p {
+  text-wrap: pretty;
+}
+p:is([class*="text-muted"], [class*="leading-relaxed"]) {
+  max-width: 65ch;
+}
+.ascii-clouds {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.7;
+}
+.ascii-clouds canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ascii-clouds ~ * {
+  position: relative;
+}
+.tray-shell {
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  isolation: isolate;
+  overflow-y: auto;
+  padding: 25px 28px 18px;
+}
+.tray-header {
+  margin-bottom: 20px;
+}
+.tray-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.tray-main > section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.tray-main > section > div:last-child:not(.tray-hero),
+.tray-main > section > form {
+  margin-top: auto;
+  padding-top: 18px;
+}
+.tray-main h1 {
+  font-size: 25px;
+  line-height: 1.18;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+.tray-main h2 {
+  font-size: 12px;
+  font-weight: 500;
+}
+.tray-main .button--primary {
+  width: 100%;
+}
+.tray-main > section > div:last-child .button--primary {
+  order: -1;
+  flex-basis: 100%;
+}
+.tray-main > section > form > div:last-child {
+  gap: 12px;
+}
+.tray-main p {
+  font-size: 12px;
+  line-height: 1.65;
+}
+.tray-linked {
+  display: flex;
+  flex-direction: column;
+}
+.tray-hero {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+}
+.tray-hero > svg {
+  flex-shrink: 0;
+}
+.tray-hero p {
+  color: var(--muted);
+  margin-top: 7px;
+}
+.tray-facts {
+  margin-top: 26px;
+  display: grid;
+  gap: 12px;
+  font-size: 12px;
+}
+.tray-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tray-facts dt {
+  color: var(--muted);
+}
+.tray-save {
+  margin-top: 23px;
+  border-top: 1px solid var(--separator);
+  padding-top: 19px;
+}
+.tray-save p {
+  margin-top: 9px;
+  color: var(--muted);
+}
+.tray-offline .tray-hero h1,
+.tray-offline .tray-header > span,
+.tray-offline-note {
+  color: #f7d482;
+}
+.tray-offline-note {
+  margin-top: 18px;
+}
+:is(.tray-actions, .tray-linked > div:last-child) {
+  margin-top: auto;
+  padding-top: 25px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+:is(.tray-actions, .tray-linked > div:last-child) > .button--primary {
+  grid-column: 1/-1;
+  width: 100%;
+}
+:is(.tray-actions, .tray-linked > div:last-child) > .button--ghost {
+  font-size: 12px;
+  padding: 3px;
+  height: auto;
+  min-width: 0;
+  justify-content: flex-start;
+}
+:is(.tray-actions, .tray-linked > div:last-child) > .tray-exit {
+  grid-column: 1/-1;
+  grid-row: 3;
+  margin-top: 3px;
+}
+.tray-shell .tray-exit {
+  color: #d29b9f;
+  font-size: 11px;
+}
+.tray-quiet-footer {
+  padding-top: 12px;
+}
+.tray-quiet-footer .button {
+  font-size: 12px;
+  padding: 4px 0;
+  height: auto;
+  min-width: 0;
+}
+.tray-quiet-footer > .button {
+  margin-top: 16px;
+}
+.activity-summary {
+  position: relative;
+}
+.activity-disclosure::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.activity-summary a {
+  position: relative;
+  z-index: 1;
+}
+.activity-trailing {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  line-height: 18px;
+}
 main:has(.server-detail) {
   padding-top: 29px;
 }

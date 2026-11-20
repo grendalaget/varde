@@ -169,9 +169,7 @@ export default function AddMachine() {
               )}
               {(tokens.data?.tokens.length ?? 0) > 0 && (
                 <div>
-                  <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
-                    Active tokens
-                  </h3>
+                  <h2 className="vd-section-title mb-2">Active tokens</h2>
                   <ul className="vd-stagger divide-y divide-separator text-sm">
                     {tokens.data!.tokens.map((t) => (
                       <li
