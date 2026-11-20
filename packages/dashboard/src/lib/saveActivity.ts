@@ -34,7 +34,12 @@ export function groupSaveEvents(events: VardeEvent[]): ActivityRow[] {
     }
     row.steps!.unshift(event);
   }
-  return rows;
+  return rows.sort((a, b) => {
+    const time = (r: ActivityRow) =>
+      (r.steps?.find((e) => e.type === "snapshot.created") ?? r.event)
+        .created_at;
+    return time(b) - time(a) || b.event.id - a.event.id;
+  });
 }
 
 export function describeSave(steps: VardeEvent[]): string {
@@ -49,10 +54,10 @@ export function describeSave(steps: VardeEvent[]): string {
       .map((e) => e.node_id),
   ).size;
   const safe = steps.some((e) => e.type === "snapshot.committed");
-  const older = steps.some((e) => e.type === "snapshot.superseded");
   if (count && steps.some((e) => e.type === "snapshot.replica_ready"))
-    return `Save backed up to ${count} ${count === 1 ? "machine" : "machines"}${older ? " · superseded" : safe ? "" : " · awaiting safety confirmation"}`;
-  if (older) return "Older save superseded";
+    return `Save backed up to ${count} ${count === 1 ? "machine" : "machines"}${safe ? "" : " · awaiting safety confirmation"}`;
+  if (steps.every((e) => e.type === "snapshot.superseded"))
+    return "Earlier save";
   if (safe) return "Save is safe";
   return "Save taken · waiting for backup";
 }

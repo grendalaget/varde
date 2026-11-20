@@ -4,7 +4,6 @@ import type { paths } from "../api/schema";
 import {
   Badge,
   Button,
-  Callout,
   Card,
   cx,
   Dot,
@@ -61,10 +60,13 @@ export default function Machines() {
         }
       />
       {nodes.length > 0 && !hasAnchor && (
-        <Callout tone="violet" title="Tip: add an always-on backup">
-          A NAS, home server or small VPS always has the latest save, even when
+        <p className="mb-5 text-xs text-muted">
+          <strong className="font-medium text-foreground">
+            Tip: add an always-on backup.
+          </strong>{" "}
+          A NAS, home server or small VPS can keep the latest save when
           everyone's PC is off.
-        </Callout>
+        </p>
       )}
       {nodes.length === 0 ? (
         <Card>

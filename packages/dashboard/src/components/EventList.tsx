@@ -55,14 +55,6 @@ function EventRow({
               className="activity-disclosure"
             >
               {describeSave(row.steps)}{" "}
-              <span
-                aria-hidden
-                className={
-                  open ? "activity-chevron is-open" : "activity-chevron"
-                }
-              >
-                ›
-              </span>
             </button>
           ) : (
             describeEvent(e, nodeName)
@@ -84,13 +76,23 @@ function EventRow({
             </Link>
           )}
         </div>
-        <time
-          className="shrink-0 text-[10px] text-muted"
-          dateTime={new Date(when).toISOString()}
-          title={dateTime(when)}
-        >
-          {timeAgo(when)}
-        </time>
+        <div className="activity-trailing">
+          <time
+            className="shrink-0 text-[10px] text-muted"
+            dateTime={new Date(when).toISOString()}
+            title={dateTime(when)}
+          >
+            {timeAgo(when)}
+          </time>
+          {row.steps && (
+            <span
+              aria-hidden
+              className={open ? "activity-chevron is-open" : "activity-chevron"}
+            >
+              ›
+            </span>
+          )}
+        </div>
       </div>
       {row.steps && (
         <div id={id} className="activity-steps" data-open={open} inert={!open}>

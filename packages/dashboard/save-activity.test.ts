@@ -29,9 +29,7 @@ test("complete pipelines group once with chronological steps and distinct backup
   const rows = groupSaveEvents([...events, events[3]]);
   expect(rows).toHaveLength(1);
   expect(rows[0].steps?.map((e) => e.id)).toEqual([1, 2, 3, 4, 5]);
-  expect(describeSave(rows[0].steps!)).toBe(
-    "Save backed up to 2 machines · superseded",
-  );
+  expect(describeSave(rows[0].steps!)).toBe("Save backed up to 2 machines");
 });
 test("incomplete pipelines never invent safety or backup steps", () => {
   const steps = [event(1, "snapshot.created")];
@@ -51,9 +49,9 @@ test("interleaved saves and server lifecycle events stay independent and newest 
     event(5, "snapshot.replica_ready", "b"),
     event(6, "lease.expired"),
   ]);
-  expect(rows.map((r) => r.event.id)).toEqual([6, 5, 4, 3]);
-  expect(rows[1].steps?.map((e) => e.id)).toEqual([2, 5]);
-  expect(rows[2].steps?.map((e) => e.id)).toEqual([1, 4]);
+  expect(rows.map((r) => r.event.id)).toEqual([6, 3, 5, 4]);
+  expect(rows[2].steps?.map((e) => e.id)).toEqual([2, 5]);
+  expect(rows[3].steps?.map((e) => e.id)).toEqual([1, 4]);
 });
 test("empty and malformed payloads remain safe, and server IDs scope save IDs", () => {
   expect(groupSaveEvents([])).toEqual([]);
@@ -68,4 +66,23 @@ test("empty and malformed payloads remain safe, and server IDs scope save IDs", 
   expect(
     groupSaveEvents([event(4, "snapshot.request")])[0].steps,
   ).toBeUndefined();
+});
+test("recent lifecycle rows interleave with saves before the total row limit", () => {
+  const rows = groupSaveEvents([
+    event(1, "snapshot.created"),
+    event(2, "server.start"),
+    event(3, "lease.issued"),
+    event(4, "snapshot.created", "b"),
+    event(5, "snapshot.committed", "b"),
+    event(6, "snapshot.superseded"),
+    event(7, "server.stop"),
+  ]).slice(0, 5);
+  expect(rows.map((r) => (r.steps ? "save" : r.event.type))).toEqual([
+    "server.stop",
+    "save",
+    "lease.issued",
+    "server.start",
+    "save",
+  ]);
+  expect(describeSave([event(1, "snapshot.superseded")])).toBe("Earlier save");
 });
