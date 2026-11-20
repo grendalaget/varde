@@ -9,10 +9,23 @@ type Holder = NonNullable<
 function HolderChips({
   replicas,
   compact,
+  plain,
 }: {
   replicas: Holder[];
   compact?: boolean;
+  plain?: boolean;
 }) {
+  if (plain) {
+    return (
+      <div className="flex flex-col gap-1">
+        {replicas.map((r) => (
+          <span key={r.node_id} className={r.online ? "text-skifer-200" : "text-muted"}>
+            {r.name}{r.anchor && " · always-on"}{!r.online && " · offline"}
+          </span>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
       <span className="text-muted">Backed up on</span>
@@ -40,9 +53,11 @@ function HolderChips({
 export default function SaveSafety({
   summary,
   compact,
+  plain,
 }: {
   summary: Server["summary"];
   compact?: boolean;
+  plain?: boolean;
 }) {
   const safe = summary.latest_safe_save;
   const newerUnsafe =
@@ -62,8 +77,9 @@ export default function SaveSafety({
   return (
     <div className="space-y-2">
       {replicas.length > 0 && (
-        <HolderChips replicas={replicas} compact={compact} />
+        <HolderChips replicas={replicas} compact={compact} plain={plain} />
       )}
+      {plain && replicas.length === 0 && <span className="text-muted">—</span>}
       {allOffline ? (
         <WarnNote>
           No machine with the latest save is online. Nothing is lost, but
