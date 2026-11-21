@@ -7,10 +7,12 @@ verifies the download, and hands off to your package manager.
 ## Install
 
 ```sh
-curl -fsSL https://github.com/grendalaget/varde/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly
 ```
 
-Default component is `agent`. Options (env-var equivalents work for piping):
+Only nightly prereleases are currently available, so these commands select
+`nightly` explicitly. The installer's default version, `latest`, requires a
+stable release. Default component is `agent`. Options (env-var equivalents work for piping):
 
 | Flag | Env | Purpose |
 | --- | --- | --- |
@@ -27,9 +29,9 @@ local directory (`file://`) — useful for testing.
 
 ```sh
 # control plane, non-interactive
-curl -fsSL .../install.sh | sh -s -- --component control-plane --yes
+curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly --component control-plane --yes
 # nightly agent
-curl -fsSL .../install.sh | VARDE_VERSION=nightly sh
+curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | VARDE_VERSION=nightly sh
 ```
 
 ## What it does

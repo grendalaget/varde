@@ -1,0 +1,33 @@
+name: Game request
+description: Suggest a game server for Varde to support.
+body:
+  - type: input
+    id: game
+    attributes:
+      label: Game name
+    validations:
+      required: true
+  - type: input
+    id: server_docs
+    attributes:
+      label: Dedicated server documentation
+      description: Link to official server setup instructions, if available.
+  - type: textarea
+    id: platforms
+    attributes:
+      label: Server platforms and requirements
+      description: List known operating systems, architectures and runtime requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: saves
+    attributes:
+      label: Save and shutdown behavior
+      description: Describe save locations, backup commands and graceful shutdown support, if known.
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why this game?
+      description: Describe how your group would use Varde with this game.
+    validations:
+      required: true

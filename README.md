@@ -7,9 +7,30 @@
 
 <p align="center">Game servers built by many hands.</p>
 
+[![CI](https://github.com/grendalaget/varde/actions/workflows/ci.yml/badge.svg)](https://github.com/grendalaget/varde/actions/workflows/ci.yml)
+[![Latest release including prereleases](https://img.shields.io/github/v/release/grendalaget/varde?include_prereleases)](https://github.com/grendalaget/varde/releases)
+[![Licence: AGPL-3.0-or-later](https://img.shields.io/badge/licence-AGPL--3.0--or--later-blue)](LICENSE)
+
+[Website](https://varde.games) | [Download](https://varde.games/download) | [Documentation](https://varde.games/docs)
+
 Peer-hosted game servers for groups of friends. One active host at a time,
 replicated snapshots, automatic failover, stable loopback service addresses,
-and a P2P QUIC mesh with relay fallback — no router configuration required.
+and a P2P QUIC mesh with relay fallback, with no router configuration required.
+
+## Supported games and platforms
+
+Hosting support follows the [game catalog](apps/controlplane/internal/catalog/catalog.json).
+
+| Game | Host operating systems | Host architectures |
+| --- | --- | --- |
+| Minecraft (Java) | Linux, Windows | x86_64, aarch64 |
+| Valheim | Linux, Windows | x86_64 |
+| Counter-Strike 2 | Linux, Windows | x86_64 |
+| Auto Tournament | Linux, Windows | x86_64 |
+| Test Game (development only) | Linux, Windows | x86_64, aarch64 |
+
+macOS cannot host catalog games. Counter-Strike 2 game addons require Linux.
+See the [game notes](docs/games/README.md) for runtime requirements and limitations.
 
 ## Components
 
@@ -30,11 +51,15 @@ and a P2P QUIC mesh with relay fallback — no router configuration required.
 
 ## Install
 
+Get the desktop app from [varde.games/download](https://varde.games/download),
+then follow the [hosting guide](https://varde.games/docs/host-a-server).
+Current builds are nightly prereleases.
+
 On Linux, one line installs the agent (`--component control-plane|relay` for
 the others):
 
 ```sh
-curl -fsSL https://github.com/grendalaget/varde/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly
 ```
 
 The script picks `.deb`/`.rpm` (or a systemd tarball), verifies the download
@@ -66,3 +91,12 @@ their source.
 
 Versions prior to October 2026 were released under the MIT License; those
 releases remain MIT-licensed.
+
+The Varde name and logos are not covered by the AGPL grant. Forks must use
+their own name and logos. See [TRADEMARKS.md](TRADEMARKS.md).
+
+## Community
+
+Read the [contribution guide](CONTRIBUTING.md) and
+[code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities using the
+[security policy](SECURITY.md), not public issues.

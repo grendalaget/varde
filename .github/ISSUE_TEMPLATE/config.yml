@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://varde.games/docs
+    about: Read setup guides and troubleshooting help.
