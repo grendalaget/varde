@@ -60,4 +60,7 @@ The wordmark is "varde" in lowercase, set in Schibsted Grotesk SemiBold (SIL OFL
 
 ## Licence
 
-Logo and brand assets are MIT-licensed like the code (see [`/LICENSE`](../LICENSE)); Schibsted Grotesk is SIL OFL 1.1 (`apps/web/public/fonts/OFL.txt`).
+The code is licensed under [AGPL-3.0-or-later](../LICENSE). The Varde name and
+logos are not covered by that grant. Forks must use their own name and logos;
+see [TRADEMARKS.md](../TRADEMARKS.md). Schibsted Grotesk is SIL OFL 1.1
+(`apps/web/public/fonts/OFL.txt`).

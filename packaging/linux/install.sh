@@ -1,7 +1,7 @@
 #!/bin/sh
 # Varde installer — https://varde.games
 #
-#   curl -fsSL https://github.com/grendalaget/varde/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly
 #
 # Picks .deb (apt/dpkg) or .rpm (dnf/yum/rpm) when a package manager is
 # present, and falls back to a tarball + systemd layout otherwise. Every
@@ -95,9 +95,9 @@ Environment equivalents for piping:
   VARDE_DRY_RUN=1, NO_COLOR=1
 
 Examples:
-  curl -fsSL .../install.sh | sh
-  curl -fsSL .../install.sh | sh -s -- --component control-plane --yes
-  curl -fsSL .../install.sh | VARDE_VERSION=nightly sh
+  curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly
+  curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | sh -s -- --version nightly --component control-plane --yes
+  curl -fsSL https://github.com/grendalaget/varde/releases/download/nightly/install.sh | VARDE_VERSION=nightly sh
 EOF
 }
 
