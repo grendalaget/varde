@@ -1,7 +1,26 @@
 # Game driver docs
 
-Per-game driver notes (runtime requirements, config schema, snapshot
-include/exclude lists) land here as each driver is implemented.
+The agent ships drivers for Minecraft Java, Valheim, Counter-Strike 2,
+Auto Tournament and the development-only Test Game. The
+[game catalog](../../apps/controlplane/internal/catalog/catalog.json) defines
+supported host operating systems, architectures and configuration fields.
+All current catalog games support Linux and Windows hosts, not macOS.
+The notes below describe runtime requirements and save handling, not a guarantee
+that every game feature has been validated on every platform.
+
+## Minecraft Java
+
+The driver provisions Java and the selected Mojang server JAR. Hosting requires
+accepting the Minecraft EULA. Configuration fields and available versions are in
+the catalog. Live snapshots use `save-off`, `save-all flush` and `save-on` to
+coordinate saves. See the [driver](../../games/minecraft/src/lib.rs) for the
+snapshot file selection and runtime setup.
+
+## Test Game
+
+Test Game is a development and regression-test driver, not a player-facing game.
+It runs the local `varde-testgame` binary and exercises TCP/UDP routing and
+save barriers. See the [driver](../../games/testgame/src/lib.rs).
 
 ## Auto Tournament
 
