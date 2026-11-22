@@ -31,6 +31,7 @@ Hosting support follows the [game catalog](apps/controlplane/internal/catalog/ca
 
 macOS cannot host catalog games. Counter-Strike 2 game addons require Linux.
 See the [game notes](docs/games/README.md) for runtime requirements and limitations.
+Read the [FAQ](docs/faq.md) for client requirements and known limitations.
 
 ## Components
 
@@ -44,7 +45,7 @@ See the [game notes](docs/games/README.md) for runtime requirements and limitati
 | `apps/desktop`       | Rust       | Windows tray (Tauri 2): link this PC, status        |
 | `go/`                | Go         | Shared libraries (identity, ids, generated protos)  |
 | `crates/`            | Rust       | Shared libraries (driver/executor APIs, storage)    |
-| `games/`             | Rust       | Game drivers (minecraft, valheim, cs2, testgame)    |
+| `games/`             | Rust       | Game drivers (minecraft, valheim, cs2, autotournament, testgame) |
 | `proto/`             | Protobuf   | Wire contracts (mesh IPC, frames, relay)            |
 | `api/openapi`        | OpenAPI    | Control-plane HTTP API contract                     |
 | `packaging/`         | -          | Linux (nfpm/systemd) and Windows packaging          |
