@@ -55,6 +55,25 @@ Copy-Item target\release\varde-setup.exe "$payload\uninstall.exe" -Force
 cargo build --locked --release -p varde-setup
 if ($LASTEXITCODE -ne 0) { throw 'cargo build (installer) failed' }
 
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class VardeExecutableIcon {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint ExtractIconEx(string file, int index, IntPtr large, IntPtr small, uint count);
+}
+'@
+$iconTargets = @('target\release\varde-setup.exe', "$payload\uninstall.exe")
+if (-not $SkipPayloadBuild) {
+  $iconTargets += @("$payload\varde-tray.exe", "$payload\varde-agent.exe")
+}
+foreach ($exe in $iconTargets) {
+  $path = (Resolve-Path $exe).Path
+  $count = [VardeExecutableIcon]::ExtractIconEx($path, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0)
+  if ($count -eq 0 -or $count -eq [uint32]::MaxValue) { throw "No embedded icons in $exe" }
+}
+
 New-Item -ItemType Directory -Force release-assets | Out-Null
 $out = "release-assets\VardeSetup-$Version.exe"
 Copy-Item target\release\varde-setup.exe $out -Force

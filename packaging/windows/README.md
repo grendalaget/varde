@@ -41,8 +41,8 @@ The installer:
   (present-but-empty means all off); a `/TASKS=` list replaces the set
   for that run
 - is a single 470x560 mouve-styled window; its finish screen has an
-  "Open Varde" tick (default on) that launches the tray as the installing
-  user (with `--link` when unlinked) as setup closes
+  "Open Varde" tick (default on) that opens Varde as the signed-in desktop
+  user (`--open` when linked or `--link` when unlinked) as setup closes
 - ends interactive uninstall by removing the Run value and Program
   Files; `%ProgramData%\Varde` is kept unless the user ticks delete
   (silent always keeps)
@@ -94,4 +94,5 @@ Azure Artifact Signing signs `VardeSetup-<ver>.exe` unchanged.
 3. drain-and-swap: stop tray, `service uninstall` + wait-unlocked,
    extract payload, rebuild dirs/registry/services/shortcuts
 4. interactive only: when setup closes with "Open Varde" ticked, launch
-   the tray as the installing user (`--link` when unlinked)
+   the tray through the signed-in desktop shell (`--open` when linked,
+   `--link` when unlinked)

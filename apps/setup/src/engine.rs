@@ -344,14 +344,14 @@ pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> R
 }
 
 /// Interactive finish (the "Open Varde" tick): start the tray as the
-/// signed-in user, straight into linking when this PC isn't linked yet.
+/// signed-in user, opening the dashboard or linking as appropriate.
 pub fn launch_tray(instdir: &Path) -> Result<()> {
     let args = if win::data_dir().join("config.toml").exists() {
-        ""
+        "--open"
     } else {
         "--link"
     };
-    win::launch_as_user(&instdir.join(win::MAIN_BINARY), args)
+    win::launch_from_desktop(&instdir.join(win::MAIN_BINARY), args)
 }
 
 pub(crate) fn extract_one(name: &str, dest: &Path) -> Result<()> {

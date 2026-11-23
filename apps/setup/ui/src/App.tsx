@@ -96,6 +96,7 @@ export default function App() {
   const [advanced, setAdvanced] = useState(false);
   const [deleteData, setDeleteData] = useState(false);
   const [launch, setLaunch] = useState(true);
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const started = useRef(false);
 
   useEffect(() => {
@@ -153,7 +154,7 @@ export default function App() {
   const close = () =>
     void invoke("exit_app", {
       launch: screen === "done" && !isUninstall && launch,
-    });
+    }).catch((error: unknown) => setLaunchError(String(error)));
 
   const answer = (accept: boolean) => {
     void invoke("answer_http", { accept });
@@ -389,13 +390,16 @@ export default function App() {
                 ? "This PC no longer runs Varde."
                 : state?.will_link
                   ? "Next, link this PC to your Varde."
-                  : "Varde is up to date and running."}
+                  : "Varde is up to date."}
             </p>
             {!isUninstall && (
               <div className="vd-fade vd-d-3 mt-6 w-full text-left">
                 <Option
                   checked={launch}
-                  onChange={setLaunch}
+                  onChange={(checked) => {
+                    setLaunch(checked);
+                    setLaunchError(null);
+                  }}
                   title="Open Varde"
                   desc={
                     state?.will_link
@@ -403,6 +407,11 @@ export default function App() {
                       : "Opens when you close setup"
                   }
                 />
+                {launchError && (
+                  <ErrorNote detail={launchError}>
+                    Couldn't open Varde. Try again, or uncheck Open Varde and start it from the Start menu.
+                  </ErrorNote>
+                )}
               </div>
             )}
             <Button
