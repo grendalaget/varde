@@ -57,7 +57,7 @@ func TestCS2SettingsSaveKeepsUsableHostname(t *testing.T) {
 	configureCS2PlacementNode(t, e, host, "windows")
 	const name = "Friday; CS2"
 	id := e.createServer("cs2", name, nil)
-	e.startToRunning(id, host)
+	_, previousExecID, epoch := e.startToRunning(id, host)
 
 	// The dashboard Settings form sends the display name as server_name.
 	e.mustOK(e.do("PATCH", "/v1/servers/"+id, map[string]any{
@@ -67,8 +67,18 @@ func TestCS2SettingsSaveKeepsUsableHostname(t *testing.T) {
 
 	d, r := host.heartbeatCaps(nil, cs2PlacementCaps("windows"))
 	e.mustOK(r)
+	if len(d.Executions) != 1 || d.Executions[0].ExecutionID != previousExecID || d.Executions[0].Action != "stop" {
+		t.Fatalf("expected stop directive for %s after saving settings, got %+v", previousExecID, d.Executions)
+	}
+	if r := host.execStatus(previousExecID, id, epoch, "stopped"); r.Status != 204 {
+		t.Fatalf("reporting stopped for %s: got %d %s, want 204", previousExecID, r.Status, r.Raw)
+	}
+	e.reconcile()
+
+	d, r = host.heartbeatCaps(nil, cs2PlacementCaps("windows"))
+	e.mustOK(r)
 	for _, exec := range d.Executions {
-		if exec.ServerID == id {
+		if exec.ServerID == id && exec.ExecutionID != previousExecID && exec.Action == "run" {
 			if got := exec.Config["server_name"]; got != "Varde CS2" {
 				t.Errorf("directive after saving settings has hostname %q, want Varde CS2", got)
 			}
@@ -78,7 +88,7 @@ func TestCS2SettingsSaveKeepsUsableHostname(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("no directive for %s after saving settings", id)
+	t.Fatalf("no replacement run directive for %s after saving settings", id)
 }
 
 func TestCS2GameAddonPlacementRequiresLinux(t *testing.T) {
