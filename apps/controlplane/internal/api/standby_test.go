@@ -51,6 +51,36 @@ func TestCS2StartSendsHostnameForExistingAndNewServers(t *testing.T) {
 	}
 }
 
+func TestCS2SettingsSaveKeepsUsableHostname(t *testing.T) {
+	e := newEnv(t)
+	host := e.newAgent("host")
+	configureCS2PlacementNode(t, e, host, "windows")
+	const name = "Friday; CS2"
+	id := e.createServer("cs2", name, nil)
+	e.startToRunning(id, host)
+
+	// The dashboard Settings form sends the display name as server_name.
+	e.mustOK(e.do("PATCH", "/v1/servers/"+id, map[string]any{
+		"name":   name,
+		"config": map[string]any{"server_name": name, "map": "de_mirage"},
+	}, e.token))
+
+	d, r := host.heartbeatCaps(nil, cs2PlacementCaps("windows"))
+	e.mustOK(r)
+	for _, exec := range d.Executions {
+		if exec.ServerID == id {
+			if got := exec.Config["server_name"]; got != "Varde CS2" {
+				t.Errorf("directive after saving settings has hostname %q, want Varde CS2", got)
+			}
+			if got := exec.Config["map"]; got != "de_mirage" {
+				t.Errorf("directive after saving settings has map %q, want de_mirage", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("no directive for %s after saving settings", id)
+}
+
 func TestCS2GameAddonPlacementRequiresLinux(t *testing.T) {
 	e := newEnv(t)
 	windows, linux := e.newAgent("windows"), e.newAgent("linux")

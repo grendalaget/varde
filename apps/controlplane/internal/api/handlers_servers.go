@@ -18,25 +18,30 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
-// withDefaultCS2Hostname derives a hostname for records without an override,
-// including servers saved before the config contained server_name.
+// withDefaultCS2Hostname derives a hostname for records without a usable
+// override, including when the dashboard sends the display name as server_name.
 func withDefaultCS2Hostname(gameID, name string, cfg map[string]any) map[string]any {
 	if gameID != "cs2" {
 		return cfg
 	}
 	current := cfg["server_name"]
-	if hostname, ok := current.(string); current != nil && (!ok || strings.TrimSpace(hostname) != "") {
+	if hostname, ok := current.(string); current != nil && (!ok || validCS2Hostname(hostname)) {
 		return cfg
 	}
 	name = strings.TrimSpace(name)
-	// The driver writes the hostname to a Source config and rejects these characters.
-	if name == "" || strings.ContainsAny(name, "\"\\;") || strings.ContainsFunc(name, unicode.IsControl) {
+	if !validCS2Hostname(name) {
 		name = "Varde CS2"
 	}
 	effective := make(map[string]any, len(cfg)+1)
 	maps.Copy(effective, cfg)
 	effective["server_name"] = name
 	return effective
+}
+
+func validCS2Hostname(name string) bool {
+	// Match the driver's restrictions for strings written to the Source config.
+	return strings.TrimSpace(name) != "" && !strings.ContainsAny(name, "\"\\;") &&
+		!strings.ContainsFunc(name, unicode.IsControl)
 }
 
 func (s *Server) ListGames(ctx context.Context, _ gen.ListGamesRequestObject) (gen.ListGamesResponseObject, error) {
