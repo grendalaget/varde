@@ -22,7 +22,7 @@ func (s *Server) serverDirectiveConfig(ctx context.Context, srv *store.Server) (
 		}
 		cfg["public_url"] = publicURL
 	}
-	return cfg, nil
+	return withDefaultCS2Hostname(srv.GameID, srv.Name, cfg), nil
 }
 
 func (s *Server) requireGateway(game *catalog.Game) error {

@@ -82,6 +82,7 @@ struct FaceInfo {
     cp_url: String,
     group_id: String,
     node_id: String,
+    can_join_cs2: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -234,6 +235,7 @@ pub fn run() {
             stop_service,
             open_varde,
             open_url,
+            join_cs2_server,
             close_window,
             exit_varde,
             apply_update,
@@ -827,6 +829,7 @@ fn face_info(app: &AppHandle, facet: Facet) -> FaceInfo {
             .as_ref()
             .map(|status| status.node_id.clone())
             .unwrap_or_default(),
+        can_join_cs2: cfg!(windows),
     }
 }
 
@@ -2019,6 +2022,15 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     }
     app.opener().open_url(url, None::<&str>).map_err(|_| {
         "Couldn't open your browser. Check your default browser, then try again.".to_string()
+    })
+}
+
+#[tauri::command]
+fn join_cs2_server(app: AppHandle, address: String) -> Result<(), String> {
+    let url = crate::cs2_join::steam_url(&address)?;
+    app.opener().open_url(url, None::<&str>).map_err(|_| {
+        "Couldn't open Steam. Check that Steam is installed, or copy the address to join from CS2."
+            .into()
     })
 }
 

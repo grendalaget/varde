@@ -8,6 +8,7 @@ export type DashboardPlatform = {
   thisGroupId: string | null;
   signInWithVarde(): void;
   openExternal(url: string): void;
+  joinCs2Server?(address: string): Promise<void>;
   moveThisPc(groupId: string): void;
   linkSteam: (() => Promise<void>) | null;
 };
@@ -20,7 +21,7 @@ const VARDE_SITE = "https://varde.games";
 
 export const webPlatform: DashboardPlatform = {
   kind: "web",
-  cpOrigin: window.location.origin,
+  cpOrigin: globalThis.location?.origin ?? "",
   thisNodeId: null,
   thisGroupId: null,
   signInWithVarde() {

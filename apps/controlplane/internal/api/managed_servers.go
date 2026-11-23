@@ -198,7 +198,7 @@ func (s *Server) StartGroupPluginManagedServer(ctx context.Context, req gen.Star
 	if err != nil {
 		return nil, err
 	}
-	if problems := game.ValidateConfig(validationConfig); len(problems) != 0 {
+	if problems := game.ValidateConfig(withDefaultCS2Hostname(game.ID, plugin.Name, validationConfig)); len(problems) != 0 {
 		return nil, errResp(gen.Validation, strings.Join(problems, "; "), nil)
 	}
 	if create {

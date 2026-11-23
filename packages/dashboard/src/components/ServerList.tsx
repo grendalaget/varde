@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import type { Server } from "../api/client";
 import { timeAgo } from "../lib/format";
 import { Link } from "../lib/router";
+import { JoinCs2Button } from "./JoinCs2Button";
 import { HostMarker, StateCairn } from "./Logo";
 import SaveSafety from "./SaveSafety";
 import { CopyText } from "./ui";
@@ -51,7 +53,10 @@ function Address({ server: s, crossplay }: Entry) {
       </span>
     );
   return s.summary.address ? (
-    <CopyText text={s.summary.address} plain />
+    <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 lg:justify-start">
+      <CopyText text={s.summary.address} plain />
+      <JoinCs2Button server={s} />
+    </div>
   ) : (
     <span className="text-muted">—</span>
   );
@@ -87,7 +92,13 @@ function ConnectionHint({ server, crossplay }: Entry) {
   return null;
 }
 
-export function ServerList({ entries }: { entries: Entry[] }) {
+export function ServerList({
+  entries,
+  renderActions,
+}: {
+  entries: Entry[];
+  renderActions?: (server: Server) => ReactNode;
+}) {
   return (
     <>
       <div className="vd-surface server-table-surface">
@@ -116,6 +127,9 @@ export function ServerList({ entries }: { entries: Entry[] }) {
                       {s.name}
                     </Link>
                     <p className="server-list-game">{entry.gameName}</p>
+                    {renderActions && (
+                      <div className="mt-2">{renderActions(s)}</div>
+                    )}
                   </th>
                   <td>
                     <Status server={s} />
@@ -184,6 +198,7 @@ export function ServerList({ entries }: { entries: Entry[] }) {
                 </div>
               </dl>
               <ConnectionHint {...entry} />
+              {renderActions && <div className="mt-4">{renderActions(s)}</div>}
             </article>
           );
         })}

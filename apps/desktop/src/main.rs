@@ -9,6 +9,8 @@ mod app;
 mod autostart;
 #[cfg(any(windows, target_os = "macos"))]
 mod crash;
+#[cfg(any(test, windows, target_os = "macos"))]
+mod cs2_join;
 #[cfg(windows)]
 #[path = "svcctl.rs"]
 mod svcctl;

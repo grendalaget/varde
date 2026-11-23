@@ -7,6 +7,50 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
 
+func TestCS2StartSendsHostnameForExistingAndNewServers(t *testing.T) {
+	e := newEnv(t)
+	host := e.newAgent("host")
+	configureCS2PlacementNode(t, e, host, "windows")
+	legacyID := e.createServer("cs2", "Existing CS2", map[string]any{
+		"config": map[string]any{"server_name": "Existing CS2"},
+	})
+	// Simulate an existing server stored with a blank driver hostname.
+	_, err := e.st.DB.ExecContext(t.Context(), e.st.Rebind("UPDATE servers SET config_json = ? WHERE id = ?"),
+		`{"server_name":"  ","map":"de_mirage"}`, legacyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID := e.createServer("cs2", "New CS2", nil)
+	customID := e.createServer("cs2", "Varde name", map[string]any{
+		"config": map[string]any{"server_name": "Custom hostname"},
+	})
+	for id, want := range map[string]string{
+		legacyID: "Existing CS2",
+		newID:    "New CS2",
+		customID: "Custom hostname",
+	} {
+		e.mustOK(e.do("POST", "/v1/servers/"+id+"/start", map[string]any{}, e.token))
+		d, r := host.heartbeatCaps(nil, cs2PlacementCaps("windows"))
+		e.mustOK(r)
+		found := false
+		for _, exec := range d.Executions {
+			if exec.ServerID != id {
+				continue
+			}
+			found = true
+			if got := exec.Config["server_name"]; got != want {
+				t.Errorf("start directive for %s has hostname %q, want %q", id, got, want)
+			}
+			if id == legacyID && exec.Config["map"] != "de_mirage" {
+				t.Errorf("start directive for %s lost its map: got %v, want de_mirage", id, exec.Config["map"])
+			}
+		}
+		if !found {
+			t.Fatalf("start directive missing for %s", id)
+		}
+	}
+}
+
 func TestCS2GameAddonPlacementRequiresLinux(t *testing.T) {
 	e := newEnv(t)
 	windows, linux := e.newAgent("windows"), e.newAgent("linux")

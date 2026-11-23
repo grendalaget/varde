@@ -274,13 +274,14 @@ type directives struct {
 		GroupName *string `json:"group_name"`
 	} `json:"node"`
 	Executions []struct {
-		ExecutionID            string `json:"execution_id"`
-		ServerID               string `json:"server_id"`
-		Epoch                  int64  `json:"epoch"`
-		Action                 string `json:"action"`
-		StopReason             string `json:"stop_reason"`
-		Freeze                 bool   `json:"freeze"`
-		LatestSafeSaveAtUnixMs *int64 `json:"latest_safe_save_at_unix_ms"`
+		ExecutionID            string         `json:"execution_id"`
+		ServerID               string         `json:"server_id"`
+		Config                 map[string]any `json:"config"`
+		Epoch                  int64          `json:"epoch"`
+		Action                 string         `json:"action"`
+		StopReason             string         `json:"stop_reason"`
+		Freeze                 bool           `json:"freeze"`
+		LatestSafeSaveAtUnixMs *int64         `json:"latest_safe_save_at_unix_ms"`
 		Restore                *struct {
 			SnapshotID    string   `json:"snapshot_id"`
 			SourceNodeIDs []string `json:"source_node_ids"`
