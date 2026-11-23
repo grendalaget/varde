@@ -2,11 +2,13 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Server } from "./src/api/client";
 import { ServerList } from "./src/components/ServerList";
+import { PlatformProvider, webPlatform } from "./src/lib/platform";
 import { Surface } from "@varde/ui/ui";
 
 const server = (over: Partial<Server> = {}): Server =>
   ({
     id: "server-1",
+    group_id: "group-1",
     name: "Campfire Sandbox",
     game_id: "testgame",
     observed_state: "running",
@@ -26,9 +28,22 @@ const server = (over: Partial<Server> = {}): Server =>
     ...over,
   }) as Server;
 
-function render(s: Server, crossplay = false) {
+function render(s: Server, crossplay = false, desktop = false) {
   return renderToStaticMarkup(
-    <ServerList entries={[{ server: s, gameName: "Test Game", crossplay }]} />,
+    <PlatformProvider
+      platform={
+        desktop
+          ? {
+              ...webPlatform,
+              kind: "desktop",
+              thisGroupId: "group-1",
+              joinCs2Server: async () => {},
+            }
+          : webPlatform
+      }
+    >
+      <ServerList entries={[{ server: s, gameName: "Test Game", crossplay }]} />
+    </PlatformProvider>,
   );
 }
 
@@ -93,4 +108,28 @@ test("nested surfaces have a single frame", () => {
     </Surface>,
   );
   expect(html.match(/vd-surface/g)).toHaveLength(1);
+});
+
+test("only a running desktop CS2 server with an address has Join server", () => {
+  const cs2 = server({
+    game_id: "cs2",
+    summary: { address: "127.77.238.6:27015" },
+  });
+  const html = render(cs2, false, true);
+  expect(html.match(/Join server/g)).toHaveLength(2);
+  expect(html).toContain('aria-label="Copy 127.77.238.6:27015"');
+  expect(render(cs2)).not.toContain("Join server");
+  expect(
+    render({ ...cs2, group_id: "another-group" }, false, true),
+  ).not.toContain("Join server");
+  expect(render(server(), false, true)).not.toContain("Join server");
+  expect(
+    render({ ...cs2, observed_state: "starting" }, false, true),
+  ).not.toContain("Join server");
+  expect(
+    render({ ...cs2, desired_state: "stopped" }, false, true),
+  ).not.toContain("Join server");
+  expect(render({ ...cs2, summary: {} }, false, true)).not.toContain(
+    "Join server",
+  );
 });

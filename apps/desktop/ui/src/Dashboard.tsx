@@ -13,6 +13,7 @@ export type FaceInfo = {
   cp_url: string;
   group_id: string;
   node_id: string;
+  can_join_cs2: boolean;
 };
 
 installCpTransport();
@@ -41,6 +42,9 @@ export default function Dashboard({ face }: { face: FaceInfo }) {
           setSessionError(String(error));
         });
       },
+      joinCs2Server: face.can_join_cs2
+        ? (address) => invoke<void>("join_cs2_server", { address })
+        : undefined,
       moveThisPc(groupId) {
         void invoke("request_move_here", { groupId }).catch(
           (error: unknown) => setSessionError(String(error)),
@@ -48,7 +52,7 @@ export default function Dashboard({ face }: { face: FaceInfo }) {
       },
       linkSteam: () => invoke<void>("open_steam_link"),
     }),
-    [face.cp_url, face.group_id, face.node_id, setSessionError],
+    [face.cp_url, face.group_id, face.node_id, face.can_join_cs2, setSessionError],
   );
 
   useEffect(() => {

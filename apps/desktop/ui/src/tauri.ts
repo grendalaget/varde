@@ -184,6 +184,7 @@ function mock(): TauriGlobal {
               cp_url: "http://localhost:5174",
               group_id: "grp_mock",
               node_id: "node_mock",
+              can_join_cs2: true,
             } as T);
           case "cp_fetch": {
             const request = args?.request as
@@ -283,6 +284,7 @@ function mock(): TauriGlobal {
           case "begin_varde_signin":
           case "request_move_here":
           case "open_url":
+          case "join_cs2_server":
           case "start_service":
           case "stop_service":
           case "exit_varde":

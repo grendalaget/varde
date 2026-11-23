@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
+	"unicode"
 
 	"github.com/grendalaget/varde/go/ids"
 
@@ -15,6 +17,32 @@ import (
 	"github.com/grendalaget/varde/apps/controlplane/internal/services"
 	"github.com/grendalaget/varde/apps/controlplane/internal/store"
 )
+
+// withDefaultCS2Hostname derives a hostname for records without a usable
+// override, including when the dashboard sends the display name as server_name.
+func withDefaultCS2Hostname(gameID, name string, cfg map[string]any) map[string]any {
+	if gameID != "cs2" {
+		return cfg
+	}
+	current := cfg["server_name"]
+	if hostname, ok := current.(string); current != nil && (!ok || validCS2Hostname(hostname)) {
+		return cfg
+	}
+	name = strings.TrimSpace(name)
+	if !validCS2Hostname(name) {
+		name = "Varde CS2"
+	}
+	effective := make(map[string]any, len(cfg)+1)
+	maps.Copy(effective, cfg)
+	effective["server_name"] = name
+	return effective
+}
+
+func validCS2Hostname(name string) bool {
+	// Match the driver's restrictions for strings written to the Source config.
+	return strings.TrimSpace(name) != "" && !strings.ContainsAny(name, "\"\\;") &&
+		!strings.ContainsFunc(name, unicode.IsControl)
+}
 
 func (s *Server) ListGames(ctx context.Context, _ gen.ListGamesRequestObject) (gen.ListGamesResponseObject, error) {
 	if _, err := s.requireUser(ctx); err != nil {
@@ -255,7 +283,7 @@ func (s *Server) createServer(ctx context.Context, req gen.CreateServerRequestOb
 	if err != nil {
 		return nil, err
 	}
-	if verr := game.ValidateConfig(validationConfig); len(verr) > 0 {
+	if verr := game.ValidateConfig(withDefaultCS2Hostname(b.GameId, b.Name, validationConfig)); len(verr) > 0 {
 		return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), map[string]any{"fields": verr})
 	}
 	lim, err := s.Store.GetLimits(ctx, req.GroupId)
@@ -384,10 +412,13 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 	if b == nil {
 		return nil, errResp(gen.Validation, "missing body", nil)
 	}
+	if b.Name != nil {
+		srv.Name = *b.Name
+	}
 	if b.Config != nil {
 		game := catalog.Get(srv.GameID)
 		if game != nil {
-			if verr := game.ValidateConfig(*b.Config); len(verr) > 0 {
+			if verr := game.ValidateConfig(withDefaultCS2Hostname(srv.GameID, srv.Name, *b.Config)); len(verr) > 0 {
 				return nil, errResp(gen.Validation, "invalid config: "+strings.Join(verr, "; "), nil)
 			}
 		}
@@ -400,9 +431,6 @@ func (s *Server) UpdateServer(ctx context.Context, req gen.UpdateServerRequestOb
 			}
 		}
 		srv.ConfigJSON = mustJSON(*b.Config)
-	}
-	if b.Name != nil {
-		srv.Name = *b.Name
 	}
 	if b.ReplicationFactor != nil {
 		srv.ReplicationFactor = int64(*b.ReplicationFactor)

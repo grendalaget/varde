@@ -10,16 +10,19 @@ import {
 } from "../components/ui";
 import { useLoad } from "../lib/data";
 import { useOnEvent } from "../lib/events";
+import { usePlatform } from "../lib/platform";
 import { navigate } from "../lib/router";
 import { canAdmin, useSession } from "../lib/session";
 import PluginSettingsPanel from "./PluginSettings";
 import { PageLoader } from "../components/Logo";
 import { ServerList } from "../components/ServerList";
+import { ServerActions } from "../components/ServerActions";
 import { isCrossplayEnabled, useGames } from "../lib/games";
 import { Icon } from "../components/icons";
 
 export default function Servers() {
   const { group } = useSession();
+  const { kind } = usePlatform();
   const games = useGames();
   const { data, refresh, loading, error } = useLoad(
     () =>
@@ -73,6 +76,11 @@ export default function Servers() {
       )}
       {servers.length > 0 && (
         <ServerList
+          renderActions={
+            kind === "desktop"
+              ? (s) => <ServerActions s={s} compact onChange={refresh} />
+              : undefined
+          }
           entries={servers.map((s) => ({
             server: s,
             gameName: games.name(s.game_id),
