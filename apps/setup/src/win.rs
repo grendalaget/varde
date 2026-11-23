@@ -592,6 +592,62 @@ pub fn create_shortcut(lnk: &Path, target: &Path) -> Result<()> {
 
 // ---- launch as interactive user --------------------------------------------
 
+/// Ask the desktop shell to run Varde with its own user token and environment,
+/// not the elevated installer's token or setup-only WebView2 profile.
+pub fn launch_from_desktop(exe: &Path, args: &str) -> Result<()> {
+    use windows::core::{Interface, BSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IServiceProvider, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Shell::{
+        IShellBrowser, IShellDispatch2, IShellFolderViewDual, IShellWindows, SID_STopLevelBrowser,
+        ShellWindows, CSIDL_DESKTOP, SVGIO_BACKGROUND, SWC_DESKTOP, SWFO_NEEDDISPATCH,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        let _apartment = Apartment;
+        let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER)?;
+        let desktop = windows.FindWindowSW(
+            &VARIANT::from(CSIDL_DESKTOP as i32),
+            &VARIANT::default(),
+            SWC_DESKTOP,
+            &mut 0,
+            SWFO_NEEDDISPATCH,
+        )?;
+        let browser: IShellBrowser = desktop
+            .cast::<IServiceProvider>()?
+            .QueryService(&SID_STopLevelBrowser)?;
+        let view: IShellFolderViewDual = browser
+            .QueryActiveShellView()?
+            .GetItemObject(SVGIO_BACKGROUND)?;
+        let shell: IShellDispatch2 = view.Application()?.cast()?;
+        let file = BSTR::from_wide(&exe.as_os_str().encode_wide().collect::<Vec<_>>());
+        let dir = exe
+            .parent()
+            .context("tray executable has no parent directory")?;
+        let dir = BSTR::from_wide(&dir.as_os_str().encode_wide().collect::<Vec<_>>());
+        shell.ShellExecute(
+            &file,
+            &VARIANT::from(BSTR::from(args)),
+            &VARIANT::from(dir),
+            &VARIANT::from("open"),
+            &VARIANT::from(SW_SHOWNORMAL.0),
+        )?;
+    }
+    Ok(())
+}
+
 /// A primary token for the user on the active console session: WTS query
 /// first, explorer.exe fallback (what RunAsUser did under the hood).
 ///
@@ -673,8 +729,7 @@ unsafe fn console_user_token() -> Result<windows::Win32::Foundation::HANDLE> {
     Ok(primary)
 }
 
-/// Spawn `exe args` as the interactive console user — the tray at the end of
-/// install, or `--autostart` when the updater relaunches it.
+/// Spawn the tray from the silent updater, which runs outside the user session.
 pub fn launch_as_user(exe: &Path, args: &str) -> Result<()> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{

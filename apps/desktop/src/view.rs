@@ -380,8 +380,9 @@ impl From<&pb::Status> for UiStatus {
 }
 
 /// Command line: `--link` (installer: open the link window and start linking
-/// with the address the service reports), `--relink` (elevated re-link
-/// window), `--relink-start` (elevated headless re-link for the dashboard's
+/// with the address the service reports), `--open` (installer: open Varde),
+/// `--relink` (elevated re-link window), `--relink-start` (elevated
+/// headless re-link for the dashboard's
 /// "Move this PC here"), `--autostart`, `--service-start` / `--service-stop`
 /// (elevated headless service control; start also restarts a running-but-dead
 /// one).
@@ -390,6 +391,7 @@ impl From<&pb::Status> for UiStatus {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub open_link: bool,
+    pub open_window: bool,
     pub relink: bool,
     pub relink_start: bool,
     pub autostart: bool,
@@ -406,6 +408,12 @@ pub struct Launch {
     pub deep_link: Option<String>,
 }
 
+impl Launch {
+    pub fn opens_window_on_start(&self) -> bool {
+        self.open_link || self.open_window
+    }
+}
+
 pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
     let mut l = Launch::default();
     let mut it = args.into_iter().peekable();
@@ -416,6 +424,7 @@ pub fn parse_launch(args: impl IntoIterator<Item = String>) -> Launch {
                 // older installers passed the address; the service has it now
                 let _ = it.next_if(|n| !n.starts_with("--"));
             }
+            "--open" => l.open_window = true,
             "--relink" => l.relink = true,
             "--relink-start" => l.relink_start = true,
             "--autostart" => l.autostart = true,
@@ -688,6 +697,11 @@ mod tests {
         assert!(l.open_link && !l.autostart);
         let l = p(&["--link", "--autostart"]);
         assert!(l.open_link && l.autostart);
+        let l = p(&["--open"]);
+        assert!(l.opens_window_on_start() && !l.open_link);
+        assert!(p(&["--link"]).opens_window_on_start());
+        assert!(!p(&["--autostart"]).opens_window_on_start());
+        assert!(!p(&[]).opens_window_on_start());
         assert!(p(&["--relink"]).relink);
         let l = p(&["--relink-start"]);
         assert!(l.relink_start && !l.relink);

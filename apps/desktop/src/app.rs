@@ -199,8 +199,8 @@ pub fn run() {
     if !relink {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let l = view::parse_launch(argv.into_iter().skip(1));
-            if let Some(u) = l.deep_link {
-                handle_deep_link(app, &u);
+            if let Some(u) = l.deep_link.as_deref() {
+                handle_deep_link(app, u);
             }
             if l.open_link {
                 app.state::<State>()
@@ -209,7 +209,7 @@ pub fn run() {
             }
             // started again (Start menu, installer): show the window; an
             // already open one re-reads its defaults (it may need to link)
-            if !l.autostart {
+            if !l.autostart || l.opens_window_on_start() {
                 let open = app.get_webview_window(MAIN_WINDOW).is_some();
                 open_varde_window(app);
                 if open {
@@ -283,7 +283,7 @@ pub fn run() {
                 open_main_window(&h);
             } else {
                 dock_sync(&h);
-                if launch.open_link {
+                if launch.opens_window_on_start() {
                     open_varde_window(&h);
                 }
             }

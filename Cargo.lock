@@ -5854,6 +5854,7 @@ dependencies = [
  "cp-api",
  "crash-report",
  "ed25519-dalek",
+ "embed-resource",
  "executor-api",
  "executor-native",
  "game-autotournament",

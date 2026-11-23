@@ -146,13 +146,14 @@ fn start_install(app: AppHandle, state: tauri::State<Shared>, autostart: bool, c
             );
             rx.recv().unwrap_or(false)
         };
-        match engine::install(&opts, &mut prog, &mut confirm) {
+        let result = engine::install(&opts, &mut prog, &mut confirm);
+        BUSY.store(false, Ordering::SeqCst);
+        match result {
             Ok(()) => {
                 let _ = app2.emit("setup-done", ());
             }
             Err(e) => emit_error(&app2, &e),
         }
-        BUSY.store(false, Ordering::SeqCst);
     });
 }
 
@@ -181,13 +182,14 @@ fn start_uninstall(app: AppHandle, state: tauri::State<Shared>, delete_data: boo
                 },
             );
         };
-        match engine::uninstall(&instdir, delete_data, update, &mut prog) {
+        let result = engine::uninstall(&instdir, delete_data, update, &mut prog);
+        BUSY.store(false, Ordering::SeqCst);
+        match result {
             Ok(()) => {
                 let _ = app2.emit("setup-done", ());
             }
             Err(e) => emit_error(&app2, &e),
         }
-        BUSY.store(false, Ordering::SeqCst);
     });
 }
 
@@ -198,16 +200,15 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 /// `launch`: the finish screen's "Open Varde" tick; the tray starts as
 /// setup closes.
 #[tauri::command]
-fn exit_app(app: AppHandle, state: tauri::State<Shared>, launch: bool) {
+fn exit_app(app: AppHandle, state: tauri::State<Shared>, launch: bool) -> Result<(), String> {
     if BUSY.load(Ordering::SeqCst) {
-        return;
+        return Ok(());
     }
     if launch {
-        if let Err(e) = engine::launch_tray(&state.instdir) {
-            eprintln!("launch tray: {e:#}");
-        }
+        engine::launch_tray(&state.instdir).map_err(|e| format!("{e:#}"))?;
     }
     app.exit(0);
+    Ok(())
 }
 
 pub fn run(args: Args, instdir: PathBuf, mode: Mode) {

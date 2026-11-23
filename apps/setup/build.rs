@@ -87,8 +87,13 @@ fn main() {
         if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
         }
-        let attrs = tauri_build::Attributes::new()
-            .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(MANIFEST));
+        let icon = "icons/icon.ico";
+        println!("cargo:rerun-if-changed={icon}");
+        let attrs = tauri_build::Attributes::new().windows_attributes(
+            tauri_build::WindowsAttributes::new()
+                .window_icon_path(icon)
+                .app_manifest(MANIFEST),
+        );
         tauri_build::try_build(attrs).expect("tauri_build");
     }
 }

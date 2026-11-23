@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 // varde-setup — Varde's Windows installer and uninstaller, one binary.
 //
 // Flag surface (NSIS-compatible, see packaging/windows/README.md):
