@@ -64,10 +64,12 @@ public static class VardeExecutableIcon {
     public static extern uint ExtractIconEx(string file, int index, IntPtr large, IntPtr small, uint count);
 }
 '@
-$iconTargets = @('target\release\varde-setup.exe', "$payload\uninstall.exe")
-if (-not $SkipPayloadBuild) {
-  $iconTargets += @("$payload\varde-tray.exe", "$payload\varde-agent.exe")
-}
+$iconTargets = @(
+  'target\release\varde-setup.exe'
+  "$payload\uninstall.exe"
+  "$payload\varde-tray.exe"
+  "$payload\varde-agent.exe"
+)
 foreach ($exe in $iconTargets) {
   $path = (Resolve-Path $exe).Path
   $count = [VardeExecutableIcon]::ExtractIconEx($path, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0)
