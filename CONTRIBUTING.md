@@ -10,9 +10,11 @@
   `crates/*`, `games/*`).
 
 Cross-language contracts go through explicit schemas: Protobuf under
-`proto/` (Rust↔Go IPC, mesh frames, relay) and OpenAPI under `api/openapi/`
-(control-plane HTTP API). Regenerate with `make gen`; `make check-gen` fails
-if committed generated files drift.
+`proto/` (Rust↔Go IPC, mesh frames, relay), OpenAPI under `api/openapi/`
+(control-plane HTTP API), and Rust types exported to TypeScript with `ts-rs`
+(desktop face and CS2 join payloads in `apps/desktop/src/desktop_ipc.rs`).
+Regenerate with `make gen`. `make check-gen` fails if committed generated
+files drift.
 
 ## Local development
 

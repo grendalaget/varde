@@ -6,15 +6,8 @@ import {
 } from "@varde/dashboard/lib/platform";
 import { navigate, RouterProvider } from "@varde/dashboard/lib/router";
 import { installCpTransport } from "./cp";
-import { invoke, listen } from "./tauri";
-
-export type FaceInfo = {
-  facet: "setup" | "dashboard";
-  cp_url: string;
-  group_id: string;
-  node_id: string;
-  can_join_cs2: boolean;
-};
+import type { FaceInfo } from "./generated/desktop-ipc";
+import { invoke, joinCs2Server, listen } from "./tauri";
 
 installCpTransport();
 
@@ -43,7 +36,7 @@ export default function Dashboard({ face }: { face: FaceInfo }) {
         });
       },
       joinCs2Server: face.can_join_cs2
-        ? (address) => invoke<void>("join_cs2_server", { address })
+        ? (address) => joinCs2Server({ address })
         : undefined,
       moveThisPc(groupId) {
         void invoke("request_move_here", { groupId }).catch(

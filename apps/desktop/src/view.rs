@@ -278,7 +278,9 @@ pub fn ago(ms: i64) -> String {
 /// Which face the one Varde window shows. The two webviews stay isolated
 /// (the remote dashboard gets no IPC bridge) but only one is ever visible,
 /// so the user sees a single window whose content follows the PC's state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Facet {
     /// Local UI: linking, federated sign-in, this-PC status, service-down.
     Setup,

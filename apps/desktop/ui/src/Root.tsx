@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import App from "./App";
-import Dashboard, { type FaceInfo } from "./Dashboard";
+import Dashboard from "./Dashboard";
+import type { FaceInfo } from "./generated/desktop-ipc";
 import { invoke, listen } from "./tauri";
 
 declare global {

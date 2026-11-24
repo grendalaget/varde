@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use crate::crash;
 use agent_ipc::pb;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::image::Image;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::{Cookie, NewWindowResponse};
@@ -19,6 +20,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::autostart;
+use crate::desktop_ipc::{FaceInfo, JoinCs2ServerRequest};
 use crate::svcctl;
 use crate::view::{self, Facet, Icon, TrayView, UiStatus};
 
@@ -74,15 +76,6 @@ struct MoveTo {
     group: String,
     code: String,
     at: std::time::Instant,
-}
-
-#[derive(Serialize, Clone)]
-struct FaceInfo {
-    facet: String,
-    cp_url: String,
-    group_id: String,
-    node_id: String,
-    can_join_cs2: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -812,11 +805,7 @@ fn desired_facet(app: &AppHandle) -> Facet {
 fn face_info(app: &AppHandle, facet: Facet) -> FaceInfo {
     let status = app.state::<State>().status.lock().unwrap().clone();
     FaceInfo {
-        facet: match facet {
-            Facet::Setup => "setup",
-            Facet::Dashboard => "dashboard",
-        }
-        .to_string(),
+        facet,
         cp_url: status
             .as_ref()
             .map(|status| status.control_plane_url.clone())
@@ -2026,8 +2015,13 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn join_cs2_server(app: AppHandle, address: String) -> Result<(), String> {
-    let url = crate::cs2_join::steam_url(&address)?;
+fn join_cs2_server(app: AppHandle, request: Request<'_>) -> Result<(), String> {
+    // Decode the whole Tauri payload so the exported Rust type covers every key.
+    let InvokeBody::Json(body) = request.body() else {
+        return Err("Invalid CS2 join request.".into());
+    };
+    let args = JoinCs2ServerRequest::deserialize(body).map_err(|_| "Invalid CS2 join request.")?;
+    let url = crate::cs2_join::steam_url(&args.address)?;
     app.opener().open_url(url, None::<&str>).map_err(|_| {
         "Couldn't open Steam. Check that Steam is installed, or copy the address to join from CS2."
             .into()
