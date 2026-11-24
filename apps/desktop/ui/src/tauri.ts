@@ -286,13 +286,16 @@ function mock(): TauriGlobal {
           case "begin_varde_signin":
           case "request_move_here":
           case "open_url":
-          case "join_cs2_server":
           case "start_service":
           case "stop_service":
           case "exit_varde":
           case "apply_update":
           case "close_window":
             return Promise.resolve(undefined as T);
+          case "join_cs2_server":
+            return typeof args?.address === "string"
+              ? Promise.resolve(undefined as T)
+              : Promise.reject("Invalid CS2 join request.");
           case "open_steam_link":
             return Promise.resolve(undefined as T);
           default:
@@ -324,5 +327,5 @@ export const invoke = tauri.core.invoke;
 export const listen = tauri.event.listen;
 
 export function joinCs2Server(request: JoinCs2ServerRequest): Promise<void> {
-  return invoke("join_cs2_server", { request });
+  return invoke("join_cs2_server", request);
 }

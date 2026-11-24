@@ -21,8 +21,24 @@ pub(crate) struct JoinCs2ServerRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::{fs, path::Path};
     use ts_rs::{Config, TS};
+
+    #[test]
+    fn join_request_decodes_full_invoke_payload() {
+        let address = "127.77.123.42:27015";
+        let body = json!({ "address": address });
+        let request = JoinCs2ServerRequest::deserialize(&body).unwrap();
+        assert_eq!(request.address, address);
+        for body in [
+            json!({}),
+            json!({ "address": 27015 }),
+            json!({ "request": { "address": address } }),
+        ] {
+            assert!(JoinCs2ServerRequest::deserialize(&body).is_err());
+        }
+    }
 
     #[test]
     fn desktop_ipc_bindings() {
