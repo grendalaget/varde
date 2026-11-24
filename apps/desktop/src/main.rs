@@ -11,6 +11,9 @@ mod autostart;
 mod crash;
 #[cfg(any(test, windows, target_os = "macos"))]
 mod cs2_join;
+#[cfg(any(test, windows, target_os = "macos"))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+mod desktop_ipc;
 #[cfg(windows)]
 #[path = "svcctl.rs"]
 mod svcctl;

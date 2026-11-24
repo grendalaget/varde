@@ -5,6 +5,8 @@
 // (locked = an administrator's pending re-link), or ?face=dashboard. Add
 // &update=1 to show a pending update on the linked views.
 
+import type { FaceInfo, JoinCs2ServerRequest } from "./generated/desktop-ipc";
+
 export interface UiStatus {
   state: string;
   control_plane_url: string;
@@ -185,7 +187,7 @@ function mock(): TauriGlobal {
               group_id: "grp_mock",
               node_id: "node_mock",
               can_join_cs2: true,
-            } as T);
+            } satisfies FaceInfo as T);
           case "cp_fetch": {
             const request = args?.request as
               { method: string; path: string; body?: string } | undefined;
@@ -320,3 +322,7 @@ if (!window.__TAURI__) window.__TAURI__ = tauri;
 
 export const invoke = tauri.core.invoke;
 export const listen = tauri.event.listen;
+
+export function joinCs2Server(request: JoinCs2ServerRequest): Promise<void> {
+  return invoke("join_cs2_server", { request });
+}

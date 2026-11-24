@@ -19,6 +19,7 @@ android:
 gen:
 	buf generate
 	bun run --filter "@varde/dashboard" gen:api
+	VARDE_UPDATE_DESKTOP_IPC=1 cargo test -p varde-tray desktop_ipc_bindings
 
 build:
 	bun run --filter "@varde/desktop-ui" build
@@ -100,7 +101,7 @@ package: build
 
 check-gen: gen gen-go-api
 	@git diff --exit-code -- go/gen packages/dashboard/src/api/schema.d.ts \
-		apps/controlplane/internal/api/gen \
+		apps/controlplane/internal/api/gen apps/desktop/ui/src/generated/desktop-ipc.ts \
 		|| (echo "generated files are stale; run 'make gen' and commit" && exit 1)
 
 .PHONY: gen-go-api

@@ -14,6 +14,9 @@ agent-ipc = { path = "../../crates/agent-ipc" }
 crash-report = { path = "../../crates/crash-report" }
 serde = { version = "1", features = ["derive"] }
 
+[dev-dependencies]
+ts-rs = "12.0.1"
+
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 anyhow = { workspace = true }
 base64 = "0.22"
