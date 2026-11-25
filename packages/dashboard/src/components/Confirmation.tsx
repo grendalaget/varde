@@ -63,13 +63,13 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
           <AlertDialog.Container placement="center">
             <AlertDialog.Dialog className="vd-confirm-dialog">
               <form
-                className="space-y-4"
+                className="flex min-h-0 flex-1 flex-col"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (enabled) close(true);
                 }}
               >
-                <AlertDialog.Header>
+                <AlertDialog.Header className="shrink-0">
                   <AlertDialog.Heading>{options.title}</AlertDialog.Heading>
                 </AlertDialog.Header>
                 {(options.detail || options.expected !== undefined) && (
@@ -88,7 +88,7 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
                     )}
                   </AlertDialog.Body>
                 )}
-                <AlertDialog.Footer>
+                <AlertDialog.Footer className="shrink-0">
                   <HeroButton
                     autoFocus={options.expected === undefined}
                     type="button"
