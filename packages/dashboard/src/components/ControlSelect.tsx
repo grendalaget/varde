@@ -46,7 +46,20 @@ export function ControlSelect<T extends string>({
       >
         {label}
       </Label>
-      <Select.Trigger className={triggerClassName ?? "py-1.5"}>
+      <Select.Trigger
+        className={triggerClassName ?? "py-1.5"}
+        render={(props) => (
+          <button
+            {...props}
+            onKeyDownCapture={(event) => {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            }}
+          />
+        )}
+      >
         {trigger ? trigger(selectedValue) : selectedValue}
         <Select.Indicator />
       </Select.Trigger>
