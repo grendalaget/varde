@@ -3,6 +3,8 @@ use std::io;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
+use executor_api::LocalPathError;
+
 use crate::{path_error, shared_config};
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
@@ -24,9 +26,10 @@ fn checked_cfg_dir(install: &Path, create_cfg: bool) -> io::Result<PathBuf> {
         }
         .map_err(|e| path_error("inspect CS2 config directory", &path, e))?;
         if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(io::Error::other(format!(
-                "CS2 config directory is not a regular directory: {}",
-                path.display()
+            return Err(io::Error::other(LocalPathError::new(
+                "inspect CS2 config directory",
+                &path,
+                "not a regular directory",
             )));
         }
     }
@@ -43,11 +46,14 @@ fn grant_modify(icacls: &Path, path: &Path, ace: &str) -> io::Result<()> {
         .output()
         .map_err(|e| path_error("spawn ACL repair tool", icacls, e))?;
     if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "grant SYSTEM modify rights on {}: {}: {}",
-            path.display(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+        return Err(io::Error::other(LocalPathError::new(
+            "grant SYSTEM modify rights on",
+            path,
+            format!(
+                "{}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         )));
     }
     Ok(())
@@ -110,24 +116,31 @@ fn probe_existing(options: &OpenOptions, path: &Path, operation: &str) -> io::Re
 }
 
 pub(crate) fn ensure_writable(install: &Path, name: &str) -> io::Result<()> {
-    let cfg = checked_cfg_dir(install, true).map_err(|e| {
-        io::Error::other(format!(
-            "{e}; reinstall or update Varde to repair CS2 access"
-        ))
-    })?;
+    let cfg = checked_cfg_dir(install, true)
+        .map_err(|e| permission_error(&install.join("game/csgo/cfg"), &e, &e))?;
     let config = cfg.join(format!("{name}.cfg"));
     match probe(&cfg, &config) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => repair_cfg(&cfg, Some(&config))
             .and_then(|()| probe(&cfg, &config))
-            .map_err(|repair| {
-                io::Error::other(format!(
-                    "CS2 config directory {} is not writable; reinstall or update Varde to repair CS2 access ({e}; {repair})",
-                    cfg.display()
-                ))
-            }),
+            .map_err(|repair| permission_error(&cfg, &e, format_args!("{e}; {repair}"))),
         Err(e) => Err(e),
     }
+}
+
+fn permission_error(cfg: &Path, error: &io::Error, detail: impl std::fmt::Display) -> io::Error {
+    let path = error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<LocalPathError>())
+        .map_or(cfg, LocalPathError::path);
+    io::Error::new(
+        error.kind(),
+        LocalPathError::new(
+            "could not access CS2 config path",
+            path,
+            format_args!("{detail}; reinstall or update Varde to repair CS2 access"),
+        ),
+    )
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use cp_api::{AgentSnapshot, ExecutionDirective};
-use executor_api::{Executor, OutputStream, ProcessHandle};
+use executor_api::{Executor, LocalPathError, OutputStream, ProcessHandle};
 use game_driver_api::{
     ArchiveKind, DeploymentSpec, DriverContext, FetchSpec, GameDriver, GameHealth, PortBinding,
     PortSpec, PreparedAddon, RuntimeProvider, SnapshotBarrier,
@@ -284,7 +284,7 @@ impl ExecCtl {
 
 /// executor/driver APIs return Box<dyn Error>; anyhow can't `?` them.
 pub(crate) fn dyn_err(e: executor_api::DynError) -> anyhow::Error {
-    anyhow::anyhow!("{e}")
+    anyhow::Error::from_boxed(e)
 }
 
 /// Report an immediate state transition to the CP (best effort — heartbeat
@@ -360,10 +360,30 @@ fn startup_diagnostic(error: &anyhow::Error) -> Option<cp_api::LogLine> {
     } else {
         "Operation failed"
     };
+    let boxed = error
+        .downcast_ref::<executor_api::DynError>()
+        .map(|cause| cause.as_ref() as &(dyn std::error::Error + 'static));
+    let path = boxed.into_iter().chain(error.chain()).find_map(|cause| {
+        cause.downcast_ref::<LocalPathError>().or_else(|| {
+            cause
+                .downcast_ref::<std::io::Error>()?
+                .get_ref()?
+                .downcast_ref::<LocalPathError>()
+        })
+    });
+    let location = path.map_or_else(String::new, |error| {
+        format!(
+            " at {}",
+            error
+                .path()
+                .to_string_lossy()
+                .replace(char::is_control, "�")
+        )
+    });
     Some(cp_api::LogLine {
         at: crate::now_ms(),
         stream: "agent".into(),
-        line: format!("{stage}: {detail}. See the execution status or the local Varde agent logs for details."),
+        line: format!("{stage}: {detail}{location}. See the execution status or the local Varde agent logs for details."),
     })
 }
 
@@ -420,7 +440,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             &game_id,
             "prepare directories",
             std::fs::create_dir_all(path)
-                .with_context(|| format!("create directory {}", path.display())),
+                .map_err(|e| LocalPathError::new("create directory", path, e).into()),
         )?;
     }
     let deployment = DeploymentSpec::parse(
@@ -453,7 +473,8 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 },
             )
             .await
-            .map_err(|err| anyhow::anyhow!("addon {}: {err}", addon.addon_id));
+            .map_err(dyn_err)
+            .with_context(|| format!("addon {}", addon.addon_id));
         let root = startup_step(&game_id, "fetch addon", fetch)?;
         prepared_addons.push(PreparedAddon {
             plugin_id: addon.plugin_id.clone(),
@@ -519,7 +540,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             .await
             .map_err(anyhow::Error::from)
             .and_then(|r| {
-                r.with_context(|| format!("restore snapshot into {}", server_dir.display()))
+                r.map_err(|e| LocalPathError::new("restore snapshot into", &server_dir, e).into())
             });
         startup_step(&game_id, "restore snapshot", restore)?;
     }
@@ -1939,13 +1960,32 @@ mod requires_stop_tests {
 
     #[test]
     fn cs2_startup_log_does_not_copy_the_underlying_error() {
-        let error = anyhow::anyhow!("secret-config-value (os error 5)")
+        let error = anyhow::anyhow!(r"secret-config-value C:\Users\Varde\fake.cfg (os error 5)")
             .context(StartupStage("launch server"));
         let line = startup_diagnostic(&error).unwrap();
         assert_eq!(line.stream, "agent");
         assert!(line.line.contains("launch server"));
         assert!(line.line.contains("os error 5"));
         assert!(!line.line.contains("secret-config-value"));
+        assert!(!line.line.contains("fake.cfg"));
+    }
+
+    #[test]
+    fn cs2_startup_log_includes_only_the_typed_local_path() {
+        let path =
+            std::path::Path::new(r"C:\Program Files (x86)\Steam\game\csgo\cfg\varde_srv.cfg");
+        let cause = || std::io::Error::other("secret argument and config contents (os error 5)");
+        let errors: [executor_api::DynError; 2] = [
+            LocalPathError::io("write private config", path, cause()).into(),
+            LocalPathError::new("write private config", path, cause()).into(),
+        ];
+        for e in errors {
+            let error = dyn_err(e).context(StartupStage("configure server"));
+            let line = startup_diagnostic(&error).unwrap();
+            assert!(line.line.contains(path.to_str().unwrap()), "{}", line.line);
+            assert!(line.line.contains("os error 5"));
+            assert!(!line.line.contains("secret"));
+        }
     }
 
     #[tokio::test]

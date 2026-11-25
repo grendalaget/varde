@@ -99,10 +99,10 @@ impl NativeHandle {
             .kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(|e| {
-            format!(
-                "spawn {} (working directory {}): {e}",
-                spec.program.display(),
-                spec.cwd.display()
+            LocalPathError::new(
+                format!("spawn from working directory {}:", spec.cwd.display()),
+                &spec.program,
+                e,
             )
         })?;
         let pid = child.id().unwrap_or(0);
@@ -142,10 +142,10 @@ impl NativeHandle {
 
         #[cfg(windows)]
         let job = {
-            let job = Job::new().map_err(|e| format!("job for {}: {e}", spec.program.display()))?;
+            let job = Job::new().map_err(|e| LocalPathError::new("job for", &spec.program, e))?;
             // assign via raw handle while we still have the Child
             job.assign(&child)
-                .map_err(|e| format!("job for {}: {e}", spec.program.display()))?;
+                .map_err(|e| LocalPathError::new("job for", &spec.program, e))?;
             Arc::new(job)
         };
 

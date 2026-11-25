@@ -28,10 +28,7 @@ const BANS: [&str; 2] = ["banned_user.cfg", "banned_ip.cfg"];
 const INFO_REQUEST: &[u8] = b"\xff\xff\xff\xffTSource Engine Query\0";
 
 fn path_error(operation: &str, path: &Path, error: io::Error) -> io::Error {
-    io::Error::new(
-        error.kind(),
-        format!("{operation} {}: {error}", path.display()),
-    )
+    executor_api::LocalPathError::io(operation, path, error)
 }
 
 fn check_install_space(dir: &Path, available: u64) -> Result<()> {
@@ -40,9 +37,10 @@ fn check_install_space(dir: &Path, available: u64) -> Result<()> {
     }
     let installed = allocated_install_bytes(dir)?;
     if available.saturating_add(installed) < MIN_DISK_BYTES {
-        return Err(format!(
-            "cs2: incomplete install requires a 75 GB disk budget ({} bytes free, {} bytes already installed)",
-            available, installed
+        return Err(executor_api::LocalPathError::new(
+            "cs2: incomplete install at",
+            dir,
+            format_args!("requires a 75 GB disk budget ({available} bytes free, {installed} bytes already installed)"),
         )
         .into());
     }
@@ -469,7 +467,7 @@ impl Cs2Driver {
         }
         let available = fs2::available_space(dir)
             .map_err(|e| path_error("check free space for CS2 install", dir, e))?;
-        check_install_space(dir, available).map_err(|e| format!("{e} at {}", dir.display()))?;
+        check_install_space(dir, available)?;
         let _updated = match ctx.runtimes.steam_app_install(APP_ID, dir).await {
             Ok(()) => true,
             Err(error) => {
