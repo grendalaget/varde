@@ -25,6 +25,9 @@ pub const APP_ID: u32 = 730;
 pub const PORT: u32 = 27015;
 const MIN_DISK_BYTES: u64 = 75_000_000_000;
 const BANS: [&str; 2] = ["banned_user.cfg", "banned_ip.cfg"];
+/// A first start downloads the workshop map before the server is up; large
+/// maps are several GB.
+const WORKSHOP_STARTUP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const INFO_REQUEST: &[u8] = b"\xff\xff\xff\xffTSource Engine Query\0";
 
 fn path_error(operation: &str, path: &Path, error: io::Error) -> io::Error {
@@ -89,6 +92,21 @@ impl Cs2Driver {
 
     fn addon_mode(ctx: &DriverContext<'_>) -> bool {
         ctx.addons.iter().any(|addon| addon.target == "game")
+    }
+
+    /// Whether the server runs from its own tree under `cs2-servers/` rather
+    /// than straight from the install: needed for addons, and on Linux for
+    /// workshop maps so their downloads stay out of the player's Steam install.
+    fn own_root(ctx: &DriverContext<'_>) -> bool {
+        Self::addon_mode(ctx)
+            || (cfg!(target_os = "linux")
+                && Self::workshop_map(ctx.config).is_ok_and(|id| id.is_some()))
+    }
+
+    fn workshop_dir(ctx: &DriverContext<'_>) -> Result<PathBuf> {
+        let root = Self::addon_root(ctx)?;
+        let id = root.file_name().ok_or("cs2: server id is empty")?;
+        Ok(ctx.deployment_dir.join("cs2-workshop").join(id))
     }
 
     fn valid_server_id(server_id: &str) -> bool {
@@ -354,10 +372,16 @@ impl Cs2Driver {
             let destination = root_runtime.join(&name);
             if name == "cs2" {
                 Self::copy_file(&entry.path(), &destination)?;
+            } else if name == "steamapps" {
+                continue;
             } else {
                 Self::symlink(&entry.path(), &destination)?;
             }
         }
+
+        let workshop = Self::workshop_dir(ctx)?;
+        std::fs::create_dir_all(&workshop)?;
+        Self::symlink(&workshop, &root_runtime.join("steamapps"))?;
 
         let source_csgo = source_game.join("csgo");
         let root_csgo = root_game.join("csgo");
@@ -518,7 +542,7 @@ impl Cs2Driver {
     }
 
     fn game_dir(ctx: &DriverContext<'_>) -> Result<PathBuf> {
-        Ok(if Self::addon_mode(ctx) {
+        Ok(if Self::own_root(ctx) {
             Self::addon_root(ctx)?.join("game/csgo")
         } else if Self::selected(ctx)?.is_some() {
             ctx.deployment_dir.join("cs2-runtime/csgo")
@@ -628,6 +652,45 @@ impl Cs2Driver {
         Ok(map)
     }
 
+    /// Steam Workshop item to host instead of `map`: a published file ID or
+    /// a steamcommunity.com link to it.
+    fn workshop_map(cfg: &Value) -> Result<Option<u64>> {
+        let value = Self::string(cfg, "workshop_map", "")?.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        let id = if value.bytes().all(|b| b.is_ascii_digit()) {
+            value
+        } else {
+            let rest = value
+                .strip_prefix("https://")
+                .or_else(|| value.strip_prefix("http://"))
+                .unwrap_or(value);
+            let (host, rest) = rest.split_once('/').unwrap_or((rest, ""));
+            let path = rest.split(['?', '#']).next().unwrap_or("");
+            let query = rest.split_once('?').map_or("", |(_, q)| q);
+            let query = query.split('#').next().unwrap_or("");
+            if !matches!(host, "steamcommunity.com" | "www.steamcommunity.com")
+                || !matches!(
+                    path.trim_end_matches('/'),
+                    "sharedfiles/filedetails" | "workshop/filedetails"
+                )
+            {
+                return Err("cs2: workshop_map must be a Steam Workshop link or item ID".into());
+            }
+            query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("id="))
+                .ok_or("cs2: workshop_map link has no item ID")?
+        };
+        match id.parse::<u64>() {
+            Ok(n) if n > 0 && !id.starts_with('0') && id.bytes().all(|b| b.is_ascii_digit()) => {
+                Ok(Some(n))
+            }
+            _ => Err("cs2: workshop_map must be a Steam Workshop link or item ID".into()),
+        }
+    }
+
     fn cfg(cfg: &Value) -> Result<String> {
         Ok(format!(
             "hostname \"{}\"\nsv_password \"{}\"\nbot_quota_mode normal\nbot_quota {}\n",
@@ -657,9 +720,13 @@ impl Cs2Driver {
             mode.to_string().into(),
             "+exec".into(),
             "varde.cfg".into(),
-            "+map".into(),
-            Self::map(cfg)?.into(),
         ];
+        // `+host_workshop_map` only works once a map is up: on its own the
+        // server never logs on to Steam, so boot the stock map first.
+        args.extend(["+map".into(), Self::map(cfg)?.into()]);
+        if let Some(id) = Self::workshop_map(cfg)? {
+            args.extend(["+host_workshop_map".into(), id.to_string().into()]);
+        }
         let token = Self::string(cfg, "gslt", "")?;
         if !token.is_empty() {
             args.extend(["+sv_setsteamaccount".into(), token.into()]);
@@ -729,7 +796,7 @@ impl Cs2Driver {
     }
 
     fn startup_command(ctx: &DriverContext<'_>) -> Result<String> {
-        let name = if Self::addon_mode(ctx) {
+        let name = if Self::own_root(ctx) {
             "varde.cfg".to_string()
         } else {
             Self::shared_config(ctx)?.map_or_else(
@@ -814,7 +881,10 @@ fn parse_reply(data: &[u8]) -> Option<QueryReply<'_>> {
     }
 }
 
-async fn a2s_ready(port: u16, map: &str) -> Result<bool> {
+/// Whether the server answers A2S_INFO with player slots and `map` loaded,
+/// or with `workshop` any other map: workshop servers boot `map`, then
+/// switch to the workshop map under its own name once it is downloaded.
+async fn a2s_ready(port: u16, map: &str, workshop: bool) -> Result<bool> {
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
     socket
         .connect((std::net::Ipv4Addr::LOCALHOST, port))
@@ -832,7 +902,7 @@ async fn a2s_ready(port: u16, map: &str) -> Result<bool> {
             Some(QueryReply::Info {
                 map: actual,
                 max_players,
-            }) => return Ok(actual == map && max_players > 0),
+            }) => return Ok(max_players > 0 && !actual.is_empty() && (actual == map) != workshop),
             None => return Ok(false),
         }
     }
@@ -858,6 +928,13 @@ impl GameDriver for Cs2Driver {
     fn addon_targets(&self) -> &'static [&'static str] {
         &["game"]
     }
+    fn startup_timeout(&self, cfg: &Value) -> Duration {
+        if Self::workshop_map(cfg).is_ok_and(|id| id.is_some()) {
+            WORKSHOP_STARTUP_TIMEOUT
+        } else {
+            DEFAULT_STARTUP_TIMEOUT
+        }
+    }
     fn validate(&self, cfg: &Value) -> Result<()> {
         if Self::string(cfg, "server_name", "")?.trim().is_empty() {
             return Err("cs2: server_name is required".into());
@@ -875,13 +952,22 @@ impl GameDriver for Cs2Driver {
         Self::prepare_install(ctx, steam::detect_client()).await
     }
     async fn configure(&self, ctx: &DriverContext<'_>) -> Result<()> {
-        let addon_mode = Self::addon_mode(ctx);
         #[cfg(not(target_os = "linux"))]
-        if addon_mode {
+        if Self::addon_mode(ctx) {
             return Err("cs2: server addons are only supported on Linux hosts".into());
         }
         self.validate(ctx.config)?;
-        if addon_mode {
+        #[cfg(not(target_os = "linux"))]
+        if Self::workshop_map(ctx.config)?.is_some()
+            && Self::selected(ctx)?.is_some_and(|install| !install.managed)
+        {
+            return Err(
+                "cs2: workshop maps would download into your Steam install; on this \
+                 system they need Varde's own CS2 install"
+                    .into(),
+            );
+        }
+        if Self::own_root(ctx) {
             #[cfg(target_os = "linux")]
             Self::rebuild_addon_root(ctx, &Self::gameinfo_search_paths(ctx)?)?;
         } else {
@@ -931,9 +1017,9 @@ impl GameDriver for Cs2Driver {
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
         let mut env = Vec::new();
-        let addon_mode = Self::addon_mode(ctx);
+        let own_root = Self::own_root(ctx);
         let selected = Self::selected(ctx)?;
-        let program = if addon_mode {
+        let program = if own_root {
             #[cfg(target_os = "linux")]
             {
                 Self::addon_root(ctx)?.join("game/bin/linuxsteamrt64/cs2")
@@ -952,7 +1038,7 @@ impl GameDriver for Cs2Driver {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(path_error("remove CS2 readiness marker", &marker, e).into()),
         }
-        if !addon_mode {
+        if !own_root {
             if let Some((_, name)) = Self::shared_config(ctx)? {
                 let index = args
                     .iter()
@@ -961,7 +1047,7 @@ impl GameDriver for Cs2Driver {
                 args[index + 1] = name.into();
             }
         }
-        let cwd = if addon_mode {
+        let cwd = if own_root {
             Self::addon_root(ctx)?
         } else if selected.is_some() {
             let game = Self::game_dir(ctx)?;
@@ -1027,7 +1113,7 @@ impl GameDriver for Cs2Driver {
             return Err("cs2: install became incomplete before launch".into());
         }
         let spec = self.process_spec(ctx)?;
-        let config = if Self::addon_mode(ctx) {
+        let config = if Self::own_root(ctx) {
             None
         } else {
             let current = if cfg!(windows) && !managed {
@@ -1042,9 +1128,10 @@ impl GameDriver for Cs2Driver {
     }
     async fn probe(&self, ctx: &DriverContext<'_>, _: &dyn ProcessHandle) -> Result<GameHealth> {
         let map = Self::map(ctx.config)?;
+        let workshop = Self::workshop_map(ctx.config)?.is_some();
         let port = u16::try_from(ctx.local_port(PORT))?;
         let ready = matches!(
-            tokio::time::timeout(Duration::from_millis(500), a2s_ready(port, map)).await,
+            tokio::time::timeout(Duration::from_millis(500), a2s_ready(port, map, workshop)).await,
             Ok(Ok(true))
         );
         if ready {
@@ -1075,7 +1162,7 @@ impl GameDriver for Cs2Driver {
                     .await
                     .map_err(|e| path_error("write CS2 readiness marker", &marker, e))?;
             }
-            if !Self::addon_mode(ctx) {
+            if !Self::own_root(ctx) {
                 Self::remove_shared_config(ctx).await?;
             }
             Ok(GameHealth::Healthy)
@@ -1099,7 +1186,7 @@ impl GameDriver for Cs2Driver {
         Ok(())
     }
     async fn graceful_stop(&self, _ctx: &DriverContext<'_>, p: &dyn ProcessHandle) -> Result<()> {
-        let _cleanup = if Self::addon_mode(_ctx) {
+        let _cleanup = if Self::own_root(_ctx) {
             None
         } else {
             Self::shared_config(_ctx)?
@@ -1123,7 +1210,7 @@ impl GameDriver for Cs2Driver {
                 }
             }
         }
-        if !Self::addon_mode(_ctx) {
+        if !Self::own_root(_ctx) {
             Self::remove_shared_config(_ctx).await?;
         }
         Ok(())

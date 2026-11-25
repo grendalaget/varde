@@ -1315,7 +1315,7 @@ fn startup_commands_preserve_positive_bot_quotas() {
 fn dashboard_null_optional_config_uses_defaults() {
     let driver = Cs2Driver::new();
     let cfg = json!({"server_name":"Varde"});
-    let dashboard = json!({"server_name":"Varde","password":null,"gslt":null,"game_mode":"competitive","map":"de_dust2","max_players":10,"bots":0});
+    let dashboard = json!({"server_name":"Varde","password":null,"gslt":null,"workshop_map":null,"game_mode":"competitive","map":"de_dust2","max_players":10,"bots":0});
     driver.validate(&dashboard).unwrap();
     assert_eq!(
         Cs2Driver::cfg(&dashboard).unwrap(),
@@ -1329,6 +1329,7 @@ fn dashboard_null_optional_config_uses_defaults() {
     for key in [
         "password",
         "gslt",
+        "workshop_map",
         "game_mode",
         "map",
         "max_players",
@@ -1378,6 +1379,9 @@ fn validation_defaults_bounds_and_injection() {
         ("game_mode", json!("unknown")),
         ("gslt", json!("+quit")),
         ("gslt", json!(false)),
+        ("workshop_map", json!("+quit")),
+        ("workshop_map", json!("3837286244;quit")),
+        ("workshop_map", json!(3837286244u64)),
     ] {
         let mut invalid = cfg.clone();
         invalid[key] = value;
@@ -1393,6 +1397,133 @@ fn validation_defaults_bounds_and_injection() {
         cfg["bots"] = json!(n);
         driver.validate(&cfg).unwrap();
     }
+}
+
+#[test]
+fn workshop_map_ids_and_links() {
+    for (value, expected) in [
+        (json!(null), None),
+        (json!(""), None),
+        (json!("  "), None),
+        (json!("3837286244"), Some(3837286244)),
+        (json!(" 3837286244 "), Some(3837286244)),
+        (
+            json!("https://steamcommunity.com/sharedfiles/filedetails/?id=3837286244"),
+            Some(3837286244),
+        ),
+        (
+            json!(
+                "https://steamcommunity.com/sharedfiles/filedetails?id=3837286244&searchtext=aurum"
+            ),
+            Some(3837286244),
+        ),
+        (
+            json!("steamcommunity.com/workshop/filedetails/?l=english&id=3070244462#top"),
+            Some(3070244462),
+        ),
+        (
+            json!("http://www.steamcommunity.com/sharedfiles/filedetails/?id=1"),
+            Some(1),
+        ),
+    ] {
+        let cfg = json!({"server_name":"Varde","workshop_map":value});
+        assert_eq!(Cs2Driver::workshop_map(&cfg).unwrap(), expected, "{value}");
+        Cs2Driver.validate(&cfg).unwrap();
+    }
+    for value in [
+        "0",
+        "0123",
+        "-1",
+        "18446744073709551616",
+        "de_dust2",
+        "https://steamcommunity.com/sharedfiles/filedetails/",
+        "https://steamcommunity.com/sharedfiles/filedetails/?id=",
+        "https://steamcommunity.com/sharedfiles/filedetails/?id=12abc",
+        "https://steamcommunity.com/sharedfiles/filedetails/?xid=12",
+        "https://steamcommunity.com/id/someone/?id=3837286244",
+        "https://evil.example/sharedfiles/filedetails/?id=3837286244",
+        "https://steamcommunity.com.evil.example/sharedfiles/filedetails/?id=1",
+        "3837286244 +quit",
+    ] {
+        let cfg = json!({"server_name":"Varde","workshop_map":value});
+        assert!(Cs2Driver::workshop_map(&cfg).is_err(), "accepted {value}");
+        assert!(Cs2Driver.validate(&cfg).is_err(), "accepted {value}");
+    }
+}
+
+#[test]
+fn workshop_map_replaces_map_and_extends_startup() {
+    let stock = json!({"server_name":"Varde","map":"de_inferno"});
+    assert_eq!(Cs2Driver.startup_timeout(&stock), DEFAULT_STARTUP_TIMEOUT);
+    let mut cfg = stock.clone();
+    cfg["workshop_map"] =
+        json!("https://steamcommunity.com/sharedfiles/filedetails/?id=3837286244");
+    cfg["gslt"] = json!("0123456789abcdef0123456789abcdef");
+    let args = Cs2Driver::args(&cfg, PORT).unwrap();
+    let tail: Vec<OsString> = [
+        "varde.cfg",
+        "+map",
+        "de_inferno",
+        "+host_workshop_map",
+        "3837286244",
+        "+sv_setsteamaccount",
+        "0123456789abcdef0123456789abcdef",
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
+    assert_eq!(&args[args.len() - tail.len()..], tail);
+    assert_eq!(Cs2Driver.startup_timeout(&cfg), WORKSHOP_STARTUP_TIMEOUT);
+    assert!(WORKSHOP_STARTUP_TIMEOUT > DEFAULT_STARTUP_TIMEOUT);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn workshop_map_runs_from_own_root_with_private_downloads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_addon_install(tmp.path());
+    std::fs::create_dir_all(install.join("game/bin/linuxsteamrt64/steamapps/workshop")).unwrap();
+    let config = json!({"server_name":"Workshop","workshop_map":"3837286244"});
+    let deployment = DeploymentSpec::parse(&json!({}));
+    let server_dir = tmp.path().join("server-state");
+    let mut ctx = context(tmp.path(), &config, &deployment);
+    ctx.server_dir = &server_dir;
+    select_install(&ctx, &install, None);
+    let source_hash = tree_hash(&install);
+    let root = tmp.path().join("cs2-servers/cs2-test");
+    let downloads = tmp.path().join("cs2-workshop/cs2-test");
+
+    Cs2Driver.configure(&ctx).await.unwrap();
+
+    let steamapps = root.join("game/bin/linuxsteamrt64/steamapps");
+    assert_eq!(std::fs::read_link(&steamapps).unwrap(), downloads);
+    std::fs::write(steamapps.join("appworkshop_730.acf"), "downloaded").unwrap();
+    assert!(root.join("game/csgo/cfg/varde.cfg").is_file());
+    assert!(!install.join("game/csgo/cfg/varde_cs2-test.cfg").exists());
+    assert_eq!(source_hash, tree_hash(&install));
+
+    let spec = Cs2Driver.process_spec(&ctx).unwrap();
+    assert_eq!(spec.program, root.join("game/bin/linuxsteamrt64/cs2"));
+    assert_eq!(spec.cwd, root);
+    let exec = spec.args.iter().position(|arg| arg == "+exec").unwrap();
+    assert_eq!(spec.args[exec + 1], "varde.cfg");
+    assert!(!spec.args.iter().any(|arg| arg == "-game"));
+    assert_eq!(
+        Cs2Driver::startup_command(&ctx).unwrap(),
+        "exec varde.cfg; bot_kick; bot_quota 0"
+    );
+
+    Cs2Driver.configure(&ctx).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(steamapps.join("appworkshop_730.acf")).unwrap(),
+        "downloaded"
+    );
+
+    let stock = json!({"server_name":"Workshop"});
+    ctx.config = &stock;
+    Cs2Driver.configure(&ctx).await.unwrap();
+    assert!(!root.exists());
+    assert_eq!(source_hash, tree_hash(&install));
 }
 
 #[test]
@@ -1488,11 +1619,14 @@ fn captured_a2s_and_malformed_packets() {
 
 #[tokio::test]
 async fn udp_challenge_readiness_and_rejections() {
-    for (map, zero_capacity, malformed, expected) in [
-        ("de_dust2", false, false, true),
-        ("de_inferno", false, false, false),
-        ("de_dust2", true, false, false),
-        ("de_dust2", false, true, false),
+    for (map, workshop, zero_capacity, malformed, expected) in [
+        ("de_dust2", false, false, false, true),
+        ("de_inferno", false, false, false, false),
+        ("de_dust2", false, true, false, false),
+        ("de_dust2", false, false, true, false),
+        ("de_inferno", true, false, false, true),
+        ("de_dust2", true, false, false, false),
+        ("de_inferno", true, true, false, false),
     ] {
         let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let port = socket.local_addr().unwrap().port();
@@ -1512,7 +1646,7 @@ async fn udp_challenge_readiness_and_rejections() {
             }
             socket.send_to(&packet, addr).await.unwrap();
         });
-        assert_eq!(a2s_ready(port, map).await.unwrap(), expected);
+        assert_eq!(a2s_ready(port, map, workshop).await.unwrap(), expected);
         task.await.unwrap();
     }
 }

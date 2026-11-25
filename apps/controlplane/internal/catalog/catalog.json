@@ -70,6 +70,7 @@
       { "name": "password", "type": "secret", "secret": true, "required": false },
       { "name": "game_mode", "type": "select", "options": ["casual", "competitive", "wingman", "retakes", "arms_race", "deathmatch"], "default": "competitive" },
       { "name": "map", "type": "string", "default": "de_dust2" },
+      { "name": "workshop_map", "label": "Workshop map", "type": "string", "required": false, "help": "Optional. A Steam Workshop map link or item ID. Hosts it instead of the map above; players download it from Steam when they join." },
       { "name": "max_players", "type": "int", "default": 10, "min": 2, "max": 64 },
       { "name": "bots", "type": "int", "default": 0, "min": 0, "max": 64, "help": "0 for none" },
       { "name": "gslt", "label": "Steam server token (GSLT)", "type": "secret", "secret": true, "required": false, "help": "Optional. Leave it blank when friends join through Varde: their connections count as local. Only players connecting without Varde need the server to have a Steam Game Server Login Token." }

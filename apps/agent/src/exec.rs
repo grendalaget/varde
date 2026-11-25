@@ -602,7 +602,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         let mut running = false;
         let mut probe_dead = false;
         let mut exit_status = None;
-        let probe_deadline = Instant::now() + Duration::from_secs(120);
+        let probe_deadline = Instant::now() + driver.startup_timeout(ctx.config);
         while Instant::now() < probe_deadline && !exit_watch.is_finished() && exit_status.is_none()
         {
             match driver.probe(&ctx, &*proc).await {

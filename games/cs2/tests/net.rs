@@ -335,3 +335,141 @@ async fn run_instance(root: &Path, name: &str, bots: u8, barrier: &tokio::sync::
         "server never answered with the configured map and nonzero capacity"
     );
 }
+
+/// VARDE_CS2_WORKSHOP_TEST=1 also hosts a real workshop map
+/// (VARDE_CS2_WORKSHOP_ID, default "Dust 2 Peek & Prefire").
+#[tokio::test]
+async fn real_cs2_workshop_map_downloads_privately() {
+    if std::env::var("VARDE_NET_TESTS").as_deref() != Ok("1")
+        || std::env::var("VARDE_CS2_WORKSHOP_TEST").as_deref() != Ok("1")
+    {
+        eprintln!("skipping; set VARDE_NET_TESTS=1 VARDE_CS2_WORKSHOP_TEST=1");
+        return;
+    }
+    let id = std::env::var("VARDE_CS2_WORKSHOP_ID").unwrap_or_else(|_| "3840167415".into());
+    let install = steam::detect(None).expect("set VARDE_STEAM_DIR or VARDE_CS2_DIR");
+    let marker = steam::binary(&install.dir).with_file_name("steam_appid.txt");
+    let mut before = installation_files(&install.dir);
+    before.remove(&marker);
+    let tmp = tempfile::tempdir().unwrap();
+    let name = "cs2-workshop";
+    let deployment_dir = tmp.path().join("deployment");
+    let server_dir = tmp.path().join("server");
+    std::fs::create_dir_all(&deployment_dir).unwrap();
+    std::fs::create_dir_all(&server_dir).unwrap();
+    let cfg = serde_json::json!({
+        "server_name": name,
+        "map": "de_dust2",
+        "workshop_map": format!("https://steamcommunity.com/sharedfiles/filedetails/?id={id}"),
+    });
+    let deployment = DeploymentSpec::parse(&serde_json::json!({}));
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let bindings = [PortBinding {
+        service_port: PORT,
+        local_port: port.into(),
+        protocol: GameProtocol::Udp,
+    }];
+    let ctx = DriverContext {
+        server_id: name,
+        server_dir: &server_dir,
+        deployment_dir: &deployment_dir,
+        runtimes: &ExistingInstall,
+        deployment: &deployment,
+        config: &cfg,
+        ports: &bindings,
+        memory_mb: 4096,
+        addons: &[],
+    };
+    let driver = Cs2Driver::new();
+    driver.validate(&cfg).unwrap();
+    driver.prepare(&ctx).await.unwrap();
+    driver.configure(&ctx).await.unwrap();
+    let spec = driver.process_spec(&ctx).unwrap();
+    assert!(spec.args.iter().any(|s| s == "+host_workshop_map"));
+    let home = server_dir.join("empty-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let start = Instant::now();
+    let process = driver.spawn(&ctx, &IsolatedHome(home)).await.unwrap();
+    let ready = tokio::time::timeout(driver.startup_timeout(&cfg), async {
+        loop {
+            if matches!(driver.probe(&ctx, &*process).await, Ok(GameHealth::Healthy)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .is_ok();
+    let elapsed = start.elapsed().as_secs_f64();
+    let map = if ready { map_name(port).await } else { None };
+    println!("CS2 workshop {id} ready={ready} elapsed={elapsed:.1}s map={map:?}");
+    driver.graceful_stop(&ctx, &*process).await.unwrap();
+    if tokio::time::timeout(Duration::from_secs(15), process.wait())
+        .await
+        .is_err()
+    {
+        process.kill().await.unwrap();
+        process.wait().await.unwrap();
+    }
+    for line in process.output_tail(2000) {
+        let lower = line.line.to_ascii_lowercase();
+        if lower.contains("workshop") || lower.contains("addon") || lower.contains("lan only") {
+            println!("CS2 LOG {}", line.line);
+        }
+    }
+    let downloads = deployment_dir.join("cs2-workshop").join(name);
+    let downloaded: Vec<_> = installation_files(&downloads)
+        .into_keys()
+        .filter(|path| path.to_string_lossy().contains(&id))
+        .collect();
+    println!("CS2 workshop files: {downloaded:?}");
+    let mut after = installation_files(&install.dir);
+    after.remove(&marker);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|(path, meta)| before.get(*path) != Some(*meta))
+        .map(|(path, _)| path.clone())
+        .chain(before.keys().filter(|p| !after.contains_key(*p)).cloned())
+        .collect();
+    assert!(ready, "workshop server did not become ready");
+    assert!(map.is_some_and(|map| !map.is_empty() && map != "de_dust2"));
+    assert!(
+        downloaded
+            .iter()
+            .any(|path| path.extension().is_some_and(|e| e == "vpk")),
+        "workshop map not downloaded into the private directory"
+    );
+    assert!(
+        changed.is_empty(),
+        "shared installation changed: {changed:?}"
+    );
+}
+
+async fn map_name(port: u16) -> Option<String> {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.ok()?;
+    socket
+        .connect((std::net::Ipv4Addr::LOCALHOST, port))
+        .await
+        .ok()?;
+    let mut request = b"\xff\xff\xff\xffTSource Engine Query\0".to_vec();
+    let mut buf = [0; 2048];
+    for _ in 0..2 {
+        socket.send(&request).await.ok()?;
+        let n = tokio::time::timeout(Duration::from_secs(1), socket.recv(&mut buf))
+            .await
+            .ok()?
+            .ok()?;
+        if buf.get(..5)? == b"\xff\xff\xff\xffA" && n == 9 {
+            request.extend_from_slice(&buf[5..9]);
+            continue;
+        }
+        let mut rest = buf.get(6..n)?;
+        let end = rest.iter().position(|b| *b == 0)?;
+        rest = &rest[end + 1..];
+        let end = rest.iter().position(|b| *b == 0)?;
+        return Some(String::from_utf8_lossy(&rest[..end]).into_owned());
+    }
+    None
+}

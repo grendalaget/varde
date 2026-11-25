@@ -77,6 +77,23 @@ before applying addons. This mode is Linux-only. The supervisor calls
 Automatic crash restarts reuse that root, so Ready Up can recover a match from
 its saved state.
 
+The optional `workshop_map` setting takes a Steam Workshop item ID or a
+`steamcommunity.com/sharedfiles/filedetails/?id=<id>` link. The server boots
+the stock `map`, then runs `+host_workshop_map <id>`: CS2 refuses the command
+before a map is up, and never logs on to Steam if it is the only map command.
+The server then downloads the item through Steam (anonymous logon works, so
+no GSLT is needed) and switches to it under the map's own name. Workshop
+starts allow 30 minutes instead of the usual 120 seconds, and the server is
+ready once it reports a map other than the stock one. On Linux, workshop
+servers run from the per-server root above, whose
+`game/bin/linuxsteamrt64/steamapps` (where CS2 puts `workshop/content/730`)
+is a link to `<deployment_dir>/cs2-workshop/<server-id>`: downloads persist
+across restarts on that machine and never land in the player's Steam install.
+On other systems a workshop map is refused when the selected install belongs
+to the Steam client. Workshop content is not part of snapshots; a failover
+host downloads the map again. Players' clients download the map from Steam
+when they join.
+
 Without addons, the driver launches the original binary. Current Linux and
 Windows builds ignore the private `-game` directory, so shared installs use one
 uniquely named `game/csgo/cfg/varde_<server-id>.cfg`, containing the server
