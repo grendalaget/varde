@@ -46,6 +46,13 @@ fn generated_name(name: &str) -> bool {
         })
 }
 
+#[cfg(windows)]
+fn generated_lock_name(name: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|n| n.strip_suffix(".lock"))
+        .is_some_and(generated_name)
+}
+
 fn managed(path: &Path) -> io::Result<bool> {
     let mut header = [0; MARKER.len() + 32 + 1];
     let result = File::open(path).and_then(|mut file| file.read_exact(&mut header));
@@ -177,25 +184,62 @@ fn clear_readonly(
 }
 
 #[cfg(windows)]
-pub(crate) fn clear_managed_readonly(dir: &Path) -> io::Result<()> {
+pub(crate) fn visit_managed_files(
+    dir: &Path,
+    mut visit: impl FnMut(&Path, bool) -> io::Result<()>,
+) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     let entries =
         std::fs::read_dir(dir).map_err(|e| path_error("list CS2 startup configs", dir, e))?;
     for entry in entries {
         let entry = entry.map_err(|e| path_error("read CS2 config directory entry", dir, e))?;
         let name = entry.file_name();
-        if let Some(name) = name.to_str() {
-            if generated_name(name) {
-                clear_readonly(&entry.path(), |path, _| managed(path))?;
-            } else if name
-                .strip_prefix('.')
-                .and_then(|n| n.strip_suffix(".lock"))
-                .is_some_and(generated_name)
+        let Some(name) = name.to_str() else { continue };
+        let lock = generated_lock_name(name);
+        if !lock && !generated_name(name) {
+            continue;
+        }
+        let path = entry.path();
+        let result = (|| {
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|e| path_error("inspect CS2 startup file", &path, e))?;
+            if metadata.is_file()
+                && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && if lock {
+                    metadata.len() == 0
+                } else {
+                    managed(&path)?
+                }
             {
-                clear_readonly(&entry.path(), |_, metadata| Ok(metadata.len() == 0))?;
+                visit(&path, lock)?;
             }
+            Ok::<(), io::Error>(())
+        })();
+        match result {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            result => result?,
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn repair_managed_files(
+    dir: &Path,
+    mut grant: impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    visit_managed_files(dir, |path, lock| {
+        grant(path)?;
+        clear_readonly(path, |path, metadata| {
+            if lock {
+                Ok(metadata.len() == 0)
+            } else {
+                managed(path)
+            }
+        })
+    })
 }
 
 impl Drop for SharedConfig {
@@ -230,7 +274,15 @@ mod tests {
             set_readonly(file, true);
         }
 
-        clear_managed_readonly(root.path()).unwrap();
+        let mut granted = Vec::new();
+        repair_managed_files(root.path(), |path| {
+            granted.push(path.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(granted.len(), 2);
+        assert!(granted.contains(&cfg));
+        assert!(granted.contains(&lock));
         assert!(!std::fs::metadata(&cfg).unwrap().permissions().readonly());
         assert!(!std::fs::metadata(&lock).unwrap().permissions().readonly());
         assert!(std::fs::metadata(&user_cfg)

@@ -23,28 +23,33 @@ fn checked_cfg_dir(install: &Path) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-pub(crate) fn repair(install: &Path) -> io::Result<()> {
+fn grant_modify(icacls: &Path, path: &Path) -> io::Result<()> {
     use std::os::windows::process::CommandExt;
 
-    let cfg = checked_cfg_dir(install)?;
-    let system = std::env::var_os("SystemRoot")
-        .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
-    let icacls = PathBuf::from(system).join("System32/icacls.exe");
-    let output = std::process::Command::new(&icacls)
-        .arg(&cfg)
+    let output = std::process::Command::new(icacls)
+        .arg(path)
         .args(["/grant", "*S-1-5-18:M", "/L"])
         .creation_flags(0x08000000)
         .output()
-        .map_err(|e| path_error("spawn ACL repair tool", &icacls, e))?;
+        .map_err(|e| path_error("spawn ACL repair tool", icacls, e))?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "grant SYSTEM modify rights on {}: {}: {}",
-            cfg.display(),
+            path.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    shared_config::clear_managed_readonly(&cfg)
+    Ok(())
+}
+
+pub(crate) fn repair(install: &Path) -> io::Result<()> {
+    let cfg = checked_cfg_dir(install)?;
+    let system = std::env::var_os("SystemRoot")
+        .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
+    let icacls = PathBuf::from(system).join("System32/icacls.exe");
+    grant_modify(&icacls, &cfg)?;
+    shared_config::repair_managed_files(&cfg, |path| grant_modify(&icacls, path))
 }
 
 fn probe(cfg: &Path) -> io::Result<()> {
@@ -58,7 +63,18 @@ fn probe(cfg: &Path) -> io::Result<()> {
         .open(&path)
         .map_err(|e| path_error("create CS2 config permission probe", &path, e))?;
     drop(file);
-    fs::remove_file(&path).map_err(|e| path_error("remove CS2 config permission probe", &path, e))
+    fs::remove_file(&path)
+        .map_err(|e| path_error("remove CS2 config permission probe", &path, e))?;
+    shared_config::visit_managed_files(cfg, |path, lock| {
+        if lock {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|e| path_error("open existing CS2 startup config lock", path, e))?;
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn ensure_writable(install: &Path) -> io::Result<()> {
@@ -92,5 +108,25 @@ mod tests {
         fs::create_dir_all(&cfg).unwrap();
         ensure_writable(root.path()).unwrap();
         assert_eq!(fs::read_dir(&cfg).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn probe_checks_existing_lock_files_without_rewriting_them() {
+        let cfg = tempfile::tempdir().unwrap();
+        let lock = cfg.path().join(".varde_stale.cfg.lock");
+        fs::write(&lock, "").unwrap();
+        let writable = fs::metadata(&lock).unwrap().permissions();
+        let mut readonly = writable.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&lock, readonly).unwrap();
+
+        let denied = probe(cfg.path());
+        fs::set_permissions(&lock, writable).unwrap();
+        let error = denied.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains(&*lock.to_string_lossy()));
+        probe(cfg.path()).unwrap();
+        assert_eq!(fs::read(&lock).unwrap(), b"");
+        assert_eq!(fs::read_dir(cfg.path()).unwrap().count(), 1);
     }
 }
