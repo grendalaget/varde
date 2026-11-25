@@ -52,7 +52,13 @@ export function ControlSelect<T extends string>({
           <button
             {...props}
             onKeyDownCapture={(event) => {
-              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              if (
+                (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.shiftKey
+              ) {
                 event.preventDefault();
                 event.stopPropagation();
               }
