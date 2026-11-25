@@ -9,6 +9,7 @@ import {
 import { dateTime, timeAgo } from "../lib/format";
 import { Link } from "../lib/router";
 import { useNodeName } from "../lib/session";
+import { HintText } from "./ControlHint";
 import { Empty } from "./ui";
 
 function EventRow({
@@ -77,13 +78,13 @@ function EventRow({
           )}
         </div>
         <div className="activity-trailing">
-          <time
+          <HintText
             className="shrink-0 text-[10px] text-muted"
             dateTime={new Date(when).toISOString()}
-            title={dateTime(when)}
+            hint={dateTime(when)}
           >
             {timeAgo(when)}
-          </time>
+          </HintText>
           {row.steps && (
             <span
               aria-hidden
@@ -101,7 +102,7 @@ function EventRow({
               {row.steps.map((step) => (
                 <li key={step.id}>
                   <span>{describeEvent(step, nodeName)}</span>
-                  <time title={dateTime(step.created_at)}>
+                  <time dateTime={new Date(step.created_at).toISOString()}>
                     {dateTime(step.created_at)}
                   </time>
                 </li>

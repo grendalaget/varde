@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api/client";
+import { ControlSelect } from "../components/ControlSelect";
+import { useConfirmation } from "../components/Confirmation";
 import {
   Avatar,
   Badge,
@@ -16,6 +18,7 @@ import { canAdmin, useSession } from "../lib/session";
 import { INVITE_TERMS, useInvite } from "../lib/invite";
 
 export default function Members() {
+  const confirmAction = useConfirmation();
   const { group, me, refreshMe } = useSession();
   const admin = canAdmin(group.role);
   const owner = group.role === "owner";
@@ -105,11 +108,16 @@ export default function Members() {
                 m.user_id !== me.user.id &&
                 (m.role !== "owner" || owner) ? (
                   <>
-                    <select
-                      aria-label={`Role for ${m.display_name}`}
-                      className="rounded-field border border-field-border bg-field px-3 py-1 text-sm text-field-foreground shadow-field transition-colors duration-150 hover:bg-field-hover"
+                    <ControlSelect
+                      label={`Role for ${m.display_name}`}
+                      className="w-28"
                       value={m.role}
-                      onChange={async (e) => {
+                      options={[
+                        ...(owner ? [{ value: "owner", label: "Owner" } as const] : []),
+                        { value: "admin", label: "Admin" },
+                        { value: "member", label: "Member" },
+                      ]}
+                      onChange={async (role) => {
                         const { error } = await api.PATCH(
                           "/v1/groups/{groupId}/members/{userId}",
                           {
@@ -119,25 +127,21 @@ export default function Members() {
                                 userId: m.user_id,
                               },
                             },
-                            body: {
-                              role: e.target.value as
-                                "owner" | "admin" | "member",
-                            },
+                            body: { role },
                           },
                         );
                         if (error) setErr(errorMessage(error));
                         void members.refresh();
                       }}
-                    >
-                      {owner && <option value="owner">Owner</option>}
-                      <option value="admin">Admin</option>
-                      <option value="member">Member</option>
-                    </select>
+                    />
                     <Button
                       variant="danger"
                       onClick={async () => {
                         if (
-                          !confirm(`Remove ${m.display_name} from the group?`)
+                          !(await confirmAction({
+                            title: `Remove ${m.display_name} from the group?`,
+                            action: "Remove member",
+                          }))
                         )
                           return;
                         await remove(m.user_id);
@@ -156,7 +160,10 @@ export default function Members() {
                       <Button
                         variant="ghost"
                         onClick={async () => {
-                          if (!confirm(`Leave ${group.name}?`)) return;
+                          if (!(await confirmAction({
+                            title: `Leave ${group.name}?`,
+                            action: "Leave group",
+                          }))) return;
                           if (!(await remove(m.user_id))) return;
                           await refreshMe();
                           navigate("/");

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api, errorMessage, type Node } from "../api/client";
 import type { paths } from "../api/schema";
+import { useConfirmation } from "../components/Confirmation";
 import {
   Badge,
   Button,
@@ -112,6 +113,7 @@ function MachineRow({
   hosting: string[];
   isThisPc: boolean;
 }) {
+  const confirmAction = useConfirmation();
   const { group, refreshNodes } = useSession();
   const admin = canAdmin(group.role);
   const [err, setErr] = useState<string | null>(null);
@@ -306,9 +308,11 @@ function MachineRow({
                 variant="danger"
                 onClick={async () => {
                   if (
-                    !confirm(
-                      `Remove ${n.name} from the group? A server it's hosting stops and restarts on another PC that can host, if there is one, from the newest save another online PC has a copy of. Save copies on ${n.name} stop counting, and it needs to be linked again to rejoin.`,
-                    )
+                    !(await confirmAction({
+                      title: `Remove ${n.name} from the group?`,
+                      action: "Remove machine",
+                      detail: `A server it's hosting stops and restarts on another PC that can host, if there is one, from the newest save another online PC has a copy of. Save copies on ${n.name} stop counting, and it needs to be linked again to rejoin.`,
+                    }))
                   )
                     return;
                   const { error } = await api.DELETE("/v1/nodes/{nodeId}", {

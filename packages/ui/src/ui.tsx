@@ -112,7 +112,7 @@ export function Field({
 }
 
 export const inputClass =
-  "w-full rounded-field border border-field-border bg-field px-3 py-1.5 text-sm text-field-foreground shadow-field outline-none transition-colors duration-150 ease-vd-out placeholder:text-field-placeholder hover:bg-field-hover focus:border-field-border-focus focus:bg-field-focus";
+  "min-h-9 w-full rounded-field border border-field-border bg-field px-3 py-1.5 text-sm text-field-foreground shadow-field outline-none transition-colors duration-150 ease-vd-out placeholder:text-field-placeholder hover:bg-field-hover focus:border-field-border-focus focus:bg-field-focus focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 export function ErrorNote({
   children,
@@ -130,7 +130,7 @@ export function ErrorNote({
     >
       {children}
       {detail ? (
-        <details className="mt-1.5">
+        <details className="vd-disclosure mt-1.5">
           <summary className="cursor-pointer text-xs opacity-80 underline-offset-2 transition-opacity hover:underline hover:opacity-100">
             Additional information
           </summary>

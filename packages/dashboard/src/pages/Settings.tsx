@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage, type Schemas } from "../api/client";
+import { useConfirmation } from "../components/Confirmation";
+import { ControlNumber } from "../components/ControlNumber";
 import {
   Avatar,
   Button,
@@ -22,6 +24,7 @@ import PluginSettingsPanel from "./PluginSettings";
 type GroupSettings = Schemas["GroupSettings"];
 
 export default function Settings() {
+  const confirmAction = useConfirmation();
   const { group, me, refreshMe, selectGroup } = useSession();
   const { linkSteam } = usePlatform();
   const loc = useLocation();
@@ -92,17 +95,17 @@ export default function Settings() {
 
   if (!s) return <PageLoader />;
 
-  const num = (k: keyof GroupSettings) => (
-    <input
-      type="number"
+  const num = (k: keyof GroupSettings, label: string, help?: string) => (
+    <ControlNumber
+      label={label}
+      help={help}
       min={1}
-      className={inputClass}
       disabled={!admin}
       value={(s[k] as number | undefined) ?? ""}
-      onChange={(e) =>
+      onChange={(value) =>
         setS({
           ...s,
-          [k]: e.target.value === "" ? undefined : Number(e.target.value),
+          [k]: value === "" ? undefined : Number(value),
         })
       }
     />
@@ -155,21 +158,10 @@ export default function Settings() {
             subtitle="Defaults for new servers. Each server can override them."
           />
           <div className="grid gap-4 p-4 sm:grid-cols-2">
-            <Field label="Save every (seconds)">
-              {num("snapshot_interval_s")}
-            </Field>
-            <Field label="Keep saves" help="Newest safe saves kept per server">
-              {num("snapshot_retention")}
-            </Field>
-            <Field
-              label="Copies per save"
-              help="How many machines should hold each save"
-            >
-              {num("default_replication_factor")}
-            </Field>
-            <Field label="Copies before a save counts as safe">
-              {num("default_min_commit_replicas")}
-            </Field>
+            {num("snapshot_interval_s", "Save every (seconds)")}
+            {num("snapshot_retention", "Keep saves", "Newest safe saves kept per server")}
+            {num("default_replication_factor", "Copies per save", "How many machines should hold each save")}
+            {num("default_min_commit_replicas", "Copies before a save counts as safe")}
             <div className="flex items-start gap-3 sm:col-span-2">
               <Toggle
                 checked={!!s.require_anchor_for_commit}
@@ -301,9 +293,11 @@ export default function Settings() {
                 variant="danger"
                 onClick={async () => {
                   if (
-                    prompt(
-                      `Type the group name (${group.name}) to delete it`,
-                    ) !== group.name
+                    !(await confirmAction({
+                      title: `Delete ${group.name}?`,
+                      action: "Delete group",
+                      expected: group.name,
+                    }))
                   )
                     return;
                   setDeleteErr(null);

@@ -1,6 +1,7 @@
 import { cx, Surface } from "@varde/ui/ui";
 import { Mark, StateCairn } from "./Logo";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { HintButton, HintText } from "./ControlHint";
 
 // Shared with the tray and installer (packages/ui); the rest of this file is
 // the dashboard's own set.
@@ -73,18 +74,16 @@ export function Badge({
     neutral: "bg-default/60 text-muted ring-border",
     host: "bg-default/60 text-foreground ring-border",
   };
-  return (
-    <span
-      title={title}
-      className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
-        slab ? "rounded-[9px_12px_8px_11px]" : "rounded-full",
-        t[tone],
-        className,
-      )}
-    >
-      {children}
-    </span>
+  const classes = cx(
+    "inline-flex items-center gap-1 whitespace-nowrap px-2 py-0.5 text-xs font-medium ring-1 ring-inset transition-colors duration-300 ease-vd-out",
+    slab ? "rounded-[9px_12px_8px_11px]" : "rounded-full",
+    t[tone],
+    className,
+  );
+  return title ? (
+    <HintText hint={title} className={classes}>{children}</HintText>
+  ) : (
+    <span className={classes}>{children}</span>
   );
 }
 
@@ -357,9 +356,9 @@ export function CopyText({
     return () => clearTimeout(timer.current);
   }, [text]);
   const copyButton = (
-    <button
+    <HintButton
       type="button"
-      title={copied ? "Copied" : "Copy"}
+      hint={copied ? "Copied" : "Copy"}
       aria-label={copied ? "Copied" : `Copy ${text}`}
       onClick={() => {
         if (!navigator.clipboard) return;
@@ -415,7 +414,7 @@ export function CopyText({
           <path d="M20 6 9 17l-5-5" />
         </svg>
       </span>
-    </button>
+    </HintButton>
   );
   return href ? (
     <span className="inline-flex min-w-0 max-w-full items-center gap-2">

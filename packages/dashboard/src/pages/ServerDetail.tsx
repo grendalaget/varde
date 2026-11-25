@@ -33,6 +33,10 @@ import { canAdmin, useNodeName, useSession } from "../lib/session";
 import EventList from "../components/EventList";
 import { useMergedEvents } from "../lib/activity";
 import { ConfigInput } from "../components/ConfigInput";
+import { ControlSelect } from "../components/ControlSelect";
+import { ControlHint, HintText } from "../components/ControlHint";
+import { ControlNumber } from "../components/ControlNumber";
+import { useConfirmation } from "../components/Confirmation";
 import { isWideField } from "../lib/configField";
 import SaveSafety from "../components/SaveSafety";
 import { INVITE_TERMS, useInvite } from "../lib/invite";
@@ -425,7 +429,7 @@ function Saves({
       {snapshots.length === 0 ? (
         <Empty>No saves yet.</Empty>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="vd-scroll overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wider text-muted">
               <tr>
@@ -449,12 +453,13 @@ function Saves({
                 return (
                   <tr key={x.id}>
                     <td className="px-4 py-2">
-                      <div
+                      <HintText
                         className="text-foreground"
-                        title={dateTime(x.created_at)}
+                        dateTime={new Date(x.created_at).toISOString()}
+                        hint={dateTime(x.created_at)}
                       >
                         {timeAgo(x.created_at)}
-                      </div>
+                      </HintText>
                       <div className="text-xs text-muted">
                         {REASON[x.reason] ?? x.reason} · on{" "}
                         {nodeName(x.node_id)}
@@ -499,19 +504,20 @@ function Saves({
                       {bytes(x.size_bytes)}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <Button
-                        variant="ghost"
-                        title={x.pinned ? "Unpin" : "Keep this save forever"}
-                        onClick={async () => {
-                          await api.PATCH("/v1/snapshots/{snapshotId}", {
-                            params: { path: { snapshotId: x.id } },
-                            body: { pinned: !x.pinned },
-                          });
-                          await refresh();
-                        }}
-                      >
-                        {x.pinned ? "Pinned" : "Pin"}
-                      </Button>
+                      <ControlHint text={x.pinned ? "Unpin" : "Keep this save forever"}>
+                        <Button
+                          variant="ghost"
+                          onClick={async () => {
+                            await api.PATCH("/v1/snapshots/{snapshotId}", {
+                              params: { path: { snapshotId: x.id } },
+                              body: { pinned: !x.pinned },
+                            });
+                            await refresh();
+                          }}
+                        >
+                          {x.pinned ? "Pinned" : "Pin"}
+                        </Button>
+                      </ControlHint>
                     </td>
                   </tr>
                 );
@@ -555,25 +561,22 @@ function Logs({ s, executions }: { s: Server; executions: Execution[] }) {
       title="Logs"
       actions={
         executions.length > 0 && (
-          <select
-            className="max-w-48 rounded-md border border-field-border bg-field px-2 py-1 text-sm transition-colors duration-150 sm:max-w-none"
+          <ControlSelect
+            label="Execution"
+            className="w-48 sm:w-64"
             value={effective}
-            onChange={(e) => setExecId(e.target.value)}
-          >
-            {executions.map((e) => (
-              <option key={e.id} value={e.id}>
-                {nodeName(e.node_id)} ·{" "}
-                {e.started_at ? dateTime(e.started_at) : "not started"}
-                {e.ended_at ? "" : " (current)"}
-              </option>
-            ))}
-          </select>
+            options={executions.map((e) => ({
+              value: e.id,
+              label: `${nodeName(e.node_id)} · ${e.started_at ? dateTime(e.started_at) : "not started"}${e.ended_at ? "" : " (current)"}`,
+            }))}
+            onChange={setExecId}
+          />
         )
       }
     >
       <pre
         ref={box}
-        className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-foreground"
+        className="vd-scroll max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed text-foreground"
       >
         {(logs.data?.lines ?? []).length === 0
           ? "No log lines."
@@ -603,6 +606,7 @@ function ServerSettings({
   s: Server;
   onSaved: () => Promise<void>;
 }) {
+  const confirmAction = useConfirmation();
   const { group, nodes } = useSession();
   const games = useGames();
   const game = games.get(s.game_id);
@@ -720,33 +724,24 @@ function ServerSettings({
               </div>
             </Field>
           </div>
-          <Field label="Save every (seconds)">
-            <input
-              type="number"
-              min={30}
-              className={inputClass}
-              value={interval}
-              onChange={(e) => setIntervalS(Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Copies per save">
-            <input
-              type="number"
-              min={1}
-              className={inputClass}
-              value={rf}
-              onChange={(e) => setRf(Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Copies before a save counts as safe">
-            <input
-              type="number"
-              min={1}
-              className={inputClass}
-              value={mcr}
-              onChange={(e) => setMcr(Number(e.target.value))}
-            />
-          </Field>
+          <ControlNumber
+            label="Save every (seconds)"
+            min={30}
+            value={interval}
+            onChange={(value) => setIntervalS(Number(value))}
+          />
+          <ControlNumber
+            label="Copies per save"
+            min={1}
+            value={rf}
+            onChange={(value) => setRf(Number(value))}
+          />
+          <ControlNumber
+            label="Copies before a save counts as safe"
+            min={1}
+            value={mcr}
+            onChange={(value) => setMcr(Number(value))}
+          />
         </div>
       </DetailSection>
       <ErrorNote>{err}</ErrorNote>
@@ -757,9 +752,11 @@ function ServerSettings({
             type="button"
             onClick={async () => {
               if (
-                prompt(
-                  `Type the server name (${s.name}) to delete it and its saves`,
-                ) !== s.name
+                !(await confirmAction({
+                  title: `Delete ${s.name} and its saves?`,
+                  action: "Delete server",
+                  expected: s.name,
+                }))
               )
                 return;
               const { error } = await api.DELETE("/v1/servers/{serverId}", {
@@ -818,7 +815,7 @@ function Details({ s, executions }: { s: Server; executions: Execution[] }) {
         title="Executions"
         subtitle="Each run holds a lease; a new epoch fences the previous one."
       >
-        <div className="overflow-x-auto">
+        <div className="vd-scroll overflow-x-auto">
           <table className="w-full font-mono text-xs">
             <thead className="text-left uppercase tracking-wider text-muted">
               <tr>

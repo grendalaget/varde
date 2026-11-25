@@ -1,6 +1,7 @@
 import { FAVICON } from "@varde/ui/brandPaths";
 import { Mark, type MarkState } from "@varde/ui/Logo";
 import { cx } from "@varde/ui/ui";
+import { HintText } from "./ControlHint";
 
 // The brand marks are shared with the tray and installer (packages/ui);
 // what follows builds the dashboard's own status marks on top of them.
@@ -70,17 +71,19 @@ export function HostMarker({
   name: string;
   className?: string;
 }) {
+  const currentHost = `${name} is hosting this server`;
   return (
-    <span
+    <HintText
+      hint={currentHost}
       className={cx(
         "inline-flex items-center gap-1.5 text-foreground",
         className,
       )}
-      title={`${name} is hosting this server`}
     >
       <Ember key={nodeId} />
-      <span className="truncate">{name}</span>
-    </span>
+      <span className="truncate" aria-hidden>{name}</span>
+      <span className="sr-only">{currentHost}</span>
+    </HintText>
   );
 }
 

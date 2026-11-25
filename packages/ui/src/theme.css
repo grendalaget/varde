@@ -134,14 +134,11 @@
   --chart-5: oklch(85% 0.08 37.96);
 }
 
-select option {
-  background-color: var(--surface);
-  color: var(--foreground);
-}
-
 html {
   color-scheme: dark;
   scroll-behavior: smooth;
+  scrollbar-color: var(--scrollbar) transparent;
+  scrollbar-width: thin;
 }
 
 body {
@@ -151,6 +148,139 @@ body {
 
 ::selection {
   background: var(--color-skifer-600);
+}
+
+@layer components {
+  .vd-choice-popover,
+  .vd-control-hint {
+    z-index: 60;
+    max-width: calc(100vw - 2rem);
+    border: 1px solid var(--separator);
+    border-radius: var(--radius);
+    box-shadow: var(--mouve-raised-shadow);
+  }
+
+  .vd-control-hint {
+    max-width: min(18rem, calc(100vw - 2rem));
+    padding: 0.375rem 0.625rem;
+    border-radius: calc(var(--radius) / 2);
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  :is(.vd-choice-popover, .vd-control-hint)[data-entering="true"] {
+    animation: vd-choice-reveal 240ms var(--ease-vd-out) both;
+  }
+
+  :is(.vd-choice-popover, .vd-control-hint)[data-exiting="true"] {
+    animation: vd-choice-reveal 200ms var(--ease-vd-out) reverse both;
+  }
+
+  .vd-choice-popover [data-slot="list-box-item"] {
+    overflow-wrap: anywhere;
+  }
+
+  .vd-group-trigger {
+    padding-inline-end: 2rem;
+  }
+
+  .vd-group-trigger[aria-expanded="true"] {
+    border-color: var(--field-border-focus);
+    background-color: var(--field-focus);
+  }
+
+  .vd-confirm-dialog {
+    border: 1px solid var(--separator);
+    border-radius: var(--radius);
+    box-shadow: var(--mouve-raised-shadow);
+  }
+
+  .vd-number-input {
+    appearance: textfield;
+  }
+
+  .vd-number-input::-webkit-inner-spin-button,
+  .vd-number-input::-webkit-outer-spin-button {
+    appearance: none;
+  }
+}
+
+@layer base {
+  :where(a[href], button, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+  }
+}
+
+.vd-scroll {
+  scrollbar-color: var(--scrollbar) transparent;
+  scrollbar-width: thin;
+}
+
+.vd-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vd-disclosure > summary {
+  list-style: none;
+}
+
+.vd-disclosure > summary::before {
+  content: "";
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-inline: 0.1em 0.6em;
+  margin-block-end: 0.15em;
+  border-inline-end: 1px solid;
+  border-block-end: 1px solid;
+  rotate: -45deg;
+  transition: rotate 240ms var(--ease-vd-out);
+}
+
+.vd-disclosure[open] > summary::before {
+  rotate: 45deg;
+}
+
+@supports (interpolate-size: allow-keywords) and selector(::details-content) {
+  .vd-disclosure::details-content {
+    interpolate-size: allow-keywords;
+    overflow: clip;
+    transition:
+      block-size 240ms var(--ease-vd-out),
+      opacity 240ms var(--ease-vd-out),
+      content-visibility 240ms allow-discrete;
+  }
+
+  .vd-disclosure:not([open])::details-content {
+    block-size: 0;
+    opacity: 0;
+  }
+
+  .vd-disclosure[open]::details-content {
+    block-size: auto;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vd-disclosure::details-content {
+      transition: none;
+    }
+  }
+}
+
+@keyframes vd-choice-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes vd-choice-reveal {
+    from {
+      opacity: 0;
+    }
+  }
 }
 
 /* Brand marks: stones use currentColor (Tåke on Natt); Glød is only the lit
@@ -316,9 +446,9 @@ body {
   html {
     scroll-behavior: auto;
   }
-  *,
-  *::before,
-  *::after {
+  :not(.keep-motion, .keep-motion *),
+  :not(.keep-motion, .keep-motion *)::before,
+  :not(.keep-motion, .keep-motion *)::after {
     transition-duration: 0.01ms !important;
   }
 }
@@ -846,9 +976,6 @@ main:has(.server-detail) {
 }
 .machine-list > article > div:first-child {
   padding: 22px 20px;
-}
-.member-row select {
-  max-width: 110px;
 }
 @media (prefers-reduced-motion: reduce) {
   .activity-steps,
