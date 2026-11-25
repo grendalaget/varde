@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AsciiClouds } from "@varde/ui/ui";
 import { api, errorMessage } from "../api/client";
+import { ControlSelect } from "../components/ControlSelect";
 import {
   Button,
   Card,
@@ -88,19 +89,16 @@ export default function LinkDevice({ code }: { code: string }) {
                   onChange={(e) => setName(e.target.value)}
                 />
               </Field>
-              <Field label="Group">
-                <select
-                  className={inputClass}
-                  value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
-                >
-                  {adminGroups.map((g) => (
-                    <option key={g.group_id} value={g.group_id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <ControlSelect
+                label="Group"
+                showLabel
+                value={groupId}
+                onChange={setGroupId}
+                options={adminGroups.map((g) => ({
+                  value: g.group_id,
+                  label: g.name,
+                }))}
+              />
               <ErrorNote>{err}</ErrorNote>
               <Button
                 variant="primary"

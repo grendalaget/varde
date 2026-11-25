@@ -111,7 +111,7 @@ export default function AddMachine() {
             </Button>
           </form>
         </Card>
-        <details className="group">
+        <details className="vd-disclosure group">
           <summary className="cursor-pointer list-none rounded-lg px-1 py-1 text-sm text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
             <span className="underline underline-offset-2">
               Set up another kind of device

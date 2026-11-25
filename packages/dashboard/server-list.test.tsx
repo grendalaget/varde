@@ -59,6 +59,8 @@ test("table and phone cards keep names, state, host, address copy and safe-save 
   ])
     expect(html).toContain(`>${column}</th>`);
   expect(html).toContain('scope="row"');
+  expect(html).toContain('<tr class="vd-hairline-row">');
+  expect(html).toContain('<header class="vd-hairline-end">');
   expect(html).toContain('href="/servers/server-1"');
   expect(html).toContain('aria-label="Copy 127.77.238.6:7777"');
   expect(html).toContain("Living Room Mini");

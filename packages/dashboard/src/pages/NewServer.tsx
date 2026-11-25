@@ -29,6 +29,7 @@ import {
 } from "../lib/games";
 import { configDefaults } from "../lib/config-defaults";
 import { ConfigInput } from "../components/ConfigInput";
+import { ControlSelect } from "../components/ControlSelect";
 import { isWideField } from "../lib/configField";
 import {
   applyCs2Mode,
@@ -401,19 +402,15 @@ function Cs2Settings({
       {mode && (
         <Section n={4} title="Map">
           <div className="grid gap-3 sm:grid-cols-2">
-            <select
-              className={inputClass}
-              aria-label="Map"
+            <ControlSelect
+              label="Map"
               value={otherMap ? "" : map}
-              onChange={(e) => onChange({ ...config, map: e.target.value })}
-            >
-              {mode.maps.map((id) => (
-                <option key={id} value={id}>
-                  {mapName(id)}
-                </option>
-              ))}
-              <option value="">Another map…</option>
-            </select>
+              options={[
+                ...mode.maps.map((id) => ({ value: id, label: mapName(id) })),
+                { value: "", label: "Another map…" },
+              ]}
+              onChange={(map) => onChange({ ...config, map })}
+            />
             {otherMap && (
               <input
                 className={cx(inputClass, "font-mono")}
@@ -429,7 +426,16 @@ function Cs2Settings({
       )}
 
       {advanced.length > 0 && (
-        <details className="group rounded-2xl border border-separator bg-surface sm:ml-9">
+        <details
+          className="vd-disclosure group rounded-2xl border border-separator bg-surface sm:ml-9"
+          onInvalidCapture={(event) => {
+            const disclosure = event.currentTarget;
+            if (disclosure.open) return;
+            disclosure.dataset.validationOpen = "";
+            disclosure.open = true;
+            requestAnimationFrame(() => delete disclosure.dataset.validationOpen);
+          }}
+        >
           <summary className="cursor-pointer list-none rounded-2xl px-4 py-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
             <span className="font-medium text-foreground">Advanced</span>
             <span className="text-muted">

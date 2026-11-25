@@ -1,15 +1,9 @@
 // Link / status window. Talks only to the tray process (typed commands),
 // which talks to the local Varde service.
 
-import {
-  Input,
-  Label,
-  ListBox,
-  Select,
-  Spinner,
-  TextField,
-} from "@heroui/react";
+import { Input, Spinner, TextField } from "@heroui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ControlSelect } from "@varde/dashboard/components/ControlSelect";
 import { Logo, Mark } from "@varde/ui/Logo";
 import {
   invoke,
@@ -21,6 +15,7 @@ import {
 import {
   Button,
   AsciiClouds,
+  cx,
   describeError,
   ErrorNote,
   errorParts,
@@ -643,32 +638,25 @@ export default function App() {
                 <p className="mt-2.5 text-sm leading-relaxed">
                   Pick the group this PC joins.
                 </p>
-                <Select
-                  selectedKey={fedGroup}
-                  onSelectionChange={(k) => setFedGroup(String(k))}
+                <ControlSelect
+                  label="Group"
+                  showLabel
                   className="mt-3.5 w-full"
-                >
-                  <Label>Group</Label>
-                  <Select.Trigger>
-                    <Select.Value />
-                    <Select.Indicator />
-                  </Select.Trigger>
-                  <Select.Popover>
-                    <ListBox>
-                      {fed.groups.map((g) => (
-                        <ListBox.Item key={g.id} id={g.id}>
-                          {g.name}
-                        </ListBox.Item>
-                      ))}
-                    </ListBox>
-                  </Select.Popover>
-                </Select>
+                  value={fedGroup}
+                  onChange={setFedGroup}
+                  options={fed.groups.map((g) => ({ value: g.id, label: g.name }))}
+                />
               </>
             )}
             {fed.stage === "error" && (
               <ErrorNote detail={fed.detail}>{fed.message}</ErrorNote>
             )}
-            <div className="mt-3.5 flex flex-wrap gap-2">
+            <div
+              className={cx(
+                "mt-3.5 flex flex-wrap gap-2",
+                fed.stage === "pick_group" && "vd-hairline pt-3",
+              )}
+            >
               {fed.stage === "confirm" && (
                 <Button
                   variant="primary"

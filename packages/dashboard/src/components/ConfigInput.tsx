@@ -1,6 +1,8 @@
 import { Checkbox } from "@heroui/react";
 import type { GameConfigField, Schemas } from "../api/client";
 import { Link } from "../lib/router";
+import { ControlSelect } from "./ControlSelect";
+import { ControlNumber } from "./ControlNumber";
 import { Field, inputClass, Toggle } from "./ui";
 
 type ConfigField = GameConfigField | Schemas["PluginField"];
@@ -120,53 +122,55 @@ export function ConfigInput({
       </Field>
     );
   }
+  if (f.type === "select") {
+    const options = (f.options ?? []).map((o) => ({
+      value: String(o),
+      label: optionLabel(String(o)),
+    }));
+    if ((value == null || value === "") && !f.options?.includes("")) {
+      options.unshift({ value: "", label: "Choose an option" });
+    }
+    return (
+      <ControlSelect
+        label={label}
+        showLabel
+        help={f.help}
+        disabled={disabled}
+        value={String(value ?? "")}
+        options={options}
+        onChange={onChange}
+      />
+    );
+  }
+  if (f.type === "int") {
+    return (
+      <ControlNumber
+        label={label}
+        help={f.help}
+        min={"min" in f ? f.min : undefined}
+        max={"max" in f ? f.max : undefined}
+        required={f.required}
+        disabled={disabled}
+        value={value == null ? "" : String(value)}
+        onChange={(next) => onChange(next === "" ? undefined : Number(next))}
+      />
+    );
+  }
   return (
     <Field label={label} help={f.help}>
-      {f.type === "select" ? (
-        <select
-          className={inputClass}
-          disabled={disabled}
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {(value == null || value === "") && !f.options?.includes("") && (
-            <option value="">Choose an option</option>
-          )}
-          {(f.options ?? []).map((o) => (
-            <option key={String(o)} value={String(o)}>
-              {optionLabel(String(o))}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          className={inputClass}
-          type={
-            f.type === "int"
-              ? "number"
-              : f.type === "secret" || f.secret
-                ? "password"
-                : "text"
-          }
-          required={f.required}
-          disabled={disabled}
-          value={value == null ? "" : String(value)}
-          placeholder={
-            f.type === "string" || f.type === "secret" || f.secret
-              ? placeholder
-              : undefined
-          }
-          onChange={(e) =>
-            onChange(
-              f.type === "int"
-                ? e.target.value === ""
-                  ? undefined
-                  : Number(e.target.value)
-                : e.target.value,
-            )
-          }
-        />
-      )}
+      <input
+        className={inputClass}
+        type={f.type === "secret" || f.secret ? "password" : "text"}
+        required={f.required}
+        disabled={disabled}
+        value={value == null ? "" : String(value)}
+        placeholder={
+          f.type === "string" || f.type === "secret" || f.secret
+            ? placeholder
+            : undefined
+        }
+        onChange={(e) => onChange(e.target.value)}
+      />
     </Field>
   );
 }

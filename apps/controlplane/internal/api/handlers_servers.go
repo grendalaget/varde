@@ -65,7 +65,7 @@ func genGame(g *catalog.Game) gen.Game {
 		fields = append(fields, gen.GameConfigField{
 			Name: f.Name, Label: &f.Label, Type: gen.GameConfigFieldType(f.Type),
 			Default: &f.Default, Required: &f.Required, Secret: &f.Secret,
-			Options: &f.Options, Help: &f.Help,
+			Options: &f.Options, Help: &f.Help, Min: f.Min, Max: f.Max,
 		})
 	}
 	oss := []gen.GameOs{}

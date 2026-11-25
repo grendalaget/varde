@@ -7,6 +7,9 @@ import {
   type Node,
 } from "./api/client";
 import { Logo, PageLoader } from "./components/Logo";
+import { ControlSelect } from "./components/ControlSelect";
+import { HintButton } from "./components/ControlHint";
+import { ConfirmationProvider } from "./components/Confirmation";
 import { AsciiClouds, navItemClass } from "@varde/ui/ui";
 import { Avatar, Button, cx, Dot, ErrorNote, TopGlow } from "./components/ui";
 import { Icon, type IconName } from "./components/icons";
@@ -42,6 +45,14 @@ const GROUP_KEY = "varde.group";
 const FED_AUTO_KEY = "varde.fed-auto";
 
 export default function App() {
+  return (
+    <ConfirmationProvider>
+      <DashboardApp />
+    </ConfirmationProvider>
+  );
+}
+
+function DashboardApp() {
   const platform = usePlatform();
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -460,39 +471,40 @@ function Layout() {
           >
             <Logo className="h-8" />
           </Link>
-          <label className="relative mb-4 flex items-center gap-2.5 rounded-xl border border-separator bg-background/50 p-2 transition-colors duration-150 focus-within:border-field-border-focus hover:border-field-border">
-            <Avatar name={group.name} className="size-8 rounded-lg text-xs" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[11px] font-medium uppercase tracking-wider text-muted">
-                Group
-              </span>
-              <span className="block truncate text-sm font-medium text-foreground">
-                {group.name}
-              </span>
-            </span>
-            <Icon name="chevrons" className="size-4 shrink-0 text-muted" />
-            {/* native select over the card: keyboard and screen readers get the real control */}
-            <select
-              aria-label="Group"
-              className="absolute inset-0 cursor-pointer opacity-0"
-              value={group.group_id}
-              onChange={(e) => {
-                if (e.target.value === "__new") navigate("/settings?new=1");
-                else {
-                  selectGroup(e.target.value);
-                  navigate("/");
-                }
-              }}
-            >
-              {me.groups.map((g) => (
-                <option key={g.group_id} value={g.group_id}>
-                  {g.name}
-                </option>
-              ))}
-              <option value="__new">New group</option>
-            </select>
-          </label>
-          <nav className="vd-stagger flex flex-col gap-0.5">
+          <ControlSelect
+            label="Group"
+            className="mb-2"
+            triggerClassName="vd-group-trigger flex items-center gap-2.5 rounded-xl border-separator bg-background/50 p-2 text-start shadow-none"
+            trigger={(selectedValue) => (
+              <>
+                <Avatar
+                  name={group.name}
+                  className="size-8 shrink-0 rounded-lg text-xs"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-muted">
+                    Group
+                  </span>
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {selectedValue}
+                  </span>
+                </span>
+              </>
+            )}
+            value={group.group_id}
+            options={[
+              ...me.groups.map((g) => ({ value: g.group_id, label: g.name })),
+              { value: "__new", label: "New group" },
+            ]}
+            onChange={(id) => {
+              if (id === "__new") navigate("/settings?new=1");
+              else {
+                selectGroup(id);
+                navigate("/");
+              }
+            }}
+          />
+          <nav className="vd-hairline vd-stagger mb-2 flex flex-col gap-0.5 pt-2 [--vd-rule-end:0.75rem] [--vd-rule-start:2.5rem]">
             {nav.map((n) => {
               const active = n.active(p);
               return (
@@ -516,25 +528,22 @@ function Layout() {
               );
             })}
           </nav>
-          <div className="mt-auto flex items-center gap-2.5 rounded-xl border border-separator bg-background/50 p-2.5">
+          <div className="vd-hairline mt-auto flex items-center gap-2.5 px-2.5 pt-4 [--vd-rule-end:0.75rem] [--vd-rule-start:2.5rem]">
             <Avatar name={me.user.display_name} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium text-foreground">
                 {me.user.display_name}
               </div>
-              <div
-                className="flex items-center gap-1.5 text-xs text-muted"
-                title="Live updates"
-              >
+              <div className="flex items-center gap-1.5 text-xs text-muted">
                 <span className={connected ? "vd-pulse" : undefined}>
                   <Dot tone={connected ? "green" : "warn"} />
                 </span>
                 {connected ? "Live" : "Reconnecting…"}
               </div>
             </div>
-            <button
+            <HintButton
               type="button"
-              title="Sign out"
+              hint="Sign out"
               aria-label="Sign out"
               className="rounded-lg p-1.5 text-muted transition-colors duration-150 hover:bg-surface-secondary hover:text-foreground"
               onClick={async () => {
@@ -546,7 +555,7 @@ function Layout() {
               }}
             >
               <Icon name="signout" className="size-[18px]" />
-            </button>
+            </HintButton>
           </div>
         </>
       }
@@ -610,7 +619,7 @@ function Shell({
       )}
       <aside
         className={cx(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-separator bg-surface px-3 py-5 transition-transform duration-300 ease-vd-out lg:sticky lg:top-0 lg:h-screen lg:w-[212px] lg:shrink-0 lg:translate-x-0",
+          "vd-scroll fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-y-auto border-r border-separator bg-surface px-3 py-5 transition-transform duration-300 ease-vd-out lg:sticky lg:top-0 lg:h-screen lg:w-[212px] lg:shrink-0 lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

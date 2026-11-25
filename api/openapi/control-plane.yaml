@@ -2042,6 +2042,8 @@ components:
           type: array
           items: { type: string }
         help: { type: string }
+        min: { type: number, format: double }
+        max: { type: number, format: double }
     GamePort:
       type: object
       required: [port, protocol]

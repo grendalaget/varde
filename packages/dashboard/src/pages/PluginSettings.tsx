@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage, type Schemas } from "../api/client";
 import { ConfigInput } from "../components/ConfigInput";
+import { useConfirmation } from "../components/Confirmation";
 import { initialFieldValue, updateFieldValue } from "../lib/configField";
 import { Button, Card, CardHeader, ErrorNote } from "../components/ui";
 import { useLoad } from "../lib/data";
@@ -100,6 +101,7 @@ function PluginSettings({
   refresh: () => Promise<void>;
   onClose?: () => void;
 }) {
+  const confirmAction = useConfirmation();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -178,7 +180,10 @@ function PluginSettings({
   }
 
   async function stop() {
-    if (!confirm(`Stop the server for ${plugin.name}?`)) return;
+    if (!(await confirmAction({
+      title: `Stop the server for ${plugin.name}?`,
+      action: "Stop server",
+    }))) return;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -198,7 +203,10 @@ function PluginSettings({
   }
 
   async function disable() {
-    if (!confirm(`Disable ${plugin.name} for this group?`)) return;
+    if (!(await confirmAction({
+      title: `Disable ${plugin.name} for this group?`,
+      action: "Disable plugin",
+    }))) return;
     setBusy(true);
     setError(null);
     setMessage(null);

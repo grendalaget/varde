@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage, type Schemas } from "../api/client";
+import { useConfirmation } from "../components/Confirmation";
 import { Badge, Button, Card, CardHeader, ErrorNote, PageHeader } from "../components/ui";
 import { PageLoader } from "../components/Logo";
 import { useLoad } from "../lib/data";
@@ -43,12 +44,16 @@ function DesktopPluginInstalls({
 }
 
 function WebAdminPlugins({ operator }: { operator: boolean }) {
+  const confirmAction = useConfirmation();
   const plugins = useLoad(() => api.GET("/v1/admin/plugins"), []);
   const [pending, setPending] = useState<{ id: string; action: Action } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function run(plugin: AdminPlugin, action: Action) {
-    if (action === "uninstall" && !confirm(`Uninstall ${plugin.name}?`)) return;
+    if (action === "uninstall" && !(await confirmAction({
+      title: `Uninstall ${plugin.name}?`,
+      action: "Uninstall plugin",
+    }))) return;
     setPending({ id: plugin.id, action });
     setErrors((current) => ({ ...current, [plugin.id]: "" }));
     const result = action === "install"
