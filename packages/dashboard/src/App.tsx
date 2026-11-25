@@ -473,7 +473,7 @@ function Layout() {
           </Link>
           <ControlSelect
             label="Group"
-            className="mb-4"
+            className="mb-2"
             triggerClassName="vd-group-trigger flex items-center gap-2.5 rounded-xl border-separator bg-background/50 p-2 text-start shadow-none"
             trigger={(selectedValue) => (
               <>
@@ -504,7 +504,7 @@ function Layout() {
               }
             }}
           />
-          <nav className="vd-stagger flex flex-col gap-0.5">
+          <nav className="vd-hairline vd-stagger mb-2 flex flex-col gap-0.5 pt-2 [--vd-rule-end:0.75rem] [--vd-rule-start:2.5rem]">
             {nav.map((n) => {
               const active = n.active(p);
               return (
@@ -528,7 +528,7 @@ function Layout() {
               );
             })}
           </nav>
-          <div className="mt-auto flex items-center gap-2.5 rounded-xl border border-separator bg-background/50 p-2.5">
+          <div className="vd-hairline mt-auto flex items-center gap-2.5 px-2.5 pt-4 [--vd-rule-end:0.75rem] [--vd-rule-start:2.5rem]">
             <Avatar name={me.user.display_name} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium text-foreground">

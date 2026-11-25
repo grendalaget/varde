@@ -31,7 +31,14 @@ export function CardHeader({
   icon?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-separator px-4 py-3">
+    <div
+      className={cx(
+        "vd-hairline-end flex items-start justify-between gap-4 px-4 py-3 [--vd-rule-end:calc(var(--spacing)*4)]",
+        icon
+          ? "[--vd-rule-start:calc(var(--spacing)*16)]"
+          : "[--vd-rule-start:calc(var(--spacing)*4)]",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-3">
         {icon && (
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-default text-muted ring-1 ring-inset ring-border">

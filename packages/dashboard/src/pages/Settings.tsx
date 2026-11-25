@@ -157,12 +157,16 @@ export default function Settings() {
             title="Saves & backups"
             subtitle="Defaults for new servers. Each server can override them."
           />
-          <div className="grid gap-4 p-4 sm:grid-cols-2">
-            {num("snapshot_interval_s", "Save every (seconds)")}
-            {num("snapshot_retention", "Keep saves", "Newest safe saves kept per server")}
-            {num("default_replication_factor", "Copies per save", "How many machines should hold each save")}
-            {num("default_min_commit_replicas", "Copies before a save counts as safe")}
-            <div className="flex items-start gap-3 sm:col-span-2">
+          <div className="vd-divided px-4">
+            <div className="grid gap-4 py-3 sm:grid-cols-2">
+              {num("snapshot_interval_s", "Save every (seconds)")}
+              {num("snapshot_retention", "Keep saves", "Newest safe saves kept per server")}
+            </div>
+            <div className="grid gap-4 py-3 sm:grid-cols-2">
+              {num("default_replication_factor", "Copies per save", "How many machines should hold each save")}
+              {num("default_min_commit_replicas", "Copies before a save counts as safe")}
+            </div>
+            <div className="py-3 [--vd-rule-start:calc(var(--spacing)*12)]">
               <Toggle
                 checked={!!s.require_anchor_for_commit}
                 disabled={!admin}
@@ -209,7 +213,7 @@ export default function Settings() {
               <p className="truncate text-xs text-muted">{me.user.email}</p>
             </div>
           </div>
-          <div className="border-t border-separator pt-4 text-xs font-medium uppercase tracking-wider text-muted">
+          <div className="vd-hairline pt-3 text-xs font-medium uppercase tracking-wider text-muted [--vd-rule-start:calc(var(--spacing)*14)]">
             Steam
           </div>
           {me.user.steam_id ? (

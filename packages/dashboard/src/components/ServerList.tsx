@@ -121,7 +121,7 @@ export function ServerList({
             {entries.map((entry) => {
               const s = entry.server;
               return (
-                <tr key={s.id}>
+                <tr className="vd-hairline-row" key={s.id}>
                   <th scope="row">
                     <Link className="server-list-name" to={`/servers/${s.id}`}>
                       {s.name}
@@ -158,7 +158,7 @@ export function ServerList({
           const s = entry.server;
           return (
             <article className="vd-surface server-list-card" key={s.id}>
-              <header>
+              <header className="vd-hairline-end">
                 <div>
                   <h2>
                     <Link className="server-list-name" to={`/servers/${s.id}`}>

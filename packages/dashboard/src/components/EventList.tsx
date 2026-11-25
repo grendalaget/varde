@@ -128,7 +128,7 @@ export default function EventList({
 }) {
   if (events.length === 0) return <Empty>Nothing has happened yet.</Empty>;
   return (
-    <ol className="activity-list">
+    <ol className="activity-list vd-divided">
       {groupSaveEvents(events)
         .slice(0, limit)
         .map((row) => (

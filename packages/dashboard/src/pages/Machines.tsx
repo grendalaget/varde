@@ -84,7 +84,7 @@ export default function Machines() {
           </Empty>
         </Card>
       ) : (
-        <Card className="machine-list divide-y divide-separator">
+        <Card className="machine-list vd-divided">
           {nodes.map((n) => (
             <MachineRow
               key={n.id}
@@ -266,7 +266,7 @@ function MachineRow({
         </Button>
       </div>
       {open && (
-        <div className="vd-reveal space-y-4 border-t border-separator px-4 py-4 text-sm">
+        <div className="vd-hairline vd-reveal space-y-4 px-4 py-4 text-sm">
           <div className="flex items-start gap-3">
             <Toggle
               checked={anchor}

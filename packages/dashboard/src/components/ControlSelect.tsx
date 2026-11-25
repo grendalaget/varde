@@ -70,7 +70,7 @@ export function ControlSelect<T extends string>({
         <Select.Indicator />
       </Select.Trigger>
       <Select.Popover className="vd-choice-popover keep-motion" offset={5}>
-        <ListBox>
+        <ListBox className="vd-divided [--vd-rule-end:0.5rem] [--vd-rule-offset:calc(var(--spacing)*-0.5)] [--vd-rule-start:0.5rem]">
           {options.map((option) => (
             <ListBox.Item
               key={option.value}

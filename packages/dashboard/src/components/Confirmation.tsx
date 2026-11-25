@@ -69,7 +69,13 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
                   if (enabled) close(true);
                 }}
               >
-                <AlertDialog.Header className="shrink-0">
+                <AlertDialog.Header
+                  className={
+                    options.detail || options.expected !== undefined
+                      ? "vd-hairline-end shrink-0 [--vd-rule-offset:-0.25rem]"
+                      : "shrink-0"
+                  }
+                >
                   <AlertDialog.Heading>{options.title}</AlertDialog.Heading>
                 </AlertDialog.Header>
                 {(options.detail || options.expected !== undefined) && (
@@ -88,7 +94,7 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
                     )}
                   </AlertDialog.Body>
                 )}
-                <AlertDialog.Footer className="shrink-0">
+                <AlertDialog.Footer className="vd-hairline shrink-0 [--vd-rule-offset:-0.625rem]">
                   <HeroButton
                     autoFocus={options.expected === undefined}
                     type="button"

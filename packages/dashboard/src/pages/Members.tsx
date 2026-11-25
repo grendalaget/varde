@@ -76,7 +76,7 @@ export default function Members() {
           (members.error ? errorMessage(members.error) : null)}
       </ErrorNote>
       <Card>
-        <ul className="vd-stagger divide-y divide-separator">
+        <ul className="vd-divided vd-stagger [--vd-rule-end:calc(var(--spacing)*5)] [--vd-rule-start:calc(var(--spacing)*17)]">
           {!members.loading &&
             !members.error &&
             !members.data?.members?.length && (

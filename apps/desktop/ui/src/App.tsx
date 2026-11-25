@@ -15,6 +15,7 @@ import {
 import {
   Button,
   AsciiClouds,
+  cx,
   describeError,
   ErrorNote,
   errorParts,
@@ -650,7 +651,12 @@ export default function App() {
             {fed.stage === "error" && (
               <ErrorNote detail={fed.detail}>{fed.message}</ErrorNote>
             )}
-            <div className="mt-3.5 flex flex-wrap gap-2">
+            <div
+              className={cx(
+                "mt-3.5 flex flex-wrap gap-2",
+                fed.stage === "pick_group" && "vd-hairline pt-3",
+              )}
+            >
               {fed.stage === "confirm" && (
                 <Button
                   variant="primary"
