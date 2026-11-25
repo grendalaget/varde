@@ -424,7 +424,10 @@ impl Cs2Driver {
     ) -> Result<()> {
         if let Some(install) = client {
             #[cfg(windows)]
-            windows_permissions::ensure_writable(&install.dir)?;
+            windows_permissions::ensure_writable(
+                &install.dir,
+                &Self::shared_config_name(ctx.server_id)?,
+            )?;
             return Self::prepare_shared(ctx, &install);
         }
         if let Some(install) = ctx.deployment_dir.parent().and_then(steam::in_deployments) {
@@ -706,21 +709,20 @@ impl Cs2Driver {
         Ok(())
     }
 
-    fn shared_config(ctx: &DriverContext<'_>) -> Result<Option<(PathBuf, String)>> {
-        let Some(install) = Self::selected(ctx)? else {
-            return Ok(None);
-        };
-        if ctx.server_id.is_empty()
-            || !ctx
-                .server_id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
+    fn shared_config_name(server_id: &str) -> Result<String> {
+        if !Self::valid_server_id(server_id) {
             return Err(
                 "cs2: server id must contain only letters, digits, underscores and hyphens".into(),
             );
         }
-        let name = format!("varde_{}", ctx.server_id);
+        Ok(format!("varde_{server_id}"))
+    }
+
+    fn shared_config(ctx: &DriverContext<'_>) -> Result<Option<(PathBuf, String)>> {
+        let Some(install) = Self::selected(ctx)? else {
+            return Ok(None);
+        };
+        let name = Self::shared_config_name(ctx.server_id)?;
         let path = install
             .dir
             .join("game/csgo/cfg")
@@ -1030,7 +1032,12 @@ impl GameDriver for Cs2Driver {
         let config = if Self::addon_mode(ctx) {
             None
         } else {
-            shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"))?;
+            let current = if cfg!(windows) && !managed {
+                Some(format!("{}.cfg", Self::shared_config_name(ctx.server_id)?))
+            } else {
+                None
+            };
+            shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"), current.as_deref())?;
             Self::create_shared_config(ctx)?
         };
         install_lock::spawn(executor, &spec, lock, config).await
