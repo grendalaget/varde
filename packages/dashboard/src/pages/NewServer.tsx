@@ -426,7 +426,16 @@ function Cs2Settings({
       )}
 
       {advanced.length > 0 && (
-        <details className="vd-disclosure group rounded-2xl border border-separator bg-surface sm:ml-9">
+        <details
+          className="vd-disclosure group rounded-2xl border border-separator bg-surface sm:ml-9"
+          onInvalidCapture={(event) => {
+            const disclosure = event.currentTarget;
+            if (disclosure.open) return;
+            disclosure.dataset.validationOpen = "";
+            disclosure.open = true;
+            requestAnimationFrame(() => delete disclosure.dataset.validationOpen);
+          }}
+        >
           <summary className="cursor-pointer list-none rounded-2xl px-4 py-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
             <span className="font-medium text-foreground">Advanced</span>
             <span className="text-muted">

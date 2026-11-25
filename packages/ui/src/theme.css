@@ -261,6 +261,10 @@ body {
     block-size: auto;
   }
 
+  .vd-disclosure[data-validation-open]::details-content {
+    transition: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .vd-disclosure::details-content {
       transition: none;
