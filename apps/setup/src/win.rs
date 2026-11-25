@@ -663,8 +663,8 @@ pub fn create_shortcut(lnk: &Path, target: &Path) -> Result<()> {
 pub fn launch_from_desktop(exe: &Path, args: &str) -> Result<()> {
     use windows::core::{Interface, BSTR};
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, IServiceProvider, CLSCTX_LOCAL_SERVER,
-        COINIT_APARTMENTTHREADED,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IDispatch, IServiceProvider,
+        CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Shell::{
@@ -681,35 +681,54 @@ pub fn launch_from_desktop(exe: &Path, args: &str) -> Result<()> {
     }
 
     unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            .ok()
+            .context("CoInitializeEx")?;
         let _apartment = Apartment;
-        let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER)?;
-        let desktop = windows.FindWindowSW(
-            &VARIANT::from(CSIDL_DESKTOP as i32),
-            &VARIANT::default(),
-            SWC_DESKTOP,
-            &mut 0,
-            SWFO_NEEDDISPATCH,
-        )?;
+        let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER)
+            .context("CoCreateInstance ShellWindows")?;
+        let desktop = windows
+            .FindWindowSW(
+                &VARIANT::from(CSIDL_DESKTOP as i32),
+                &VARIANT::default(),
+                SWC_DESKTOP,
+                &mut 0,
+                SWFO_NEEDDISPATCH,
+            )
+            .context("FindWindowSW desktop")?;
         let browser: IShellBrowser = desktop
-            .cast::<IServiceProvider>()?
-            .QueryService(&SID_STopLevelBrowser)?;
-        let view: IShellFolderViewDual = browser
-            .QueryActiveShellView()?
-            .GetItemObject(SVGIO_BACKGROUND)?;
-        let shell: IShellDispatch2 = view.Application()?.cast()?;
+            .cast::<IServiceProvider>()
+            .context("desktop IServiceProvider")?
+            .QueryService(&SID_STopLevelBrowser)
+            .context("QueryService SID_STopLevelBrowser")?;
+        // IShellView::GetItemObject(SVGIO_BACKGROUND) only returns IDispatch
+        // (or IContextMenu); requesting IShellFolderViewDual directly fails
+        // with E_NOINTERFACE (0x80004002).
+        let view_disp: IDispatch = browser
+            .QueryActiveShellView()
+            .context("QueryActiveShellView")?
+            .GetItemObject(SVGIO_BACKGROUND)
+            .context("GetItemObject SVGIO_BACKGROUND")?;
+        let view: IShellFolderViewDual = view_disp.cast().context("cast IShellFolderViewDual")?;
+        let shell: IShellDispatch2 = view
+            .Application()
+            .context("IShellFolderViewDual::Application")?
+            .cast()
+            .context("cast IShellDispatch2")?;
         let file = BSTR::from_wide(&exe.as_os_str().encode_wide().collect::<Vec<_>>());
         let dir = exe
             .parent()
             .context("tray executable has no parent directory")?;
         let dir = BSTR::from_wide(&dir.as_os_str().encode_wide().collect::<Vec<_>>());
-        shell.ShellExecute(
-            &file,
-            &VARIANT::from(BSTR::from(args)),
-            &VARIANT::from(dir),
-            &VARIANT::from("open"),
-            &VARIANT::from(SW_SHOWNORMAL.0),
-        )?;
+        shell
+            .ShellExecute(
+                &file,
+                &VARIANT::from(BSTR::from(args)),
+                &VARIANT::from(dir),
+                &VARIANT::from("open"),
+                &VARIANT::from(SW_SHOWNORMAL.0),
+            )
+            .context("IShellDispatch2::ShellExecute")?;
     }
     Ok(())
 }
