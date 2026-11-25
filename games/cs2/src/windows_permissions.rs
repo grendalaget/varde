@@ -33,12 +33,12 @@ fn checked_cfg_dir(install: &Path, create_cfg: bool) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-fn grant_modify(icacls: &Path, path: &Path) -> io::Result<()> {
+fn grant_modify(icacls: &Path, path: &Path, ace: &str) -> io::Result<()> {
     use std::os::windows::process::CommandExt;
 
     let output = std::process::Command::new(icacls)
         .arg(path)
-        .args(["/grant", "*S-1-5-18:M", "/L"])
+        .args(["/grant", ace, "/L"])
         .creation_flags(0x08000000)
         .output()
         .map_err(|e| path_error("spawn ACL repair tool", icacls, e))?;
@@ -62,8 +62,10 @@ fn repair_cfg(cfg: &Path, current: Option<&Path>) -> io::Result<()> {
     let system = std::env::var_os("SystemRoot")
         .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
     let icacls = PathBuf::from(system).join("System32/icacls.exe");
-    grant_modify(&icacls, cfg)?;
-    let grant = |path: &Path| grant_modify(&icacls, path);
+    // Files Varde creates here must inherit the grant, or SYSTEM cannot
+    // delete or reopen them on a later start.
+    grant_modify(&icacls, cfg, "*S-1-5-18:(OI)M")?;
+    let grant = |path: &Path| grant_modify(&icacls, path, "*S-1-5-18:M");
     if let Some(config) = current {
         shared_config::repair_managed_file(config, false, grant)?;
         shared_config::repair_managed_file(&shared_config::lock_path(config)?, true, grant)
