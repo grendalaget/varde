@@ -147,6 +147,8 @@ export function ConfigInput({
       <ControlNumber
         label={label}
         help={f.help}
+        min={"min" in f ? f.min : undefined}
+        max={"max" in f ? f.max : undefined}
         required={f.required}
         disabled={disabled}
         value={value == null ? "" : String(value)}

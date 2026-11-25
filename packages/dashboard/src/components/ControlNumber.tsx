@@ -7,6 +7,7 @@ export function ControlNumber({
   value,
   onChange,
   min,
+  max,
   required,
   disabled,
 }: {
@@ -15,6 +16,7 @@ export function ControlNumber({
   value: string | number;
   onChange: (value: string) => void;
   min?: number;
+  max?: number;
   required?: boolean;
   disabled?: boolean;
 }) {
@@ -45,6 +47,7 @@ export function ControlNumber({
           required={required}
           disabled={disabled}
           min={min}
+          max={max}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />

@@ -1308,6 +1308,8 @@ type GameConfigField struct {
 
 	// Label display name; clients fall back to a prettified name
 	Label    *string             `json:"label,omitempty"`
+	Max      *float64            `json:"max,omitempty"`
+	Min      *float64            `json:"min,omitempty"`
 	Name     string              `json:"name"`
 	Options  *[]string           `json:"options,omitempty"`
 	Required *bool               `json:"required,omitempty"`

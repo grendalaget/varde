@@ -41,3 +41,23 @@ test("number fields retain native validation and expose branded step controls", 
   expect(html).toContain('aria-label="Decrease Copies"');
   expect(html).toContain('aria-label="Increase Copies"');
 });
+
+test("integer config fields apply catalog bounds to the number input", () => {
+  const html = renderToStaticMarkup(
+    <ConfigInput
+      f={{
+        name: "max_players",
+        type: "int",
+        min: 2,
+        max: 64,
+        required: false,
+        secret: false,
+      }}
+      value={64}
+      onChange={() => {}}
+    />,
+  );
+  expect(html).toContain('type="number"');
+  expect(html).toContain('min="2"');
+  expect(html).toContain('max="64"');
+});

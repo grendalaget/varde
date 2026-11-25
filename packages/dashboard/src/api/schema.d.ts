@@ -1364,6 +1364,10 @@ export interface components {
             secret: boolean;
             options?: string[];
             help?: string;
+            /** Format: double */
+            min?: number;
+            /** Format: double */
+            max?: number;
         };
         GamePort: {
             port: number;
