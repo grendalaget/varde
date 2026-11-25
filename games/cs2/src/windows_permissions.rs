@@ -7,12 +7,22 @@ use crate::{path_error, shared_config};
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
-fn checked_cfg_dir(install: &Path) -> io::Result<PathBuf> {
+fn checked_cfg_dir(install: &Path, create_cfg: bool) -> io::Result<PathBuf> {
     let mut path = install.to_path_buf();
     for component in ["game", "csgo", "cfg"] {
         path.push(component);
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|e| path_error("inspect CS2 config directory", &path, e))?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Err(e) if create_cfg && component == "cfg" && e.kind() == io::ErrorKind::NotFound => {
+                match fs::create_dir(&path) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
+                    Err(e) => return Err(path_error("create CS2 config directory", &path, e)),
+                }
+                fs::symlink_metadata(&path)
+            }
+            result => result,
+        }
+        .map_err(|e| path_error("inspect CS2 config directory", &path, e))?;
         if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(io::Error::other(format!(
                 "CS2 config directory is not a regular directory: {}",
@@ -44,7 +54,7 @@ fn grant_modify(icacls: &Path, path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn repair(install: &Path) -> io::Result<()> {
-    let cfg = checked_cfg_dir(install)?;
+    let cfg = checked_cfg_dir(install, false)?;
     let system = std::env::var_os("SystemRoot")
         .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
     let icacls = PathBuf::from(system).join("System32/icacls.exe");
@@ -78,7 +88,7 @@ fn probe(cfg: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn ensure_writable(install: &Path) -> io::Result<()> {
-    let cfg = checked_cfg_dir(install).map_err(|e| {
+    let cfg = checked_cfg_dir(install, true).map_err(|e| {
         io::Error::other(format!(
             "{e}; reinstall or update Varde to repair CS2 access"
         ))
@@ -108,6 +118,15 @@ mod tests {
         fs::create_dir_all(&cfg).unwrap();
         ensure_writable(root.path()).unwrap();
         assert_eq!(fs::read_dir(&cfg).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn preflight_recreates_a_missing_config_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let csgo = root.path().join("game/csgo");
+        fs::create_dir_all(&csgo).unwrap();
+        ensure_writable(root.path()).unwrap();
+        assert!(csgo.join("cfg").is_dir());
     }
 
     #[test]
