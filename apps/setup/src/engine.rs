@@ -302,7 +302,7 @@ pub fn install(o: &InstallOpts, prog: &mut Progress, confirm: &mut Confirm) -> R
 
     step(prog, "services");
     win::service_install(&agent).context("VardeAgent install")?;
-    let _ = win::sc_start("VardeAgent");
+    win::start_agent().context("VardeAgent failed to start after installation")?;
 
     // product key + ARP
     win::hklm_set(win::MANUPRODUCT_KEY, "", &o.instdir.to_string_lossy())?;

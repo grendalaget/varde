@@ -21,7 +21,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Windows-only crate: deps gated so the workspace still compiles on
 # Linux/macOS CI (tauri would pull glib/gtk system libraries).
 [target.'cfg(windows)'.dependencies]
+agent-ipc = { path = "../../crates/agent-ipc" }
 tauri = { version = "2", features = ["custom-protocol"] }
+tokio.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -38,6 +40,7 @@ windows = { version = "0.62", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_RemoteDesktop",
+    "Win32_System_Services",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",

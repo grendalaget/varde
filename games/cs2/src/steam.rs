@@ -46,6 +46,10 @@ fn install(dir: PathBuf, root: &Path) -> Option<Install> {
 }
 
 pub fn in_root(root: &Path) -> Option<Install> {
+    installs_in_root(root).next()
+}
+
+fn installs_in_root(root: &Path) -> impl Iterator<Item = Install> + '_ {
     let mut libraries = vec![root.to_path_buf()];
     if let Ok(contents) = std::fs::read_to_string(root.join("steamapps/libraryfolders.vdf")) {
         if let Ok(vdf) = vdf::parse(&contents) {
@@ -67,32 +71,22 @@ pub fn in_root(root: &Path) -> Option<Install> {
             }
         }
     }
-    for library in libraries {
-        let Some(manifest) =
+    libraries.into_iter().filter_map(move |library| {
+        let manifest =
             std::fs::read_to_string(library.join(format!("steamapps/appmanifest_{APP_ID}.acf")))
                 .ok()
-                .and_then(|s| vdf::parse(&s).ok())
-        else {
-            continue;
-        };
-        let Some(app) = manifest.get("AppState") else {
-            continue;
-        };
+                .and_then(|s| vdf::parse(&s).ok())?;
+        let app = manifest.get("AppState")?;
         if app.get("StateFlags").and_then(vdf::Value::text) != Some("4") {
-            continue;
+            return None;
         }
-        let Some(name) = app.get("installdir").and_then(vdf::Value::text) else {
-            continue;
-        };
+        let name = app.get("installdir").and_then(vdf::Value::text)?;
         // The manifest supplies a directory name, not an arbitrary path.
         if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
-            continue;
+            return None;
         }
-        if let Some(found) = install(library.join("steamapps/common").join(name), root) {
-            return Some(found);
-        }
-    }
-    None
+        install(library.join("steamapps/common").join(name), root)
+    })
 }
 
 #[cfg(not(windows))]
@@ -196,6 +190,32 @@ pub fn detect_client() -> Option<Install> {
         }
     }
     None
+}
+
+#[cfg(windows)]
+pub fn repair_client_permissions() {
+    let mut seen = std::collections::HashSet::new();
+    let explicit = std::env::var_os("VARDE_CS2_DIR")
+        .and_then(|dir| install(PathBuf::from(dir), Path::new("")));
+    let mut repair = |install: Install| {
+        if seen.insert(install.dir.clone()) {
+            if let Err(error) = super::windows_permissions::repair(&install.dir) {
+                tracing::warn!(
+                    install = %install.dir.display(),
+                    %error,
+                    "could not repair Steam CS2 config directory permissions"
+                );
+            }
+        }
+    };
+    if let Some(install) = explicit {
+        repair(install);
+    }
+    for root in roots() {
+        for install in installs_in_root(&root) {
+            repair(install);
+        }
+    }
 }
 
 pub fn in_deployments(deployments: &Path) -> Option<Install> {

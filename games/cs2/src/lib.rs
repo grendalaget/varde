@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,6 +18,8 @@ mod rcon;
 mod shared_config;
 pub mod steam;
 mod vdf;
+#[cfg(windows)]
+mod windows_permissions;
 
 pub const APP_ID: u32 = 730;
 pub const PORT: u32 = 27015;
@@ -24,15 +27,20 @@ const MIN_DISK_BYTES: u64 = 75_000_000_000;
 const BANS: [&str; 2] = ["banned_user.cfg", "banned_ip.cfg"];
 const INFO_REQUEST: &[u8] = b"\xff\xff\xff\xffTSource Engine Query\0";
 
+fn path_error(operation: &str, path: &Path, error: io::Error) -> io::Error {
+    executor_api::LocalPathError::io(operation, path, error)
+}
+
 fn check_install_space(dir: &Path, available: u64) -> Result<()> {
     if steam_app_installed(APP_ID, dir) {
         return Ok(());
     }
     let installed = allocated_install_bytes(dir)?;
     if available.saturating_add(installed) < MIN_DISK_BYTES {
-        return Err(format!(
-            "cs2: incomplete install requires a 75 GB disk budget ({} bytes free, {} bytes already installed)",
-            available, installed
+        return Err(executor_api::LocalPathError::new(
+            "cs2: incomplete install at",
+            dir,
+            format_args!("requires a 75 GB disk budget ({available} bytes free, {installed} bytes already installed)"),
         )
         .into());
     }
@@ -43,14 +51,21 @@ fn allocated_install_bytes(dir: &Path) -> Result<u64> {
     let mut dirs = vec![dir.to_path_buf()];
     let mut total = 0u64;
     while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let kind = entry.file_type()?;
+        for entry in std::fs::read_dir(&dir).map_err(|e| path_error("list CS2 install", &dir, e))? {
+            let entry =
+                entry.map_err(|e| path_error("read CS2 install directory entry", &dir, e))?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|e| path_error("inspect CS2 install entry", &path, e))?;
             if kind.is_dir() {
-                dirs.push(entry.path());
+                dirs.push(path);
             } else if kind.is_file() {
-                let file = std::fs::File::open(entry.path())?;
-                total = total.saturating_add(fs2::FileExt::allocated_size(&file)?);
+                let file = std::fs::File::open(&path)
+                    .map_err(|e| path_error("open CS2 install file", &path, e))?;
+                total = total.saturating_add(fs2::FileExt::allocated_size(&file).map_err(|e| {
+                    path_error("measure allocated CS2 install file size", &path, e)
+                })?);
                 if total >= MIN_DISK_BYTES {
                     return Ok(total);
                 }
@@ -392,10 +407,12 @@ impl Cs2Driver {
 
     fn remove_addon_root(ctx: &DriverContext<'_>) -> Result<()> {
         let root = Self::addon_root(ctx)?;
-        match std::fs::remove_dir_all(root) {
+        match std::fs::remove_dir_all(&root) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(error) => {
+                Err(path_error("remove obsolete CS2 addon directory", &root, error).into())
+            }
         }
     }
 
@@ -404,22 +421,30 @@ impl Cs2Driver {
         client: Option<steam::Install>,
     ) -> Result<()> {
         if let Some(install) = client {
+            #[cfg(windows)]
+            windows_permissions::ensure_writable(
+                &install.dir,
+                &Self::shared_config_name(ctx.server_id)?,
+            )?;
             return Self::prepare_shared(ctx, &install);
         }
         if let Some(install) = ctx.deployment_dir.parent().and_then(steam::in_deployments) {
             Self::update_install(ctx, &install.dir).await?;
             return Self::prepare_shared(ctx, &install);
         }
-        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-install.json")).await {
+        let selection = ctx.deployment_dir.join("cs2-install.json");
+        match tokio::fs::remove_file(&selection).await {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(path_error("remove CS2 install selection", &selection, e).into()),
         }
         Self::update_install(ctx, &Self::install_dir(ctx)).await
     }
 
     async fn update_install(ctx: &DriverContext<'_>, dir: &Path) -> Result<()> {
-        tokio::fs::create_dir_all(dir).await?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| path_error("create CS2 install directory", dir, e))?;
         let lock = install_lock::open(dir)?;
         match fs2::FileExt::try_lock_exclusive(&lock) {
             Ok(()) => (),
@@ -434,10 +459,15 @@ impl Cs2Driver {
                 }
                 return Err("cs2: incomplete install is locked by another process".into());
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                return Err(
+                    path_error("lock CS2 install for update", &install_lock::path(dir), e).into(),
+                )
+            }
         }
-        check_install_space(dir, fs2::available_space(dir)?)
-            .map_err(|e| format!("{e} at {}", dir.display()))?;
+        let available = fs2::available_space(dir)
+            .map_err(|e| path_error("check free space for CS2 install", dir, e))?;
+        check_install_space(dir, available)?;
         let _updated = match ctx.runtimes.steam_app_install(APP_ID, dir).await {
             Ok(()) => true,
             Err(error) => {
@@ -473,10 +503,11 @@ impl Cs2Driver {
     }
 
     fn selected(ctx: &DriverContext<'_>) -> Result<Option<steam::Install>> {
-        match std::fs::read(ctx.deployment_dir.join("cs2-install.json")) {
+        let selection = ctx.deployment_dir.join("cs2-install.json");
+        match std::fs::read(&selection) {
             Ok(contents) => Ok(Some(serde_json::from_slice(&contents)?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(path_error("read CS2 install selection", &selection, e).into()),
         }
     }
 
@@ -498,10 +529,14 @@ impl Cs2Driver {
 
     fn prepare_shared(ctx: &DriverContext<'_>, install: &steam::Install) -> Result<()> {
         let game = ctx.deployment_dir.join("cs2-runtime/csgo");
-        std::fs::create_dir_all(game.join("cfg"))?;
-        let mut info = vdf::parse(&std::fs::read_to_string(
-            install.dir.join("game/csgo/gameinfo.gi"),
-        )?)?;
+        let cfg = game.join("cfg");
+        std::fs::create_dir_all(&cfg)
+            .map_err(|e| path_error("create private CS2 config directory", &cfg, e))?;
+        let original = install.dir.join("game/csgo/gameinfo.gi");
+        let mut info = vdf::parse(
+            &std::fs::read_to_string(&original)
+                .map_err(|e| path_error("read Steam CS2 game info", &original, e))?,
+        )?;
         let paths = info
             .get_mut("GameInfo")
             .and_then(|v| v.get_mut("FileSystem"))
@@ -527,14 +562,17 @@ impl Cs2Driver {
             isolated.push((key.clone(), vdf::Value::Text(engine_path(&path))));
         }
         *paths = vdf::Value::Object(isolated);
-        std::fs::write(game.join("gameinfo.gi"), info.render())?;
+        let info_path = game.join("gameinfo.gi");
+        std::fs::write(&info_path, info.render())
+            .map_err(|e| path_error("write private CS2 game info", &info_path, e))?;
         for name in ["autoexec.cfg", "server.cfg"] {
-            std::fs::write(game.join("cfg").join(name), "")?;
+            let path = cfg.join(name);
+            std::fs::write(&path, "")
+                .map_err(|e| path_error("write private CS2 config", &path, e))?;
         }
-        std::fs::write(
-            ctx.deployment_dir.join("cs2-install.json"),
-            serde_json::to_vec(install)?,
-        )?;
+        let selection = ctx.deployment_dir.join("cs2-install.json");
+        std::fs::write(&selection, serde_json::to_vec(install)?)
+            .map_err(|e| path_error("write CS2 install selection", &selection, e))?;
         Ok(())
     }
 
@@ -637,38 +675,52 @@ impl Cs2Driver {
         } else {
             (installed, state)
         };
-        tokio::fs::create_dir_all(&to).await?;
+        tokio::fs::create_dir_all(&to)
+            .await
+            .map_err(|e| path_error("create CS2 ban file directory", &to, e))?;
         for name in BANS {
-            match tokio::fs::copy(from.join(name), to.join(name)).await {
+            let source = from.join(name);
+            let destination = to.join(name);
+            match tokio::fs::copy(&source, &destination).await {
                 Ok(_) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    match tokio::fs::remove_file(to.join(name)).await {
+                    match tokio::fs::remove_file(&destination).await {
                         Ok(()) => (),
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                        Err(e) => return Err(e.into()),
+                        Err(e) => {
+                            return Err(
+                                path_error("remove outdated CS2 ban file", &destination, e).into()
+                            )
+                        }
                     }
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(format!(
+                        "copy CS2 ban file {} to {}: {e}",
+                        source.display(),
+                        destination.display()
+                    )
+                    .into())
+                }
             }
         }
         Ok(())
+    }
+
+    fn shared_config_name(server_id: &str) -> Result<String> {
+        if !Self::valid_server_id(server_id) {
+            return Err(
+                "cs2: server id must contain only letters, digits, underscores and hyphens".into(),
+            );
+        }
+        Ok(format!("varde_{server_id}"))
     }
 
     fn shared_config(ctx: &DriverContext<'_>) -> Result<Option<(PathBuf, String)>> {
         let Some(install) = Self::selected(ctx)? else {
             return Ok(None);
         };
-        if ctx.server_id.is_empty()
-            || !ctx
-                .server_id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
-            return Err(
-                "cs2: server id must contain only letters, digits, underscores and hyphens".into(),
-            );
-        }
-        let name = format!("varde_{}", ctx.server_id);
+        let name = Self::shared_config_name(ctx.server_id)?;
         let path = install
             .dir
             .join("game/csgo/cfg")
@@ -700,16 +752,21 @@ impl Cs2Driver {
         if !dir.join("varde.cfg").is_file() {
             return Ok(None);
         }
-        let mut cfg = std::fs::read_to_string(dir.join("varde.cfg"))?;
+        let private = dir.join("varde.cfg");
+        let mut cfg = std::fs::read_to_string(&private)
+            .map_err(|e| path_error("read private CS2 startup config", &private, e))?;
         for name in BANS {
-            let contents = match std::fs::read_to_string(dir.join(name)) {
+            let ban = dir.join(name);
+            let contents = match std::fs::read_to_string(&ban) {
                 Ok(contents) => contents,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(path_error("read CS2 ban file", &ban, e).into()),
             };
             cfg = cfg.replace(&format!("exec {name}\n"), &format!("{contents}\n"));
         }
-        std::fs::create_dir_all(path.parent().ok_or("cs2: config path has no parent")?)?;
+        let parent = path.parent().ok_or("cs2: config path has no parent")?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| path_error("create CS2 startup config directory", parent, e))?;
         Ok(Some(shared_config::SharedConfig::write(path, &cfg)?))
     }
 
@@ -717,11 +774,8 @@ impl Cs2Driver {
         let Some((path, _)) = Self::shared_config(ctx)? else {
             return Ok(());
         };
-        match tokio::fs::remove_file(path).await {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        tokio::task::spawn_blocking(move || shared_config::remove(&path)).await??;
+        Ok(())
     }
 }
 
@@ -836,10 +890,11 @@ impl GameDriver for Cs2Driver {
             }
             Self::shared_config(ctx)?;
         }
-        match tokio::fs::remove_file(ctx.deployment_dir.join("cs2-configured")).await {
+        let marker = ctx.deployment_dir.join("cs2-configured");
+        match tokio::fs::remove_file(&marker).await {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(path_error("remove CS2 readiness marker", &marker, e).into()),
         }
         Self::sync_bans(ctx, true).await?;
         let cfg_dir = Self::game_dir(ctx)?.join("cfg");
@@ -869,7 +924,9 @@ impl GameDriver for Cs2Driver {
             file.write_all(cfg.as_bytes())?;
         }
         #[cfg(not(unix))]
-        tokio::fs::write(&path, cfg).await?;
+        tokio::fs::write(&path, cfg)
+            .await
+            .map_err(|e| path_error("write private CS2 startup config", &path, e))?;
         Ok(())
     }
     fn process_spec(&self, ctx: &DriverContext<'_>) -> Result<ProcessSpec> {
@@ -889,10 +946,11 @@ impl GameDriver for Cs2Driver {
             Self::binary(ctx)?
         };
         let mut args = Self::args(ctx.config, ctx.local_port(PORT))?;
-        match std::fs::remove_file(ctx.deployment_dir.join("cs2-configured")) {
+        let marker = ctx.deployment_dir.join("cs2-configured");
+        match std::fs::remove_file(&marker) {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(path_error("remove CS2 readiness marker", &marker, e).into()),
         }
         if !addon_mode {
             if let Some((_, name)) = Self::shared_config(ctx)? {
@@ -972,7 +1030,12 @@ impl GameDriver for Cs2Driver {
         let config = if Self::addon_mode(ctx) {
             None
         } else {
-            shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"))?;
+            let current = if cfg!(windows) && !managed {
+                Some(format!("{}.cfg", Self::shared_config_name(ctx.server_id)?))
+            } else {
+                None
+            };
+            shared_config::SharedConfig::sweep(&dir.join("game/csgo/cfg"), current.as_deref())?;
             Self::create_shared_config(ctx)?
         };
         install_lock::spawn(executor, &spec, lock, config).await
@@ -987,8 +1050,10 @@ impl GameDriver for Cs2Driver {
         if ready {
             let marker = ctx.deployment_dir.join("cs2-configured");
             if !marker.is_file() {
-                let cfg =
-                    tokio::fs::read_to_string(Self::game_dir(ctx)?.join("cfg/varde.cfg")).await?;
+                let path = Self::game_dir(ctx)?.join("cfg/varde.cfg");
+                let cfg = tokio::fs::read_to_string(&path)
+                    .await
+                    .map_err(|e| path_error("read CS2 startup config for readiness", &path, e))?;
                 let password = cfg
                     .lines()
                     .find_map(|line| {
@@ -1006,7 +1071,9 @@ impl GameDriver for Cs2Driver {
                     Ok(result) => result?,
                     Err(_) => return Ok(GameHealth::Starting),
                 }
-                tokio::fs::write(marker, "").await?;
+                tokio::fs::write(&marker, "")
+                    .await
+                    .map_err(|e| path_error("write CS2 readiness marker", &marker, e))?;
             }
             if !Self::addon_mode(ctx) {
                 Self::remove_shared_config(ctx).await?;

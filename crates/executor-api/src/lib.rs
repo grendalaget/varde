@@ -3,7 +3,9 @@
 //! through a shell (I9).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -52,6 +54,46 @@ pub struct ResourceUsage {
 
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, DynError>;
+
+/// Local filesystem context that can be reported independently of error text.
+#[derive(Debug)]
+pub struct LocalPathError {
+    operation: String,
+    path: PathBuf,
+    detail: String,
+}
+
+impl LocalPathError {
+    pub fn new(operation: impl Into<String>, path: &Path, detail: impl fmt::Display) -> Self {
+        Self {
+            operation: operation.into(),
+            path: path.to_owned(),
+            detail: detail.to_string(),
+        }
+    }
+
+    pub fn io(operation: impl Into<String>, path: &Path, source: io::Error) -> io::Error {
+        io::Error::new(source.kind(), Self::new(operation, path, source))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl fmt::Display for LocalPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {}: {}",
+            self.operation,
+            self.path.display(),
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for LocalPathError {}
 
 /// Number of output lines retained in the ring buffer.
 pub const OUTPUT_RING_LINES: usize = 1000;

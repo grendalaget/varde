@@ -5,19 +5,28 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use executor_api::*;
 
+use crate::path_error;
+
+pub(crate) fn path(dir: &Path) -> PathBuf {
+    dir.join(".varde-cs2.lock")
+}
+
 pub fn open(dir: &Path) -> Result<File> {
+    let path = path(dir);
     Ok(OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(dir.join(".varde-cs2.lock"))?)
+        .open(&path)
+        .map_err(|e| path_error("open CS2 install lock", &path, e))?)
 }
 
 pub async fn shared(dir: PathBuf) -> Result<File> {
     tokio::task::spawn_blocking(move || {
         let lock = open(&dir)?;
-        fs2::FileExt::lock_shared(&lock)?;
+        fs2::FileExt::lock_shared(&lock)
+            .map_err(|e| path_error("lock CS2 install for startup", &path(&dir), e))?;
         Ok(lock)
     })
     .await?

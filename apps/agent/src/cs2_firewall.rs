@@ -1,29 +1,50 @@
+use std::sync::Arc;
+
+use executor_api::{DynError, Result};
+
 const PREFIX: &str = "Varde CS2 ";
 
-struct SweepGate(tokio::sync::watch::Receiver<Option<Result<(), String>>>);
+#[derive(Debug, Clone)]
+struct SweepError(Arc<DynError>);
+
+impl std::fmt::Display for SweepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for SweepError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref().as_ref())
+    }
+}
+
+struct SweepGate(tokio::sync::watch::Receiver<Option<std::result::Result<(), SweepError>>>);
 
 impl SweepGate {
-    fn start(work: impl std::future::Future<Output = Result<(), String>> + Send + 'static) -> Self {
+    fn start(work: impl std::future::Future<Output = Result<()>> + Send + 'static) -> Self {
         let (done, waiting) = tokio::sync::watch::channel(None);
         tokio::spawn(async move {
-            done.send_replace(Some(work.await));
+            done.send_replace(Some(work.await.map_err(|e| SweepError(Arc::new(e)))));
         });
         Self(waiting)
     }
 
-    async fn wait(&self) -> Result<(), String> {
-        self.0
+    async fn wait(&self) -> Result<()> {
+        let outcome = self
+            .0
             .clone()
             .wait_for(Option::is_some)
             .await
             .map_err(|_| "CS2 firewall sweep task stopped".to_string())?
             .as_ref()
             .unwrap()
-            .clone()
+            .clone();
+        outcome.map_err(Into::into)
     }
 }
 
-fn rule_names(server: &str, launch: u128) -> Result<[String; 2], &'static str> {
+fn rule_names(server: &str, launch: u128) -> std::result::Result<[String; 2], &'static str> {
     if server.is_empty() || server.len() > 160 || server.chars().any(char::is_control) {
         return Err("cs2: invalid server ID for firewall rule");
     }
@@ -46,7 +67,7 @@ fn cleanup_script(names: &[String; 2]) -> String {
     )
 }
 
-fn install_script(names: &[String; 2], port: u16) -> Result<String, &'static str> {
+fn install_script(names: &[String; 2], port: u16) -> std::result::Result<String, &'static str> {
     if port == 0 {
         return Err("cs2: firewall port must be nonzero");
     }
@@ -63,21 +84,28 @@ mod platform {
 
     use executor_api::*;
     use std::os::windows::process::CommandExt;
-    use std::sync::Arc;
 
-    fn command(script: &str) -> Result<()> {
+    fn command(operation: &str, script: &str) -> Result<()> {
         let system =
             std::env::var_os("SystemRoot").ok_or("cs2: Windows system directory unavailable")?;
         let powershell =
             std::path::PathBuf::from(system).join("System32/WindowsPowerShell/v1.0/powershell.exe");
-        let output = std::process::Command::new(powershell)
+        let output = std::process::Command::new(&powershell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &format!("$ErrorActionPreference='Stop'; $policy=New-Object -ComObject HNetCfg.FwPolicy2; {script}")])
             .creation_flags(0x08000000)
-            .output()?;
+            .output()
+            .map_err(|e| LocalPathError::new(format!("{operation}: spawn"), &powershell, e))?;
         if !output.status.success() {
-            return Err(format!(
-                "cs2: Windows Firewall COM operation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let reason = if stderr.contains("Windows Firewall profile is disabled") {
+                "Windows Firewall profile is disabled"
+            } else {
+                "Windows Firewall COM operation failed"
+            };
+            return Err(LocalPathError::new(
+                format!("{operation} via"),
+                &powershell,
+                format_args!("{reason} ({})", output.status),
             )
             .into());
         }
@@ -88,9 +116,10 @@ mod platform {
         static SWEEP: std::sync::OnceLock<SweepGate> = std::sync::OnceLock::new();
         SWEEP.get_or_init(|| {
             SweepGate::start(async {
-                async { tokio::task::spawn_blocking(|| command(&sweep_script())).await? }
-                    .await
-                    .map_err(|error: executor_api::DynError| error.to_string())
+                tokio::task::spawn_blocking(|| {
+                    command("sweep stale CS2 firewall rules", &sweep_script())
+                })
+                .await?
             })
         })
     }
@@ -105,7 +134,7 @@ mod platform {
 
     impl Drop for Rule {
         fn drop(&mut self) {
-            if let Err(error) = command(&cleanup_script(&self.names)) {
+            if let Err(error) = command("remove CS2 firewall rules", &cleanup_script(&self.names)) {
                 tracing::warn!(%error, rules = ?self.names, "CS2 firewall cleanup failed; retaining block until startup sweep");
             }
         }
@@ -117,7 +146,7 @@ mod platform {
         tokio::task::spawn_blocking(move || {
             let script = install_script(&names, port)?;
             let rule = Rule { names };
-            if let Err(error) = command(&script) {
+            if let Err(error) = command("install CS2 firewall rules", &script) {
                 tracing::warn!(%error, "CS2 firewall protection unavailable; launch refused");
                 return Err(error);
             }
@@ -202,11 +231,30 @@ mod tests {
                 .is_err()
         );
         release.send(Ok(())).unwrap();
-        assert_eq!(gate.wait().await, Ok(()));
-        assert_eq!(gate.wait().await, Ok(()));
-        let failure = SweepGate::start(async { Err("sweep failed".to_string()) });
-        assert_eq!(failure.wait().await, Err("sweep failed".to_string()));
-        assert_eq!(failure.wait().await, Err("sweep failed".to_string()));
+        gate.wait().await.unwrap();
+        gate.wait().await.unwrap();
+        let failure = SweepGate::start(async { Err("sweep failed".into()) });
+        assert_eq!(
+            failure.wait().await.unwrap_err().to_string(),
+            "sweep failed"
+        );
+        assert_eq!(
+            failure.wait().await.unwrap_err().to_string(),
+            "sweep failed"
+        );
+        let path = std::path::Path::new("powershell.exe");
+        let failure = SweepGate::start(async move {
+            Err(executor_api::LocalPathError::new("spawn", path, "denied").into())
+        });
+        for _ in 0..2 {
+            let error = failure.wait().await.unwrap_err();
+            let context = error
+                .source()
+                .unwrap()
+                .downcast_ref::<executor_api::LocalPathError>()
+                .unwrap();
+            assert_eq!(context.path(), path);
+        }
     }
 
     #[test]

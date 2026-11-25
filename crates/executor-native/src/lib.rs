@@ -98,7 +98,13 @@ impl NativeHandle {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let mut child = cmd.spawn().map_err(to_err)?;
+        let mut child = cmd.spawn().map_err(|e| {
+            LocalPathError::new(
+                format!("spawn from working directory {}:", spec.cwd.display()),
+                &spec.program,
+                e,
+            )
+        })?;
         let pid = child.id().unwrap_or(0);
 
         let (tx, _rx) = broadcast::channel(512);
@@ -136,9 +142,10 @@ impl NativeHandle {
 
         #[cfg(windows)]
         let job = {
-            let job = Job::new()?;
+            let job = Job::new().map_err(|e| LocalPathError::new("job for", &spec.program, e))?;
             // assign via raw handle while we still have the Child
-            job.assign(&child)?;
+            job.assign(&child)
+                .map_err(|e| LocalPathError::new("job for", &spec.program, e))?;
             Arc::new(job)
         };
 
@@ -456,7 +463,7 @@ impl Job {
             // returned handle is null-checked before use.
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                return Err(io::Error::last_os_error().into());
+                return Err(format!("CreateJobObjectW: {}", io::Error::last_os_error()).into());
             }
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -467,8 +474,9 @@ impl Job {
                 std::mem::size_of_val(&info) as u32,
             ) == 0
             {
+                let error = io::Error::last_os_error();
                 windows_sys::Win32::Foundation::CloseHandle(job);
-                return Err(io::Error::last_os_error().into());
+                return Err(format!("SetInformationJobObject: {error}").into());
             }
             Ok(Job(job))
         }
@@ -482,12 +490,15 @@ impl Job {
             // closed on every path before returning.
             let proc = OpenProcess(PROCESS_ALL_ACCESS, 0, child.id().unwrap_or(0));
             if proc.is_null() {
-                return Err(io::Error::last_os_error().into());
+                return Err(
+                    format!("OpenProcess for Job Object: {}", io::Error::last_os_error()).into(),
+                );
             }
             let ok = AssignProcessToJobObject(self.0, proc);
+            let error = (ok == 0).then(io::Error::last_os_error);
             windows_sys::Win32::Foundation::CloseHandle(proc);
-            if ok == 0 {
-                return Err(io::Error::last_os_error().into());
+            if let Some(error) = error {
+                return Err(format!("AssignProcessToJobObject: {error}").into());
             }
             Ok(())
         }

@@ -5924,11 +5924,13 @@ dependencies = [
 name = "varde-setup"
 version = "0.1.0"
 dependencies = [
+ "agent-ipc",
  "anyhow",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
  "window-vibrancy",
  "windows",
  "winreg",

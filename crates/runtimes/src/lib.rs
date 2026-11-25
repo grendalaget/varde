@@ -11,7 +11,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-use game_driver_api::{steam_app_installed, ArchiveKind, FetchSpec, RuntimeProvider};
+use game_driver_api::{
+    steam_app_installed, ArchiveKind, FetchSpec, LocalPathError, RuntimeProvider,
+};
 use http_body_util::BodyExt;
 use hyper::header::{HeaderValue, HOST, LOCATION, USER_AGENT};
 use hyper::{Request, Uri};
@@ -155,8 +157,11 @@ impl RuntimeProvider for HttpRuntimes {
         ));
         let staging2 = staging.clone();
         spawn_fs(move || {
-            std::fs::create_dir_all(&parent)?;
-            std::fs::create_dir_all(&staging2)?;
+            std::fs::create_dir_all(&parent)
+                .map_err(|e| LocalPathError::new("create runtime cache directory", &parent, e))?;
+            std::fs::create_dir_all(&staging2).map_err(|e| {
+                LocalPathError::new("create runtime staging directory", &staging2, e)
+            })?;
             Ok(())
         })
         .await?;
@@ -168,14 +173,22 @@ impl RuntimeProvider for HttpRuntimes {
                 Ok(())
             })
             .await;
-            return Err(e);
+            return Err(if e.is::<LocalPathError>() {
+                e
+            } else {
+                format!("stage runtime into {}: {e}", staging.display()).into()
+            });
         }
         // publish atomically; fs ops stay off the async worker
         let st = staging.clone();
         let d = dest.clone();
         spawn_fs(move || {
-            std::fs::write(st.join(".complete"), b"ok")?;
-            std::fs::rename(&st, &d)?;
+            let marker = st.join(".complete");
+            std::fs::write(&marker, b"ok")
+                .map_err(|e| LocalPathError::new("write runtime completion marker", &marker, e))?;
+            std::fs::rename(&st, &d).map_err(|e| {
+                LocalPathError::new(format!("move staged runtime {} to", st.display()), &d, e)
+            })?;
             Ok(())
         })
         .await?;
@@ -186,7 +199,8 @@ impl RuntimeProvider for HttpRuntimes {
         let cmd = steamcmd(self).await?;
         let destination = dest.to_path_buf();
         spawn_fs(move || {
-            std::fs::create_dir_all(destination)?;
+            std::fs::create_dir_all(&destination)
+                .map_err(|e| LocalPathError::new("create Steam app directory", &destination, e))?;
             Ok(())
         })
         .await?;
@@ -198,7 +212,14 @@ impl RuntimeProvider for HttpRuntimes {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true)
-                .spawn()?;
+                .spawn()
+                .map_err(|e| {
+                    LocalPathError::new(
+                        format!("spawn SteamCMD for install {}:", dest.display()),
+                        &cmd,
+                        e,
+                    )
+                })?;
             let captured = Arc::new(Mutex::new(VecDeque::with_capacity(40)));
             let stdout = child
                 .stdout
@@ -208,7 +229,10 @@ impl RuntimeProvider for HttpRuntimes {
                 .stderr
                 .take()
                 .map(|pipe| capture_output(pipe, captured.clone()));
-            let st = child.wait().await?;
+            let st = child
+                .wait()
+                .await
+                .map_err(|e| LocalPathError::new("wait for SteamCMD", &cmd, e))?;
             if let Some(stdout) = stdout {
                 let _ = stdout.await;
             }
@@ -552,11 +576,15 @@ async fn fetch_into_inner(
         ArchiveKind::Tgz => {
             let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
             spawn_fs(move || {
-                let f = std::fs::File::open(&b)?;
+                let f = std::fs::File::open(&b)
+                    .map_err(|e| LocalPathError::new("open runtime archive", &b, e))?;
                 if untrusted {
-                    extract_tar_strict(flate2::read::GzDecoder::new(f), &s, limits)?;
+                    extract_tar_strict(flate2::read::GzDecoder::new(f), &s, limits)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 } else {
-                    tar::Archive::new(flate2::read::GzDecoder::new(f)).unpack(&s)?;
+                    tar::Archive::new(flate2::read::GzDecoder::new(f))
+                        .unpack(&s)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 }
                 let _ = std::fs::remove_file(&b);
                 Ok(())
@@ -566,13 +594,20 @@ async fn fetch_into_inner(
         ArchiveKind::TarXz => {
             let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
             spawn_fs(move || {
-                let reader = xz2::read::XzDecoder::new(std::fs::File::open(&b)?);
+                let reader = xz2::read::XzDecoder::new(
+                    std::fs::File::open(&b)
+                        .map_err(|e| LocalPathError::new("open runtime archive", &b, e))?,
+                );
                 if untrusted {
-                    extract_tar_strict(reader, &s, limits)?;
+                    extract_tar_strict(reader, &s, limits)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 } else {
-                    tar::Archive::new(reader).unpack(&s)?;
+                    tar::Archive::new(reader)
+                        .unpack(&s)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 }
-                std::fs::remove_file(b)?;
+                std::fs::remove_file(&b)
+                    .map_err(|e| LocalPathError::new("remove runtime archive", &b, e))?;
                 Ok(())
             })
             .await?;
@@ -580,11 +615,16 @@ async fn fetch_into_inner(
         ArchiveKind::Zip => {
             let (b, s, untrusted) = (blob.clone(), staging.to_path_buf(), spec.untrusted);
             spawn_fs(move || {
-                let f = std::fs::File::open(&b)?;
+                let f = std::fs::File::open(&b)
+                    .map_err(|e| LocalPathError::new("open runtime archive", &b, e))?;
                 if untrusted {
-                    extract_zip_strict(f, &s, limits)?;
+                    extract_zip_strict(f, &s, limits)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 } else {
-                    zip::ZipArchive::new(f)?.extract(&s)?;
+                    zip::ZipArchive::new(f)
+                        .map_err(|e| LocalPathError::new("read runtime archive", &b, e))?
+                        .extract(&s)
+                        .map_err(|e| LocalPathError::new("extract runtime archive into", &s, e))?;
                 }
                 let _ = std::fs::remove_file(&b);
                 Ok(())
@@ -628,7 +668,8 @@ async fn download_verified(
                 return Err(format!("sha1 mismatch for {u}: got {got} want {want}").into());
             }
         }
-        std::fs::write(&f, &body)?;
+        std::fs::write(&f, &body)
+            .map_err(|e| LocalPathError::new("write runtime download", &f, e))?;
         Ok(())
     })
     .await

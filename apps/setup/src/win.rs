@@ -133,13 +133,79 @@ fn wait_unlocked(path: &Path) {
 }
 
 pub fn service_install(exe: &Path) -> Result<()> {
-    run_quiet(&exe.to_string_lossy(), &["service", "install"])?;
+    use std::os::windows::process::CommandExt;
+
+    let out = Command::new(exe)
+        .args(["service", "install"])
+        .creation_flags(0x08000000)
+        .output()
+        .with_context(|| format!("spawn {}", exe.display()))?;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        crate::imp::log_line(line);
+    }
+    anyhow::ensure!(
+        out.status.success(),
+        "{} service install exited with {}: {}",
+        exe.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
     Ok(())
 }
 
 pub fn sc_start(name: &str) -> Result<()> {
     run_quiet("sc.exe", &["start", name])?;
     Ok(())
+}
+
+pub fn start_agent() -> Result<()> {
+    use std::time::{Duration, Instant};
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::System::Services::*;
+
+    sc_start("VardeAgent")?;
+    unsafe {
+        let manager = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT)
+            .context("open Service Control Manager")?;
+        let service = OpenServiceW(manager, w!("VardeAgent"), SERVICE_QUERY_STATUS);
+        let _ = CloseServiceHandle(manager);
+        let service = service.context("open VardeAgent for status query")?;
+        let result = (|| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            loop {
+                let mut status = SERVICE_STATUS::default();
+                QueryServiceStatus(service, &mut status).context("query VardeAgent status")?;
+                if status.dwCurrentState == SERVICE_STOPPED {
+                    bail!(
+                        "VardeAgent stopped during startup (Windows exit code {}, service exit code {}); check the agent logs",
+                        status.dwWin32ExitCode,
+                        status.dwServiceSpecificExitCode
+                    );
+                }
+                anyhow::ensure!(
+                    Instant::now() < deadline,
+                    "VardeAgent was not running and answering its local pipe within 60 seconds; check the agent logs"
+                );
+                if status.dwCurrentState == SERVICE_RUNNING
+                    && tauri::async_runtime::block_on(async {
+                        matches!(
+                            tokio::time::timeout(
+                                Duration::from_secs(1),
+                                agent_ipc::connect(agent_ipc::PIPE_NAME),
+                            )
+                            .await,
+                            Ok(Ok(_))
+                        )
+                    })
+                {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        })();
+        let _ = CloseServiceHandle(service);
+        result
+    }
 }
 
 /// icacls: SYSTEM + Administrators full, optionally one extra grant

@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
+pub use executor_api::LocalPathError;
 use executor_api::{Executor, ProcessHandle, ProcessSpec};
 pub use snapshot_store::PathPattern;
 
