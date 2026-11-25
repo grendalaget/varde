@@ -193,15 +193,18 @@ pub fn detect_client() -> Option<Install> {
 }
 
 #[cfg(windows)]
-pub fn repair_client_permissions() -> game_driver_api::Result<()> {
+pub fn repair_client_permissions() {
     let mut seen = std::collections::HashSet::new();
     let explicit = std::env::var_os("VARDE_CS2_DIR")
         .and_then(|dir| install(PathBuf::from(dir), Path::new("")));
-    let mut errors = Vec::new();
     let mut repair = |install: Install| {
         if seen.insert(install.dir.clone()) {
             if let Err(error) = super::windows_permissions::repair(&install.dir) {
-                errors.push(error.to_string());
+                tracing::warn!(
+                    install = %install.dir.display(),
+                    %error,
+                    "could not repair Steam CS2 config directory permissions"
+                );
             }
         }
     };
@@ -212,11 +215,6 @@ pub fn repair_client_permissions() -> game_driver_api::Result<()> {
         for install in installs_in_root(&root) {
             repair(install);
         }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; ").into())
     }
 }
 

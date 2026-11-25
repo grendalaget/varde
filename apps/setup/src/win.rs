@@ -140,6 +140,9 @@ pub fn service_install(exe: &Path) -> Result<()> {
         .creation_flags(0x08000000)
         .output()
         .with_context(|| format!("spawn {}", exe.display()))?;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        crate::imp::log_line(line);
+    }
     anyhow::ensure!(
         out.status.success(),
         "{} service install exited with {}: {}",

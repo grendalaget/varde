@@ -72,9 +72,7 @@ pub fn install() -> Result<()> {
     svc.set_preshutdown_timeout(Duration::from_millis(PRESHUTDOWN_MS as u64))
         .context("set preshutdown timeout")?;
     secure_data_dir().context("restrict the data dir to SYSTEM and Administrators")?;
-    game_cs2::steam::repair_client_permissions()
-        .map_err(crate::exec::dyn_err)
-        .context("repair Steam CS2 config directory permissions")?;
+    game_cs2::steam::repair_client_permissions();
     // WER LocalDumps so hard crashes (access violations, abort) leave a
     // minidump the agent can report next boot; panics come from the hook.
     if let Err(e) = crash_report::wer::register(&crate::default_data_dir().join("crash-reports")) {

@@ -37,18 +37,21 @@ mod imp {
         std::env::temp_dir().join(format!("varde-setup-{}.log", std::process::id()))
     }
 
+    pub(crate) fn log_line(line: &str) {
+        println!("{line}");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path())
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+
     macro_rules! log {
-        ($($t:tt)*) => {{
-            let line = format!($($t)*);
-            println!("{line}");
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path())
-            {
-                let _ = writeln!(f, "{line}");
-            }
-        }};
+        ($($t:tt)*) => {
+            log_line(&format!($($t)*))
+        };
     }
 
     /// uninstall.exe running from inside $INSTDIR copies itself out first —
