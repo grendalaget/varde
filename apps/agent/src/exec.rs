@@ -336,9 +336,41 @@ fn failure_phase(ctl: &ExecCtl) -> Phase {
     }
 }
 
+#[derive(Debug)]
+struct StartupStage(&'static str);
+
+impl std::fmt::Display for StartupStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CS2 startup — {}", self.0)
+    }
+}
+
+fn startup_step<T>(game_id: &str, stage: &'static str, result: Result<T>) -> Result<T> {
+    if game_id == "cs2" {
+        result.context(StartupStage(stage))
+    } else {
+        result
+    }
+}
+
+fn startup_diagnostic(error: &anyhow::Error) -> Option<cp_api::LogLine> {
+    let stage = error.downcast_ref::<StartupStage>()?;
+    let detail = if format!("{error:#}").contains("(os error 5)") {
+        "Access was denied by Windows (os error 5)"
+    } else {
+        "Operation failed"
+    };
+    Some(cp_api::LogLine {
+        at: crate::now_ms(),
+        stream: "agent".into(),
+        line: format!("{stage}: {detail}. See the execution status or the local Varde agent logs for details."),
+    })
+}
+
 async fn supervisor_error(agent: &Agent, ctl: &ExecCtl, error: &anyhow::Error) {
     let phase = failure_phase(ctl);
-    ctl.set_message(&format!("{error:#}"));
+    let message = format!("{error:#}");
+    ctl.set_message(&message);
     if phase == Phase::Fenced {
         ctl.mark_fenced();
         ctl.mark_finished();
@@ -351,8 +383,13 @@ async fn supervisor_error(agent: &Agent, ctl: &ExecCtl, error: &anyhow::Error) {
         return;
     }
     ctl.set_phase(phase);
-    tracing::error!(exec = %ctl.dir.execution_id, %error, ?phase, "supervisor ended");
+    tracing::error!(exec = %ctl.dir.execution_id, error = %message, ?phase, "supervisor ended");
     report(agent, ctl).await;
+    if phase == Phase::Failed {
+        if let Some(line) = startup_diagnostic(error) {
+            flush_logs(agent, &ctl.dir.execution_id, &mut vec![line]).await;
+        }
+    }
     ctl.mark_finished();
 }
 
@@ -365,7 +402,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         .get(&game_id)
         .context(format!("no driver for {game_id}"))?;
     let config = dir.config.clone().unwrap_or(serde_json::json!({}));
-    driver.validate(&config).map_err(dyn_err)?;
+    startup_step(
+        &game_id,
+        "validate settings",
+        driver.validate(&config).map_err(dyn_err),
+    )?;
 
     let server_dir = agent.data_dir.join("servers").join(&dir.server_id);
     let deployment_dir = agent.data_dir.join("deployments").join(
@@ -374,8 +415,14 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             .map(|d| d.id.clone())
             .unwrap_or_else(|| game_id.clone()),
     );
-    std::fs::create_dir_all(&server_dir)?;
-    std::fs::create_dir_all(&deployment_dir)?;
+    for path in [&server_dir, &deployment_dir] {
+        startup_step(
+            &game_id,
+            "prepare directories",
+            std::fs::create_dir_all(path)
+                .with_context(|| format!("create directory {}", path.display())),
+        )?;
+    }
     let deployment = DeploymentSpec::parse(
         &dir.deployment
             .as_ref()
@@ -391,7 +438,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             "tar_gz" => ("addon.tar.gz", ArchiveKind::Tgz),
             _ => bail!("addon {} has unsupported archive kind", addon.addon_id),
         };
-        let root = agent
+        let fetch = agent
             .runtimes
             .fetch(
                 "addons",
@@ -406,7 +453,8 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 },
             )
             .await
-            .map_err(|err| anyhow::anyhow!("addon {}: {err}", addon.addon_id))?;
+            .map_err(|err| anyhow::anyhow!("addon {}: {err}", addon.addon_id));
+        let root = startup_step(&game_id, "fetch addon", fetch)?;
         prepared_addons.push(PreparedAddon {
             plugin_id: addon.plugin_id.clone(),
             addon_id: addon.addon_id.clone(),
@@ -422,7 +470,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     }
     // allocate the local port block before configure so drivers can bind
     // 127.0.0.1:<local_port> while the mesh owns <loopback>:<service_port>
-    let bindings = alloc_port_block(&driver.ports(&config))?;
+    let bindings = startup_step(
+        &game_id,
+        "allocate ports",
+        alloc_port_block(&driver.ports(&config)),
+    )?;
     *ctl.port_bindings.lock().unwrap() = bindings.clone();
     let ctx = DriverContext {
         server_id: &dir.server_id,
@@ -439,7 +491,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     // ---- prepare ----
     ctl.set_phase(Phase::Preparing);
     report(&agent, &ctl).await;
-    crate::standby::prepare_locked(&agent, driver, &ctx).await?;
+    startup_step(
+        &game_id,
+        "prepare installation",
+        crate::standby::prepare_locked(&agent, driver, &ctx).await,
+    )?;
     ensure_live(&ctl)?;
 
     // ---- restore ----
@@ -447,22 +503,33 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         ctl.set_phase(Phase::Restoring);
         report(&agent, &ctl).await;
         let sid = SnapshotId(r.snapshot_id.clone());
-        chunks::fetch_snapshot(
+        let fetch = chunks::fetch_snapshot(
             &agent.mesh,
             &agent.store,
             &sid,
             &r.manifest_digest,
             &r.source_node_ids,
         )
-        .await?;
+        .await;
+        startup_step(&game_id, "fetch snapshot", fetch)?;
         let store = agent.store.clone();
         let inc = driver.persistent_paths(&config);
         let dst = server_dir.clone();
-        tokio::task::spawn_blocking(move || store.restore(&sid, &dst, &inc)).await??;
+        let restore = tokio::task::spawn_blocking(move || store.restore(&sid, &dst, &inc))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|r| {
+                r.with_context(|| format!("restore snapshot into {}", server_dir.display()))
+            });
+        startup_step(&game_id, "restore snapshot", restore)?;
     }
     ensure_live(&ctl)?;
 
-    driver.configure(&ctx).await.map_err(dyn_err)?;
+    startup_step(
+        &game_id,
+        "configure server",
+        driver.configure(&ctx).await.map_err(dyn_err),
+    )?;
     ensure_live(&ctl)?;
 
     // ---- spawn + probe + supervise ----
@@ -534,7 +601,10 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(exec = %dir.execution_id, error = %format!("{e:#}"), "probe error");
+                    let error =
+                        startup_step::<()>(&game_id, "check server readiness", Err(dyn_err(e)))
+                            .unwrap_err();
+                    tracing::warn!(exec = %dir.execution_id, error = %format!("{error:#}"), "probe error");
                 }
             }
             if ctl.is_fenced() {
@@ -1142,18 +1212,22 @@ async fn spawn_live(
     let executor = LiveExecutor { executor, ctl };
     #[cfg(windows)]
     let firewall = if driver.id() == "cs2" {
+        let port = u16::try_from(ctx.local_port(game_cs2::PORT))
+            .context(StartupStage("configure Windows Firewall"))?;
         Some(
-            crate::cs2_firewall::install(
-                ctx.server_id,
-                u16::try_from(ctx.local_port(game_cs2::PORT))?,
-            )
-            .await
-            .map_err(dyn_err)?,
+            crate::cs2_firewall::install(ctx.server_id, port)
+                .await
+                .map_err(dyn_err)
+                .context(StartupStage("configure Windows Firewall"))?,
         )
     } else {
         None
     };
-    let process = driver.spawn(ctx, &executor).await.map_err(dyn_err)?;
+    let process = startup_step(
+        driver.id(),
+        "launch server",
+        driver.spawn(ctx, &executor).await.map_err(dyn_err),
+    )?;
     #[cfg(windows)]
     let process = match firewall {
         Some(rule) => crate::cs2_firewall::retain(process, rule),
@@ -1838,6 +1912,40 @@ mod requires_stop_tests {
             }
         });
         (format!("http://127.0.0.1:{port}"), requests)
+    }
+
+    #[tokio::test]
+    async fn cs2_startup_failure_reports_status_and_logs_without_a_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (cp, requests) = stub_cp_recording().await;
+        let agent = test_agent(cp, tmp.path());
+        let ctl = test_ctl();
+        let error = startup_step::<()>(
+            "cs2",
+            "launch server",
+            Err(anyhow::anyhow!(
+                "write private config: Access is denied. (os error 5)"
+            )),
+        )
+        .unwrap_err();
+        supervisor_error(&agent, &ctl, &error).await;
+        assert!(ctl.proc().is_none());
+        assert_eq!(ctl.phase(), Phase::Failed);
+        assert!(ctl
+            .message()
+            .starts_with("CS2 startup — launch server: write private config"));
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn cs2_startup_log_does_not_copy_the_underlying_error() {
+        let error = anyhow::anyhow!("secret-config-value (os error 5)")
+            .context(StartupStage("launch server"));
+        let line = startup_diagnostic(&error).unwrap();
+        assert_eq!(line.stream, "agent");
+        assert!(line.line.contains("launch server"));
+        assert!(line.line.contains("os error 5"));
+        assert!(!line.line.contains("secret-config-value"));
     }
 
     #[tokio::test]

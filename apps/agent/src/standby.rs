@@ -50,8 +50,9 @@ pub async fn prepare_locked(
         .clone();
     let _guard = lock.lock().await;
     driver.prepare(ctx).await.map_err(crate::exec::dyn_err)?;
-    if let Err(e) = std::fs::write(ctx.deployment_dir.join(PREPARED_MARKER), b"") {
-        warn!(error = %e, "could not mark deployment prepared");
+    let marker = ctx.deployment_dir.join(PREPARED_MARKER);
+    if let Err(e) = std::fs::write(&marker, b"") {
+        warn!(error = %e, path = %marker.display(), "could not write deployment prepared marker");
     }
     Ok(())
 }

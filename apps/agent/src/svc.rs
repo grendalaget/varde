@@ -72,6 +72,9 @@ pub fn install() -> Result<()> {
     svc.set_preshutdown_timeout(Duration::from_millis(PRESHUTDOWN_MS as u64))
         .context("set preshutdown timeout")?;
     secure_data_dir().context("restrict the data dir to SYSTEM and Administrators")?;
+    game_cs2::steam::repair_client_permissions()
+        .map_err(crate::exec::dyn_err)
+        .context("repair Steam CS2 config directory permissions")?;
     // WER LocalDumps so hard crashes (access violations, abort) leave a
     // minidump the agent can report next boot; panics come from the hook.
     if let Err(e) = crash_report::wer::register(&crate::default_data_dir().join("crash-reports")) {
@@ -100,24 +103,27 @@ fn secure_data_dir() -> Result<()> {
             .context("run icacls")?;
         anyhow::ensure!(
             out.status.success(),
-            "icacls {} {}: {}",
+            "icacls {} {}: {} {}",
             path.display(),
             args.join(" "),
-            String::from_utf8_lossy(&out.stdout).trim()
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
         );
         Ok(())
     };
     let protect = [&["/inheritance:r", "/grant:r"][..], &OWNERS].concat();
-    icacls(&data, &["/setowner", ADMINS, "/T", "/C", "/Q"])?;
+    icacls(&data, &["/setowner", ADMINS, "/T", "/Q"])?;
     // drop explicit entries on the folder itself, then what it inherits
     icacls(&data, &["/reset", "/Q"])?;
     icacls(&data, &protect)?;
-    icacls(&data.join("*"), &["/reset", "/T", "/C", "/Q"])?;
+    icacls(&data.join("*"), &["/reset", "/T", "/Q"])?;
     icacls(&ident, &protect)?;
     let logs = data.join("logs");
     if logs.is_dir() {
         icacls(&logs, &["/grant", "*S-1-5-32-545:(OI)(CI)RX"])?;
     }
+    icacls(&data, &["/verify", "/Q"])?;
+    icacls(&ident, &["/verify", "/Q"])?;
     Ok(())
 }
 pub fn uninstall() -> Result<()> {

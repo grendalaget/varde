@@ -65,19 +65,27 @@ mod platform {
     use std::os::windows::process::CommandExt;
     use std::sync::Arc;
 
-    fn command(script: &str) -> Result<()> {
+    fn command(operation: &str, script: &str) -> Result<()> {
         let system =
             std::env::var_os("SystemRoot").ok_or("cs2: Windows system directory unavailable")?;
         let powershell =
             std::path::PathBuf::from(system).join("System32/WindowsPowerShell/v1.0/powershell.exe");
-        let output = std::process::Command::new(powershell)
+        let output = std::process::Command::new(&powershell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &format!("$ErrorActionPreference='Stop'; $policy=New-Object -ComObject HNetCfg.FwPolicy2; {script}")])
             .creation_flags(0x08000000)
-            .output()?;
+            .output()
+            .map_err(|e| format!("{operation}: spawn {}: {e}", powershell.display()))?;
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let reason = if stderr.contains("Windows Firewall profile is disabled") {
+                "Windows Firewall profile is disabled"
+            } else {
+                "Windows Firewall COM operation failed"
+            };
             return Err(format!(
-                "cs2: Windows Firewall COM operation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                "{operation} via {}: {reason} ({})",
+                powershell.display(),
+                output.status
             )
             .into());
         }
@@ -88,9 +96,14 @@ mod platform {
         static SWEEP: std::sync::OnceLock<SweepGate> = std::sync::OnceLock::new();
         SWEEP.get_or_init(|| {
             SweepGate::start(async {
-                async { tokio::task::spawn_blocking(|| command(&sweep_script())).await? }
-                    .await
-                    .map_err(|error: executor_api::DynError| error.to_string())
+                async {
+                    tokio::task::spawn_blocking(|| {
+                        command("sweep stale CS2 firewall rules", &sweep_script())
+                    })
+                    .await?
+                }
+                .await
+                .map_err(|error: executor_api::DynError| error.to_string())
             })
         })
     }
@@ -105,7 +118,7 @@ mod platform {
 
     impl Drop for Rule {
         fn drop(&mut self) {
-            if let Err(error) = command(&cleanup_script(&self.names)) {
+            if let Err(error) = command("remove CS2 firewall rules", &cleanup_script(&self.names)) {
                 tracing::warn!(%error, rules = ?self.names, "CS2 firewall cleanup failed; retaining block until startup sweep");
             }
         }
@@ -117,7 +130,7 @@ mod platform {
         tokio::task::spawn_blocking(move || {
             let script = install_script(&names, port)?;
             let rule = Rule { names };
-            if let Err(error) = command(&script) {
+            if let Err(error) = command("install CS2 firewall rules", &script) {
                 tracing::warn!(%error, "CS2 firewall protection unavailable; launch refused");
                 return Err(error);
             }

@@ -2,6 +2,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::path_error;
+
 const MARKER: &[u8] = b"// varde-managed:";
 
 pub struct SharedConfig {
@@ -9,19 +11,28 @@ pub struct SharedConfig {
     _lock: Option<File>,
 }
 
-fn lock_file(path: &Path) -> io::Result<File> {
+fn lock_path(path: &Path) -> io::Result<PathBuf> {
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::other("CS2 config has no filename"))?;
     let mut lock_name = std::ffi::OsString::from(".");
     lock_name.push(name);
     lock_name.push(".lock");
-    OpenOptions::new()
+    Ok(path.with_file_name(lock_name))
+}
+
+fn lock_file(path: &Path) -> io::Result<(PathBuf, File)> {
+    let path = lock_path(path)?;
+    #[cfg(windows)]
+    clear_readonly(&path, |_, metadata| Ok(metadata.len() == 0))?;
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path.with_file_name(lock_name))
+        .open(&path)
+        .map_err(|e| path_error("open CS2 startup config lock", &path, e))?;
+    Ok((path, file))
 }
 
 fn generated_name(name: &str) -> bool {
@@ -52,7 +63,11 @@ fn managed(path: &Path) -> io::Result<bool> {
         {
             Ok(false)
         }
-        Err(error) => Err(error),
+        Err(error) => Err(path_error(
+            "read CS2 startup config ownership marker",
+            path,
+            error,
+        )),
     }
 }
 
@@ -62,8 +77,9 @@ impl SharedConfig {
     }
 
     pub fn write(path: PathBuf, contents: &str) -> io::Result<Self> {
-        let lock = lock_file(&path)?;
-        fs2::FileExt::try_lock_exclusive(&lock)?;
+        let (lock_path, lock) = lock_file(&path)?;
+        fs2::FileExt::try_lock_exclusive(&lock)
+            .map_err(|e| path_error("lock CS2 startup config", &lock_path, e))?;
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -71,14 +87,17 @@ impl SharedConfig {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&path)?;
+        let mut file = options
+            .open(&path)
+            .map_err(|e| path_error("create CS2 startup config", &path, e))?;
         let guard = Self {
             path,
             _lock: Some(lock),
         };
-        file.write_all(MARKER)?;
-        writeln!(file, "{:032x}", rand::random::<u128>())?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(MARKER)
+            .and_then(|()| writeln!(file, "{:032x}", rand::random::<u128>()))
+            .and_then(|()| file.write_all(contents.as_bytes()))
+            .map_err(|e| path_error("write CS2 startup config", &guard.path, e))?;
         Ok(guard)
     }
 
@@ -86,17 +105,20 @@ impl SharedConfig {
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
+            Err(error) => return Err(path_error("list CS2 startup configs", dir, error)),
         };
         for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file()
+            let entry = entry.map_err(|e| path_error("read CS2 config directory entry", dir, e))?;
+            let path = entry.path();
+            if !entry
+                .file_type()
+                .map_err(|e| path_error("inspect CS2 config directory entry", &path, e))?
+                .is_file()
                 || !entry.file_name().to_str().is_some_and(generated_name)
             {
                 continue;
             }
-            let path = entry.path();
-            let lock = lock_file(&path)?;
+            let (lock_path, lock) = lock_file(&path)?;
             match fs2::FileExt::try_lock_exclusive(&lock) {
                 Ok(()) => {
                     if managed(&path)? {
@@ -105,18 +127,75 @@ impl SharedConfig {
                 }
                 Err(error)
                     if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    return Err(path_error(
+                        "lock stale CS2 startup config",
+                        &lock_path,
+                        error,
+                    ))
+                }
             }
         }
         Ok(())
     }
 }
 
-fn remove(path: &Path) -> io::Result<()> {
+pub(crate) fn remove(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    clear_readonly(path, |path, _| managed(path))?;
     match std::fs::remove_file(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
+        result => result.map_err(|e| path_error("remove CS2 startup config", path, e)),
     }
+}
+
+#[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
+fn clear_readonly(
+    path: &Path,
+    owned: impl FnOnce(&Path, &std::fs::Metadata) -> io::Result<bool>,
+) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(path_error("inspect CS2 startup file attributes", path, e)),
+    };
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let mut permissions = metadata.permissions();
+    if metadata.is_file()
+        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+        && permissions.readonly()
+        && owned(path, &metadata)?
+    {
+        permissions.set_readonly(false);
+        std::fs::set_permissions(path, permissions)
+            .map_err(|e| path_error("clear read-only CS2 startup file attribute", path, e))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn clear_managed_readonly(dir: &Path) -> io::Result<()> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| path_error("list CS2 startup configs", dir, e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| path_error("read CS2 config directory entry", dir, e))?;
+        let name = entry.file_name();
+        if let Some(name) = name.to_str() {
+            if generated_name(name) {
+                clear_readonly(&entry.path(), |path, _| managed(path))?;
+            } else if name
+                .strip_prefix('.')
+                .and_then(|n| n.strip_suffix(".lock"))
+                .is_some_and(generated_name)
+            {
+                clear_readonly(&entry.path(), |_, metadata| Ok(metadata.len() == 0))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Drop for SharedConfig {
@@ -130,6 +209,55 @@ impl Drop for SharedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn repair_and_sweep_remove_readonly_only_from_varde_files() {
+        fn set_readonly(path: &Path, readonly: bool) {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_readonly(readonly);
+            std::fs::set_permissions(path, perms).unwrap();
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let cfg = root.path().join("varde_stale.cfg");
+        let lock = lock_path(&cfg).unwrap();
+        let user_cfg = root.path().join("varde_user.cfg");
+        std::fs::write(&cfg, format!("// varde-managed:{:032x}\n", 1)).unwrap();
+        std::fs::write(&lock, "").unwrap();
+        std::fs::write(&user_cfg, "user configuration").unwrap();
+        for file in [&cfg, &lock, &user_cfg] {
+            set_readonly(file, true);
+        }
+
+        clear_managed_readonly(root.path()).unwrap();
+        assert!(!std::fs::metadata(&cfg).unwrap().permissions().readonly());
+        assert!(!std::fs::metadata(&lock).unwrap().permissions().readonly());
+        assert!(std::fs::metadata(&user_cfg)
+            .unwrap()
+            .permissions()
+            .readonly());
+
+        set_readonly(&cfg, true);
+        set_readonly(&lock, true);
+        SharedConfig::sweep(root.path()).unwrap();
+        assert!(!cfg.exists());
+        assert!(std::fs::metadata(&user_cfg)
+            .unwrap()
+            .permissions()
+            .readonly());
+        set_readonly(&user_cfg, false);
+    }
+
+    #[test]
+    fn sweep_error_names_the_config_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("not-a-directory");
+        std::fs::write(&path, "").unwrap();
+        let error = SharedConfig::sweep(&path).unwrap_err().to_string();
+        assert!(error.contains("list CS2 startup configs"));
+        assert!(error.contains(&*path.to_string_lossy()));
+    }
 
     #[test]
     fn sweep_only_removes_exact_generated_names_and_preserves_live_configs() {
