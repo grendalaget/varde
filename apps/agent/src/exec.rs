@@ -559,20 +559,26 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let snap_interval = Duration::from_secs(dir.snapshot_interval_s.unwrap_or(120).max(5) as u64);
     let mut stop_rx = ctl.stop_rx();
 
+    let startup_timeout = driver.startup_timeout(ctx.config);
+    // restart policy: 3 attempts per window, long enough to hold 3 startups
+    let restart_window = Duration::from_secs(600).max(startup_timeout * 3);
+
     'outer: loop {
         ensure_live(&ctl)?;
-        // restart policy: 3 attempts in 10 minutes
         let now = Instant::now();
         while attempts
             .front()
-            .map(|t| now.duration_since(*t) > Duration::from_secs(600))
+            .map(|t| now.duration_since(*t) > restart_window)
             .unwrap_or(false)
         {
             attempts.pop_front();
         }
         if attempts.len() >= 3 {
             ctl.set_phase(Phase::Failed);
-            ctl.set_message("restart limit reached (3 in 10 min)");
+            ctl.set_message(&format!(
+                "restart limit reached (3 in {} min)",
+                restart_window.as_secs() / 60
+            ));
             report(&agent, &ctl).await;
             ctl.mark_finished();
             return Ok(());
@@ -602,8 +608,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         let mut running = false;
         let mut probe_dead = false;
         let mut exit_status = None;
-        let probe_deadline = Instant::now() + driver.startup_timeout(ctx.config);
-        while Instant::now() < probe_deadline && !exit_watch.is_finished() && exit_status.is_none()
+        let probe_deadline = Instant::now() + startup_timeout;
+        while Instant::now() < probe_deadline
+            && !exit_watch.is_finished()
+            && exit_status.is_none()
+            && ctl.stop.borrow().is_none()
         {
             match driver.probe(&ctx, &*proc).await {
                 Ok(GameHealth::Healthy) => {
@@ -619,6 +628,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {}
                         st = &mut exit_watch => { exit_status = Some(st); }
+                        _ = stop_rx.changed() => {}
                     }
                 }
                 Err(e) => {
@@ -632,6 +642,16 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 running = false;
                 break;
             }
+        }
+        let stop = *ctl.stop.borrow();
+        match stop {
+            Some(StopKind::Hard) => {
+                let _ = proc.kill().await;
+                ctl.mark_finished();
+                return Ok(());
+            }
+            Some(StopKind::Graceful) if !ctl.is_fenced() => break 'outer,
+            _ => {}
         }
         if probe_dead {
             let _ = proc.kill().await;
