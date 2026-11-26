@@ -560,8 +560,10 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let mut stop_rx = ctl.stop_rx();
 
     let startup_timeout = driver.startup_timeout(ctx.config);
-    // restart policy: 3 attempts per window, long enough to hold 3 startups
-    let restart_window = Duration::from_secs(600).max(startup_timeout * 3);
+    // restart policy: 3 attempts per 10 min, and 3 failed startups in a row
+    // (startups may outlast the window)
+    let restart_window = Duration::from_secs(600);
+    let mut failed_starts = 0;
 
     'outer: loop {
         ensure_live(&ctl)?;
@@ -573,12 +575,13 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         {
             attempts.pop_front();
         }
-        if attempts.len() >= 3 {
+        if attempts.len() >= 3 || failed_starts >= 3 {
             ctl.set_phase(Phase::Failed);
-            ctl.set_message(&format!(
-                "restart limit reached (3 in {} min)",
-                restart_window.as_secs() / 60
-            ));
+            ctl.set_message(if failed_starts >= 3 {
+                "startup failed 3 times in a row"
+            } else {
+                "restart limit reached (3 in 10 min)"
+            });
             report(&agent, &ctl).await;
             ctl.mark_finished();
             return Ok(());
@@ -654,6 +657,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             _ => {}
         }
         if probe_dead {
+            failed_starts += 1;
             let _ = proc.kill().await;
             continue 'outer;
         }
@@ -669,9 +673,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             return Ok(());
         }
         if !running {
+            failed_starts += 1;
             let _ = proc.kill().await;
             continue 'outer;
         }
+        failed_starts = 0;
         ctl.set_phase(Phase::Running);
         ctl.set_health("ok");
         report(&agent, &ctl).await;
