@@ -89,10 +89,11 @@ servers run from the per-server root above, whose
 `game/bin/linuxsteamrt64/steamapps` (where CS2 puts `workshop/content/730`)
 is a link to `<deployment_dir>/cs2-workshop/<server-id>`: downloads persist
 across restarts on that machine and never land in the player's Steam install.
-On other systems a workshop map is refused when the selected install belongs
-to the Steam client. Workshop content is not part of snapshots; a failover
-host downloads the map again. Players' clients download the map from Steam
-when they join.
+On Windows, workshop servers run from the selected install, so a Steam client
+install gets the download under `game\bin\win64\steamapps`; Varde grants the
+service account modify rights there first if it lacks them. Workshop content
+is not part of snapshots; a failover host downloads the map again. Players'
+clients download the map from Steam when they join.
 
 Without addons, the driver launches the original binary. Current Linux and
 Windows builds ignore the private `-game` directory, so shared installs use one

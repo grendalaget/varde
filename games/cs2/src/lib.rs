@@ -447,10 +447,15 @@ impl Cs2Driver {
     ) -> Result<()> {
         if let Some(install) = client {
             #[cfg(windows)]
-            windows_permissions::ensure_writable(
-                &install.dir,
-                &Self::shared_config_name(ctx.server_id)?,
-            )?;
+            {
+                windows_permissions::ensure_writable(
+                    &install.dir,
+                    &Self::shared_config_name(ctx.server_id)?,
+                )?;
+                if Self::workshop_map(ctx.config)?.is_some() {
+                    windows_permissions::ensure_workshop_writable(&install.dir)?;
+                }
+            }
             return Self::prepare_shared(ctx, &install);
         }
         if let Some(install) = ctx.deployment_dir.parent().and_then(steam::in_deployments) {
@@ -958,16 +963,6 @@ impl GameDriver for Cs2Driver {
             return Err("cs2: server addons are only supported on Linux hosts".into());
         }
         self.validate(ctx.config)?;
-        #[cfg(not(target_os = "linux"))]
-        if Self::workshop_map(ctx.config)?.is_some()
-            && Self::selected(ctx)?.is_some_and(|install| !install.managed)
-        {
-            return Err(
-                "cs2: workshop maps would download into your Steam install; on this \
-                 system they need Varde's own CS2 install"
-                    .into(),
-            );
-        }
         if Self::own_root(ctx) {
             #[cfg(target_os = "linux")]
             Self::rebuild_addon_root(ctx, &Self::gameinfo_search_paths(ctx)?)?;
