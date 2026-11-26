@@ -148,12 +148,23 @@ pub(crate) fn ensure_writable(install: &Path, name: &str) -> io::Result<()> {
 /// Lets the agent write workshop downloads, which CS2 puts under
 /// `game/bin/win64/steamapps` of the install it runs from.
 pub(crate) fn ensure_workshop_writable(install: &Path) -> io::Result<()> {
-    let dir = checked_dir(
-        install,
-        &["game", "bin", "win64", "steamapps"],
-        true,
-        "CS2 workshop directory",
-    )?;
+    const DIR: [&str; 4] = ["game", "bin", "win64", "steamapps"];
+    const WHAT: &str = "CS2 workshop directory";
+    let icacls = || -> io::Result<PathBuf> {
+        let system = std::env::var_os("SystemRoot")
+            .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
+        Ok(PathBuf::from(system).join("System32/icacls.exe"))
+    };
+    let dir = match checked_dir(install, &DIR, true, WHAT) {
+        // let SYSTEM add just this directory; it then owns and can repair it
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            let bin = checked_dir(install, &DIR[..3], false, WHAT)?;
+            grant_modify(&icacls()?, &bin, "*S-1-5-18:(AD)")
+                .and_then(|()| checked_dir(install, &DIR, true, WHAT))
+                .map_err(|repair| permission_error(&bin, &e, format_args!("{e}; {repair}")))?
+        }
+        result => result?,
+    };
     let probe = |dir: &Path| -> io::Result<()> {
         let path = dir.join(format!(
             ".varde-permission-{:032x}.tmp",
@@ -169,10 +180,7 @@ pub(crate) fn ensure_workshop_writable(install: &Path) -> io::Result<()> {
     };
     match probe(&dir) {
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-            let system = std::env::var_os("SystemRoot")
-                .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
-            let icacls = PathBuf::from(system).join("System32/icacls.exe");
-            grant_modify(&icacls, &dir, "*S-1-5-18:(OI)(CI)M")
+            grant_modify(&icacls()?, &dir, "*S-1-5-18:(OI)(CI)M")
                 .and_then(|()| probe(&dir))
                 .map_err(|repair| permission_error(&dir, &e, format_args!("{e}; {repair}")))
         }
