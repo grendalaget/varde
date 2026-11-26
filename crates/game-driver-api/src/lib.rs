@@ -16,6 +16,8 @@ pub use snapshot_store::PathPattern;
 pub type DynError = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, DynError>;
 
+pub const DEFAULT_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Whether SteamCMD marks an app installation as fully installed.
 pub fn steam_app_installed(app_id: u32, dest: &Path) -> bool {
     let manifest =
@@ -639,6 +641,10 @@ pub trait GameDriver: Send + Sync {
     fn validate(&self, config: &serde_json::Value) -> Result<()>;
     fn addon_targets(&self) -> &'static [&'static str] {
         &[]
+    }
+    /// How long after spawn `probe` may keep reporting `Starting`.
+    fn startup_timeout(&self, _config: &serde_json::Value) -> std::time::Duration {
+        DEFAULT_STARTUP_TIMEOUT
     }
     /// Install into `deployment_dir` (idempotent).
     async fn prepare(&self, ctx: &DriverContext<'_>) -> Result<()>;

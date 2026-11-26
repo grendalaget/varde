@@ -68,6 +68,8 @@ func TestCS2Config(t *testing.T) {
 		{"game_mode", "wingman", false}, {"game_mode", "arms_race", false},
 		{"game_mode", "deathmatch", false}, {"game_mode", "unknown", true},
 		{"password", "", false}, {"gslt", "", false}, {"server_name", "", true},
+		{"workshop_map", "", false}, {"workshop_map", "3837286244", false},
+		{"workshop_map", float64(3837286244), true},
 	} {
 		cfg := map[string]any{"server_name": "Varde"}
 		cfg[tc.key] = tc.value

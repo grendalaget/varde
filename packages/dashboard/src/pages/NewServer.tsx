@@ -357,6 +357,8 @@ export default function NewServer() {
   );
 }
 
+const WORKSHOP = "__workshop";
+
 function Cs2Settings({
   game,
   config,
@@ -375,7 +377,11 @@ function Cs2Settings({
   );
   const mode = modes.find((m) => m.id === config.game_mode) ?? modes[0];
   const map = typeof config.map === "string" ? config.map : "";
-  const otherMap = !!mode && !mode.maps.includes(map);
+  const workshopField = game.config_fields.some((f) => f.name === "workshop_map");
+  const workshopMap =
+    typeof config.workshop_map === "string" ? config.workshop_map : "";
+  const [workshop, setWorkshop] = useState(workshopMap !== "");
+  const otherMap = !workshop && !!mode && !mode.maps.includes(map);
   const advanced = game.config_fields.filter((f) =>
     CS2_ADVANCED.includes(f.name),
   );
@@ -404,13 +410,34 @@ function Cs2Settings({
           <div className="grid gap-3 sm:grid-cols-2">
             <ControlSelect
               label="Map"
-              value={otherMap ? "" : map}
+              value={workshop ? WORKSHOP : otherMap ? "" : map}
               options={[
                 ...mode.maps.map((id) => ({ value: id, label: mapName(id) })),
                 { value: "", label: "Another map…" },
+                ...(workshopField
+                  ? [{ value: WORKSHOP, label: "Workshop map…" }]
+                  : []),
               ]}
-              onChange={(map) => onChange({ ...config, map })}
+              onChange={(next) => {
+                setWorkshop(next === WORKSHOP);
+                if (next === WORKSHOP) return;
+                const rest: typeof config = { ...config, map: next };
+                delete rest.workshop_map;
+                onChange(rest);
+              }}
             />
+            {workshop && (
+              <input
+                className={cx(inputClass, "font-mono")}
+                aria-label="Workshop map link or ID"
+                required
+                value={workshopMap}
+                onChange={(e) =>
+                  onChange({ ...config, workshop_map: e.target.value })
+                }
+                placeholder="Workshop link or item ID"
+              />
+            )}
             {otherMap && (
               <input
                 className={cx(inputClass, "font-mono")}
@@ -422,6 +449,13 @@ function Cs2Settings({
               />
             )}
           </div>
+          {workshop && (
+            <p className="mt-2 text-sm text-muted">
+              The host downloads the map from Steam before the server starts,
+              so the first start takes longer. Players download it from Steam
+              when they join.
+            </p>
+          )}
         </Section>
       )}
 

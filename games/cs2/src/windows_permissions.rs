@@ -10,24 +10,41 @@ use crate::{path_error, shared_config};
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
 fn checked_cfg_dir(install: &Path, create_cfg: bool) -> io::Result<PathBuf> {
+    checked_dir(
+        install,
+        &["game", "csgo", "cfg"],
+        create_cfg,
+        "CS2 config directory",
+    )
+}
+
+/// `install` joined with `components`, refusing anything but plain
+/// directories; with `create`, the last component is created if missing.
+fn checked_dir(
+    install: &Path,
+    components: &[&str],
+    create: bool,
+    what: &str,
+) -> io::Result<PathBuf> {
     let mut path = install.to_path_buf();
-    for component in ["game", "csgo", "cfg"] {
+    for (i, component) in components.iter().enumerate() {
         path.push(component);
+        let last = i + 1 == components.len();
         let metadata = match fs::symlink_metadata(&path) {
-            Err(e) if create_cfg && component == "cfg" && e.kind() == io::ErrorKind::NotFound => {
+            Err(e) if create && last && e.kind() == io::ErrorKind::NotFound => {
                 match fs::create_dir(&path) {
                     Ok(()) => (),
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
-                    Err(e) => return Err(path_error("create CS2 config directory", &path, e)),
+                    Err(e) => return Err(path_error(&format!("create {what}"), &path, e)),
                 }
                 fs::symlink_metadata(&path)
             }
             result => result,
         }
-        .map_err(|e| path_error("inspect CS2 config directory", &path, e))?;
+        .map_err(|e| path_error(&format!("inspect {what}"), &path, e))?;
         if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(io::Error::other(LocalPathError::new(
-                "inspect CS2 config directory",
+                format!("inspect {what}"),
                 &path,
                 "not a regular directory",
             )));
@@ -128,6 +145,49 @@ pub(crate) fn ensure_writable(install: &Path, name: &str) -> io::Result<()> {
     }
 }
 
+/// Lets the agent write workshop downloads, which CS2 puts under
+/// `game/bin/win64/steamapps` of the install it runs from.
+pub(crate) fn ensure_workshop_writable(install: &Path) -> io::Result<()> {
+    const DIR: [&str; 4] = ["game", "bin", "win64", "steamapps"];
+    const WHAT: &str = "CS2 workshop directory";
+    let icacls = || -> io::Result<PathBuf> {
+        let system = std::env::var_os("SystemRoot")
+            .ok_or_else(|| io::Error::other("Windows system directory unavailable"))?;
+        Ok(PathBuf::from(system).join("System32/icacls.exe"))
+    };
+    let dir = match checked_dir(install, &DIR, true, WHAT) {
+        // let SYSTEM add just this directory; it then owns and can repair it
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            let bin = checked_dir(install, &DIR[..3], false, WHAT)?;
+            grant_modify(&icacls()?, &bin, "*S-1-5-18:(AD)")
+                .and_then(|()| checked_dir(install, &DIR, true, WHAT))
+                .map_err(|repair| permission_error(&bin, &e, format_args!("{e}; {repair}")))?
+        }
+        result => result?,
+    };
+    let probe = |dir: &Path| -> io::Result<()> {
+        let path = dir.join(format!(
+            ".varde-permission-{:032x}.tmp",
+            rand::random::<u128>()
+        ));
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| path_error("create CS2 workshop permission probe", &path, e))?;
+        fs::remove_file(&path)
+            .map_err(|e| path_error("remove CS2 workshop permission probe", &path, e))
+    };
+    match probe(&dir) {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            grant_modify(&icacls()?, &dir, "*S-1-5-18:(OI)(CI)M")
+                .and_then(|()| probe(&dir))
+                .map_err(|repair| permission_error(&dir, &e, format_args!("{e}; {repair}")))
+        }
+        result => result,
+    }
+}
+
 fn permission_error(cfg: &Path, error: &io::Error, detail: impl std::fmt::Display) -> io::Error {
     let path = error
         .get_ref()
@@ -146,6 +206,16 @@ fn permission_error(cfg: &Path, error: &io::Error, detail: impl std::fmt::Displa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workshop_preflight_creates_the_download_directory_and_leaves_it_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("game/bin/win64");
+        fs::create_dir_all(&bin).unwrap();
+        ensure_workshop_writable(root.path()).unwrap();
+        assert_eq!(fs::read_dir(bin.join("steamapps")).unwrap().count(), 0);
+        assert!(ensure_workshop_writable(&root.path().join("missing")).is_err());
+    }
 
     #[test]
     fn preflight_does_not_leave_a_file_in_the_steam_config_directory() {

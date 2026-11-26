@@ -559,20 +559,29 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
     let snap_interval = Duration::from_secs(dir.snapshot_interval_s.unwrap_or(120).max(5) as u64);
     let mut stop_rx = ctl.stop_rx();
 
+    let startup_timeout = driver.startup_timeout(ctx.config);
+    // restart policy: 3 attempts per 10 min, and 3 failed startups in a row
+    // (startups may outlast the window)
+    let restart_window = Duration::from_secs(600);
+    let mut failed_starts = 0;
+
     'outer: loop {
         ensure_live(&ctl)?;
-        // restart policy: 3 attempts in 10 minutes
         let now = Instant::now();
         while attempts
             .front()
-            .map(|t| now.duration_since(*t) > Duration::from_secs(600))
+            .map(|t| now.duration_since(*t) > restart_window)
             .unwrap_or(false)
         {
             attempts.pop_front();
         }
-        if attempts.len() >= 3 {
+        if attempts.len() >= 3 || failed_starts >= 3 {
             ctl.set_phase(Phase::Failed);
-            ctl.set_message("restart limit reached (3 in 10 min)");
+            ctl.set_message(if failed_starts >= 3 {
+                "startup failed 3 times in a row"
+            } else {
+                "restart limit reached (3 in 10 min)"
+            });
             report(&agent, &ctl).await;
             ctl.mark_finished();
             return Ok(());
@@ -602,8 +611,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
         let mut running = false;
         let mut probe_dead = false;
         let mut exit_status = None;
-        let probe_deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < probe_deadline && !exit_watch.is_finished() && exit_status.is_none()
+        let probe_deadline = Instant::now() + startup_timeout;
+        while Instant::now() < probe_deadline
+            && !exit_watch.is_finished()
+            && exit_status.is_none()
+            && ctl.stop.borrow().is_none()
         {
             match driver.probe(&ctx, &*proc).await {
                 Ok(GameHealth::Healthy) => {
@@ -619,6 +631,7 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {}
                         st = &mut exit_watch => { exit_status = Some(st); }
+                        _ = stop_rx.changed() => {}
                     }
                 }
                 Err(e) => {
@@ -633,7 +646,18 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
                 break;
             }
         }
+        let stop = *ctl.stop.borrow();
+        match stop {
+            Some(StopKind::Hard) => {
+                let _ = proc.kill().await;
+                ctl.mark_finished();
+                return Ok(());
+            }
+            Some(StopKind::Graceful) if !ctl.is_fenced() => break 'outer,
+            _ => {}
+        }
         if probe_dead {
+            failed_starts += 1;
             let _ = proc.kill().await;
             continue 'outer;
         }
@@ -649,9 +673,11 @@ async fn run(agent: Arc<Agent>, ctl: Arc<ExecCtl>) -> Result<()> {
             return Ok(());
         }
         if !running {
+            failed_starts += 1;
             let _ = proc.kill().await;
             continue 'outer;
         }
+        failed_starts = 0;
         ctl.set_phase(Phase::Running);
         ctl.set_health("ok");
         report(&agent, &ctl).await;
