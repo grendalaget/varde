@@ -103,6 +103,7 @@ impl Cs2Driver {
                 && Self::workshop_map(ctx.config).is_ok_and(|id| id.is_some()))
     }
 
+    #[cfg(target_os = "linux")]
     fn workshop_dir(ctx: &DriverContext<'_>) -> Result<PathBuf> {
         let root = Self::addon_root(ctx)?;
         let id = root.file_name().ok_or("cs2: server id is empty")?;
